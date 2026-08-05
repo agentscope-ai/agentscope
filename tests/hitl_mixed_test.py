@@ -17,7 +17,6 @@ from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionContext,
-    PermissionRule,
 )
 from agentscope.message import (
     TextBlock,
@@ -57,7 +56,6 @@ class MockMixedSequentialTool(ToolBase):
         context: PermissionContext,
     ) -> PermissionDecision:
         """Check permissions for the tool usage."""
-        del tool_input, context
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             decision_reason="Mock mixed tool requires user confirmation",
@@ -94,7 +92,6 @@ class MockMixedConcurrentTool(ToolBase):
         context: PermissionContext,
     ) -> PermissionDecision:
         """Check permissions for the tool usage."""
-        del tool_input, context
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             decision_reason="Mock mixed tool requires user confirmation",
@@ -305,7 +302,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         self,
         id: str,
         result: str,
-        state: str = "success",
     ) -> list[dict]:
         """Helper method to get the expected tool result events."""
         return [
@@ -317,7 +313,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_END",
                 "tool_call_id": id,
-                "state": state,
+                "state": "success",
             },
         ]
 
@@ -348,8 +344,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         id: str,
         name: str,
         tool_input: str,
-        *,
-        has_suggested_rule: bool = True,
     ) -> list[dict]:
         """Helper method to get the expected external execution events."""
         return [
@@ -367,7 +361,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         name,
                         tool_input,
                         ToolCallState.SUBMITTED,
-                        has_suggested_rule=has_suggested_rule,
                     ),
                 ],
             },
@@ -387,14 +380,13 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         id: str,
         name: str,
         result: str,
-        state: ToolResultState = ToolResultState.SUCCESS,
     ) -> ToolResultBlock:
         """Build a tool result block."""
         return ToolResultBlock(
             id=id,
             name=name,
             output=[TextBlock(text=result)],
-            state=state,
+            state=ToolResultState.SUCCESS,
         )
 
     def _get_confirm_result(
@@ -402,13 +394,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         id: str,
         name: str,
         tool_input: str,
-        rules: list[PermissionRule] | None = None,
     ) -> ConfirmResult:
         """Build a confirmation result."""
         return ConfirmResult(
             confirmed=True,
             tool_call=self._get_tool_call_block(id, name, tool_input),
-            rules=rules,
         )
 
     def _build_tool_calls(
@@ -935,8 +925,20 @@ class AgentMixTest(IsolatedAsyncioTestCase):
     async def test_concurrent_user_confirmation_and_external_execution(
         self,
     ) -> None:
-        """Test concurrent tool calls that need confirmation and external
-        execution."""
+        """Concurrent calls confirmed one at a time, without an allow rule.
+
+        Two concurrent calls to the same tool share one tool-name-level
+        suggested rule, so batch de-duplication surfaces only the first
+        confirmation and leaves the second PENDING. Confirming the first
+        WITHOUT the suggested rule sends it on to external execution and
+        surfaces the second call's own (deferred) prompt in the same run —
+        the state this fixture exists to cover, where one call sits on the
+        external gate while its peer sits on the confirmation gate.
+
+        Confirming the first WITH the always-allow rule instead is
+        ``hitl_user_confirmation_test``'s rule-dedup case, and is not
+        repeated here.
+        """
         mixed_tool = MockMixedConcurrentTool()
         self.agent.toolkit = Toolkit(tools=[mixed_tool])
 
@@ -1032,8 +1034,9 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
 
-        # Applying the first call's suggested rule also releases the pending
-        # second call for external execution.
+        # Confirming the first call without a rule hands it to external
+        # execution and, in the same run, surfaces the second call's own
+        # deferred prompt — the two gates are open at once.
         user_confirm_event = UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
@@ -1041,14 +1044,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     self.tool_call_id_1,
                     self.concurrent_tool_name,
                     self.tool_input_1,
-                    rules=[
-                        PermissionRule(
-                            tool_name=self.concurrent_tool_name,
-                            rule_content=None,
-                            behavior=PermissionBehavior.ALLOW,
-                            source="suggested",
-                        ),
-                    ],
                 ),
             ],
         )
@@ -1057,41 +1052,78 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
-        self.assertEqual(len(events), 4)
-        expected_tool_events = {
-            self.tool_call_id_1: [
-                {**basic_dict, **_}
-                for _ in self._get_require_external_execution_events(
-                    reply_id,
-                    self.tool_call_id_1,
-                    self.concurrent_tool_name,
-                    self.tool_input_1,
-                )
-            ],
-            self.tool_call_id_2: [
-                {**basic_dict, **_}
-                for _ in self._get_require_external_execution_events(
-                    reply_id,
+        expected_events_resume = [
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_1,
+                self.concurrent_tool_name,
+                self.tool_input_1,
+            ),
+            self._get_require_user_confirm_event(
+                reply_id,
+                self.tool_call_id_2,
+                self.concurrent_tool_name,
+                self.tool_input_2,
+            ),
+        ]
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events_resume],
+        )
+
+        expected_context = [
+            self._get_expected_user_message(),
+            {
+                "content": [
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.SUBMITTED,
+                    ),
+                    # The deferred prompt restores the suggested rule the
+                    # PENDING placeholder above did not carry.
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.ASKING,
+                    ),
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context = [{**msg_base, **_} for _ in expected_context]
+        self.assertListEqual(context_dicts, expected_context)
+
+        # Confirming the second call sends it to the same external gate.
+        user_confirm_event = UserConfirmResultEvent(
+            reply_id=reply_id,
+            confirm_results=[
+                self._get_confirm_result(
                     self.tool_call_id_2,
                     self.concurrent_tool_name,
                     self.tool_input_2,
-                    has_suggested_rule=False,
-                )
+                ),
             ],
-        }
-        for tool_call_id, expected_tool_event in expected_tool_events.items():
-            self.assertListEqual(
-                [
-                    event
-                    for event in events
-                    if event.get("tool_call_id") == tool_call_id
-                    or (
-                        event["type"] == "REQUIRE_EXTERNAL_EXECUTION"
-                        and event["tool_calls"][0]["id"] == tool_call_id
-                    )
-                ],
-                expected_tool_event,
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
+            events.append(event.model_dump())
+
+        expected_events_second_confirm = (
+            self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_2,
+                self.concurrent_tool_name,
+                self.tool_input_2,
             )
+        )
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events_second_confirm],
+        )
 
         expected_context = [
             self._get_expected_user_message(),
@@ -1108,7 +1140,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         self.concurrent_tool_name,
                         self.tool_input_2,
                         ToolCallState.SUBMITTED,
-                        has_suggested_rule=False,
                     ),
                 ],
             },
@@ -1176,7 +1207,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         self.concurrent_tool_name,
                         self.tool_input_2,
                         ToolCallState.FINISHED,
-                        has_suggested_rule=False,
                     ),
                     self._get_expected_tool_result_block(
                         self.concurrent_tool_name,
