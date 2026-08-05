@@ -78,6 +78,31 @@ class ExecResult:
         return self.exit_code == 0
 
 
+@dataclass(frozen=True, slots=True)
+class DirEntry:
+    """One entry from :meth:`BackendBase.scandir`.
+
+    Mirrors :class:`os.DirEntry`: the metadata comes from the same
+    directory read as the name, so a listing costs one round trip
+    instead of one per entry plus one per attribute.
+
+    Attributes:
+        name: The entry's base name, without any leading directory.
+        is_dir: Whether the entry is a directory, following symlinks.
+        size_bytes: Size in bytes of a file. Always ``None`` for a
+            directory — its on-disk size says nothing a caller wants —
+            and ``None`` when it could not be determined (a broken
+            symlink, a vanished entry).
+        mtime: Modification time as a POSIX timestamp, or ``None``
+            for the same reasons.
+    """
+
+    name: str
+    is_dir: bool
+    size_bytes: int | None = None
+    mtime: float | None = None
+
+
 # ── helpers ────────────────────────────────────────────────────────────
 
 
@@ -500,6 +525,82 @@ class BackendBase(ABC):
             if part
         ]
 
+    async def scandir(self, path: str) -> list[DirEntry]:
+        """List one directory level with each entry's metadata.
+
+        The type, size and mtime come back from the same ``find`` run
+        as the names, so listing a directory of N entries costs one
+        round trip rather than 1 + 3N. Prefer this over
+        :meth:`list_dir` plus per-entry calls whenever the metadata is
+        wanted; ``find -printf`` is a GNU extension, so backends on
+        non-GNU userlands should override it.
+
+        ``%Y`` follows symlinks, matching what :meth:`is_dir` reports;
+        the size and mtime describe the link itself, which only
+        differs for the link's own few bytes.
+
+        Args:
+            path (`str`):
+                Directory to list inside the backend's environment.
+
+        Returns:
+            `list[DirEntry]`:
+                The immediate children, or an empty list if ``path``
+                does not exist or cannot be listed.
+        """
+        result = await self.exec_shell(
+            [
+                "find",
+                path,
+                "-mindepth",
+                "1",
+                "-maxdepth",
+                "1",
+                # Name last: it is the only field that may contain a
+                # tab, so a bounded split keeps it intact.
+                "-printf",
+                "%Y\\t%s\\t%T@\\t%f\\0",
+            ],
+        )
+        if not result.ok():
+            return []
+
+        entries: list[DirEntry] = []
+        for record in result.stdout.split(b"\0"):
+            if not record:
+                continue
+            fields = record.decode("utf-8", errors="surrogateescape").split(
+                "\t",
+                3,
+            )
+            if len(fields) != 4:
+                continue
+            kind, raw_size, raw_mtime, name = fields
+            try:
+                size: int | None = int(raw_size)
+            except ValueError:
+                size = None
+            try:
+                mtime: float | None = float(raw_mtime)
+            except ValueError:
+                mtime = None
+            # ``%Y`` reports N/L/? when it cannot follow the link. The
+            # size and mtime it still prints describe the link itself,
+            # which would read as a real 21-byte file; ``os.scandir``
+            # reports nothing there, so neither does this.
+            if kind in ("N", "L", "?"):
+                size, mtime = None, None
+            is_dir = kind == "d"
+            entries.append(
+                DirEntry(
+                    name=name,
+                    is_dir=is_dir,
+                    size_bytes=None if is_dir else size,
+                    mtime=mtime,
+                ),
+            )
+        return entries
+
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of ``path``, or ``None``.
 
@@ -528,35 +629,6 @@ class BackendBase(ABC):
             return None
         try:
             return float(
-                result.stdout.decode("utf-8", errors="replace").strip(),
-            )
-        except ValueError:
-            return None
-
-    async def stat_size(self, path: str) -> int | None:
-        """Return the size of ``path`` in bytes, or ``None``.
-
-        Tries GNU ``stat -c %s`` first and falls back to BSD
-        ``stat -f %z`` for portability across Linux and macOS.
-
-        Args:
-            path (`str`):
-                Path to stat inside the backend's environment.
-
-        Returns:
-            `int | None`:
-                Size in bytes, or ``None`` when unavailable.
-        """
-        quoted = shlex.quote(path)
-        script = (
-            f"stat -c %s {quoted} 2>/dev/null || "
-            f"stat -f %z {quoted} 2>/dev/null"
-        )
-        result = await self.exec_shell(["sh", "-c", script])
-        if not result.ok():
-            return None
-        try:
-            return int(
                 result.stdout.decode("utf-8", errors="replace").strip(),
             )
         except ValueError:
@@ -837,6 +909,46 @@ class LocalBackend(BackendBase):
             return results
         return os.listdir(path)
 
+    async def scandir(self, path: str) -> list[DirEntry]:
+        """List a local directory with each entry's metadata.
+
+        ``os.scandir`` carries the type in the directory record itself,
+        so this is cheaper than ``os.listdir`` followed by a ``stat``
+        per entry — the same reason the base class batches its ``find``.
+
+        Args:
+            path (`str`):
+                Directory to list.
+
+        Returns:
+            `list[DirEntry]`:
+                The immediate children, or an empty list if ``path``
+                does not exist or cannot be listed.
+        """
+        entries: list[DirEntry] = []
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    # A symlink can break, or the entry can vanish,
+                    # between the listing and the stat.
+                    try:
+                        is_dir = entry.is_dir()
+                        stat = entry.stat()
+                        size, mtime = stat.st_size, stat.st_mtime
+                    except OSError:
+                        is_dir, size, mtime = False, None, None
+                    entries.append(
+                        DirEntry(
+                            name=entry.name,
+                            is_dir=is_dir,
+                            size_bytes=None if is_dir else size,
+                            mtime=mtime,
+                        ),
+                    )
+        except OSError:
+            return []
+        return entries
+
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of a local file.
 
@@ -851,22 +963,6 @@ class LocalBackend(BackendBase):
         """
         try:
             return os.stat(path).st_mtime
-        except (OSError, FileNotFoundError):
-            return None
-
-    async def stat_size(self, path: str) -> int | None:
-        """Return the size of a local path in bytes.
-
-        Args:
-            path (`str`):
-                Path to stat.
-
-        Returns:
-            `int | None`:
-                Size in bytes, or ``None`` if the path is unavailable.
-        """
-        try:
-            return os.stat(path).st_size
         except (OSError, FileNotFoundError):
             return None
 

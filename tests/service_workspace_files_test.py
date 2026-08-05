@@ -33,6 +33,7 @@ from agentscope.app.storage import (
 )
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.state import AgentState
+from agentscope.tool import DirEntry
 
 SECRET = "test-signing-secret"
 
@@ -133,10 +134,23 @@ class _FakeBackend:
             return 1_700_000_000.0
         return None
 
-    async def stat_size(self, path: str) -> int | None:
-        """Return the byte length of a tracked file."""
-        data = self._files.get(path)
-        return None if data is None else len(data)
+    async def scandir(self, path: str) -> list[DirEntry]:
+        """Return each child with its metadata, as one batch would."""
+        entries = []
+        for name in await self.list_dir(path):
+            child = posixpath.join(path, name)
+            is_dir = child in self._dirs
+            entries.append(
+                DirEntry(
+                    name=name,
+                    is_dir=is_dir,
+                    size_bytes=(
+                        None if is_dir else len(self._files.get(child, b""))
+                    ),
+                    mtime=1_700_000_000.0,
+                ),
+            )
+        return entries
 
 
 class _FakeWorkspace:
@@ -295,6 +309,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
         self.assertEqual(sorted(by_name), ["notes.txt", "subdir"])
         self.assertFalse(by_name["notes.txt"].is_dir)
         self.assertEqual(by_name["notes.txt"].size_bytes, len(b"hello world"))
+        self.assertEqual(by_name["notes.txt"].updated_at, 1_700_000_000.0)
         self.assertTrue(by_name["subdir"].is_dir)
         self.assertIsNone(by_name["subdir"].size_bytes)
         # Listing must not read file contents, or a directory of large
@@ -403,7 +418,6 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             x_user_id="u",
         )
         self.assertEqual(response.media_type, "text/plain")
-        self.assertEqual(response.headers["content-length"], "11")
         self.assertNotIn("content-disposition", response.headers)
         self.assertEqual(await _collect(response), b"hello world")
 

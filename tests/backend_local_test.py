@@ -3,9 +3,8 @@
 
 Exercises the three abstract primitives (``exec_shell``, ``read_file``,
 ``write_file``) plus the derived filesystem helpers (``file_exists``,
-``is_dir``, ``list_dir``, ``read_stream``, ``stat_mtime``,
-``stat_size``, ``delete_path``) of the host-local backend, and the
-module-level
+``is_dir``, ``list_dir``, ``scandir``, ``read_stream``, ``stat_mtime``,
+``delete_path``) of the host-local backend, and the module-level
 ``normalize_newlines`` helper.
 
 ``LocalBackend`` is designed to run on every platform (it spawns
@@ -267,15 +266,34 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_stat_size(self) -> None:
-        """``stat_size`` returns bytes for a file and None when missing."""
-        path = os.path.join(self.temp_dir.name, "f.txt")
-        await self.backend.write_file(path, b"payload")
-        self.assertEqual(await self.backend.stat_size(path), 7)
-        self.assertIsNone(
-            await self.backend.stat_size(
+    async def test_scandir_returns_metadata_per_entry(self) -> None:
+        """``scandir`` carries type, size and mtime with each name."""
+        await self.backend.write_file(
+            os.path.join(self.temp_dir.name, "f.txt"),
+            b"payload",
+        )
+        os.makedirs(os.path.join(self.temp_dir.name, "d"))
+        entries = {
+            e.name: e
+            for e in await self.backend.scandir(
+                self.temp_dir.name,
+            )
+        }
+        self.assertEqual(sorted(entries), ["d", "f.txt"])
+        self.assertFalse(entries["f.txt"].is_dir)
+        self.assertEqual(entries["f.txt"].size_bytes, 7)
+        self.assertIsNotNone(entries["f.txt"].mtime)
+        self.assertTrue(entries["d"].is_dir)
+        # A directory's own size is noise; the contract pins it to None.
+        self.assertIsNone(entries["d"].size_bytes)
+
+    async def test_scandir_missing_dir_returns_empty(self) -> None:
+        """An unlistable path yields no entries rather than raising."""
+        self.assertEqual(
+            await self.backend.scandir(
                 os.path.join(self.temp_dir.name, "missing"),
             ),
+            [],
         )
 
     async def test_read_stream_chunks_without_buffering(self) -> None:

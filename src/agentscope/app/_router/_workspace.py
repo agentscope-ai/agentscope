@@ -505,21 +505,17 @@ async def list_workspace_directory(
             detail="Directory not found.",
         )
 
-    entries: list[DirectoryEntry] = []
-    for name in await backend.list_dir(target):
-        entry_path = backend.join_path(target, name)
-        is_dir = await backend.is_dir(entry_path)
-        entries.append(
-            DirectoryEntry(
-                name=name,
-                is_dir=is_dir,
-                size_bytes=(
-                    None if is_dir else await backend.stat_size(entry_path)
-                ),
-                updated_at=await backend.stat_mtime(entry_path),
-            ),
+    # One call for the whole directory: asking per entry would be one
+    # round trip each on a sandboxed backend, times three attributes.
+    return [
+        DirectoryEntry(
+            name=entry.name,
+            is_dir=entry.is_dir,
+            size_bytes=entry.size_bytes,
+            updated_at=entry.mtime,
         )
-    return entries
+        for entry in await backend.scandir(target)
+    ]
 
 
 @workspace_router.post("/files/download-token")
@@ -631,11 +627,6 @@ async def read_workspace_file(
         )
 
     headers: dict[str, str] = {}
-    # Lets the browser show real download progress instead of a
-    # spinner of unknown length; omitted when the backend cannot stat.
-    size = await backend.stat_size(target)
-    if size is not None:
-        headers["Content-Length"] = str(size)
     if download:
         headers[
             "Content-Disposition"
