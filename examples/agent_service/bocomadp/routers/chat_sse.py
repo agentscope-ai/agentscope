@@ -3,7 +3,7 @@
 
 POST /api/chat/run
     Body: { "session_id": "...", "agent_id": "default",
-            "input": "user message text" }
+            "user_id": "...", "input": "user message text" }
     Response: ``text/event-stream`` — SSE envelope dicts
 
 POST /api/chat/stop
@@ -39,6 +39,7 @@ class ChatRunRequest(BaseModel):
 
     session_id: str = Field(default="", description="Conversation thread id")
     agent_id: str = Field(default="default", description="Agent to run")
+    user_id: str = Field(default="default", description="User id for workspace isolation")
     input: str = Field(default="", description="User message text")
 
 
@@ -69,6 +70,7 @@ async def run_chat(
     req = _SimpleRequest(
         session_id=body.session_id,
         agent_id=body.agent_id,
+        user_id=body.user_id,
         input=body.input,
     )
 
@@ -112,9 +114,16 @@ async def stop_chat(
 class _SimpleRequest:
     """Minimal request object for Runtime."""
 
-    def __init__(self, session_id: str, agent_id: str, input: str):
+    def __init__(
+        self,
+        session_id: str,
+        agent_id: str,
+        input: str,
+        user_id: str = "default",
+    ):
         self.session_id = session_id
         self.agent_id = agent_id
+        self.user_id = user_id
         self.input_msgs = [{"role": "user", "content": input}]
 
 

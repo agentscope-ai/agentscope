@@ -62,6 +62,7 @@ class HookContext:
     request: Any = None
     session_id: str = ""
     agent_id: str = ""
+    user_id: str = "default"
     workspace: Any = None
     app_services: Any = None
     input_msgs: list = field(default_factory=list)

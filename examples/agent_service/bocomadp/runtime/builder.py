@@ -25,6 +25,10 @@ class AgentBuilder:
     The builder pulls tools from the :class:`ToolRegistry`, middlewares
     from the :class:`MiddlewareRegistry`, and the model from the
     :class:`ProviderManager`. All dependencies are injected externally.
+
+    When a :class:`WorkspaceManagerBase` is supplied, the builder also
+    loads workspace-level skills and MCP clients so the agent sees the
+    same skill instructions the built-in ``/chat`` path provides.
     """
 
     def __init__(
@@ -33,10 +37,12 @@ class AgentBuilder:
         tool_registry: Any = None,
         middleware_registry: Any = None,
         provider_manager: Any = None,
+        workspace_manager: Any = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._middleware_registry = middleware_registry
         self._provider_manager = provider_manager
+        self._workspace_manager = workspace_manager
 
     async def build(
         self,
@@ -81,7 +87,32 @@ class AgentBuilder:
         # Resolve max_iters (config > default)
         max_iters = getattr(cfg, "max_iters", None) or 20
 
-        toolkit = Toolkit(tools=tools)
+        # Resolve workspace skills + MCPs (matches built-in /chat path)
+        skills: list = []
+        mcps: list = []
+        if self._workspace_manager is not None:
+            user_id = getattr(ctx, "user_id", "default")
+            session_id = getattr(ctx, "session_id", "") or ""
+            try:
+                workspace = await self._workspace_manager.get_workspace(
+                    user_id=user_id,
+                    agent_id=getattr(ctx, "agent_id", "default"),
+                    session_id=session_id,
+                )
+                skills = await workspace.list_skills()
+                mcps = await workspace.list_mcps()
+                ctx.workspace = workspace
+            except Exception:
+                logger.warning(
+                    "builder: workspace load failed, skills/mcps skipped",
+                    exc_info=True,
+                )
+
+        toolkit = Toolkit(
+            tools=tools,
+            skills_or_loaders=skills or None,
+            mcps=mcps or None,
+        )
 
         agent = Agent(
             name=getattr(ctx, "agent_id", None) or "default",
@@ -97,9 +128,11 @@ class AgentBuilder:
             agent.load_state_dict(ctx.session_state)
 
         logger.info(
-            "builder: built agent session=%s tools=%d middlewares=%d",
+            "builder: built agent session=%s tools=%d skills=%d mcps=%d middlewares=%d",
             getattr(ctx, "session_id", ""),
             len(tools),
+            len(skills),
+            len(mcps),
             len(middlewares),
         )
         return agent

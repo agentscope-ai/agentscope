@@ -58,6 +58,7 @@ class Runtime:
         middleware_registry: Any = None,
         provider_manager: Any = None,
         multi_agent_manager: Any = None,
+        workspace_manager: Any = None,
         heartbeat_interval: float = 15.0,
     ) -> None:
         self.workspace = workspace
@@ -67,6 +68,7 @@ class Runtime:
         self.middleware_registry = middleware_registry
         self.provider_manager = provider_manager
         self.multi_agent_manager = multi_agent_manager
+        self.workspace_manager = workspace_manager
         self._heartbeat_interval = heartbeat_interval
         # Track active executors for cancel support
         self._active_executors: dict[str, AgentExecutor] = {}
@@ -135,6 +137,7 @@ class Runtime:
                     tool_registry=self.tool_registry,
                     middleware_registry=self.middleware_registry,
                     provider_manager=self.provider_manager,
+                    workspace_manager=self.workspace_manager,
                 )
                 ctx.agent = await builder.build(ctx)
 
@@ -207,6 +210,7 @@ class Runtime:
         """Build the per-request HookContext from the normalized request."""
         session_id = getattr(request, "session_id", "") or ""
         agent_id = getattr(request, "agent_id", "") or "default"
+        user_id = getattr(request, "user_id", "") or "default"
         input_msgs = getattr(request, "input_msgs", []) or []
         if not input_msgs:
             input_msgs = getattr(request, "input", []) or []
@@ -220,6 +224,7 @@ class Runtime:
             request=request,
             session_id=session_id,
             agent_id=agent_id,
+            user_id=user_id,
             workspace=self.workspace,
             app_services=self.app_services,
             input_msgs=list(input_msgs),
