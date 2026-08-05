@@ -2,7 +2,7 @@
 """企业内部智能体平台扩展包。
 
 基于 AgentScope 官方 ``agent_service`` 示例，只承载企业特有能力：
-    - ``middlewares``: 企业管控（审计留痕、数据脱敏 DLP）
+    - ``middlewares``: 企业管控（审计留痕）
     - ``tools``:       企业内部工具占位（HR / 文档库 / ITSM）
     - ``routers``:     平台自有路由（健康检查）
 

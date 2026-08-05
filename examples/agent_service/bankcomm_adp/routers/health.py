@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..config import settings
-from .._version import __version__
+from .. import __version__
+from ..config.settings_config import get_settings
 
 router = APIRouter(prefix="/platform/health", tags=["health"])
 
@@ -25,5 +25,5 @@ async def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         version=__version__,
-        app_name=settings.app_name,
+        app_name=get_settings().app_name,
     )

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """BocomADP — built on top of AgentScope's ``create_app``.
 
-This is the single place where every concern is wired together:
+本示例在官方入口之上叠加了企业内部扩展（``bankcomm_adp``），
+同时也是所有关注点统一装配的唯一入口：
 
 1. Load config (:mod:`bocomadp.config`).
 2. Configure logging once at startup (:func:`configure_logging`).
@@ -42,7 +43,6 @@ from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
-from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
@@ -72,6 +72,7 @@ from bocomadp.tools import ToolRegistry
 
 # 企业扩展（案例）：管控中间件 + 工具 + 自有路由
 # health_router 重命名为 platform_health_router，避免与 bocomadp 的 health_router 同名
+from bankcomm_adp.config import get_settings
 from bankcomm_adp.middlewares import build_enterprise_middlewares
 from bankcomm_adp.routers import health_router as platform_health_router
 from bankcomm_adp.tools import build_enterprise_tools
@@ -199,10 +200,7 @@ storage = RedisStorage(
 vector_store = QdrantStore(location=":memory:")
 
 workspace_manager = LocalWorkspaceManager(
-    basedir=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "workspaces",
-    ),
+    basedir=str(get_settings().workspace_dir),
     default_mcps=build_default_mcps(),
 )
 runtime.workspace_manager = workspace_manager
