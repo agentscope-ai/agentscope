@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import json
 import secrets
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -254,9 +255,18 @@ class GatewayMCPClient(MCPClient):
             )
         assert self._gateway is not None
         try:
+            _t0 = time.perf_counter()
             status, resp_body = await self._gateway.exec_request(
                 "DELETE",
                 f"/mcps/{self.name}",
+            )
+            _dt = time.perf_counter() - _t0
+            logger.info(
+                "[MCP-TIMING] GatewayMCPClient.close DELETE /mcps/%s "
+                "status=%s dt=%.3fs",
+                self.name,
+                status,
+                _dt,
             )
             if status >= 400 and not ignore_errors:
                 raise RuntimeError(

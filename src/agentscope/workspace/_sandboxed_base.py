@@ -19,6 +19,7 @@ add/remove routing, ``.mcp`` persistence, reset — lives here.
 import asyncio
 import json
 import shlex
+import time
 from abc import abstractmethod
 
 from .._logging import logger
@@ -301,12 +302,25 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
+        _lock_t0 = time.perf_counter()
         async with self._mcp_lock:
+            _lock_dt = time.perf_counter() - _lock_t0
+            logger.info(
+                "[MCP-TIMING] remove_mcp(%s) _mcp_lock wait=%.3fs",
+                name,
+                _lock_dt,
+            )
             for i, mcp in enumerate(self._mcps):
                 if mcp.name == name:
                     self._mcps.pop(i)
                     try:
+                        _t0 = time.perf_counter()
                         await mcp.close()
+                        logger.info(
+                            "[MCP-TIMING] remove_mcp(%s) mcp.close()=%.3fs",
+                            name,
+                            time.perf_counter() - _t0,
+                        )
                     except Exception as e:
                         logger.warning("MCP %r close failed: %s", name, e)
                     await self._save_mcp_file()
