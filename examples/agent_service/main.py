@@ -16,6 +16,12 @@ This is the single place where every concern is wired together:
 6. Mount custom routers (chat SSE, agent manage, models, health, stats).
 7. Register sub-agent templates via ``custom_subagent_templates``.
 
+In addition, enterprise extension cases from ``bankcomm_adp`` are wired in
+alongside the core skeleton (kept as runnable examples, not replacing core):
+   - ``extra_agent_middlewares``: 审计留痕 + 数据脱敏（DLP）
+   - ``extra_agent_tools``:       企业内部工具占位（HR / 文档库 / ITSM）
+   - ``platform_health_router``:  平台自有健康检查路由（``/platform/health``）
+
 Run::
 
     cd agentscope/examples/agent_service
@@ -58,6 +64,12 @@ from bocomadp.routers.agent_manage import (
 from bocomadp.routers.models import models_router
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.tools import ToolRegistry
+
+# 企业内部扩展（案例）：管控中间件 + 工具 + 自有路由
+# health_router 重命名为 platform_health_router，避免与 bocomadp 的 health_router 同名
+from bankcomm_adp.middlewares import build_enterprise_middlewares
+from bankcomm_adp.routers import health_router as platform_health_router
+from bankcomm_adp.tools import build_enterprise_tools
 
 # ---------------------------------------------------------------------------
 # 1. Config + logging
@@ -137,12 +149,17 @@ if os.getenv("AMAP_API_KEY"):
 # AgentScope ``AgentToolFactory`` — returns the same custom tools to
 # the built-in ``/chat`` endpoint that ``AgentBuilder`` injects into
 # the Runtime layer.  Keeps both agent-creation paths consistent.
+# 同时并入 ``bankcomm_adp`` 企业内部工具（HR / 文档库 / ITSM 占位）。
 async def _agent_tool_factory(
     user_id: str,
     agent_id: str,
     session_id: str,
 ):
-    return tool_registry.list_tools()
+    tools = tool_registry.list_tools()
+    tools.extend(
+        await build_enterprise_tools(user_id, agent_id, session_id),
+    )
+    return tools
 
 # ---------------------------------------------------------------------------
 # 4. Storage / message bus / workspace / knowledge base
@@ -176,6 +193,9 @@ app = create_app(
     mcp_hubs=[GitHubMCPHub()],
     skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
     custom_subagent_templates=load_subagent_templates(),
+    # 企业管控中间件（案例）：审计 + DLP，与 bocomadp 核心中间件并存
+    extra_agent_middlewares=build_enterprise_middlewares,
+    # 已合并 bocomadp 工具 + bankcomm_adp 企业工具
     extra_agent_tools=_agent_tool_factory,
     title="BocomADP",
     extra_middlewares=[
@@ -211,6 +231,8 @@ app.include_router(stats_router)
 app.include_router(chat_sse_router)
 app.include_router(agent_manage_router)
 app.include_router(models_router)
+# 企业扩展（案例）平台健康路由：/platform/health（与 /healthz、/readyz 不冲突）
+app.include_router(platform_health_router)
 
 
 if __name__ == "__main__":

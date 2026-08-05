@@ -39,6 +39,7 @@ RUN uv pip install --no-deps -e .
 COPY examples/agent_service/main.py ./
 COPY examples/agent_service/bocomadp ./bocomadp
 COPY examples/agent_service/.env.example ./
+COPY examples/agent_service/bankcomm_adp ./bankcomm_adp
 
 # 外层包在 PYTHONPATH 上（cwd=/app）
 ENV PYTHONPATH=/app
