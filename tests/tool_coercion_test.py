@@ -198,7 +198,9 @@ class ToolCoercionTest(unittest.TestCase):
         # "3.14" can't be integer, but can be coerced to number (3.14)
         result = _coerce_tool_args({"value": "3.14"}, schema)
         self.assertIsInstance(
-            result["value"], float, "Should coerce to float, not keep str",
+            result["value"],
+            float,
+            "Should coerce to float, not keep str",
         )
         self.assertEqual(result["value"], 3.14)
 

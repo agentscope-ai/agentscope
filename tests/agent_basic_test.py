@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -1646,6 +1647,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         executed_args: list[Any] = []
 
         class MockIntTool(ToolBase):
+            """A test tool that expects an integer parameter."""
+
             name: str = "mock_int_tool"
             description: str = "A tool with an integer parameter"
             input_schema: dict[str, Any] = {
@@ -1730,9 +1733,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         )
 
         # Tool result should be success
-        tool_result_end = [
-            e for e in events if e["type"] == "TOOL_RESULT_END"
-        ]
+        tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
         self.assertTrue(
             any(e["state"] == "success" for e in tool_result_end),
         )

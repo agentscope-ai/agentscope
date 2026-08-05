@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
+
 import asyncio
 import collections
 import inspect
@@ -251,12 +252,14 @@ class Agent:
 
     async def reply_stream(
         self,
-        inputs: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None = None,
+        inputs: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+            | None
+        ) = None,
         structured_schema: Type[BaseModel] | None = None,
         yield_final_msg: bool = False,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -295,12 +298,14 @@ class Agent:
 
     async def reply(
         self,
-        inputs: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None = None,
+        inputs: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+            | None
+        ) = None,
         structured_schema: Type[BaseModel] | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
@@ -633,12 +638,14 @@ class Agent:
 
     async def _reply(
         self,
-        inputs: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None = None,
+        inputs: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+            | None
+        ) = None,
         structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
@@ -652,12 +659,14 @@ class Agent:
 
             async def execute_chain(
                 index: int = 0,
-                inputs: Msg
-                | list[Msg]
-                | UserConfirmResultEvent
-                | UserInterruptEvent
-                | ExternalExecutionResultEvent
-                | None = inputs,
+                inputs: (
+                    Msg
+                    | list[Msg]
+                    | UserConfirmResultEvent
+                    | UserInterruptEvent
+                    | ExternalExecutionResultEvent
+                    | None
+                ) = inputs,
                 structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
@@ -759,12 +768,14 @@ class Agent:
 
     async def _reply_impl(
         self,
-        inputs: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None = None,
+        inputs: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+            | None
+        ) = None,
         structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
@@ -1167,9 +1178,11 @@ class Agent:
                     )
                     last_time = last_time.replace(
                         tzinfo=_resolve_timezone(
-                            match_tz.group(1).strip()
-                            if match_tz
-                            else self.injection_config.timezone,
+                            (
+                                match_tz.group(1).strip()
+                                if match_tz
+                                else self.injection_config.timezone
+                            ),
                         ),
                     )
 
@@ -1418,12 +1431,16 @@ class Agent:
         # Send the model call ended event with usage if available
         yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
-            input_tokens=completed_response.usage.input_tokens
-            if completed_response.usage
-            else 0,
-            output_tokens=completed_response.usage.output_tokens
-            if completed_response.usage
-            else 0,
+            input_tokens=(
+                completed_response.usage.input_tokens
+                if completed_response.usage
+                else 0
+            ),
+            output_tokens=(
+                completed_response.usage.output_tokens
+                if completed_response.usage
+                else 0
+            ),
             finished_reason=completed_response.finished_reason,
         )
 
@@ -2082,7 +2099,8 @@ class Agent:
             # Coerce types before validation (e.g. str "42" → int 42).
             if parsed_input and tool.input_schema:
                 parsed_input = _coerce_tool_args(
-                    parsed_input, tool.input_schema
+                    parsed_input,
+                    tool.input_schema,
                 )
                 tool_call.input = json.dumps(parsed_input)
 
@@ -2224,9 +2242,11 @@ class Agent:
                     tool_result_block = ToolResultBlock(
                         id=tool_call.id,
                         name=tool_call.name,
-                        output=[TextBlock(text=chunk.content)]
-                        if isinstance(chunk.content, str)
-                        else chunk.content,
+                        output=(
+                            [TextBlock(text=chunk.content)]
+                            if isinstance(chunk.content, str)
+                            else chunk.content
+                        ),
                         state=chunk.state,
                         metadata=chunk.metadata,
                     )
