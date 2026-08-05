@@ -46,7 +46,12 @@ from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
-from bocomadp.config import load_config, is_trace_correlation_enabled
+from bocomadp.config import (
+    load_config,
+    is_trace_correlation_enabled,
+    load_models_from_yaml,
+    build_model_instance,
+)
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
@@ -104,6 +109,35 @@ if config.mcp.enabled:
         mcp_registry.load_custom()
 
 provider_manager = ProviderManager()
+
+# 从 config.yaml 加载模型配置并自动注册到 ProviderManager
+if config.providers.enabled:
+    _model_entries = load_models_from_yaml(config.providers.config_file)
+    for _entry in _model_entries:
+        try:
+            _model = build_model_instance(_entry)
+            provider_manager.register(
+                provider_id=_entry.provider_id,
+                model=_model,
+                model_name=_entry.model_name or _entry.provider_id,
+                display_name=_entry.display_name,
+                supports_multimodal=_entry.supports_multimodal,
+                metadata={"base_url": _entry.base_url} if _entry.base_url else {},
+            )
+            # 非首条或显式标记为活跃的，覆盖默认激活项
+            if _entry.is_active:
+                provider_manager.set_active(_entry.provider_id)
+            logger.info(
+                "provider registered from config.yaml: %s (model=%s)",
+                _entry.provider_id,
+                _entry.model_name or _entry.provider_id,
+            )
+        except Exception:
+            logger.warning(
+                "failed to register provider '%s' from config.yaml",
+                _entry.provider_id,
+                exc_info=True,
+            )
 
 hook_registry = HookRegistry()
 

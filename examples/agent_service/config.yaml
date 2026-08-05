@@ -1,0 +1,56 @@
+# ============================================================
+# 模型 Provider 配置
+# ============================================================
+# 启动时自动注册到 ProviderManager，curl /api/models 即可看到。
+#
+# 支持的 provider_type (简写即可):
+#   deepseek / openai / anthropic / dashscope / gemini
+#   ollama / moonshot / xai
+# 也可写全称: deepseek_credential / openai_credential / ...
+#
+# api_key 支持两种写法：
+#   1. ${ENV_VAR}  — 从环境变量读取（推荐，避免硬编码密钥）
+#   2. sk-xxx      — 直接写明文（仅限本地开发）
+#
+# parameters 中的字段会透传给对应 ChatModel 的 Parameters 模型，
+# 例如 DeepSeekChatModel.Parameters 支持:
+#   temperature / max_tokens / top_p / thinking_enable / reasoning_effort
+# ============================================================
+
+models:
+  - provider_id: deepseek
+    display_name: "DeepSeek Chat"
+    provider_type: deepseek
+    model_name: deepseek-chat
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com
+    is_active: true
+    supports_multimodal: false
+    parameters:
+      temperature: 0.7
+      max_tokens: 4096
+      thinking_enable: false
+
+  # --- 取消注释以启用更多 provider ---
+  # - provider_id: deepseek-reasoner
+  #   display_name: "DeepSeek Reasoner (R1)"
+  #   provider_type: deepseek
+  #   model_name: deepseek-reasoner
+  #   api_key: ${DEEPSEEK_API_KEY}
+  #   base_url: https://api.deepseek.com
+  #   is_active: false
+  #   supports_multimodal: false
+  #   parameters:
+  #     thinking_enable: true
+  #     reasoning_effort: high
+
+  # - provider_id: openai
+  #   display_name: "GPT-4o"
+  #   provider_type: openai
+  #   model_name: gpt-4o
+  #   api_key: ${OPENAI_API_KEY}
+  #   base_url: https://api.openai.com/v1
+  #   is_active: false
+  #   supports_multimodal: true
+  #   parameters:
+  #     temperature: 0.7

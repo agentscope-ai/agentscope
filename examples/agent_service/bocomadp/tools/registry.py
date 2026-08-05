@@ -23,6 +23,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+try:
+    from agentscope.tool import FunctionTool, ToolBase
+except ImportError:  # pragma: no cover - 仅在未安装 agentscope 时走 fallback
+    FunctionTool = None  # type: ignore[assignment]
+    ToolBase = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +40,14 @@ class ToolRegistry:
         self._tool_names: set[str] = set()
 
     def register(self, tool: Any) -> None:
-        """Register a tool. Idempotent — duplicate names are skipped."""
+        """Register a tool. Idempotent — duplicate names are skipped.
+
+        接受 ``ToolBase`` 实例或裸 Python 函数：裸函数会被自动包装为
+        ``FunctionTool``，确保下游 ``Toolkit`` 始终拿到 ``ToolBase``，
+        避免 ``remove_tool`` / ``add_tool`` 访问 ``tool.name`` 时因裸函数
+        仅有 ``__name__`` 而抛出 ``AttributeError``。
+        """
+        tool = self._normalize_tool(tool)
         name = self._tool_name(tool)
         if name in self._tool_names:
             logger.debug("tool already registered: %s", name)
@@ -106,6 +119,21 @@ class ToolRegistry:
             if callable(obj) and getattr(obj, "_is_tool", False):
                 # 复用实例方法 register（幂等）
                 self.register(obj)
+
+    @staticmethod
+    def _normalize_tool(tool: Any) -> Any:
+        """将裸函数包装为 ``ToolBase`` 实例；``ToolBase`` 原样返回。
+
+        当 agentscope 未安装（fallback 模式）时，保持原样返回，
+        以便至少能完成模块导入与语法检查。
+        """
+        # 已经是 ToolBase 实例，无需包装
+        if ToolBase is not None and isinstance(tool, ToolBase):
+            return tool
+        # 裸 Python 函数 -> FunctionTool
+        if FunctionTool is not None and callable(tool):
+            return FunctionTool(tool)
+        return tool
 
     @staticmethod
     def _tool_name(tool: Any) -> str:

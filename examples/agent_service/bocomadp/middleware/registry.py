@@ -33,11 +33,16 @@ class MiddlewareRegistry:
 
     def __init__(self) -> None:
         self._middlewares: list[Any] = []
+        self._names: set[str] = set()
 
     def register(self, middleware: Any) -> None:
-        """Register an agent middleware instance."""
-        self._middlewares.append(middleware)
+        """Register an agent middleware instance. Idempotent — duplicates by class name are skipped."""
         name = type(middleware).__name__
+        if name in self._names:
+            logger.debug("agent middleware already registered: %s", name)
+            return
+        self._middlewares.append(middleware)
+        self._names.add(name)
         logger.info("agent middleware registered: %s", name)
 
     def unregister(self, name: str) -> None:
@@ -46,10 +51,15 @@ class MiddlewareRegistry:
             m for m in self._middlewares
             if type(m).__name__ != name
         ]
+        self._names.discard(name)
 
     def list_middlewares(self) -> list[Any]:
         """Return all registered middlewares."""
         return list(self._middlewares)
+
+    def list_middleware_names(self) -> list[str]:
+        """Return all registered middleware class names."""
+        return sorted(self._names)
 
     def load_builtin(self) -> None:
         """加载 agent_middleware.py 中所有模块级 Middleware 实例。

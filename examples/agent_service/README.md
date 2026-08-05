@@ -102,7 +102,8 @@ examples/agent_service/
 │
 └── tests/
     ├── __init__.py
-    └── test_logging.py                  # 日志三件套单元测试
+    ├── test_logging.py                  # 日志三件套单元测试
+    └── test_registry_scan.py            # 三大注册表自动扫描测试
 ```
 
 ## 快速开始
@@ -327,6 +328,42 @@ amap = MCPClient(
     is_stateful=False,
 )
 ```
+
+### 配置开关
+
+三个注册表都有独立的 `enabled` + `load_custom` 开关，默认全开，可通过环境变量关闭：
+
+| 配置项 | 环境变量 | 默认 | 说明 |
+|--------|---------|------|------|
+| `tools.enabled` | `BOCOMADP_TOOLS__ENABLED` | `true` | 是否加载内置工具 |
+| `tools.load_custom` | `BOCOMADP_TOOLS__LOAD_CUSTOM` | `true` | 是否扫描 `tools/custom/` |
+| `middlewares.enabled` | `BOCOMADP_MIDDLEWARES__ENABLED` | `true` | 是否加载内置中间件 |
+| `middlewares.load_custom` | `BOCOMADP_MIDDLEWARES__LOAD_CUSTOM` | `true` | 是否扫描 `middleware/custom/` |
+| `mcp.enabled` | `BOCOMADP_MCP__ENABLED` | `true` | 是否加载内置 MCP |
+| `mcp.load_custom` | `BOCOMADP_MCP__LOAD_CUSTOM` | `true` | 是否扫描 `mcp/custom/` |
+
+### 扫描机制详解
+
+三个注册表使用统一的 **"builtin + custom/ 双路扫描"** 模式，内部实现对称：
+
+```
+load_builtin()  →  import builtin_*.py  →  _scan_module(mod)  →  register(每个匹配项)
+load_custom()   →  pkgutil.walk_packages(custom/)  →  逐模块 _scan_module  →  register
+```
+
+**各注册表的判定条件**：
+
+| 注册表 | 判定函数 | 条件 | 为什么这样判 |
+|--------|---------|------|-------------|
+| `ToolRegistry` | `_is_tool` 属性 | `callable(obj) and getattr(obj, "_is_tool", False)` | `@tool` 装饰器自动打标记，纯函数无需实例化 |
+| `MiddlewareRegistry` | `_is_agent_middleware` 属性 | `getattr(obj, "_is_agent_middleware", False) and not isinstance(obj, type)` | 中间件需带状态/参数，扫实例不扫类；基类统一打标记 |
+| `McpRegistry` | duck-type | `hasattr(obj, "name") and hasattr(obj, "mcp_config") and not isinstance(obj, type)` | `MCPClient` 不自带标记，用 duck-type 避免改 agentscope 源码 |
+
+**设计要点**：
+
+- **幂等注册**：三个注册表都按名称去重（Tool/MCP 按 `name` 属性，Middleware 按类名），重复加载不会重复注册
+- **容错**：单个 custom 模块 import 失败只 warning 跳过，不影响其他模块
+- **无 agentscope 可运行**：tool 和 middleware 的 fallback 装饰器/基类仍打标记，语法检查环境也能测扫描逻辑
 
 ### 加一个 ASGI 中间件
 
