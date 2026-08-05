@@ -18,6 +18,7 @@ add/remove routing, ``.mcp`` persistence, reset — lives here.
 
 import asyncio
 import json
+import os
 import shlex
 import time
 from abc import abstractmethod
@@ -33,6 +34,19 @@ from ._utils import (
     DEFAULT_GLOB_HELPER_SCRIPT,
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
+)
+
+# ── HTTP MCP 直挂开关（MCP_HTTP_DIRECT）─────────────────────────────
+# 默认开启（"1"）：远程/非本地 MCP（HttpMCPConfig，业务 MCP）直接挂在
+# 主进程 _mcps（进程内 registry），不再经沙箱 gateway 代理，工具调用
+# 从 1-2s/次 降到 10-50ms/次。
+# 关闭（"0"/"false"/"no"/"off"）：恢复官方原行为，所有 MCP 一律走
+# in-sandbox gateway（stdio 型无论如何都走 gateway，不受本开关影响）。
+MCP_HTTP_DIRECT_ENABLED = os.getenv("MCP_HTTP_DIRECT", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
 )
 
 
@@ -261,8 +275,29 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """Gateway-wrapped MCP handles, one per registered MCP."""
         return list(self._mcps)
 
+    def _mcp_persist(self, mcp: MCPClient) -> bool:
+        """Only stdio MCPs (gateway-attached) are persisted to ``.mcp``.
+
+        HTTP MCPs attached directly to the host process (direct-attach
+        mode, see ``MCP_HTTP_DIRECT``) are excluded, so the in-sandbox
+        gateway never re-attaches them on restart (double-mount).
+        """
+        if MCP_HTTP_DIRECT_ENABLED and mcp.mcp_config.type == "http_mcp":
+            return False
+        return True
+
     async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Register a new MCP server through the in-sandbox gateway.
+        """Register a new MCP server.
+
+        Routing (direct-attach mode enabled by ``MCP_HTTP_DIRECT``):
+
+        - ``HttpMCPConfig`` (remote/business MCPs) are attached directly
+          to the host-process registry (``self._mcps``) — no in-sandbox
+          gateway hop. They are deliberately NOT persisted to ``.mcp``
+          (inject-then-live semantics: the caller re-injects them after
+          a restart).
+        - ``StdioMCPConfig`` (in-sandbox subprocess tools) always go
+          through the in-sandbox gateway.
 
         Args:
             mcp_client (`MCPClient`):
@@ -275,6 +310,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 If the gateway is not attached or rejects the
                 registration.
         """
+        if MCP_HTTP_DIRECT_ENABLED and mcp_client.mcp_config.type == "http_mcp":
+            async with self._mcp_lock:
+                if any(m.name == mcp_client.name for m in self._mcps):
+                    raise ValueError(
+                        f"MCP {mcp_client.name!r} already exists in workspace.",
+                    )
+                if mcp_client.is_stateful and not mcp_client.is_connected:
+                    await mcp_client.connect()
+                self._mcps.append(mcp_client)
+            return
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
         async with self._mcp_lock:

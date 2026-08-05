@@ -378,6 +378,16 @@ class WorkspaceBase:
 
     # ── MCP persistence (shared) ───────────────────────────────────
 
+    def _mcp_persist(self, mcp: "MCPClient") -> bool:
+        """Whether ``mcp`` should be persisted to the ``.mcp`` file.
+
+        Base implementation persists everything. Sandboxed workspaces
+        override this to skip host-side direct-attached MCPs (HTTP MCP
+        direct-attach mode, see ``MCP_HTTP_DIRECT``), so the in-sandbox
+        gateway never re-attaches them on restart (double-mount).
+        """
+        return True
+
     async def _save_mcp_file(self) -> None:
         """Persist ``self._mcps`` to ``${workdir}/.mcp`` via backend.
 
@@ -395,7 +405,7 @@ class WorkspaceBase:
         if backend is None:
             return
         payload = json.dumps(
-            [m.model_dump(mode="json") for m in self._mcps],
+            [m.model_dump(mode="json") for m in self._mcps if self._mcp_persist(m)],
             indent=2,
             ensure_ascii=False,
         ).encode("utf-8")
