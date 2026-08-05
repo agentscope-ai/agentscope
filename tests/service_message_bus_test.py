@@ -8,6 +8,7 @@ the abstract surface (queue / log / pubsub / lock) and the domain helpers
 (``session_run`` / ``session_publish_event`` / ``inbox_*`` / ``wakeup_*``)
 that are layered on top.
 """
+
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
@@ -82,6 +83,84 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         rest = await self.bus.queue_drain("k", max_count=10)
         self.assertEqual([p["i"] for _id, p in first], [0, 1, 2])
         self.assertEqual([p["i"] for _id, p in rest], [3, 4])
+
+
+class TestReliableQueuePrimitive(IsolatedAsyncioTestCase):
+    """Redis consumer-group work queue semantics."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_pending_entry_is_not_delivered_as_new_twice(self) -> None:
+        """Pending Redis work is assigned to only one consumer."""
+        entry_id = await self.bus.reliable_queue_push("work", {"i": 1})
+        first = await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "c1",
+            block_ms=1,
+        )
+        second = await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "c2",
+            block_ms=1,
+        )
+        self.assertEqual(first, [(entry_id, {"i": 1})])
+        self.assertEqual(second, [])
+        self.assertEqual(
+            await self.bus.reliable_queue_ack("work", "g", [entry_id]),
+            1,
+        )
+
+    async def test_pending_entry_can_be_reclaimed(self) -> None:
+        """A healthy consumer can reclaim abandoned pending work."""
+        entry_id = await self.bus.reliable_queue_push("work", {"i": 1})
+        await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "dead",
+            block_ms=1,
+        )
+        reclaimed = await self.bus.reliable_queue_reclaim(
+            "work",
+            "g",
+            "healthy",
+            min_idle_ms=0,
+        )
+        self.assertEqual(reclaimed, [(entry_id, {"i": 1})])
+
+    async def test_stale_heartbeat_cannot_steal_reclaimed_entry(self) -> None:
+        """An old owner cannot reclaim work through a late heartbeat."""
+        entry_id = await self.bus.reliable_queue_push("work", {"i": 1})
+        await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "dead",
+            block_ms=1,
+        )
+        await self.bus.reliable_queue_reclaim(
+            "work",
+            "g",
+            "healthy",
+            min_idle_ms=0,
+        )
+
+        await self.bus.reliable_queue_touch(
+            "work",
+            "g",
+            "dead",
+            [entry_id],
+        )
+
+        pending = await self.fr.xpending_range("work", "g", "-", "+", 1)
+        self.assertEqual(pending[0]["consumer"], "healthy")
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):

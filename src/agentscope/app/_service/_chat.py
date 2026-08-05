@@ -11,7 +11,12 @@ Events produced by the agent are not exposed back through this method
 that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
+
 import asyncio
+import hashlib
+import json
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
 
@@ -168,12 +173,14 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | None = None,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+            | None
+        ) = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -225,6 +232,72 @@ class ChatService:
                 agent_id,
                 str(e),
             )
+
+    async def run_reliable_resume(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        input_msg: (
+            UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+        ),
+    ) -> bool:
+        """Run one reliable resume while loading state inside its lock.
+
+        Returns ``True`` only when the command reached a durable terminal
+        boundary (applied or rejected as an already-applied duplicate).  A
+        setup failure returns ``False`` so the dispatcher leaves the stream
+        entry pending for recovery instead of acknowledging an in-memory
+        spawn.
+        """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            return await self._run_impl(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+                session_lock_held=True,
+            )
+
+    @asynccontextmanager
+    async def _session_lock(
+        self,
+        session_id: str,
+        *,
+        already_held: bool,
+    ) -> AsyncGenerator[None, None]:
+        """Acquire the run lock unless the reliable caller already did."""
+        if already_held:
+            yield
+            return
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            yield
+
+    @staticmethod
+    def _resume_identity(
+        input_msg: (
+            UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+        ),
+    ) -> tuple[str, str]:
+        """Return the durable ledger key and canonical payload hash."""
+        key = f"{input_msg.reply_id}:{input_msg.id}"
+        payload = json.dumps(
+            input_msg.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return key, hashlib.sha256(payload).hexdigest()
 
     async def _close_failed_reply(
         self,
@@ -471,13 +544,18 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | None,
-    ) -> None:
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+            | None
+        ),
+        *,
+        session_lock_held: bool = False,
+    ) -> bool:
+        # pylint: disable=too-many-branches,too-many-statements
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
         per-step logic at one extra indentation level."""
@@ -486,6 +564,7 @@ class ChatService:
         # here has no reply to attach to, so one is synthesized —
         # otherwise the client sees a stream that simply stops and is
         # left saying "unknown error".
+        resume_identity: tuple[str, str] | None = None
         try:
             # -----------------------------------------------------------------
             # 1. Load records + resolve workspace ONCE here, reused below.
@@ -520,6 +599,37 @@ class ChatService:
                         f"agent {agent_id!r}."
                     ),
                 )
+            if isinstance(
+                input_msg,
+                (
+                    UserConfirmResultEvent,
+                    ExternalExecutionResultEvent,
+                    UserInterruptEvent,
+                ),
+            ):
+                resume_identity = self._resume_identity(input_msg)
+                resume_key, payload_hash = resume_identity
+                existing_hash = session_record.state.applied_resume_events.get(
+                    resume_key,
+                )
+                if existing_hash is not None:
+                    if existing_hash == payload_hash:
+                        logger.info(
+                            "Ignoring duplicate resume event %s for session "
+                            "%s reply %s.",
+                            input_msg.id,
+                            session_id,
+                            input_msg.reply_id,
+                        )
+                    else:
+                        logger.error(
+                            "Rejecting resume idempotency conflict for event "
+                            "%s in session %s reply %s.",
+                            input_msg.id,
+                            session_id,
+                            input_msg.reply_id,
+                        )
+                    return True
             workspace = await self._workspace_manager.get_workspace(
                 user_id,
                 agent_id,
@@ -693,27 +803,26 @@ class ChatService:
             )
 
             if self._skip_parked_wakeup(session_id, agent, input_msg):
-                return
+                return True
         except Exception as e:  # pylint: disable=broad-except
             # Under the session lock, like the reply this run never got
             # to make: these events share a channel with a live reply's,
             # so publishing them unserialised would drop a "reply failed"
             # into the middle of an answer another run is streaming.
-            async with self._message_bus.acquire_lock(
-                MessageBusKeys.session_lock(session_id),
-                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+            async with self._session_lock(
+                session_id,
+                already_held=session_lock_held,
             ):
                 await self._report_failure(user_id, session_id, agent_id, e)
-            return
+            return False
 
         # --------------------------------------------------------------------
         # 7. Run the agent inside the distributed session lock
         # ---------------------------------------------------------------------
-        lock_key = MessageBusKeys.session_lock(session_id)
         events_key = MessageBusKeys.session_events(session_id)
-        async with self._message_bus.acquire_lock(
-            lock_key,
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        async with self._session_lock(
+            session_id,
+            already_held=session_lock_held,
         ):
             reply_msg: Msg | None = None
             try:
@@ -834,6 +943,19 @@ class ChatService:
                 # acquire the lock and load a stale state from storage
                 # before this write lands.
                 async def _persist() -> None:
+                    if resume_identity is not None:
+                        resume_key, payload_hash = resume_identity
+                        agent.state.applied_resume_events[
+                            resume_key
+                        ] = payload_hash
+                        # A session only needs a bounded recent ledger: once
+                        # the reply has advanced, old resume events are also
+                        # rejected by the agent's awaiting-tool-call state.
+                        while len(agent.state.applied_resume_events) > 256:
+                            oldest = next(
+                                iter(agent.state.applied_resume_events),
+                            )
+                            agent.state.applied_resume_events.pop(oldest)
                     if reply_msg is not None:
                         await self._storage.upsert_message(
                             user_id,
@@ -857,6 +979,7 @@ class ChatService:
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+        return True
 
     async def _project_event(
         self,

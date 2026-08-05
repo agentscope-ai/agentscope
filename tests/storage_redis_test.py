@@ -249,14 +249,21 @@ class TestSession(IsolatedAsyncioTestCase):
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched.id, session_id)
 
+        state = AgentState(
+            applied_resume_events={"reply:event": "payload-hash"},
+        )
         await self.storage.update_session_state(
             self.user_id,
             self.agent_id,
             session_id,
-            AgentState(),
+            state,
         )
         records = await self.storage.list_sessions(self.user_id, self.agent_id)
         self.assertEqual([record.id for record in records], [session_id])
+        self.assertEqual(
+            records[0].state.applied_resume_events,
+            state.applied_resume_events,
+        )
 
     async def test_delete(self) -> None:
         """Delete a session and verify it is gone from Redis."""

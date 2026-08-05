@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -186,6 +187,15 @@ class AgentState(BaseModel):
 
     context: list[Msg] = Field(default_factory=list)
     """The uncompressed conversation context, which will be fed into the LLM"""
+
+    applied_resume_events: dict[str, str] = Field(default_factory=dict)
+    """Durable resume idempotency ledger.
+
+    Keys combine the target reply id and stable resume event id; values are
+    canonical payload hashes.  It is persisted with the rest of the mutable
+    agent state so a consumer-group redelivery after commit can be rejected
+    without a separate cross-backend Redis marker.
+    """
 
     # =================================================================
     # For backword compatibility

@@ -13,7 +13,7 @@ payload's lifetime ends — rather than by business use case. Callers map
 their own concepts (agent inbox, session SSE replay, idle wake-up, …)
 onto the right mode plus a key naming convention they own.
 
-Three orthogonal modes are exposed:
+Four orthogonal modes are exposed:
 
 ============================  ===========================================
 Mode A — drain queue          Mode C — replay log
@@ -32,14 +32,17 @@ Mode D — transient broadcast: ``publish`` / ``subscribe``. Fire-and-forget
 pub/sub; only currently-subscribed listeners receive a payload, no
 history. Use for wake-up signals where missed-while-offline is fine.
 
-Counted broadcast (one entry consumed by N distinct readers) is
-intentionally not exposed as a primitive: in practice it requires
-consumer-group coordination (Redis Streams' XREADGROUP/XACK semantics)
-and adds substantial state. Producers wanting "fan out to N members"
-should fan out at write time — push one entry per recipient inbox using
-Mode A. The bus stays simple; deduplication is the producer's
-responsibility.
+Mode B — reliable work queue: ``reliable_queue_*``. Entries are claimed by
+one member of a consumer group, remain pending while they are processed,
+and disappear only after an explicit acknowledgement. A dead consumer's
+pending entries can be reclaimed by another member after an idle timeout.
+
+Mode B is point-to-point within one consumer group, not counted broadcast.
+Producers wanting "fan out to N members" should fan out at write time —
+push one entry per recipient inbox. Deduplication remains the producer or
+application consumer's responsibility.
 """
+
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -166,6 +169,80 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             key (`str`):
                 Queue identifier.
         """
+
+    # ------------------------------------------------------------------
+    # Mode B — reliable work queue (consumer group + explicit ACK)
+    # ------------------------------------------------------------------
+
+    async def reliable_queue_push(self, key: str, payload: dict) -> str:
+        """Append a payload to a reliable work queue.
+
+        Backends that support horizontally-scaled application workers must
+        override this mode.  It is deliberately separate from
+        :meth:`queue_push`: mixing an ack-on-read consumer with an
+        explicit-ACK consumer on the same key destroys the latter's pending
+        entries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reliable queues.",
+        )
+
+    async def reliable_queue_ensure_group(self, key: str, group: str) -> None:
+        """Create ``group`` for ``key`` if it does not already exist."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reliable queues.",
+        )
+
+    async def reliable_queue_read(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        *,
+        max_count: int = 1,
+        block_ms: int = 1000,
+    ) -> list[tuple[str, dict]]:
+        """Claim new entries for one consumer-group member."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reliable queues.",
+        )
+
+    async def reliable_queue_reclaim(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        *,
+        min_idle_ms: int,
+        max_count: int = 1,
+    ) -> list[tuple[str, dict]]:
+        """Claim entries abandoned by consumers for ``min_idle_ms``."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reliable queues.",
+        )
+
+    async def reliable_queue_touch(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Refresh ownership of entries that are still being processed."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reliable queues.",
+        )
+
+    async def reliable_queue_ack(
+        self,
+        key: str,
+        group: str,
+        entry_ids: list[str],
+    ) -> int:
+        """Acknowledge durably processed entries and remove their payloads."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reliable queues.",
+        )
 
     # ------------------------------------------------------------------
     # Mode C — replay log (multi-consumer, externally bounded)
@@ -674,16 +751,20 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         inputs: dict | None = None,
     ) -> None:
         """Enqueue a typed run trigger."""
-        await self.queue_push(
-            self._WAKEUP_QUEUE_KEY,
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "agent_id": agent_id,
-                "kind": kind,
-                "input": inputs,
-            },
-        )
+        payload = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "kind": kind,
+            "input": inputs,
+        }
+        if kind == MessageBusKeys.WAKEUP_KIND_RESUME:
+            await self.reliable_queue_push(
+                MessageBusKeys.resume_queue(),
+                payload,
+            )
+            return
+        await self.queue_push(self._WAKEUP_QUEUE_KEY, payload)
         await self.publish(self._WAKEUP_SIGNAL_KEY, {})
 
     @deprecated(

@@ -11,6 +11,7 @@ from ._manager import (
     ChatRunRegistry,
     SchedulerManager,
     WakeupDispatcher,
+    ResumeDispatcher,
 )
 from ._service import (
     ChatService,
@@ -185,6 +186,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # for us, so we don't need local bindings or app.state slots.
         await stack.enter_async_context(
             WakeupDispatcher(
+                message_bus=message_bus,
+                storage=storage,
+                chat_service=chat_service,
+                chat_run_registry=chat_run_registry,
+            ),
+        )
+        await stack.enter_async_context(
+            ResumeDispatcher(
                 message_bus=message_bus,
                 storage=storage,
                 chat_service=chat_service,

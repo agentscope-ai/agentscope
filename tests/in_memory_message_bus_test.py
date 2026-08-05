@@ -8,6 +8,7 @@ the base :class:`MessageBus` class.
 
 No external dependencies (no Redis, no fakeredis) — just asyncio.
 """
+
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
@@ -78,6 +79,79 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         b = await self.bus.queue_drain("b", max_count=10)
         self.assertEqual([p for _id, p in a], [{"x": 1}])
         self.assertEqual([p for _id, p in b], [{"x": 2}])
+
+
+class TestReliableQueuePrimitive(IsolatedAsyncioTestCase):
+    """Mode B — consumer assignment, explicit ACK and reclaim."""
+
+    async def asyncSetUp(self) -> None:
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(InMemoryMessageBus())
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+
+    async def test_entry_is_pending_until_ack(self) -> None:
+        """A new reader cannot see work pending under another consumer."""
+        entry_id = await self.bus.reliable_queue_push("work", {"i": 1})
+        first = await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "c1",
+            block_ms=0,
+        )
+        second = await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "c2",
+            block_ms=0,
+        )
+        self.assertEqual(first, [(entry_id, {"i": 1})])
+        self.assertEqual(second, [])
+
+        self.assertEqual(
+            await self.bus.reliable_queue_ack("work", "g", [entry_id]),
+            1,
+        )
+        self.assertEqual(
+            await self.bus.reliable_queue_reclaim(
+                "work",
+                "g",
+                "c2",
+                min_idle_ms=0,
+            ),
+            [],
+        )
+
+    async def test_idle_entry_can_be_reclaimed_and_touch_defers_it(
+        self,
+    ) -> None:
+        """Heartbeats defer reclaim until the refreshed claim is idle."""
+        entry_id = await self.bus.reliable_queue_push("work", {"i": 1})
+        await self.bus.reliable_queue_read(
+            "work",
+            "g",
+            "dead",
+            block_ms=0,
+        )
+        await self.bus.reliable_queue_touch("work", "g", "dead", [entry_id])
+        self.assertEqual(
+            await self.bus.reliable_queue_reclaim(
+                "work",
+                "g",
+                "healthy",
+                min_idle_ms=100,
+            ),
+            [],
+        )
+        await asyncio.sleep(0.02)
+        reclaimed = await self.bus.reliable_queue_reclaim(
+            "work",
+            "g",
+            "healthy",
+            min_idle_ms=10,
+        )
+        self.assertEqual(reclaimed, [(entry_id, {"i": 1})])
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):

@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Single per-process dispatcher for all cross-session run triggers.
+"""Per-process dispatcher for rebuildable wake triggers.
 
 One asyncio task per process. Subscribes to the shared trigger signal
-channel and drains the durable trigger queue on each signal. It is the
-**sole** site that spawns :meth:`ChatService.run` into the shared
-:class:`ChatRunRegistry`, which is what makes concurrent-spawn races
-(two writers contending for one session's run slot → a spurious "already
-has an active chat run" 409) structurally impossible: every run trigger
-funnels through this one serial consumer.
+channel and drains the hint-style wake queue on each signal. New HITL and
+external-tool resume commands use the separate consumer-group stream owned
+by :class:`ResumeDispatcher`; this class accepts ``resume`` entries only for
+rolling-upgrade compatibility with the legacy mixed stream.
 
 Each queue entry carries a ``kind`` that selects how a busy session is
 handled:
 
 - ``wake`` (idle-session wake-up, ``input_msg=None``): skipped while the
   session is already running — the live run will drain the inbox.
-- ``resume`` (a parked HITL run being fed its result): must *not* be
+- legacy ``resume`` (a parked HITL run being fed its result): must *not* be
   skipped while running, because the session is typically still running
   the parked tail at trigger time. It is re-queued after a short backoff
   until the parked run releases its session lock, then spawned with the
@@ -25,6 +23,7 @@ All bus keys live on the :class:`MessageBus` base class (see
 ``subscribe_wakeup_signal``, ``session_is_running``), so this file has
 no hard-coded key strings.
 """
+
 import asyncio
 from typing import TYPE_CHECKING, Self
 
@@ -37,7 +36,6 @@ from ...event import (
     UserInterruptEvent,
 )
 from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -325,9 +323,9 @@ class WakeupDispatcher:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | None,
+        input_msg: (
+            UserConfirmResultEvent | ExternalExecutionResultEvent | None
+        ),
     ) -> None:
         """Re-enqueue a ``resume`` trigger after a short backoff.
 
@@ -350,14 +348,24 @@ class WakeupDispatcher:
         async def _retry() -> None:
             try:
                 await asyncio.sleep(_RESUME_RETRY_BACKOFF_SECS)
-                await enqueue_run_trigger(
-                    self._bus,
-                    user_id=user_id,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    kind=MessageBusKeys.WAKEUP_KIND_RESUME,
-                    inputs=input_msg,
+                # Compatibility for resume entries written to the legacy
+                # mixed wakeup stream before the v2 producer cut-over. New
+                # resume commands never enter this dispatcher.
+                await self._bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "agent_id": agent_id,
+                        "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                        "input": (
+                            input_msg.model_dump(mode="json")
+                            if input_msg
+                            else None
+                        ),
+                    },
                 )
+                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
             except asyncio.CancelledError:
                 pass
             except Exception:  # pylint: disable=broad-except

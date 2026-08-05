@@ -17,6 +17,7 @@ other's internals.
    * - :func:`enqueue_index_task`
      - Enqueue a knowledge-document indexing task and signal consumers.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
@@ -75,10 +76,12 @@ async def enqueue_run_trigger(
     agent_id: str,
     *,
     kind: Literal["wake", "resume"] = MessageBusKeys.WAKEUP_KIND_WAKE,
-    inputs: UserConfirmResultEvent
-    | ExternalExecutionResultEvent
-    | UserInterruptEvent
-    | None = None,
+    inputs: (
+        UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | UserInterruptEvent
+        | None
+    ) = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
 
@@ -113,16 +116,21 @@ async def enqueue_run_trigger(
             ``model_dump(mode="json")`` internally — callers pass the
             event object, not a pre-serialised dict.
     """
-    await bus.queue_push(
-        MessageBusKeys.wakeup_queue(),
-        {
-            "user_id": user_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "kind": kind,
-            "input": inputs.model_dump(mode="json") if inputs else None,
-        },
-    )
+    payload = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "kind": kind,
+        "input": inputs.model_dump(mode="json") if inputs else None,
+    }
+    if kind == MessageBusKeys.WAKEUP_KIND_RESUME:
+        # Resume commands carry irreplaceable HITL/tool results.  They use a
+        # physically separate explicit-ACK stream so legacy XRANGE/XDEL
+        # consumers can never delete a consumer-group pending entry.
+        await bus.reliable_queue_push(MessageBusKeys.resume_queue(), payload)
+        return
+
+    await bus.queue_push(MessageBusKeys.wakeup_queue(), payload)
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
 

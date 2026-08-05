@@ -150,6 +150,22 @@ class MessageBusKeys:
 
     _WAKEUP_QUEUE = "agentscope:wakeups"
     _WAKEUP_SIGNAL = "agentscope:wakeup_signal"
+    _RESUME_QUEUE = "agentscope:wakeups:resume:v2"
+
+    RESUME_CONSUMER_GROUP: Final = "agentscope-resume-dispatchers-v2"
+    """Shared consumer group for reliable resume commands."""
+
+    RESUME_CLAIM_IDLE_MS: Final = 60_000
+    """Idle time after which an un-heartbeated resume may be reclaimed."""
+
+    RESUME_READ_BLOCK_MS: Final = 1_000
+    """Maximum blocking read duration while waiting for new resume work."""
+
+    RESUME_RECLAIM_INTERVAL_MS: Final = 5_000
+    """Interval between scans for work abandoned by dead consumers."""
+
+    RESUME_MAX_CONCURRENCY: Final = 16
+    """Maximum resume entries processed concurrently by one API process."""
 
     @classmethod
     def wakeup_queue(cls) -> str:
@@ -160,6 +176,11 @@ class MessageBusKeys:
     def wakeup_signal(cls) -> str:
         """Shared signal channel that nudges dispatchers to drain."""
         return cls._WAKEUP_SIGNAL
+
+    @classmethod
+    def resume_queue(cls) -> str:
+        """Reliable v2 stream carrying HITL/external resume commands."""
+        return cls._RESUME_QUEUE
 
     # ------------------------------------------------------------------
     # Cross-process cancel

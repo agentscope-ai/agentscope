@@ -9,6 +9,7 @@ backend implements, mirroring the shape (though not always the
 literal assertions) of the Redis backend's tests so both backends
 stay behavioural equivalents.
 """
+
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -310,7 +311,9 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         # State-only update
         from agentscope.state import AgentState
 
-        new_state = AgentState()
+        new_state = AgentState(
+            applied_resume_events={"reply:event": "payload-hash"},
+        )
         await self.storage.update_session_state(
             "user-1",
             agent.id,

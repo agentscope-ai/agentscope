@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Redis-backed message bus implementation."""
+
 import asyncio
 import json
 import uuid
@@ -16,7 +17,14 @@ else:
     Redis = Any
 
 
-class RedisMessageBus(MessageBus):
+def _watch_error() -> type[BaseException]:
+    """Lazy-load Redis's optimistic-transaction conflict error."""
+    from redis.exceptions import WatchError
+
+    return WatchError
+
+
+class RedisMessageBus(MessageBus):  # pylint: disable=R0904
     """Redis-backed implementation of :class:`MessageBus`.
 
     Mapping of bus modes to Redis primitives:
@@ -27,6 +35,10 @@ class RedisMessageBus(MessageBus):
       by per-id ``XDEL`` so the read is destructive and idempotent
       under the single-consumer-per-key invariant. ``ttl_secs`` is
       enforced via ``EXPIRE`` after each push (sliding TTL).
+    - **Mode B (reliable work queue)** uses a Redis Stream consumer group.
+      ``XREADGROUP`` assigns new entries, ``XAUTOCLAIM`` recovers abandoned
+      pending entries, and ``XACK`` removes work only after its durable
+      processing boundary.
     - **Mode C (replay log)** also uses a Redis Stream, but never
       ``XDEL``s on read. Trimming happens via ``XADD … MAXLEN ~N``
       (approximate, for performance) on append, via the ``ttl_secs``
@@ -85,6 +97,8 @@ class RedisMessageBus(MessageBus):
         # Populated in __aenter__; None until the context is entered.
         self._client: Redis | None = None
         self._owned_pool: ConnectionPool | None = None
+        self._reliable_reclaim_cursors: dict[tuple[str, str, str], str] = {}
+        self._reliable_groups_ready: set[tuple[str, str]] = set()
 
     async def __aenter__(self) -> Self:
         """Create the connection pool and Redis client.
@@ -275,6 +289,205 @@ class RedisMessageBus(MessageBus):
                 when the key does not exist.
         """
         await self._client.delete(key)
+
+    # ------------------------------------------------------------------
+    # Mode B — reliable work queue
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _decode_stream_entries(entries: list) -> list[tuple[str, dict]]:
+        """Decode Redis Stream fields into the bus payload shape."""
+        results: list[tuple[str, dict]] = []
+        for entry_id, fields in entries:
+            raw = fields.get("payload")
+            if raw is None:
+                # Preserve the id so the consumer can classify and ACK a
+                # malformed entry instead of leaving poison work in the PEL.
+                results.append((entry_id, {}))
+                continue
+            try:
+                results.append((entry_id, json.loads(raw)))
+            except (TypeError, json.JSONDecodeError):
+                results.append((entry_id, {}))
+        return results
+
+    async def reliable_queue_push(self, key: str, payload: dict) -> str:
+        """Append an entry to a consumer-group work stream."""
+        return await self._client.xadd(
+            key,
+            {"payload": json.dumps(payload, ensure_ascii=False)},
+        )
+
+    async def reliable_queue_ensure_group(self, key: str, group: str) -> None:
+        """Create a group at the beginning of the stream, once."""
+        group_key = (key, group)
+        if group_key in self._reliable_groups_ready:
+            return
+        try:
+            await self._client.xgroup_create(
+                name=key,
+                groupname=group,
+                id="0",
+                mkstream=True,
+            )
+        except Exception as exc:  # Redis uses a backend-specific error type.
+            if "BUSYGROUP" not in str(exc):
+                raise
+        self._reliable_groups_ready.add(group_key)
+
+    async def reliable_queue_read(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        *,
+        max_count: int = 1,
+        block_ms: int = 1000,
+    ) -> list[tuple[str, dict]]:
+        """Read new work through ``XREADGROUP ... >``."""
+        read_kwargs: dict[str, Any] = {}
+        if block_ms > 0:
+            read_kwargs["block"] = block_ms
+        for attempt in range(2):
+            await self.reliable_queue_ensure_group(key, group)
+            try:
+                streams = await self._client.xreadgroup(
+                    groupname=group,
+                    consumername=consumer,
+                    streams={key: ">"},
+                    count=max_count,
+                    **read_kwargs,
+                )
+                break
+            except Exception as exc:  # Backend-specific response error.
+                if attempt == 0 and "NOGROUP" in str(exc):
+                    self._reliable_groups_ready.discard((key, group))
+                    continue
+                raise
+        if not streams:
+            return []
+        return self._decode_stream_entries(streams[0][1])
+
+    async def reliable_queue_reclaim(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        *,
+        min_idle_ms: int,
+        max_count: int = 1,
+    ) -> list[tuple[str, dict]]:
+        """Reclaim abandoned PEL entries with ``XAUTOCLAIM``."""
+        cursor_key = (key, group, consumer)
+        for attempt in range(2):
+            await self.reliable_queue_ensure_group(key, group)
+            try:
+                claimed = await self._client.xautoclaim(
+                    name=key,
+                    groupname=group,
+                    consumername=consumer,
+                    min_idle_time=min_idle_ms,
+                    start_id=self._reliable_reclaim_cursors.get(
+                        cursor_key,
+                        "0-0",
+                    ),
+                    count=max_count,
+                )
+                break
+            except Exception as exc:  # Backend-specific response error.
+                if attempt == 0 and "NOGROUP" in str(exc):
+                    self._reliable_groups_ready.discard((key, group))
+                    self._reliable_reclaim_cursors.pop(cursor_key, None)
+                    continue
+                raise
+        # redis-py returns ``(next_id, entries, deleted_ids)`` on modern
+        # Redis and ``(next_id, entries)`` with older compatible servers.
+        if claimed:
+            self._reliable_reclaim_cursors[cursor_key] = claimed[0]
+        entries = claimed[1] if len(claimed) >= 2 else []
+        return self._decode_stream_entries(entries)
+
+    async def reliable_queue_touch(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Reset idle time, but only while ``consumer`` still owns work.
+
+        The ownership check and ``XCLAIM`` must be one Redis operation.  A
+        separate ``XPENDING``/``XCLAIM`` pair would let a stale heartbeat
+        steal an entry back immediately after another process reclaimed it.
+        """
+        if not entry_ids:
+            return
+        for entry_id in entry_ids:
+            async with self._client.pipeline(transaction=True) as pipe:
+                while True:
+                    try:
+                        await pipe.watch(key)
+                        rows = await pipe.xpending_range(
+                            key,
+                            group,
+                            entry_id,
+                            entry_id,
+                            1,
+                        )
+                        if not rows or rows[0]["consumer"] != consumer:
+                            await pipe.unwatch()
+                            break
+                        pipe.multi()
+                        pipe.xclaim(
+                            key,
+                            group,
+                            consumer,
+                            min_idle_time=0,
+                            message_ids=[entry_id],
+                            justid=True,
+                        )
+                        await pipe.execute()
+                        break
+                    except _watch_error():
+                        # Ownership changed between XPENDING and XCLAIM.
+                        # Re-read it rather than letting a stale heartbeat
+                        # steal the entry back from the new consumer.
+                        continue
+
+    async def reliable_queue_ack(
+        self,
+        key: str,
+        group: str,
+        entry_ids: list[str],
+    ) -> int:
+        """Atomically ACK processed work and remove its payload."""
+        if not entry_ids:
+            return 0
+        acked = 0
+        for entry_id in entry_ids:
+            async with self._client.pipeline(transaction=True) as pipe:
+                while True:
+                    try:
+                        await pipe.watch(key)
+                        rows = await pipe.xpending_range(
+                            key,
+                            group,
+                            entry_id,
+                            entry_id,
+                            1,
+                        )
+                        if not rows:
+                            await pipe.unwatch()
+                            break
+                        pipe.multi()
+                        pipe.xack(key, group, entry_id)
+                        pipe.xdel(key, entry_id)
+                        results = await pipe.execute()
+                        acked += int(results[0])
+                        break
+                    except _watch_error():
+                        continue
+        return acked
 
     # ------------------------------------------------------------------
     # Mode C — replay log

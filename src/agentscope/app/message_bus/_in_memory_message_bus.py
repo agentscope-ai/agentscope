@@ -14,9 +14,11 @@ dependency.
    For real deployments use :class:`RedisMessageBus` (or another
    networked backend).
 """
+
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections import defaultdict
 from collections.abc import AsyncGenerator
@@ -26,7 +28,7 @@ from typing import Callable, Self
 from ._base import MessageBus
 
 
-class InMemoryMessageBus(MessageBus):
+class InMemoryMessageBus(MessageBus):  # pylint: disable=R0904
     """In-memory implementation of :class:`MessageBus`.
 
     Mapping of bus modes to in-memory structures:
@@ -59,6 +61,18 @@ class InMemoryMessageBus(MessageBus):
 
         # Mode A — drain queues: key -> [(entry_id, payload), ...]
         self._queues: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+
+        # Mode B — reliable queues. ``delivered`` prevents a new read from
+        # returning an entry already assigned to the group; ``pending`` maps
+        # it to (consumer, last-delivery monotonic timestamp).
+        self._reliable_queues: dict[
+            str,
+            list[tuple[str, dict]],
+        ] = defaultdict(list)
+        self._reliable_groups: dict[
+            tuple[str, str],
+            dict[str, object],
+        ] = {}
 
         # Mode C — replay logs: key -> [(entry_id, payload), ...]
         self._logs: dict[str, list[tuple[str, dict]]] = defaultdict(list)
@@ -180,6 +194,125 @@ class InMemoryMessageBus(MessageBus):
                 Queue identifier.
         """
         self._queues.pop(key, None)
+
+    # ------------------------------------------------------------------
+    # Mode B — reliable work queue
+    # ------------------------------------------------------------------
+
+    async def reliable_queue_push(self, key: str, payload: dict) -> str:
+        """Append an entry without acknowledging it on read."""
+        entry_id = self._next_id()
+        self._reliable_queues[key].append((entry_id, payload))
+        return entry_id
+
+    async def reliable_queue_ensure_group(self, key: str, group: str) -> None:
+        """Create in-memory group bookkeeping when absent."""
+        self._reliable_groups.setdefault(
+            (key, group),
+            {"delivered": set(), "pending": {}},
+        )
+
+    async def reliable_queue_read(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        *,
+        max_count: int = 1,
+        block_ms: int = 1000,
+    ) -> list[tuple[str, dict]]:
+        """Assign previously unseen entries to ``consumer``."""
+        await self.reliable_queue_ensure_group(key, group)
+        deadline = time.monotonic() + max(0, block_ms) / 1000
+        while True:
+            state = self._reliable_groups[(key, group)]
+            delivered = state["delivered"]
+            pending = state["pending"]
+            assert isinstance(delivered, set)
+            assert isinstance(pending, dict)
+            result: list[tuple[str, dict]] = []
+            now = time.monotonic()
+            for entry_id, payload in self._reliable_queues.get(key, []):
+                if entry_id in delivered:
+                    continue
+                delivered.add(entry_id)
+                pending[entry_id] = (consumer, now)
+                result.append((entry_id, payload))
+                if len(result) >= max_count:
+                    return result
+            if result or block_ms <= 0 or time.monotonic() >= deadline:
+                return result
+            await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+
+    async def reliable_queue_reclaim(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        *,
+        min_idle_ms: int,
+        max_count: int = 1,
+    ) -> list[tuple[str, dict]]:
+        """Transfer idle pending entries to ``consumer``."""
+        await self.reliable_queue_ensure_group(key, group)
+        state = self._reliable_groups[(key, group)]
+        pending = state["pending"]
+        assert isinstance(pending, dict)
+        payloads = dict(self._reliable_queues.get(key, []))
+        now = time.monotonic()
+        result: list[tuple[str, dict]] = []
+        for entry_id, (_owner, touched_at) in list(pending.items()):
+            if (now - touched_at) * 1000 < min_idle_ms:
+                continue
+            pending[entry_id] = (consumer, now)
+            if entry_id in payloads:
+                result.append((entry_id, payloads[entry_id]))
+            if len(result) >= max_count:
+                break
+        return result
+
+    async def reliable_queue_touch(
+        self,
+        key: str,
+        group: str,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Refresh entries that are still owned by ``consumer``."""
+        await self.reliable_queue_ensure_group(key, group)
+        pending = self._reliable_groups[(key, group)]["pending"]
+        assert isinstance(pending, dict)
+        now = time.monotonic()
+        for entry_id in entry_ids:
+            current = pending.get(entry_id)
+            if current is not None and current[0] == consumer:
+                pending[entry_id] = (consumer, now)
+
+    async def reliable_queue_ack(
+        self,
+        key: str,
+        group: str,
+        entry_ids: list[str],
+    ) -> int:
+        """Remove acknowledged entries and their pending records."""
+        await self.reliable_queue_ensure_group(key, group)
+        state = self._reliable_groups[(key, group)]
+        pending = state["pending"]
+        delivered = state["delivered"]
+        assert isinstance(pending, dict)
+        assert isinstance(delivered, set)
+        acked = 0
+        for entry_id in entry_ids:
+            if pending.pop(entry_id, None) is not None:
+                acked += 1
+            delivered.discard(entry_id)
+        ids = set(entry_ids)
+        self._reliable_queues[key] = [
+            item
+            for item in self._reliable_queues.get(key, [])
+            if item[0] not in ids
+        ]
+        return acked
 
     # ------------------------------------------------------------------
     # Mode C — replay log
