@@ -49,7 +49,6 @@ from bocomadp.agents.templates import load_subagent_templates
 from bocomadp.config import load_config, is_trace_correlation_enabled
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
-from bocomadp.middleware.agent_middleware import LoggingMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
 from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
@@ -62,6 +61,7 @@ from bocomadp.routers.chat_sse import chat_sse_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
 from bocomadp.routers.stats import stats_router
+from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.tools import ToolRegistry
 
@@ -84,10 +84,24 @@ logger = logging.getLogger("bocomadp.main")
 tool_registry = ToolRegistry()
 if config.tools.enabled:
     tool_registry.load_builtin_tools()
+    if config.tools.load_custom:
+        tool_registry.load_custom_tools()
 logger.info("tools loaded: %s", tool_registry.list_tool_names())
 
+# agent 级中间件：load_builtin 扫描 agent_middleware.py 的模块级实例，
+# load_custom 扫描 middleware/custom/ 下的模块级实例。
 middleware_registry = MiddlewareRegistry()
-middleware_registry.register(LoggingMiddleware())
+if config.middlewares.enabled:
+    middleware_registry.load_builtin()
+    if config.middlewares.load_custom:
+        middleware_registry.load_custom()
+
+# MCP 注册表：load_builtin 扫描 builtin_mcps.py，load_custom 扫描 mcp/custom/。
+mcp_registry = McpRegistry()
+if config.mcp.enabled:
+    mcp_registry.load_builtin()
+    if config.mcp.load_custom:
+        mcp_registry.load_custom()
 
 provider_manager = ProviderManager()
 
@@ -106,39 +120,23 @@ runtime = Runtime(
 
 logger.info(
     "framework modules initialized: "
-    "tools=%d middlewares=%d providers=%d agents=%d",
+    "tools=%d middlewares=%d providers=%d agents=%d mcps=%d",
     len(tool_registry.list_tools()),
     len(middleware_registry.list_middlewares()),
     len(provider_manager.list_providers()),
     len(multi_agent_manager.list_agents()),
+    len(mcp_registry.list_mcps()),
 )
 
 # ---------------------------------------------------------------------------
 # 3. MCP 服务器 + Agent 工具工厂
 # ---------------------------------------------------------------------------
-def build_default_mcps() -> list[MCPClient]:
-    """构建每个工作区默认挂载的 MCP 服务器列表。"""
-    mcps = [
-        MCPClient(
-            name="browser-use",
-            mcp_config=StdioMCPConfig(
-                command="npx",
-                args=["@playwright/mcp@latest"],
-            ),
-            is_stateful=True,
-        ),
-    ]
-    if os.getenv("AMAP_API_KEY"):
-        mcps.append(
-            MCPClient(
-                name="amap",
-                mcp_config=HttpMCPConfig(
-                    url=f"https://mcp.amap.com/mcp?key={os.environ['AMAP_API_KEY']}",
-                ),
-                is_stateful=False,
-            ),
-        )
-    return mcps
+# MCP 列表从 mcp_registry 获取（builtin + custom 自动扫描），
+# 不再手写 build_default_mcps()。新增 MCP：在 mcp/builtin_mcps.py
+# 或 mcp/custom/xxx.py 导出 MCPClient 实例即可，重启生效。
+def build_default_mcps() -> list:
+    """返回注册表中的 MCPClient 实例列表。"""
+    return mcp_registry.list_mcps()
 
 
 # AgentScope ``AgentToolFactory`` —— 返回与内置 ``/chat`` 端点一致的自定义工具，

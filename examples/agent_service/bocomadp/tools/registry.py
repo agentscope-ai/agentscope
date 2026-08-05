@@ -59,21 +59,53 @@ class ToolRegistry:
         return sorted(self._tool_names)
 
     def load_builtin_tools(self) -> None:
-        """Load tools from :mod:`builtin_tools`.
+        """加载 builtin_tools.py 中所有 ``@tool`` 装饰的函数。
 
-        Importing this module registers every ``@tool``-decorated
-        function. Add new tools to ``builtin_tools.py``.
+        在该模块顶部用 ``@tool`` 装饰函数即可，重启后自动注册。
         """
         try:
             from . import builtin_tools  # noqa: F401
-            for name in dir(builtin_tools):
-                obj = getattr(builtin_tools, name)
-                if callable(obj) and getattr(obj, "_is_tool", False):
-                    self.register(obj)
+            self._scan_module_for_tools(builtin_tools)
         except ImportError:
             logger.warning("builtin_tools module not found")
         except Exception:
             logger.exception("failed to load builtin tools")
+
+    def load_custom_tools(self) -> None:
+        """自动扫描 ``custom/`` 包下所有子模块的 ``@tool`` 函数。
+
+        在 ``custom/`` 下新建任意 ``.py`` 文件，用 ``@tool`` 装饰函数，
+        重启后自动注册，无需修改 main.py。
+        """
+        try:
+            import importlib
+            import pkgutil
+            from . import custom as _custom_pkg
+        except ImportError:
+            logger.debug("custom tools package not found; skipping")
+            return
+        for _finder, modname, _ispkg in pkgutil.walk_packages(
+            _custom_pkg.__path__,
+            prefix=_custom_pkg.__name__ + ".",
+        ):
+            try:
+                mod = importlib.import_module(modname)
+            except Exception:
+                logger.warning(
+                    "failed to import custom tool module: %s",
+                    modname,
+                    exc_info=True,
+                )
+                continue
+            self._scan_module_for_tools(mod)
+
+    def _scan_module_for_tools(self, mod: Any) -> None:
+        """扫描模块命名空间，注册所有 ``_is_tool`` 标记的可调用对象。"""
+        for name in dir(mod):
+            obj = getattr(mod, name)
+            if callable(obj) and getattr(obj, "_is_tool", False):
+                # 复用实例方法 register（幂等）
+                self.register(obj)
 
     @staticmethod
     def _tool_name(tool: Any) -> str:

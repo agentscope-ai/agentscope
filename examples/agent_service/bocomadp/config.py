@@ -165,6 +165,36 @@ class ToolsConfig(BaseModel):
         default=True,
         description="Load built-in custom tools into every agent.",
     )
+    load_custom: bool = Field(
+        default=True,
+        description="自动扫描 tools/custom/ 下的 @tool 函数。",
+    )
+
+
+class MiddlewaresConfig(BaseModel):
+    """配置 agent 级中间件注册表。"""
+
+    enabled: bool = Field(
+        default=True,
+        description="加载 agent_middleware.py 中的内置中间件。",
+    )
+    load_custom: bool = Field(
+        default=True,
+        description="自动扫描 middleware/custom/ 下的 Middleware 实例。",
+    )
+
+
+class McpConfig(BaseModel):
+    """配置 MCP 注册表。"""
+
+    enabled: bool = Field(
+        default=True,
+        description="加载 builtin_mcps.py 中的 MCPClient 实例。",
+    )
+    load_custom: bool = Field(
+        default=True,
+        description="自动扫描 mcp/custom/ 下的 MCPClient 实例。",
+    )
 
 
 class AppConfig(BaseSettings):
@@ -206,6 +236,8 @@ class AppConfig(BaseSettings):
     # ---- New framework modules ----
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    middlewares: MiddlewaresConfig = Field(default_factory=MiddlewaresConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
 
 def load_config() -> AppConfig:

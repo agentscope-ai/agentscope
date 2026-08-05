@@ -86,8 +86,8 @@ def _coder_template() -> SubAgentTemplate:
             "Note: `TeamSay` is your ONLY channel to communicate with "
             "{leader_name} and the other team members."
         ),
-        # WRITE allows file read/write + shell within the workspace sandbox.
-        permission_context=PermissionContext(mode=PermissionMode.WRITE),
+        # ACCEPT_EDITS allows file read/write + shell within the workspace sandbox.
+        permission_context=PermissionContext(mode=PermissionMode.ACCEPT_EDITS),
     )
 
 

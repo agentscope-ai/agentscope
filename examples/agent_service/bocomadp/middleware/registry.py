@@ -52,15 +52,63 @@ class MiddlewareRegistry:
         return list(self._middlewares)
 
     def load_builtin(self) -> None:
-        """Load built-in agent middlewares from :mod:`agent_middleware`."""
+        """加载 agent_middleware.py 中所有模块级 Middleware 实例。
+
+        在该模块顶部实例化并导出（如 ``logging_mw = LoggingMiddleware()``），
+        重启后自动注册。
+        """
         try:
             from . import agent_middleware  # noqa: F401
-            # Built-in middlewares are created and registered in
-            # the module-level code of agent_middleware.py
+            self._scan_module_for_middlewares(agent_middleware)
         except ImportError:
             logger.warning("agent_middleware module not found")
         except Exception:
             logger.exception("failed to load built-in agent middlewares")
+
+    def load_custom(self) -> None:
+        """自动扫描 ``custom/`` 包下所有子模块的 Middleware 实例。
+
+        在 ``custom/`` 下新建任意 ``.py`` 文件，实例化 Middleware 子类并
+        在模块级导出（如 ``audit_mw = AuditMiddleware()``），重启后自动
+        注册，无需修改 main.py。
+        """
+        try:
+            import importlib
+            import pkgutil
+            from . import custom as _custom_pkg
+        except ImportError:
+            logger.debug("custom middlewares package not found; skipping")
+            return
+        for _finder, modname, _ispkg in pkgutil.walk_packages(
+            _custom_pkg.__path__,
+            prefix=_custom_pkg.__name__ + ".",
+        ):
+            try:
+                mod = importlib.import_module(modname)
+            except Exception:
+                logger.warning(
+                    "failed to import custom middleware module: %s",
+                    modname,
+                    exc_info=True,
+                )
+                continue
+            self._scan_module_for_middlewares(mod)
+
+    def _scan_module_for_middlewares(self, mod: Any) -> None:
+        """扫描模块命名空间，注册所有 ``_is_agent_middleware`` 标记的实例。
+
+        判定条件：
+        - 有 ``_is_agent_middleware`` 属性且为 True（Middleware 基类设置）
+        - 是实例而非类（``not isinstance(obj, type)``），因为 middleware
+          需要带状态/参数实例化后才可注册
+        """
+        for name in dir(mod):
+            obj = getattr(mod, name)
+            if (
+                getattr(obj, "_is_agent_middleware", False)
+                and not isinstance(obj, type)
+            ):
+                self.register(obj)
 
 
 __all__ = ["MiddlewareRegistry"]
