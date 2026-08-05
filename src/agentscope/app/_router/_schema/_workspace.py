@@ -48,6 +48,43 @@ class AddFromLibraryResponse(BaseModel):
     )
 
 
+class DirectoryEntry(BaseModel):
+    """One entry in a workspace directory listing."""
+
+    name: str = Field(
+        description="The entry name, without any leading directory.",
+    )
+    is_dir: bool = Field(
+        description="Whether the entry is itself a directory.",
+    )
+    size_bytes: int | None = Field(
+        default=None,
+        description=(
+            "File size in bytes. Always null for a directory, and null "
+            "for a file the backend could not stat."
+        ),
+    )
+    updated_at: float | None = Field(
+        default=None,
+        description="Last modification time as a Unix timestamp.",
+    )
+
+
+class DownloadTokenResponse(BaseModel):
+    """A capability authorizing one download of one path."""
+
+    token: str = Field(
+        description=(
+            "Pass as the ``token`` query parameter of "
+            "``GET /workspace/files``, in place of the ``X-User-ID`` "
+            "header. Valid for this path only."
+        ),
+    )
+    expires_at: float = Field(
+        description="Unix timestamp after which the token is refused.",
+    )
+
+
 class ToolInfo(BaseModel):
     """The tool info."""
 

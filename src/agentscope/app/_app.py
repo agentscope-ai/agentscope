@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
+import secrets
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
@@ -92,6 +93,7 @@ def create_app(
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
     resource_access_policy: ResourceAccessPolicyBase | None = None,
+    download_secret: str | None = None,
     title: str = "AgentScope",
     version: str = __version__,
 ) -> FastAPI:
@@ -225,6 +227,13 @@ def create_app(
             user. When ``None`` (default), a
             :class:`DenyAllResourceAccessPolicy` is installed which
             preserves the historical owner-isolated behavior.
+        download_secret (`str | None`, optional):
+            Signs the short-lived tokens that let a browser download a
+            workspace file by navigation. Defaults to a value generated
+            per process, which is fine for a single instance but **must
+            be set explicitly behind a load balancer** — otherwise a
+            token minted by one replica is rejected by the next, and
+            downloads fail at random.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to the package version):
@@ -255,6 +264,7 @@ def create_app(
     )
     app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
     app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
+    app.state.download_secret = download_secret or secrets.token_urlsafe(32)
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is

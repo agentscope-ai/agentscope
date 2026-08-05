@@ -46,6 +46,10 @@ from typing import Any, AsyncIterator
 
 import aiofiles
 
+# Chunk size for streamed reads. Large enough that a big file does not
+# turn into thousands of awaits, small enough to stay off the heap.
+DEFAULT_READ_CHUNK_SIZE = 1024 * 1024
+
 # ── data class ─────────────────────────────────────────────────────────
 
 
@@ -331,6 +335,33 @@ class BackendBase(ABC):
         chunks = [chunk async for chunk in stream]
         await self.write_file(path, b"".join(chunks))
 
+    async def read_stream(
+        self,
+        path: str,
+        chunk_size: int = DEFAULT_READ_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read ``path`` as a byte stream.
+
+        The default reads the whole file through :meth:`read_file` and
+        re-slices it, so peak memory is the file size; only backends
+        that override this (``LocalBackend``) are constant-memory.
+        Overriding requires incremental access to ``exec_shell``
+        stdout, which the remote backends do not expose today.
+
+        Args:
+            path (`str`):
+                Path to the file inside the backend's environment.
+            chunk_size (`int`, defaults to 1 MiB):
+                The size of each yielded chunk.
+
+        Yields:
+            `bytes`:
+                Successive chunks of the file, in order.
+        """
+        data = await self.read_file(path)
+        for start in range(0, len(data), chunk_size):
+            yield data[start : start + chunk_size]
+
     # ── derived filesystem ops (shell-based defaults) ──────────────
 
     async def getcwd(self) -> str:
@@ -390,32 +421,6 @@ class BackendBase(ABC):
         if not home:
             return path
         return home + path[1:]
-
-    async def realpath(self, path: str) -> str:
-        """Resolve symbolic links for an existing backend path.
-
-        The default invokes ``realpath`` inside the backend environment,
-        avoiding accidental resolution against the host filesystem.
-
-        Args:
-            path (`str`):
-                Existing path inside the backend's environment.
-
-        Returns:
-            `str`:
-                Canonical absolute path with symbolic links resolved.
-
-        Raises:
-            `FileNotFoundError`:
-                The path does not exist or cannot be resolved.
-        """
-        result = await self.exec_shell(["realpath", path])
-        if not result.ok():
-            raise FileNotFoundError(path)
-        return result.stdout.decode(
-            "utf-8",
-            errors="surrogateescape",
-        ).strip()
 
     async def file_exists(self, path: str) -> bool:
         """Return ``True`` if ``path`` exists (file or directory).
@@ -732,6 +737,27 @@ class LocalBackend(BackendBase):
             async for chunk in stream:
                 await f.write(chunk)
 
+    async def read_stream(
+        self,
+        path: str,
+        chunk_size: int = DEFAULT_READ_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read a local file chunk by chunk, never holding it whole.
+
+        Args:
+            path (`str`):
+                Path to the local file.
+            chunk_size (`int`, defaults to 1 MiB):
+                The size of each yielded chunk.
+
+        Yields:
+            `bytes`:
+                Successive chunks of the file, in order.
+        """
+        async with aiofiles.open(path, mode="rb") as f:
+            while chunk := await f.read(chunk_size):
+                yield chunk
+
     async def getcwd(self) -> str:
         """Return the host process's current working directory.
 
@@ -754,25 +780,6 @@ class LocalBackend(BackendBase):
                 subprocess.
         """
         return os.path.expanduser(path)
-
-    async def realpath(self, path: str) -> str:
-        """Resolve symbolic links for an existing local path.
-
-        Args:
-            path (`str`):
-                Existing local path.
-
-        Returns:
-            `str`:
-                Canonical absolute path with symbolic links resolved.
-
-        Raises:
-            `FileNotFoundError`:
-                The path does not exist.
-        """
-        if not os.path.exists(path):
-            raise FileNotFoundError(path)
-        return os.path.realpath(path)
 
     async def file_exists(self, path: str) -> bool:
         """Check if a local path exists.

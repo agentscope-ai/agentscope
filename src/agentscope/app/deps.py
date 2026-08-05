@@ -165,6 +165,18 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
     return request.app.state.workspace_manager
 
 
+async def get_download_secret(request: Request) -> str:
+    """Return the secret that signs file-download tokens.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `str`: The signing secret stored in ``app.state``.
+    """
+    return request.app.state.download_secret
+
+
 async def get_extra_agent_middlewares(
     request: Request,
 ) -> AgentMiddlewareFactory | None:
