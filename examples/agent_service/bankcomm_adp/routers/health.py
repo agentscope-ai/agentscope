@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from .. import __version__
 from ..config import settings
-from .._version import __version__
 
 router = APIRouter(prefix="/platform/health", tags=["health"])
 
