@@ -486,6 +486,12 @@
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
 		"submit": "开始使用",
+		"checking": "连接中...",
+		"errorUnreachable": "无法连接到该服务器。请检查地址是否正确、服务是否已启动，以及是否允许跨域请求。",
+		"errorTimeout": "服务器已建立连接，但在超时时间内没有响应。可能负载过高或启动卡住了。",
+		"errorNotAgentScope": "地址可以访问，但它不是 AgentScope 服务。请检查地址，或升级尚未提供健康检查接口的旧版本后端。",
+		"errorUnauthorized": "服务器拒绝了该用户名，请填写有效的用户名。",
+		"errorNotReady": "服务器可以连接，但尚未就绪。以下子系统启动失败：",
 		"hint": "此应用仅提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
 	},
 	"tour": {

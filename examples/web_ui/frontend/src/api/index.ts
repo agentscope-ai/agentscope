@@ -10,3 +10,4 @@ export { skillApi } from './skill';
 export { scheduleApi } from './schedule';
 export { embeddingModelApi, modelApi, ttsModelApi } from './model';
 export { knowledgeBaseApi } from './knowledgeBase';
+export { healthApi } from './health';

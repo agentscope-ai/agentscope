@@ -486,6 +486,12 @@
 		"username": "Username",
 		"usernamePlaceholder": "Your username",
 		"submit": "Get Started",
+		"checking": "Connecting...",
+		"errorUnreachable": "Cannot reach this server. Check the address, make sure the service is running, and that it allows cross-origin requests.",
+		"errorTimeout": "The server accepted the connection but did not respond in time. It may be overloaded or stuck starting up.",
+		"errorNotAgentScope": "Reached the address, but it is not an AgentScope service — check the URL, or upgrade a backend too old to expose a health endpoint.",
+		"errorUnauthorized": "The server rejected this username. Enter a valid one.",
+		"errorNotReady": "The server is reachable but not ready. These subsystems failed to start:",
 		"hint": "This is a frontend-only application, and all data are served from the Server URL above. The username is used solely for server-side authentication."
 	},
 	"tour": {
