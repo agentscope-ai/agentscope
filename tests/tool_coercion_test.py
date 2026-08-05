@@ -286,6 +286,34 @@ class ToolCoercionTest(unittest.TestCase):
             {"x": "1"},
         )
 
+    def test_boolean_only_coerces_zero_and_one(self) -> None:
+        """Only exact 0/1 are coerced to bool; other numbers stay unchanged."""
+        schema = _schema({"flag": {"type": "boolean"}})
+        # Exact 0/1 — coerced
+        self.assertIs(
+            _coerce_tool_args({"flag": 0}, schema)["flag"],
+            False,
+        )
+        self.assertIs(
+            _coerce_tool_args({"flag": 1}, schema)["flag"],
+            True,
+        )
+        self.assertIs(
+            _coerce_tool_args({"flag": 0.0}, schema)["flag"],
+            False,
+        )
+        self.assertIs(
+            _coerce_tool_args({"flag": 1.0}, schema)["flag"],
+            True,
+        )
+        # Other numbers — unchanged
+        for v in (2, -1, 2.0, 3.14):
+            with self.subTest(value=v):
+                self.assertEqual(
+                    _coerce_tool_args({"flag": v}, schema)["flag"],
+                    v,
+                )
+
 
 class ToolCoercionIntegrationTest(unittest.IsolatedAsyncioTestCase):
     """Integration tests for the ToolBase and Toolkit invocation paths."""

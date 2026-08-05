@@ -663,8 +663,12 @@ def _coerce_to_type(value: Any, expected_type: str) -> Any:
                 return True
             if stripped in ("false", "0", "no"):
                 return False
-        if isinstance(value, (int, float)):
-            return bool(value)
+        if isinstance(value, int):
+            if value in (0, 1):
+                return bool(value)
+        if isinstance(value, float):
+            if value in (0.0, 1.0):
+                return bool(value)
         return value
 
     if expected_type == "array":
