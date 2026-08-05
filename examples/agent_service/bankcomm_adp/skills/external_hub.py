@@ -1,112 +1,112 @@
 # -*- coding: utf-8 -*-
-"""An external skillhub provider.
+"""外部 skillhub 提供者（迁移自 ``agentscope.app.hub._skill._external_hub``）。
 
-A thin async client around the deployment's own skillhub HTTP API that
-exposes the catalog and download endpoints through the
-:class:`~agentscope.app.hub._skill._base.SkillHubBase` interface, so the
-web UI and the workspace flows treat it like any other skill hub.
+对外部 skillhub HTTP API 的薄异步客户端，通过
+:class:`~agentscope.app.hub._skill._base.SkillHubBase` 接口暴露目录与
+下载能力，使 Web UI 与 workspace 流程将其视为普通 skill hub。
 
-Authentication is cookie-based and token-driven: the caller passes a
-``guwpToken`` per request via :meth:`set_token`; every call exchanges
-it for a fresh ``SESSION`` cookie against the login endpoint (no
-caching).
+认证为 cookie 式、token 驱动：调用方通过 :meth:`set_token` 每次请求
+传入 ``guwpToken``；每次调用都会向登录端点换取新的 ``SESSION``
+cookie（无缓存）。
+
+服务地址从 :mod:`bankcomm_adp.config` 读取（``ADP_EXTERNAL_SKILLHUB_URL``）。
 """
+from __future__ import annotations
+
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from ._base import SkillArchive, SkillHubBase
-from .._error import HubError
-from ._card import SkillCard, SkillHubPage
-from ...._logging import logger
+from agentscope._logging import logger
+from agentscope.app.hub._error import HubError
+from agentscope.app.hub._skill._base import SkillArchive, SkillHubBase
+from agentscope.app.hub._skill._card import SkillCard, SkillHubPage
+
+from ..config import settings
 
 if TYPE_CHECKING:
     import httpx
 
-#: Default host + prefix of the deployment's skillhub.
-DEFAULT_BASE_URL = "http://53.12.9.18/skillhub-server"
-
-#: Catalog endpoint path; the namespace is passed as a query parameter.
+#: 目录查询端点路径（命名空间走 query 参数）。
 CATALOG_PATH = "/api/web/skills"
 
-#: Download endpoint prefix — the final URL is
-#: ``{base_url}{DOWNLOAD_PREFIX}/{card_id}/download``.
+#: 下载端点前缀 —— 最终 URL 为 ``{base_url}{DOWNLOAD_PREFIX}/{card_id}/download``。
 DOWNLOAD_PREFIX = "/api/web/skills/global"
 
-#: Catalog namespace.
+#: 目录命名空间。
 CATALOG_NAMESPACE = "global"
 
-#: Endpoint listing the current user's own uploaded skills.
+#: 当前用户已上传 skill 的端点路径。
 MY_SKILLS_PATH = "/api/web/me/skills"
-#: Default streaming chunk size (64 KiB).
+
+#: 默认流式块大小（64 KiB）。
 DEFAULT_CHUNK_SIZE = 64 * 1024
 
 
 class ExternalSkillHub(SkillHubBase):
-    """A skill hub backed by the deployment's own skillhub server.
+    """基于部署方自有 skillhub 服务器的 skill hub。
 
     .. code-block:: python
 
-        hub = ExternalSkillHub(base_url="http://53.12.9.18/skillhub-server")
-        hub.set_token("guwp_...")          # optional, per request
+        hub = ExternalSkillHub()                 # base_url 取 settings
+        hub.set_token("guwp_...")                # 可选，按请求设置
         page = await hub.list_skills(user_id="alice", q="write")
         archive = await hub.download("alice", "write")
-        # ... stream archive into a workspace
     """
 
     def __init__(
         self,
         hub_id: str = "external",
         display_name: str = "External SkillHub",
-        description: str = "The deployment's skillhub catalog.",
+        description: str = "外部 skillhub 目录",
         icon_url: str | None = None,
         *,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str | None = None,
         api_token: str | None = None,
         timeout: float = 30.0,
     ) -> None:
-        """Initialize the external skillhub provider.
+        """初始化外部 skillhub 提供者。
 
         Args:
-            hub_id (`str`): Stable id addressing the hub in the routes.
-            display_name (`str`): The user-facing hub name.
-            description (`str`): The user-facing hub description.
-            icon_url (`str | None`): The hub's icon.
-            base_url (`str`): Base URL of the skillhub server.
-            api_token (`str | None`): Initial ``guwpToken``; may be
-                updated at runtime via :meth:`set_token`.
-            timeout (`float`): Per-request timeout in seconds.
+            hub_id (`str`): 路由中寻址该 hub 的稳定 id。
+            display_name (`str`): 用户可见名称。
+            description (`str`): 用户可见描述。
+            icon_url (`str | None`): hub 图标。
+            base_url (`str | None`): skillhub 服务地址；``None`` 时
+                取 ``settings.external_skillhub_url``。
+            api_token (`str | None`): 初始 ``guwpToken``，可后续通过
+                :meth:`set_token` 更新。
+            timeout (`float`): 单请求超时（秒）。
         """
         super().__init__(hub_id, display_name, description, icon_url)
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or settings.external_skillhub_url).rstrip("/")
         self.timeout = timeout
         self._guwp_token = api_token
         self._client: "httpx.AsyncClient | None" = None
 
     def set_token(self, token: str | None) -> None:
-        """Update the ``guwpToken`` used for cookie refresh.
+        """更新用于 cookie 刷新的 ``guwpToken``。
 
-        Safe to call per request — the next call re-authenticates with
-        the new token.
+        可逐请求调用——下一次调用会用新 token 重新认证。
         """
         self._guwp_token = token
 
-    # ── lifecycle ────────────────────────────────────────────────
+    # ── 生命周期 ────────────────────────────────────────────────
 
     async def __aenter__(self) -> "ExternalSkillHub":
-        """Open the shared HTTP client."""
+        """打开共享 HTTP 客户端。"""
         import httpx
 
         self._client = httpx.AsyncClient(timeout=self.timeout)
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        """Close the shared HTTP client."""
+        """关闭共享 HTTP 客户端。"""
         if self._client is not None:
             await self._client.aclose()
             self._client = None
 
     def _http(self) -> "httpx.AsyncClient":
-        """Return the shared client, opening one if never entered."""
+        """返回共享客户端；未进入上下文时按需创建。"""
         import httpx
 
         if self._client is None:
@@ -114,7 +114,7 @@ class ExternalSkillHub(SkillHubBase):
         return self._client
 
     def _headers(self, cookie: str) -> dict[str, str]:
-        """Build the request headers, including the session cookie."""
+        """构造请求头（含会话 cookie）。"""
         return {
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate, br",
@@ -124,15 +124,13 @@ class ExternalSkillHub(SkillHubBase):
             "User-Agent": "PostmanRuntime-ApipostRuntime/1.1.0",
         }
 
-    # ── auth ─────────────────────────────────────────────────────
+    # ── 认证 ────────────────────────────────────────────────────
 
     async def _cookie(self) -> str:
-        """Return a fresh ``SESSION=...`` cookie for the current token.
+        """为当前 token 返回一个新的 ``SESSION=...`` cookie。
 
-        No caching: every call re-authenticates against the login
-        endpoint with the current ``guwpToken`` (set via
-        :meth:`set_token`). No token means the unauthenticated session
-        (empty cookie).
+        无缓存：每次调用都会用当前 ``guwpToken``（:meth:`set_token`
+        设置）向登录端点重新认证。无 token 时返回空（匿名会话）。
         """
         token = self._guwp_token
         if not token:
@@ -170,10 +168,7 @@ class ExternalSkillHub(SkillHubBase):
         cursor: str | None = None,
         limit: int = 20,
     ) -> SkillHubPage:
-        """Browse the catalog.
-
-        ``cursor`` encodes the upstream page number as ``page:N``.
-        """
+        """浏览目录。``cursor`` 以 ``page:N`` 编码上游页码。"""
         import urllib.parse
 
         page = 0
@@ -216,7 +211,7 @@ class ExternalSkillHub(SkillHubBase):
         )
 
     def _to_card(self, item: dict) -> SkillCard:
-        """Build a :class:`SkillCard` from one catalog record."""
+        """由一条目录记录构造 :class:`SkillCard`。"""
         slug = item["slug"]
         return SkillCard(
             hub_id=self.hub_id,
@@ -231,18 +226,10 @@ class ExternalSkillHub(SkillHubBase):
         )
 
     async def list_uploaded_skills(self, user_id: str) -> SkillHubPage:
-        """Browse the skills the current user uploaded to the skillhub.
+        """浏览当前用户上传到 skillhub 的 skill。
 
-        Requires a ``guwpToken`` set via :meth:`set_token` — the
-        endpoint is per-user and the session cookie carries the
-        identity.
-
-        Args:
-            user_id (`str`): The user identifier (unused by the remote
-                endpoint; kept for interface consistency).
-
-        Returns:
-            `SkillHubPage`: The uploaded skills plus their total count.
+        需先通过 :meth:`set_token` 设置 ``guwpToken``——端点按用户
+        隔离，会话 cookie 携带身份。
         """
         url = f"{self.base_url}{MY_SKILLS_PATH}"
         try:
@@ -269,15 +256,14 @@ class ExternalSkillHub(SkillHubBase):
         )
 
     async def get_skill(self, user_id: str, card_id: str) -> SkillCard:
-        """Not implemented yet.
+        """尚未实现。
 
-        The remote service currently exposes only the catalog and the
-        download endpoint; no per-card detail endpoint is wired up.
-        Install-to-library (``POST /hub/skill/.../install``) via this
-        hub therefore fails until this is implemented.
+        远程服务目前只暴露目录与下载端点；未接入单卡详情端点，因此
+        通过本 hub 的“安装进库”（``POST /hub/skill/.../install``）会
+        失败，直到实现为止。
 
         Raises:
-            NotImplementedError: Always, for now.
+            NotImplementedError: 当前恒抛。
         """
         raise NotImplementedError(
             "ExternalSkillHub.get_skill is not implemented yet — the "
@@ -290,12 +276,10 @@ class ExternalSkillHub(SkillHubBase):
         card_id: str,
         version: str | None = None,
     ) -> SkillArchive:
-        """Open a skill archive via ``{base}/api/web/skills/global/<id>/download``.
+        """打开 skill 归档流（``{base}/api/web/skills/global/<id>/download``）。
 
-        The response headers are awaited here — so a missing skill (404)
-        raises before the caller commits to an install — while the body
-        stays lazy, letting the archive be piped into a workspace
-        without ever being held whole.
+        响应头在此处等待——缺失的 skill（404）在调用方开始安装前抛出；
+        body 保持惰性，归档可被直接管道送入 workspace 而无需整体驻留内存。
         """
         import urllib.parse
 
@@ -333,7 +317,7 @@ class ExternalSkillHub(SkillHubBase):
         response: Any,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
     ) -> AsyncIterator[bytes]:
-        """Yield the archive bytes, closing the stream when done."""
+        """逐块产出归档字节，结束时关闭流。"""
         try:
             async for chunk in response.aiter_bytes(chunk_size):
                 yield chunk

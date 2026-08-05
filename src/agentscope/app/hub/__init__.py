@@ -16,7 +16,6 @@ from ._skill import (
     SkillCard,
     SkillHubPage,
     ClawSkillHub,
-    ExternalSkillHub,
 )
 
 __all__ = [
@@ -31,5 +30,4 @@ __all__ = [
     "SkillCard",
     "SkillHubPage",
     "ClawSkillHub",
-    "ExternalSkillHub",
 ]

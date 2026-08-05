@@ -84,6 +84,15 @@ class Settings:
     def workspace_dir(self) -> Path:
         return Path(_getenv("WORKSPACE_DIR") or str(BASE_DIR / "workspaces"))
 
+    # ---------- 外部 skill hub ----------
+    @property
+    def external_skillhub_url(self) -> str:
+        """外部 skillhub 服务地址（``ADP_EXTERNAL_SKILLHUB_URL``）。"""
+        return (
+            _getenv("EXTERNAL_SKILLHUB_URL")
+            or "http://53.12.9.18/skillhub-server"
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:

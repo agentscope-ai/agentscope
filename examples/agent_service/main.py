@@ -15,10 +15,10 @@ from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
-from agentscope.app.hub import ClawSkillHub, ExternalSkillHub, GitHubMCPHub
+from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
-from agentscope.app.storage import RedisStorage
+from agentscope.app.storage import AsyncSQLAlchemyStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
@@ -26,7 +26,8 @@ from agentscope.rag import QdrantStore
 
 # 企业内部扩展：管控中间件 + 工具 + 自有路由
 from bankcomm_adp.middlewares import build_enterprise_middlewares
-from bankcomm_adp.routers import health_router
+from bankcomm_adp.routers import health_router, skill_router
+from bankcomm_adp.skills import ExternalSkillHub
 from bankcomm_adp.tools import build_enterprise_tools
 
 default_mcps = [
@@ -52,10 +53,7 @@ if os.getenv("AMAP_API_KEY"):
         ),
     )
 
-storage = RedisStorage(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-)
+storage = AsyncSQLAlchemyStorage("sqlite+aiosqlite:///./as.db")
 
 vector_store = QdrantStore(location=":memory:")
 
@@ -149,6 +147,7 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
 
 # 挂载平台自有路由（与 AgentScope 内置路由并列）
 app.include_router(health_router)
+app.include_router(skill_router)
 
 
 if __name__ == "__main__":
