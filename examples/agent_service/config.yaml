@@ -1,23 +1,80 @@
-# ============================================================
-# 模型 Provider 配置
-# ============================================================
-# 启动时自动注册到 ProviderManager，curl /api/models 即可看到。
+# ==========================================================
+# BocomADP 唯一配置源（config.yaml）
+# 复制模板：cp config.yaml.example config.yaml
 #
-# 支持的 provider_type (简写即可):
-#   deepseek / openai / anthropic / dashscope / gemini
-#   ollama / moonshot / xai
-# 也可写全称: deepseek_credential / openai_credential / ...
+# 读取优先级（高 → 低）：
+#   ① 进程环境变量（BOCOMADP_* 前缀，嵌套字段用 __ 分隔，如
+#      BOCOMADP_REDIS__HOST）—— 部署期覆盖，优先级最高
+#   ② .env 文件（agent_service/.env 中的 BOCOMADP_* 键）
+#   ③ 本文件 config.yaml（含 $VAR / ${VAR} 环境变量引用展开）—— 主配置源
+#   ④ 代码默认值（bocomadp/config/）
 #
-# api_key 支持两种写法：
-#   1. ${ENV_VAR}  — 从环境变量读取（推荐，避免硬编码密钥）
-#   2. sk-xxx      — 直接写明文（仅限本地开发）
-#
-# parameters 中的字段会透传给对应 ChatModel 的 Parameters 模型，
-# 例如 DeepSeekChatModel.Parameters 支持:
-#   temperature / max_tokens / top_p / thinking_enable / reasoning_effort
-# ============================================================
+# 框架级参数（log_level / logging / service / redis / runtime /
+# tools / middlewares / mcp / providers）与业务配置（models /
+# app_name / audit / workspace_dir）统一在本文件声明；
+# 部署期需要临时覆盖时用 BOCOMADP_* 环境变量（优先级高于本文件）。
+# ==========================================================
+
+# ---------- 服务 ----------
+# Web UI 标题与健康检查展示的应用名
+app_name: "交通银行智能体平台"
+
+# ---------- 日志 ----------
+log_level: info
+logging:
+  enhance:
+    enabled: true          # trace_id 关联日志增强（TraceContextFilter + 格式化）
+    format: text           # text | json（json 推荐生产环境）
+
+# ---------- HTTP 服务 ----------
+service:
+  host: 0.0.0.0
+  port: 8000
+  reload: false            # 仅开发期开启 uvicorn 自动重载
+
+# ---------- Redis（AgentScope storage / message bus） ----------
+redis:
+  host: localhost
+  port: 6379
+
+# ---------- 运行时 ----------
+runtime:
+  enabled: true            # 挂载 /api/chat/run SSE 端点
+  heartbeat_interval_seconds: 15.0
+
+# ---------- 组件注册表 ----------
+# 三大 registry（工具 / agent 中间件 / MCP）统一开关：
+# enabled 控制内置组件扫描，load_custom 控制 custom/ 目录自动扫描。
+tools:
+  enabled: true
+  load_custom: true
+
+middlewares:
+  enabled: true
+  load_custom: true
+
+mcp:
+  enabled: true
+  load_custom: true
+
+# ---------- 模型 Provider（启动时自动注册到 ProviderManager） ----------
+providers:
+  enabled: true
+  config_file: null        # null 表示使用本文件（config.yaml）；可指向其他 YAML
 
 models:
+  # 支持的 provider_type (简写即可):
+  #   deepseek / openai / anthropic / dashscope / gemini
+  #   ollama / moonshot / xai
+  # 也可写全称: deepseek_credential / openai_credential / ...
+  #
+  # api_key 支持两种写法：
+  #   1. ${ENV_VAR}  — 从环境变量读取（推荐，避免硬编码密钥）
+  #   2. sk-xxx      — 直接写明文（仅限本地开发）
+  #
+  # parameters 中的字段会透传给对应 ChatModel 的 Parameters 模型，
+  # 例如 DeepSeekChatModel.Parameters 支持:
+  #   temperature / max_tokens / top_p / thinking_enable / reasoning_effort
   - provider_id: deepseek
     display_name: "DeepSeek Chat"
     provider_type: deepseek
@@ -54,17 +111,6 @@ models:
   #   supports_multimodal: true
   #   parameters:
   #     temperature: 0.7
-# ==========================================================
-# Agent Service（企业扩展 bankcomm_adp）单一配置文件
-# 复制为 config.yaml 后按需修改：cp config.yaml.example config.yaml
-#
-# 该文件为统一配置源，根节点包含全局配置与各工具配置（如 cross_search）。
-# 读取优先级：进程环境变量 > .env 文件 > config.yaml > 代码默认值
-# ==========================================================
-
-# ---------- 服务 ----------
-# Web UI 标题与健康检查展示的应用名
-app_name: "交通银行智能体平台"
 
 # ---------- 审计（Audit） ----------
 audit:
@@ -77,34 +123,3 @@ audit:
 # 工作区目录（AgentScope 沙箱文件读写根目录）
 # 支持 $VAR 环境变量引用展开
 workspace_dir: "./workspaces"
-
-# ---------- 跨知识搜索 ----------
-# 扁平结构：键与 cross_search_config.py 字段一一对应。
-# 字符串值支持 $VAR / ${VAR} 环境变量引用展开（如 api_url: $CROSS_SEARCH_API_URL）。
-cross_search:
-  # api_url 支持环境变量引用展开，运行时需设置 CROSS_SEARCH_API_URL
-  api_url: $CROSS_SEARCH_API_URL
-  timeout: 30
-  caller: "VD2026000"
-  search_type: "0"
-  text_top_n: 5
-  vector_top_n: 5
-  qa_type: [0, 1]
-  attach_flag: 1
-  rerank_flag: 1
-  rewrite_flag: "ON"
-  rerank_top_n: 5
-  rerank_rule_code: "RR0005"
-  vector_min_score: 0.54
-  user_role: "0"
-  space_code_list: []
-  team_space_code_list: []
-  user_code: ""
-  psnl_space_code_id: "PER754964863350213"
-  psnl_category_id_list: []
-  headers:
-    Accept: "*/*"
-    Accept-Encoding: "gzip, deflate, br"
-    Connection: "keep-alive"
-    Content-Type: "multipart/form-data"
-    jumpcloud-ENV: "BASE"

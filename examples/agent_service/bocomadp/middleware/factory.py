@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
-"""中间件工厂。
+"""企业中间件主动构建工厂（bocomadp）。
 
-``create_app`` 的 ``extra_agent_middlewares`` 参数要求一个
-``async (user_id, agent_id, session_id) -> list[MiddlewareBase]`` 工厂。
-本模块封装该工厂，按配置装配企业管控中间件链。
+采用**主动 build** 而非 custom/ 被动扫描：
+- 企业中间件（审计留痕）由 :func:`build_enterprise_middlewares` 显式构建，
+  每次 agent 组装时按会话创建独立实例（user_id / session_id 直传）；
+- 按 ``audit.enabled`` 配置开关决定是否装配，关闭时不产生任何中间件；
+- 由 ``main.py`` 的通用中间件构建入口（``build_agent_middlewares``）调用，
+  与 ``MiddlewareRegistry`` 自动扫描的内置中间件合并注入。
 """
 from __future__ import annotations
 
 from agentscope.middleware import MiddlewareBase
 
-from ..config.audit_config import get_audit_config
+from ..config import get_audit_config
 from .audit import AuditMiddleware
 
 

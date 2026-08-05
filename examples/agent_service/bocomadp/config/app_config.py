@@ -1,34 +1,92 @@
-"""Application configuration.
+# -*- coding: utf-8 -*-
+"""框架级配置 AppConfig（config.yaml 主源 + 环境变量部署期覆盖）。
 
-Uses ``pydantic-settings`` to read from env vars (and ``.env`` if present).
-All settings are grouped into nested models so that each concern has its
-own section — this makes it easy to extend as you port modules in.
-
-## Reserved sections for future QwenPaw module migration
-
-The classes marked ``# PORT-FROM-QWENPAW`` below are placeholders for
-modules you may migrate later. They are intentionally minimal (often just
-an ``enabled`` flag) so that wiring them into ``main.py`` is a one-line
-change once the module is ported in.
-
-- :class:`ProviderConfig`        ← ``qwenpaw/providers/``
-- :class:`GovernanceConfig`      ← ``qwenpaw/governance/``
-- :class:`HooksConfig`           ← ``qwenpaw/hooks/``
-- :class:`CheckpointsConfig`     ← ``qwenpaw/checkpoints/``
-- :class:`TokenUsageConfig`      ← ``qwenpaw/token_usage/``
-- :class:`LocalModelsConfig`     ← ``qwenpaw/local_models/``
+> ``config.yaml`` 为唯一配置载体，``AppConfig`` 为唯一 schema：
+>
+> - ``config.yaml`` 中的全部节点（``log_level`` / ``logging`` / ``service`` /
+>   ``redis`` / ``runtime`` / ``tools`` / ``middlewares`` / ``mcp`` /
+>   ``providers`` / ``app_name`` / ``workspace_dir``）作为主配置源；
+> - ``BOCOMADP_`` 前缀环境变量 / ``.env`` 文件可在部署期覆盖（优先级更高）。
+>
+> 读取优先级（高 → 低，由 pydantic-settings 保证）：
+> 进程环境变量 > ``.env`` 文件 > ``config.yaml``（$VAR 展开后）> 代码默认值。
 """
-
 from __future__ import annotations
 
-import os
-import re
 from pathlib import Path
 from typing import Any, Literal
 
+import difflib
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import YamlConfigSettingsSource
+
+from .base import (
+    BASE_DIR,
+    CONFIG_YAML_FILE,
+    DOTENV_FILE,
+    expand_env_vars,
+    load_config_yaml,
+    resolve_path,
+)
+
+# 顶层业务节点白名单：这些键**有意**不在 AppConfig schema 内，
+# 由独立读取器消费（models → load_models_from_yaml；audit → AuditConfig）。
+# 新增此类业务节点时，必须加入本集合，否则启动校验会 fail-fast。
+_BUSINESS_KEYS: frozenset[str] = frozenset({"models", "audit"})
+
+# 拼写校验相似度阈值：YAML 键与声明字段的相似度达到该值即视为疑似拼写错误。
+_SPELL_CHECK_CUTOFF = 0.7
+
+
+def _reject_unknown_yaml_keys(data: dict[str, Any]) -> None:
+    """递归校验 YAML 键与 schema 字段匹配，发现疑似拼写错误时抛错。
+
+    - 顶层：白名单（``_BUSINESS_KEYS``）之外的未知键，用 ``difflib`` 与声明
+      字段做模糊匹配，高度相似视为拼写错误（fail-fast，而非静默用默认值）；
+    - 嵌套：对声明为 ``BaseModel`` 子类的字段递归校验其子键。
+    """
+
+    def _walk(data: dict[str, Any], fields: dict, path: str = "") -> None:
+        for key in data:
+            if key in fields:
+                # 递归下钻嵌套模型
+                annotation = fields[key].annotation
+                if (
+                    isinstance(data[key], dict)
+                    and isinstance(annotation, type)
+                    and issubclass(annotation, BaseModel)
+                    and getattr(annotation, "model_fields", None)
+                ):
+                    _walk(data[key], annotation.model_fields, f"{path}{key}.")
+                continue
+            if not path and key in _BUSINESS_KEYS:
+                continue
+            match = difflib.get_close_matches(
+                str(key),
+                [f for f in fields if f not in _BUSINESS_KEYS],
+                n=1,
+                cutoff=_SPELL_CHECK_CUTOFF,
+            )
+            hint = f"，是否应为 {match[0]!r}？" if match else ""
+            raise ValueError(
+                f"config.yaml 中键 {path + str(key)!r} 未在 "
+                f"AppConfig schema 中声明{hint}；"
+                "请检查拼写；若为有意新增的业务节点，"
+                "请将其加入 bocomadp.config.app_config._BUSINESS_KEYS 白名单。",
+            )
+
+    _walk(data, AppConfig.model_fields)
+
+
+def get_app_config() -> "AppConfig":
+    """加载最新应用配置：每次调用重建 ``AppConfig``（config.yaml 实时重读 = 热加载）。
+
+    适合**运行时**按需获取最新配置（如每次请求 / 每次 agent 组装）；
+    启动装配（注册表 / Redis / 中间件）用一次快照即可，保持装配一致性。
+    """
+    return AppConfig()
 
 
 class LoggingEnhanceConfig(BaseModel):
@@ -59,7 +117,11 @@ class ServiceConfig(BaseModel):
 
 
 class RedisConfig(BaseModel):
-    """Redis backend for AgentScope storage / message bus."""
+    """Redis backend for AgentScope storage / message bus.
+
+    ``main.py`` 中 ``RedisStorage`` 应通过 ``config.redis.host`` /
+    ``config.redis.port`` 读取，禁止绕过本配置直接 ``os.getenv``。
+    """
 
     host: str = Field(default="localhost")
     port: int = Field(default=6379)
@@ -112,9 +174,9 @@ class ProviderConfig(BaseModel):
         default=True,
         description="启动时从 config.yaml 加载并注册模型。",
     )
-    config_file: str = Field(
-        default="config.yaml",
-        description="模型 Provider 配置文件路径（相对于工作目录）。",
+    config_file: str | Path | None = Field(
+        default=None,
+        description="模型 Provider 配置文件路径；None 时使用 agent_service/config.yaml。",
     )
     manager_class: str = Field(
         default="bocomadp.providers.ProviderManager",
@@ -235,27 +297,92 @@ class McpConfig(BaseModel):
     )
 
 
-class AppConfig(BaseSettings):
-    """Root application config.
+class _ExpandedYamlSource(YamlConfigSettingsSource):
+    """config.yaml 配置源：读取后先做 ``$VAR`` / ``${VAR}`` 环境变量展开，
+    再做键拼写校验（fail-fast）。
 
-    Reads from env vars with prefix ``BOCOMADP_``.  Nested fields use
-    ``__`` as the delimiter, e.g.::
+    继承 ``YamlConfigSettingsSource``（其 ``get_field_value`` 支持嵌套模型
+    按字段名递归填充），仅在解析前多一步环境变量展开，保证与
+    ``load_config_yaml`` / ``expand_env_vars`` 的行为一致。
+    键校验与读取同源（仅一次文件读取，无 lru_cache），修改文件内容后
+    校验实时生效，与热加载语义一致。
+    """
+
+    def _read_file(self, file_path: Path) -> dict[str, Any]:
+        data = super()._read_file(file_path)
+        data = expand_env_vars(data) if data else data
+        # 对必填项开启校验：拼写错误（如 redis.hots）不再静默忽略
+        # （extra="ignore" 仅用于容忍业务节点），fail-fast 暴露问题。
+        if data:
+            _reject_unknown_yaml_keys(data)
+        return data
+
+
+class AppConfig(BaseSettings):
+    """应用配置：config.yaml 为主源，BOCOMADP_* 环境变量部署期覆盖。
+
+    优先级（高 → 低）：
+
+    1. 进程环境变量（``BOCOMADP_`` 前缀）
+    2. ``agent_service/.env`` 中的 ``BOCOMADP_*`` 键
+    3. ``agent_service/config.yaml``（``$VAR`` 展开后）—— 主配置源
+    4. 代码默认值
+
+    嵌套字段用 ``__`` 分隔，例如::
 
         BOCOMADP_LOG_LEVEL=debug
         BOCOMADP_LOGGING__ENHANCE__ENABLED=true
         BOCOMADP_SERVICE__PORT=9000
         BOCOMADP_REDIS__HOST=redis.local
-
-    Drop a ``.env`` file next to ``main.py`` for local dev.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="BOCOMADP_",
-        env_file=".env",
+        env_file=DOTENV_FILE,
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        """把 ``config.yaml``（含 $VAR 展开）作为主源插入优先级链。
+
+        source 顺序即优先级：init > 进程环境变量 > .env > config.yaml > secrets。
+        """
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _ExpandedYamlSource(settings_cls, yaml_file=CONFIG_YAML_FILE),
+            file_secret_settings,
+        )
+
+    # ---- 全局（config.yaml 根节点） ----
+    app_name: str = Field(default="交通银行智能体平台")
+    workspace_dir: Path = Field(
+        default_factory=lambda: BASE_DIR / "workspaces",
+        description="工作区目录（AgentScope 沙箱文件读写根目录），相对路径基于 BASE_DIR 归一化。",
+    )
+
+    @field_validator("workspace_dir", mode="before")
+    @classmethod
+    def _normalize_workspace_dir(cls, v: Any) -> Path:
+        """将 workspace_dir 归一化为绝对路径（相对路径基于 BASE_DIR 解析）。
+
+        与启动工作目录无关：无论从哪个目录启动，路径都一致指向
+        ``agent_service/`` 下的目标目录。
+        """
+        if v is None or v == "":
+            return BASE_DIR / "workspaces"
+        return resolve_path(v)
 
     # ---- core ----
     log_level: str = Field(default="info")
@@ -278,37 +405,27 @@ class AppConfig(BaseSettings):
     mcp: McpConfig = Field(default_factory=McpConfig)
 
 
-def _resolve_env(value: str) -> str:
-    """将 ${ENV_VAR} 占位符替换为实际环境变量值。
-
-    支持两种写法：
-    - ``${DEEPSEEK_API_KEY}`` → ``os.environ["DEEPSEEK_API_KEY"]``
-    - ``sk-xxx``              → 原样返回
-    """
-    pattern = re.compile(r"\$\{(\w+)\}")
-    return pattern.sub(lambda m: os.environ.get(m.group(1), ""), value)
-
-
 def load_models_from_yaml(
-    path: str = "config.yaml",
+    path: str | Path | None = None,
 ) -> list[ModelEntry]:
     """从 YAML 文件加载模型 Provider 列表。
 
-    文件不存在时返回空列表（不影响启动）。``api_key`` 中的
-    ``${ENV_VAR}`` 占位符会被替换为实际环境变量值。
+    默认读取 ``agent_service/config.yaml``（绝对路径，与启动工作目录无关），
+    读取后先做 ``$VAR`` / ``${VAR}`` 环境变量展开。文件不存在时返回空列表
+    （不影响启动）。
     """
-    p = Path(path)
-    if not p.exists():
-        return []
-    raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    entries_data = raw.get("models", [])
+    if path:
+        p = Path(path)
+        if not p.exists():
+            return []
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        data = expand_env_vars(raw) if isinstance(raw, dict) else {}
+    else:
+        data = expand_env_vars(load_config_yaml())
+    entries_data = data.get("models", [])
     result: list[ModelEntry] = []
     for item in entries_data:
-        entry = ModelEntry(**item)
-        entry.api_key = _resolve_env(entry.api_key)
-        if entry.base_url:
-            entry.base_url = _resolve_env(entry.base_url)
-        result.append(entry)
+        result.append(ModelEntry(**item))
     return result
 
 
@@ -350,15 +467,13 @@ def build_model_instance(entry: ModelEntry):
     return model
 
 
-def load_config() -> AppConfig:
-    """Load the application config from env / .env file."""
-    return AppConfig()
-
-
 def is_trace_correlation_enabled(config: AppConfig) -> bool:
     """Single source of truth for the trace-correlation gate.
 
     Used by both the TraceMiddleware (ASGI) and ``configure_logging`` so
     they cannot drift on when ``trace_id`` is bound.
     """
-    return bool(getattr(config.logging, "enhance", None) and config.logging.enhance.enabled)
+    return bool(
+        getattr(config.logging, "enhance", None)
+        and config.logging.enhance.enabled
+    )

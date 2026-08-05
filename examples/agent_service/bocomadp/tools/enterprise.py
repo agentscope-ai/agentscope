@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
-"""企业工具工厂。
+"""企业工具主动构建工厂（bocomadp）。
 
-``create_app`` 的 ``extra_agent_tools`` 参数要求一个
-``async (user_id, agent_id, session_id) -> list[ToolBase]`` 工厂。
+采用**主动 build** 而非 custom/ 被动扫描：
+- 企业工具属于确定性注入组件，由 :func:`build_enterprise_tools` 显式构建，
+  每会话按需装配，行为可控、可观测；
+- ``FunctionTool`` 显式包装保留 ``is_read_only`` 语义（查询类工具只读）；
+- 由 ``main.py`` 的通用工具构建入口（``build_agent_tools``）调用，
+  与 ``ToolRegistry`` 自动扫描的内置工具合并注入。
 """
 from __future__ import annotations
 

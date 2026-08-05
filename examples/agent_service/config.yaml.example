@@ -1,54 +1,77 @@
 # ==========================================================
-# Agent Service（企业扩展 bankcomm_adp）单一配置文件模板
-# 复制为 config.yaml 后按需修改：cp config.yaml.example config.yaml
+# BocomADP 配置模板（复制为 config.yaml 后按需修改）
+# cp config.yaml.example config.yaml
 #
-# 该文件为统一配置源，根节点包含全局配置与各工具配置（如 cross_search）。
-# 读取优先级：进程环境变量 > .env 文件 > config.yaml > 代码默认值
+# 本文件为唯一配置源模板：框架级参数（logging/service/redis/
+# runtime/tools/middlewares/mcp/providers）与业务配置（models/
+# app_name/audit/workspace_dir）统一在此声明。
+# 读取优先级：进程环境变量（BOCOMADP_*）> .env > config.yaml > 代码默认值
 # ==========================================================
 
 # ---------- 服务 ----------
 # Web UI 标题与健康检查展示的应用名
 app_name: "交通银行智能体平台"
 
+# ---------- 日志 ----------
+log_level: info
+logging:
+  enhance:
+    enabled: true
+    format: text           # text | json
+
+# ---------- HTTP 服务 ----------
+service:
+  host: 0.0.0.0
+  port: 8000
+  reload: false            # 仅开发期开启自动重载
+
+# ---------- Redis（AgentScope storage / message bus） ----------
+redis:
+  host: localhost
+  port: 6379
+
+# ---------- 运行时 ----------
+runtime:
+  enabled: true
+  heartbeat_interval_seconds: 15.0
+
+# ---------- 组件注册表 ----------
+tools:
+  enabled: true
+  load_custom: true
+
+middlewares:
+  enabled: true
+  load_custom: true
+
+mcp:
+  enabled: true
+  load_custom: true
+
+# ---------- 模型 Provider ----------
+providers:
+  enabled: true
+  config_file: null        # null 表示使用本文件
+
+models:
+  - provider_id: deepseek
+    display_name: "DeepSeek Chat"
+    provider_type: deepseek
+    model_name: deepseek-chat
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com
+    is_active: true
+    supports_multimodal: false
+    parameters:
+      temperature: 0.7
+      max_tokens: 4096
+      thinking_enable: false
+
 # ---------- 审计（Audit） ----------
 audit:
-  # 审计留痕开关：记录每次 agent 调用（谁/何时/用了哪些工具/输出摘要）
   enabled: true
-  # 日志路径（JSONL）
   log_path: "./logs/audit.jsonl"
 
 # ---------- 运行时目录 ----------
-# 工作区目录（AgentScope 沙箱文件读写根目录）
-# 支持 $VAR 环境变量引用展开
+# 工作区目录（AgentScope 沙箱文件读写根目录），支持 $VAR 展开
 workspace_dir: "./workspaces"
-
-# ---------- 跨知识搜索 ----------
-# 扁平结构：键与 cross_search_config.py 字段一一对应。
-# 字符串值支持 $VAR / ${VAR} 环境变量引用展开（如 api_url: $CROSS_SEARCH_API_URL）。
-cross_search:
-  # api_url 支持环境变量引用展开，运行时需设置 CROSS_SEARCH_API_URL
-  api_url: $CROSS_SEARCH_API_URL
-  timeout: 30
-  caller: "VD2026000"
-  search_type: "0"
-  text_top_n: 5
-  vector_top_n: 5
-  qa_type: [0, 1]
-  attach_flag: 1
-  rerank_flag: 1
-  rewrite_flag: "ON"
-  rerank_top_n: 5
-  rerank_rule_code: "RR0005"
-  vector_min_score: 0.54
-  user_role: "0"
-  space_code_list: []
-  team_space_code_list: []
-  user_code: ""
-  psnl_space_code_id: "PER754964863350213"
-  psnl_category_id_list: []
-  headers:
-    Accept: "*/*"
-    Accept-Encoding: "gzip, deflate, br"
-    Connection: "keep-alive"
-    Content-Type: "multipart/form-data"
-    jumpcloud-ENV: "BASE"

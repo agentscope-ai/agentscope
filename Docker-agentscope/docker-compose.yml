@@ -13,16 +13,19 @@ services:
     ports: ["8000:8000"]
     env_file: .env
     environment:
-      - REDIS_HOST=redis
+      # 注意：AppConfig 只识别 BOCOMADP_ 前缀（嵌套字段用 __ 分隔），
+      # 裸 REDIS_HOST 不会生效，会导致容器内连 localhost:6379 失败
+      - BOCOMADP_REDIS__HOST=redis
     depends_on: [redis]
     volumes:
       # 挂载源码（可编辑模式）
       - ../src:/app/src:ro
       - ../examples/agent_service/main.py:/app/main.py:ro
+      # 挂载配置（config.yaml 位于 /app/config.yaml，与 BASE_DIR 解析一致）
+      - ../examples/agent_service/config.yaml:/app/config.yaml:ro
       # 外层产品包：挂载到 /app/bocomadp，随 main.py 一同被 import
+      # （企业扩展原 bankcomm_adp 已整合进 bocomadp，无需单独挂载）
       - ../examples/agent_service/bocomadp:/app/bocomadp:ro
-      # 企业扩展子包：挂载到 /app/bankcomm_adp，随 main.py 一同被 import
-      - ../examples/agent_service/bankcomm_adp:/app/bankcomm_adp:ro
       - ../pyproject.toml:/app/pyproject.toml:ro
       - ../README.md:/app/README.md:ro
       # 工作区数据持久化

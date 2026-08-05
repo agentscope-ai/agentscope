@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
-"""审计留痕（Audit）配置模块。
+"""审计留痕配置 AuditConfig（``config.yaml`` 的 ``audit`` 节点）。
 
-与 ``cross_search_config.py`` 对称，负责从单一 ``config.yaml`` 中提取
-``audit`` 节点（``enabled`` / ``log_path``）。
-
-读取优先级（高到低）：:
-
-    ① config.yaml 的 audit 节点
-    ② 代码默认值
+对应设计文档 ``config/audit_config.py``。``get_audit_config()`` 每次调用
+重新解析，修改 ``config.yaml`` 后即时生效（热加载），配合
+``middleware/factory.py`` 在每次 agent 组装时动态开启/关闭审计。
 """
 from __future__ import annotations
 
@@ -33,7 +29,11 @@ class AuditConfig:
 
     @classmethod
     def from_yaml(cls) -> "AuditConfig":
-        """从 ``config.yaml`` 的 ``audit`` 节点构建配置。"""
+        """从 ``config.yaml`` 的 ``audit`` 节点构建配置。
+
+        ``enabled`` 缺省为 ``True``；``log_path`` 经 ``resolve_path``
+        归一化为绝对路径，缺省为 ``BASE_DIR / "logs" / "audit.jsonl"``。
+        """
         data = load_config_yaml()
         section = yaml_section(data, ["audit"])
 
@@ -51,5 +51,5 @@ class AuditConfig:
 
 
 def get_audit_config() -> AuditConfig:
-    """返回审计留痕配置（每次读取最新 YAML）。"""
+    """返回审计留痕配置（每次读取最新 YAML，热加载入口）。"""
     return AuditConfig.from_yaml()

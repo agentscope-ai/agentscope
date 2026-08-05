@@ -1,6 +1,6 @@
 # BocomADP
 
-基于 AgentScope 2.0 `create_app` 搭建的可扩展 Agent 服务骨架。在官方 `agent_service` 示例之上，构建了完整的模块化扩展架构，并接入企业扩展案例 `bankcomm_adp`。
+基于 AgentScope 2.0 `create_app` 搭建的可扩展 Agent 服务骨架。在官方 `agent_service` 示例之上，构建了完整的模块化扩展架构，企业扩展能力已全部整合进 `bocomadp`。
 
 ## 核心特性
 
@@ -12,7 +12,7 @@
 - **自定义 ASGI 中间件**（`middleware/`）：访问日志、全局错误处理
 - **自定义路由**（`routers/`）：健康检查、SSE 对话、Agent 管理、模型列表、统计示例
 - **子智能体模板**（`agents/`）：researcher / coder，可通过 `custom_subagent_templates` 扩展
-- **企业扩展案例**（`bankcomm_adp/`）：审计留痕、企业内部工具、平台健康检查
+- **企业扩展能力**（bocomadp）：审计留痕、企业内部工具、平台健康检查
 
 ## 目录结构
 
@@ -24,8 +24,8 @@ examples/agent_service/
 ├── README.md
 ├── Dockerfile
 │
-├── bocomadp/                            # 核心扩展包
-│   ├── config.py                        # 核心配置（pydantic-settings，环境变量驱动）
+├── bocomadp/                            # 核心扩展包（含企业扩展能力）
+│   ├── config/                           # 配置包：app_config.py（唯一 schema）/ base.py（公共加载层）/ audit_config.py
 │   │
 │   ├── logging/                         # 日志三件套
 │   │   ├── logging_config.py            # TraceContextFilter + JsonTraceFormatter
@@ -45,14 +45,18 @@ examples/agent_service/
 │   ├── tools/                           # 自定义工具
 │   │   ├── registry.py                  # ToolRegistry (自动扫描)
 │   │   ├── builtin_tools.py             # 内置示例工具
-│   │   └── custom/                      # 你的产品工具放这里
+│   │   ├── enterprise.py                # 企业工具 build 工厂
+│   │   ├── placeholder.py               # 企业工具占位（HR / 文档库 / ITSM）
+│   │   └── custom/                      # 你的产品工具放这里（自动扫描）
 │   │
 │   ├── middleware/                      # 中间件
 │   │   ├── registry.py                  # MiddlewareRegistry (自动扫描)
 │   │   ├── agent_middleware.py          # 内置示例
+│   │   ├── audit.py                     # 企业审计留痕中间件
+│   │   ├── factory.py                   # 企业中间件 build 工厂
 │   │   ├── error_handler.py             # ASGI 错误处理
 │   │   ├── request_log.py               # ASGI 访问日志
-│   │   └── custom/                      # 你的产品中间件放这里
+│   │   └── custom/                      # 你的产品中间件放这里（自动扫描）
 │   │
 │   ├── mcp/                             # MCP 连接器
 │   │   ├── registry.py                  # McpRegistry (自动扫描)
@@ -64,24 +68,11 @@ examples/agent_service/
 │   │   ├── agent_manage.py              # 多 Agent CRUD
 │   │   ├── models.py                    # 模型列表 + 切换
 │   │   ├── health.py                    # 健康检查 (/healthz /readyz)
+│   │   ├── platform_health.py           # 平台健康检查 GET /platform/health
 │   │   └── stats.py                     # 统计示例
 │   │
 │   └── agents/
 │       └── templates.py                 # subagent 模板
-│
-├── bankcomm_adp/                        # 企业扩展案例包
-│   ├── config/                          # 企业配置（dataclass + from_yaml）
-│   │   ├── base.py                      # 公共基座：.env 加载、YAML 解析、环境变量展开
-│   │   ├── settings_config.py           # 全局配置（app_name / workspace_dir）
-│   │   ├── audit_config.py              # 审计配置（enabled / log_path）
-│   │   └── cross_search_config.py       # 跨知识搜索配置
-│   ├── middlewares/
-│   │   ├── audit.py                     # 审计留痕中间件
-│   │   └── factory.py                   # 中间件工厂
-│   ├── routers/
-│   │   └── health.py                    # GET /platform/health
-│   └── tools/
-│       └── enterprise.py               # 企业工具工厂
 │
 └── tests/
     ├── test_logging.py
@@ -92,72 +83,67 @@ examples/agent_service/
 
 ## 配置体系
 
-项目采用 **双配置源** 架构，共享同一个 `config.yaml` 文件：
+**单源化**：`config.yaml` 为唯一配置载体，`AppConfig`（`bocomadp/config/app_config.py`）为唯一 schema（已含 `app_name` / `workspace_dir` / 日志 / Redis / 注册表开关等全部字段），环境变量仅作部署期覆盖。
 
-| 配置源 | 包 | 驱动方式 | 职责 |
-|--------|-----|---------|------|
-| **核心配置** | `bocomadp/config.py` | `pydantic-settings`，环境变量 + `.env` | 框架运行参数（日志、Redis、注册表开关等） |
-| **企业配置** | `bankcomm_adp/config/` | `@dataclass + from_yaml()`，读取 `config.yaml` | 业务参数（应用名、审计、工作区路径、工具配置等） |
+### 配置读取优先级（高 → 低）
 
-### 配置读取优先级
+① 进程环境变量（`BOCOMADP_*`，嵌套字段用 `__` 分隔）→ ② `.env` 文件 → ③ `config.yaml`（含 `$VAR` / `${VAR}` 展开）→ ④ 代码默认值
 
-两个包的读取方式不同：
-
-**bocomadp（核心配置）**：
-- 框架参数（日志、Redis、注册表开关等）→ **环境变量**（`BOCOMADP_*`）+ `.env` 文件
-- 模型 Provider → **config.yaml** 的 `models` 节点
-
-**bankcomm_adp（企业配置）**：
-```
-config.yaml（含 $VAR 环境变量展开）> 代码默认值
-```
 其中 `$VAR` 的取值来源：进程环境变量 > `.env` 文件（首次访问时自动加载，`setdefault` 不覆盖已有值）
 
 ### config.yaml 结构
 
-`config.yaml` 是唯一的 YAML 配置文件，被两个包按节点分工读取：
+`config.yaml` 是唯一 YAML 配置载体，根节点统一声明框架与业务配置：
 
 ```yaml
-# ===== bocomadp 读取 models 节点 =====
-# 由 load_models_from_yaml() 加载，启动时自动注册到 ProviderManager
+# ===== 业务配置 =====
+app_name: "交通银行智能体平台"        # 应用名
+workspace_dir: "./workspaces"        # 工作区目录（支持 $VAR 展开）
+audit:                               # AuditConfig
+  enabled: true
+  log_path: "./logs/audit.jsonl"
+
+# ===== 框架配置 =====
+log_level: info
+logging:
+  enhance:
+    enabled: true
+    format: text                     # text | json
+service:
+  host: 0.0.0.0
+  port: 8000
+  reload: false
+redis:
+  host: localhost
+  port: 6379
+runtime:
+  enabled: true
+  heartbeat_interval_seconds: 15.0
+tools / middlewares / mcp:
+  enabled: true
+  load_custom: true
+providers:
+  enabled: true
+  config_file: null
+
+# ===== 模型 Provider =====
 models:
   - provider_id: deepseek
     provider_type: deepseek
     model_name: deepseek-chat
     api_key: ${DEEPSEEK_API_KEY}     # 支持 ${ENV_VAR} 展开
-    base_url: https://api.deepseek.com
-    is_active: true
-    parameters:
-      temperature: 0.7
-
-# ===== bankcomm_adp 读取以下节点 =====
-app_name: "交通银行智能体平台"        # Settings.app_name
-workspace_dir: "./workspaces"        # Settings.workspace_dir
-
-audit:                               # AuditConfig
-  enabled: true
-  log_path: "./logs/audit.jsonl"
-
-cross_search:                        # CrossSearchConfig
-  api_url: $CROSS_SEARCH_API_URL     # 支持 $VAR 展开
-  timeout: 30
-  ...
+    ...
 ```
 
-> bocomadp 其余配置（日志、Redis、注册表开关等）通过 **环境变量** 控制，不走 config.yaml。
-
-### 核心配置读取流程（bocomadp）
-
-bocomadp 的配置分两路：
-
-**① 环境变量 → pydantic-settings**（框架运行参数）
+### 配置加载流程（bocomadp/config）
 
 ```
 main.py
-  └─ load_config()                          # bocomadp/config.py
+  └─ get_app_config()                       # bocomadp/config/app_config.py
        └─ AppConfig()                       # pydantic-settings
+            ├─ 读取 config.yaml（主源，$VAR 展开）
             ├─ 读取 .env 文件
-            ├─ 读取 BOCOMADP_* 环境变量
+            ├─ 读取 BOCOMADP_* 环境变量（优先级最高）
             └─ 嵌套字段用 __ 分隔
                  如 BOCOMADP_LOGGING__ENHANCE__FORMAT=json
 ```
@@ -186,38 +172,32 @@ BOCOMADP_PROVIDERS__CONFIG_FILE=config.yaml # 模型配置文件路径
 BOCOMADP_RUNTIME__HEARTBEAT_INTERVAL_SECONDS=15.0
 ```
 
-### 企业配置读取流程（bankcomm_adp）
+### 公共加载层（bocomadp/config/base.py）
 
 ```
 main.py
-  └─ get_settings().workspace_dir           # settings_config.py
-       └─ Settings.from_yaml()
-            ├─ load_config_yaml()           # base.py（@lru_cache 缓存）
-            │    └─ yaml.safe_load("config.yaml")
-            ├─ expand_env_vars(data)        # 递归展开 $VAR / ${VAR}
-            │    └─ _load_dotenv_once()     # 首次调用时加载 .env
-            └─ 提取 app_name / workspace_dir
+  └─ get_app_config()                       # AppConfig（唯一 schema，yaml 主源 + env 覆盖 + 键拼写校验）
+       └─ base.py 公共工具
+            ├─ _load_dotenv_once()    # .env 加载（lru_cache 保证只一次，setdefault 不覆盖）
+            ├─ load_config_yaml()     # YAML 读取（lru_cache 仅缓存原始解析）
+            ├─ expand_env_vars()      # $VAR / ${VAR} 递归展开（缓存外执行 → 环境变量实时生效）
+            └─ resolve_path()         # 相对路径 → 绝对路径（基于 BASE_DIR）
 
-  └─ get_audit_config().enabled             # audit_config.py
+  └─ get_audit_config().enabled             # AuditConfig（audit_config.py）
        └─ AuditConfig.from_yaml()
             └─ yaml_section(data, ["audit"]) → enabled / log_path
 ```
 
-企业配置按模块拆分，统一采用 `@dataclass + from_yaml()` 模式：
+配置包结构：
 
 ```
-bankcomm_adp/config/
-├── base.py                  # 公共基座
-│   ├─ _load_dotenv_once()   # .env 加载（lru_cache 保证只一次）
-│   ├─ load_config_yaml()    # YAML 加载（lru_cache 缓存）
-│   ├─ expand_env_vars()     # $VAR / ${VAR} 递归展开
-│   └─ resolve_path()        # 相对路径 → 绝对路径（基于 BASE_DIR）
-├── settings_config.py       # Settings: app_name, workspace_dir
-├── audit_config.py          # AuditConfig: enabled, log_path
-└── cross_search_config.py   # CrossSearchConfig: api_url, timeout, ...
+bocomadp/config/
+├─ base.py             # 公共加载层：BASE_DIR 定位 / .env 加载 / yaml 读取 / $VAR 展开 / 类型工具
+├─ app_config.py       # AppConfig：唯一 schema（yaml 主源 + env 覆盖 + 键拼写校验 fail-fast）
+└─ audit_config.py     # AuditConfig：独立业务分组（dataclass + from_yaml 热加载）
 ```
 
-每个模块通过 `get_xxx_config()` 工厂函数获取，每次调用重新从 YAML 构建（支持运行时修改配置即时生效）。
+`get_app_config()` 每次调用重建 `AppConfig`（热加载）；`get_audit_config()` 每次调用重新 `from_yaml()`（支持运行时修改配置即时生效）。
 
 ### 环境变量展开机制
 
@@ -226,18 +206,15 @@ bankcomm_adp/config/
 ```yaml
 # .env 文件中设置
 DEEPSEEK_API_KEY=sk-xxx
-CROSS_SEARCH_API_URL=https://api.example.com
 
 # config.yaml 中引用
 models:
   - api_key: ${DEEPSEEK_API_KEY}     # → sk-xxx
-cross_search:
-  api_url: $CROSS_SEARCH_API_URL     # → https://api.example.com
 ```
 
 展开时机：
-- **bocomadp**：`load_models_from_yaml()` 中调用 `_resolve_env()` 逐个展开
-- **bankcomm_adp**：`expand_env_vars()` 递归展开整个 YAML 树（字符串、列表、字典中的字符串均支持）
+- **AppConfig（models 节点）**：`_resolve_env()` 逐个展开
+- **YAML 全树（业务节点）**：`expand_env_vars()` 递归展开（字符串、列表、字典中的字符串均支持）
 
 ---
 
@@ -293,7 +270,7 @@ pnpm install && pnpm dev
 | `/api/models/active` | POST | 切换活跃模型 |
 | `/healthz` | GET | 存活检查 |
 | `/readyz` | GET | 就绪检查 |
-| `/platform/health` | GET | 平台健康检查（bankcomm_adp） |
+| `/platform/health` | GET | 平台健康检查（bocomadp） |
 
 > 上述路由叠加在 `create_app` 自动注册的 12 个内置路由之上。
 
@@ -385,7 +362,7 @@ app.include_router(orders_router)
 
 ### main.py 组装流程
 
-1. **配置加载** — `load_config()` 读环境变量 / `.env`
+1. **配置加载** — `get_app_config()` 读 config.yaml + `.env` + `BOCOMADP_*` 环境变量
 2. **日志初始化** — `configure_logging(config)`
 3. **框架模块初始化** — ToolRegistry → MiddlewareRegistry → McpRegistry → ProviderManager → HookRegistry → Runtime
 4. **模型注册** — `load_models_from_yaml("config.yaml")` 自动注册到 ProviderManager

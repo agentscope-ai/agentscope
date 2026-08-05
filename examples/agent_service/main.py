@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """BocomADP — built on top of AgentScope's ``create_app``.
 
-本示例在官方入口之上叠加了企业内部扩展（``bankcomm_adp``），
-同时也是所有关注点统一装配的唯一入口：
+本示例在官方入口之上叠加企业内部扩展，同时也是所有关注点
+统一装配的唯一入口（企业能力已全部整合进 ``bocomadp``）：
 
 1. Load config (:mod:`bocomadp.config`).
 2. Configure logging once at startup (:func:`configure_logging`).
@@ -17,10 +17,9 @@
 6. Mount custom routers (chat SSE, agent manage, models, health, stats).
 7. Register sub-agent templates via ``custom_subagent_templates``.
 
-In addition, enterprise extension cases from ``bankcomm_adp`` are wired in
-alongside the core skeleton (kept as runnable examples, not replacing core):
-   - ``extra_agent_middlewares``: audit trail + data masking (DLP)
-   - ``extra_agent_tools``:       enterprise internal tools (HR / Doc / ITSM)
+企业扩展能力（bocomadp）：
+   - 企业 agent 中间件（审计留痕）：``middleware/factory.py`` 主动 build 装配
+   - 企业工具（HR / Doc / ITSM）：``tools/enterprise.py`` 主动 build 装配
    - ``platform_health_router``:  platform health check (``/platform/health``)
 
 Run::
@@ -47,7 +46,7 @@ from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
 from bocomadp.config import (
-    load_config,
+    get_app_config,
     is_trace_correlation_enabled,
     load_models_from_yaml,
     build_model_instance,
@@ -55,6 +54,7 @@ from bocomadp.config import (
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
+from bocomadp.middleware.factory import build_enterprise_middlewares
 from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
 from bocomadp.providers import ProviderManager
@@ -65,22 +65,16 @@ from bocomadp.routers.agent_manage import (
 from bocomadp.routers.chat_sse import chat_sse_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
+from bocomadp.routers.platform_health import platform_health_router
 from bocomadp.routers.stats import stats_router
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
-from bocomadp.tools import ToolRegistry
-
-# 企业扩展（案例）：管控中间件 + 工具 + 自有路由
-# health_router 重命名为 platform_health_router，避免与 bocomadp 的 health_router 同名
-from bankcomm_adp.config import get_settings
-from bankcomm_adp.middlewares import build_enterprise_middlewares
-from bankcomm_adp.routers import health_router as platform_health_router
-from bankcomm_adp.tools import build_enterprise_tools
+from bocomadp.tools import ToolRegistry, build_enterprise_tools
 
 # ---------------------------------------------------------------------------
 # 1. 配置加载 + 日志初始化
 # ---------------------------------------------------------------------------
-config = load_config()
+config = get_app_config()
 configure_logging(config)
 logger = logging.getLogger("bocomadp.main")
 
@@ -174,9 +168,10 @@ def build_default_mcps() -> list:
     return mcp_registry.list_mcps()
 
 
-# AgentScope ``AgentToolFactory`` —— 返回与内置 ``/chat`` 端点一致的自定义工具，
-# 同时供 Runtime 层的 ``AgentBuilder`` 注入使用，保持两条 agent 创建路径的工具视图一致。
-# 同时合并 ``bankcomm_adp`` 企业内部工具（HR / 文档库 / ITSM 占位）。
+# 通用工具构建入口（AgentScope ``AgentToolFactory``）：
+# 合并「ToolRegistry 自动扫描的内置/自定义工具」+「主动 build 的企业工具」，
+# 同时供 Runtime 层的 ``AgentBuilder`` 注入使用（AgentBuilder 侧取 registry 部分）。
+# 企业工具采用主动 build（tools/enterprise.py），不依赖 custom/ 被动扫描。
 async def build_agent_tools(
     user_id: str,
     agent_id: str,
@@ -189,18 +184,35 @@ async def build_agent_tools(
     return tools
 
 
+# 通用中间件构建入口（AgentScope ``AgentMiddlewareFactory``）：
+# 合并「MiddlewareRegistry 自动扫描的内置中间件」+「主动 build 的企业中间件」，
+# 与 Runtime 层 AgentBuilder 注入的中间件视图保持一致。
+# 企业中间件（审计留痕）采用主动 build（middleware/factory.py），
+# 按会话创建独立实例，不依赖 custom/ 被动扫描。
+async def build_agent_middlewares(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+):
+    middlewares = middleware_registry.list_middlewares()
+    middlewares.extend(
+        await build_enterprise_middlewares(user_id, agent_id, session_id),
+    )
+    return middlewares
+
+
 # ---------------------------------------------------------------------------
 # 4. 存储 / 消息总线 / 工作区 / 知识库
 # ---------------------------------------------------------------------------
 storage = RedisStorage(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
+    host=config.redis.host,
+    port=config.redis.port,
 )
 
 vector_store = QdrantStore(location=":memory:")
 
 workspace_manager = LocalWorkspaceManager(
-    basedir=str(get_settings().workspace_dir),
+    basedir=str(config.workspace_dir),
     default_mcps=build_default_mcps(),
 )
 runtime.workspace_manager = workspace_manager
@@ -237,9 +249,9 @@ app = create_app(
     mcp_hubs=[GitHubMCPHub()],
     skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
     custom_subagent_templates=load_subagent_templates(),
-    # 企业管控中间件（审计 + DLP），与核心中间件并存
-    extra_agent_middlewares=build_enterprise_middlewares,
-    # 已合并核心工具 + bankcomm_adp 企业工具
+    # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
+    extra_agent_middlewares=build_agent_middlewares,
+    # 通用工具构建入口：registry 自动扫描 + 企业工具主动 build（HR / Doc / ITSM）
     extra_agent_tools=build_agent_tools,
     title="BocomADP",
     extra_middlewares=build_asgi_middlewares(trace_enabled),
@@ -263,19 +275,22 @@ app.include_router(stats_router)
 app.include_router(chat_sse_router)
 app.include_router(agent_manage_router)
 app.include_router(models_router)
-# 企业扩展（案例）：/platform/health
+# 平台健康检查（/platform/health）
 app.include_router(platform_health_router)
 
 
 if __name__ == "__main__":
     logger.info(
-        "Starting BocomADP (trace_enhance=%s, format=%s)",
+        "Starting BocomADP on %s:%s (trace_enhance=%s, format=%s, reload=%s)",
+        config.service.host,
+        config.service.port,
         trace_enabled,
         config.logging.enhance.format,
+        config.service.reload,
     )
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=config.service.host,
+        port=config.service.port,
+        reload=config.service.reload,
     )
