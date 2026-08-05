@@ -4,6 +4,7 @@
 import inspect
 import json
 import math
+import sys
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Callable
 
@@ -11,6 +12,13 @@ from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
 
 from .._logging import logger
+
+# Upper bound for integer coercion via Decimal, kept safely below
+# Python's int→str limit (default 4300) so json.dumps won't fail later.
+_int_str_limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+_MAX_COERCED_INT_DIGITS: int = (
+    min(4_000, _int_str_limit - 300) if _int_str_limit else 4_000
+)
 
 
 def _remove_title_field(schema: dict) -> dict:
@@ -621,8 +629,11 @@ def _coerce_to_type(value: Any, expected_type: str) -> Any:
             # would silently corrupt.
             try:
                 d = Decimal(stripped)
-                if d == d.to_integral_value():
-                    return int(d)
+                if d.is_finite() and d == d.to_integral_value():
+                    # d.adjusted() estimates digit count; skip huge
+                    # values to avoid OOM (e.g. "1e1000000000").
+                    if d.adjusted() < _MAX_COERCED_INT_DIGITS:
+                        return int(d)
             except (ValueError, TypeError, InvalidOperation, OverflowError):
                 pass
         return value

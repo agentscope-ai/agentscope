@@ -84,6 +84,25 @@ class ToolCoercionTest(unittest.TestCase):
                     ),
                 )
 
+    def test_integer_coercion_guards_against_huge_values(self) -> None:
+        """Huge values via scientific notation are left unchanged."""
+        schema = _schema({"value": {"type": "integer"}})
+        # Should be kept as-is — would produce a billion-digit int
+        self.assertEqual(
+            _coerce_tool_args({"value": "1e1000000000"}, schema)["value"],
+            "1e1000000000",
+        )
+        # Should be kept as-is — exceeds the digit limit
+        self.assertEqual(
+            _coerce_tool_args({"value": "1e10000"}, schema)["value"],
+            "1e10000",
+        )
+        # Within the limit — should be coerced
+        self.assertEqual(
+            _coerce_tool_args({"value": "1e23"}, schema)["value"],
+            100000000000000000000000,
+        )
+
     def test_nested_and_collection_coercion(self) -> None:
         """Recurse through objects, arrays, JSON values, and refs."""
         schema = _schema(
