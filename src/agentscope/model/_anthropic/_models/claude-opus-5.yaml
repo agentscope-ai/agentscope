@@ -1,5 +1,5 @@
-name: claude-opus-4-7
-label: Claude Opus 4.7
+name: claude-opus-5
+label: Claude Opus 5
 status: active
 
 input_types:

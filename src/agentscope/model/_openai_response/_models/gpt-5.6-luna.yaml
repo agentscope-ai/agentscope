@@ -1,5 +1,5 @@
-name: gpt-5.5
-label: GPT-5.5
+name: gpt-5.6-luna
+label: GPT-5.6 Luna
 status: active
 
 input_types:
@@ -18,7 +18,7 @@ output_size: 128000
 parameter_overrides:
   max_tokens:
     maximum: 128000
+  # Reasoning happens internally and is never returned as content, so the
+  # thinking toggle has nothing to surface — reasoning_effort is the knob.
   thinking_enable:
-    hidden: true
-  reasoning_effort:
     hidden: true

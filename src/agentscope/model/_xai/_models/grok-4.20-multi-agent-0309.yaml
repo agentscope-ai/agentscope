@@ -1,11 +1,9 @@
-name: grok-4.3
-label: Grok 4.3
+name: grok-4.20-multi-agent-0309
+label: Grok 4.20 Multi-Agent
 status: active
 
 input_types:
   - text/plain
-  - image/jpeg
-  - image/png
 
 output_types:
   - text/plain
