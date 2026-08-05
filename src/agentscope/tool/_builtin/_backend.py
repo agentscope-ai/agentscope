@@ -50,6 +50,11 @@ import aiofiles
 # turn into thousands of awaits, small enough to stay off the heap.
 DEFAULT_READ_CHUNK_SIZE = 1024 * 1024
 
+# One NUL-terminated record per entry, for the shell-based ``scandir``
+# and ``stat``. The name goes last because it is the only field that
+# may itself contain a tab, so a bounded split keeps it whole.
+_FIND_ENTRY_FORMAT = "%Y\\t%s\\t%T@\\t%f\\0"
+
 # ── data class ─────────────────────────────────────────────────────────
 
 
@@ -548,7 +553,7 @@ class BackendBase(ABC):
                 The immediate children, or an empty list if ``path``
                 does not exist or cannot be listed.
         """
-        result = await self.exec_shell(
+        return await self._find_entries(
             [
                 "find",
                 path,
@@ -556,12 +561,61 @@ class BackendBase(ABC):
                 "1",
                 "-maxdepth",
                 "1",
-                # Name last: it is the only field that may contain a
-                # tab, so a bounded split keeps it intact.
                 "-printf",
-                "%Y\\t%s\\t%T@\\t%f\\0",
+                _FIND_ENTRY_FORMAT,
             ],
         )
+
+    async def stat(self, path: str) -> DirEntry | None:
+        """Return one path's type, size and mtime in a single call.
+
+        The single-path counterpart of :meth:`scandir`, the way
+        :func:`os.stat` sits beside :func:`os.scandir`. Prefer it over
+        asking :meth:`file_exists`, :meth:`is_dir` and
+        :meth:`stat_mtime` in turn, which is three round trips for what
+        one command answers.
+
+        Args:
+            path (`str`):
+                Path to stat inside the backend's environment.
+
+        Returns:
+            `DirEntry | None`:
+                The entry, or ``None`` if ``path`` does not exist.
+                ``name`` is the base name, as :meth:`scandir` reports
+                it.
+        """
+        entries = await self._find_entries(
+            ["find", path, "-maxdepth", "0", "-printf", _FIND_ENTRY_FORMAT],
+            skip_unresolvable=True,
+        )
+        return entries[0] if entries else None
+
+    async def _find_entries(
+        self,
+        command: list[str],
+        *,
+        skip_unresolvable: bool = False,
+    ) -> list[DirEntry]:
+        """Parse the records a ``_FIND_ENTRY_FORMAT`` run prints.
+
+        Args:
+            command (`list[str]`):
+                The ``find`` argv, already carrying the format.
+            skip_unresolvable (`bool`, defaults to ``False``):
+                Drop entries whose target could not be followed — a
+                dangling symlink, most often. :meth:`stat` wants this
+                (``os.stat`` follows the link and fails, and a caller
+                about to read the file must not be told it is there);
+                :meth:`scandir` does not, since ``os.scandir`` lists a
+                broken link like any other name.
+
+        Returns:
+            `list[DirEntry]`:
+                One entry per record, or an empty list when ``find``
+                failed (a missing path, most often).
+        """
+        result = await self.exec_shell(command)
         if not result.ok():
             return []
 
@@ -589,6 +643,8 @@ class BackendBase(ABC):
             # which would read as a real 21-byte file; ``os.scandir``
             # reports nothing there, so neither does this.
             if kind in ("N", "L", "?"):
+                if skip_unresolvable:
+                    continue
                 size, mtime = None, None
             is_dir = kind == "d"
             entries.append(
@@ -948,6 +1004,31 @@ class LocalBackend(BackendBase):
         except OSError:
             return []
         return entries
+
+    async def stat(self, path: str) -> DirEntry | None:
+        """Return one local path's type, size and mtime.
+
+        Args:
+            path (`str`):
+                Path to stat.
+
+        Returns:
+            `DirEntry | None`:
+                The entry, or ``None`` if ``path`` does not exist or
+                cannot be stat'd.
+        """
+        try:
+            # Follows symlinks, as ``os.DirEntry.stat`` does by default.
+            info = os.stat(path)
+        except OSError:
+            return None
+        is_dir = os.path.isdir(path)
+        return DirEntry(
+            name=os.path.basename(path),
+            is_dir=is_dir,
+            size_bytes=None if is_dir else info.st_size,
+            mtime=info.st_mtime,
+        )
 
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of a local file.

@@ -287,6 +287,29 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
         # A directory's own size is noise; the contract pins it to None.
         self.assertIsNone(entries["d"].size_bytes)
 
+    async def test_stat_reports_file_and_directory(self) -> None:
+        """``stat`` answers type, size and mtime in one call."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"payload")
+        entry = await self.backend.stat(path)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.name, "f.txt")
+        self.assertFalse(entry.is_dir)
+        self.assertEqual(entry.size_bytes, 7)
+        self.assertIsNotNone(entry.mtime)
+
+        directory = await self.backend.stat(self.temp_dir.name)
+        self.assertTrue(directory.is_dir)
+        self.assertIsNone(directory.size_bytes)
+
+    async def test_stat_missing_path_returns_none(self) -> None:
+        """A path with nothing behind it stats to None, not an error."""
+        self.assertIsNone(
+            await self.backend.stat(
+                os.path.join(self.temp_dir.name, "missing"),
+            ),
+        )
+
     async def test_scandir_missing_dir_returns_empty(self) -> None:
         """An unlistable path yields no entries rather than raising."""
         self.assertEqual(

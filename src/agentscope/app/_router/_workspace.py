@@ -494,15 +494,16 @@ async def list_workspace_directory(
     backend = workspace.get_backend()
     target = backend.abspath(path, cwd=workspace.workdir)
 
-    if not await backend.is_dir(target):
-        if await backend.file_exists(target):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Requested path is a file, not a directory.",
-            )
+    entry = await backend.stat(target)
+    if entry is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Directory not found.",
+        )
+    if not entry.is_dir:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path is a file, not a directory.",
         )
 
     # One call for the whole directory: asking per entry would be one
@@ -615,18 +616,23 @@ async def read_workspace_file(
     target = backend.abspath(path, cwd=workspace.workdir)
     basename = backend.basename(target) or "download"
 
-    if await backend.is_dir(target):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Requested path is a directory, not a file.",
-        )
-    if not await backend.file_exists(target):
+    entry = await backend.stat(target)
+    if entry is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found.",
         )
+    if entry.is_dir:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path is a directory, not a file.",
+        )
 
     headers: dict[str, str] = {}
+    # Lets the browser show real download progress instead of a
+    # spinner of unknown length; omitted when the backend cannot stat.
+    if entry.size_bytes is not None:
+        headers["Content-Length"] = str(entry.size_bytes)
     if download:
         headers[
             "Content-Disposition"

@@ -134,6 +134,18 @@ class _FakeBackend:
             return 1_700_000_000.0
         return None
 
+    async def stat(self, path: str) -> DirEntry | None:
+        """Return one path's metadata, or None when it is not tracked."""
+        is_dir = path in self._dirs
+        if not is_dir and path not in self._files:
+            return None
+        return DirEntry(
+            name=posixpath.basename(path),
+            is_dir=is_dir,
+            size_bytes=None if is_dir else len(self._files[path]),
+            mtime=1_700_000_000.0,
+        )
+
     async def scandir(self, path: str) -> list[DirEntry]:
         """Return each child with its metadata, as one batch would."""
         entries = []
@@ -418,6 +430,8 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             x_user_id="u",
         )
         self.assertEqual(response.media_type, "text/plain")
+        # Without this the browser can only show an indeterminate bar.
+        self.assertEqual(response.headers["content-length"], "11")
         self.assertNotIn("content-disposition", response.headers)
         self.assertEqual(await _collect(response), b"hello world")
 
