@@ -12,6 +12,10 @@ that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
 import asyncio
+import hashlib
+import json
+import time
+from collections import OrderedDict
 
 from fastapi import HTTPException
 
@@ -54,7 +58,7 @@ from ...event import (
 )
 from ._errors import _classify_error
 from ...message import AssistantMsg, Msg, ToolCallState
-from ...permission import AdditionalWorkingDirectory
+from ...permission import AdditionalWorkingDirectory, PermissionEngine
 
 
 class ChatService:
@@ -86,6 +90,7 @@ class ChatService:
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
+        build_cache_max_size: int = 512,
     ) -> None:
         """Initialize chat service.
 
@@ -161,6 +166,33 @@ class ChatService:
             SubagentHitlProjector(storage),
             *(extra_projectors or []),
         ]
+        # P1: per-session build cache — keyed by (user, agent, session),
+        # LRU-evicted. Each entry reuses the assembled toolkit / model /
+        # agent across consecutive turns; only the mutable AgentState is
+        # hot-swapped per turn (see ``_run_impl``).
+        self._build_cache: "OrderedDict[tuple[str, str, str], dict[str, object]]" = (
+            OrderedDict()
+        )
+        self._build_cache_max_size = max(build_cache_max_size, 1)
+
+    def _build_fingerprint(
+        self,
+        agent_record: AgentRecord,
+        session_record: SessionRecord,
+    ) -> str:
+        """Hash the build inputs that change what gets assembled.
+
+        The mutable ``AgentState`` (persisted after every turn) is
+        deliberately excluded — it is hot-swapped onto the cached agent
+        instead of participating in the fingerprint, so that consecutive
+        turns of a session reuse the build while state keeps evolving.
+        """
+        payload = {
+            "agent": agent_record.data.model_dump(mode="json"),
+            "config": session_record.config.model_dump(mode="json"),
+        }
+        raw = json.dumps(payload, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def run(
         self,
@@ -328,12 +360,39 @@ class ChatService:
                     f"agent {agent_id!r}."
                 ),
             )
-        workspace = await self._workspace_manager.get_workspace(
-            user_id,
-            agent_id,
-            session_id,
-            session_record.config.workspace_id,
-        )
+        # ----------------------------------------------------------------
+        # 1b. P1 per-session build cache: reuse the assembled toolkit /
+        # model / agent across consecutive turns of the same session when
+        # the build inputs (agent data + session config) are unchanged.
+        #
+        # Only the mutable per-turn ``AgentState`` is hot-swapped: it is
+        # re-read from storage every run and persisted afterwards, so the
+        # cached agent never carries stale conversation state. The
+        # permission engine is rebuilt from the fresh state because
+        # runtime-accumulated rules live on the state (persisted), not on
+        # the engine instance.
+        # ----------------------------------------------------------------
+        build_started = time.perf_counter()
+        cache_key = (user_id, agent_id, session_id)
+        fingerprint = self._build_fingerprint(agent_record, session_record)
+        cached = self._build_cache.get(cache_key)
+        build_hit = cached is not None and cached["fingerprint"] == fingerprint
+        if build_hit:
+            workspace = cached["workspace"]
+            agent = cached["agent"]
+            session_record.state.session_id = session_id
+            agent.state = session_record.state
+            agent._engine = PermissionEngine(
+                session_record.state.permission_context,
+            )
+            self._build_cache.move_to_end(cache_key)
+        else:
+            workspace = await self._workspace_manager.get_workspace(
+                user_id,
+                agent_id,
+                session_id,
+                session_record.config.workspace_id,
+            )
 
         # Add workspace working directory to the permission context
         if (
@@ -496,6 +555,32 @@ class ChatService:
             state=agent_state,
             middlewares=middlewares,
             offloader=workspace,
+        )
+
+        # ----------------------------------------------------------------
+        # 5b. P1: store the assembled build for reuse by the next turn of
+        # this session. LRU-evicted when the cache exceeds its capacity.
+        # ----------------------------------------------------------------
+        if not build_hit:
+            if len(self._build_cache) >= self._build_cache_max_size:
+                self._build_cache.popitem(last=False)
+            self._build_cache[cache_key] = {
+                "fingerprint": fingerprint,
+                "agent": agent,
+                "workspace": workspace,
+            }
+
+        # ----------------------------------------------------------------
+        # 5c. P1 observability — build HIT/MISS timing per session.
+        # ----------------------------------------------------------------
+        build_ms = (time.perf_counter() - build_started) * 1000
+        logger.info(
+            "AGENT-BUILD %s user=%s agent=%s session=%s build_ms=%.1f",
+            "HIT" if build_hit else "MISS",
+            user_id,
+            agent_id,
+            session_id,
+            build_ms,
         )
 
         # ----------------------------------------------------------------
