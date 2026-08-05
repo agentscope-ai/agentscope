@@ -337,11 +337,12 @@ def _coerce_composite(
             continue
         try:
             coerced = _coerce_to_type(value, alt_type)
+        except (ValueError, TypeError):
+            continue
+        if _value_matches_type(coerced, alt_type):
             if coerced is not value:
                 _log_coercion(param, type(value).__name__, alt_type)
             return _coerce_value(coerced, resolved_alt, defs, param)
-        except (ValueError, TypeError):
-            continue
 
     return value
 
@@ -529,11 +530,12 @@ def _coerce_union(
             continue
         try:
             coerced = _coerce_to_type(value, t)
+        except (ValueError, TypeError):
+            continue
+        if _value_matches_type(coerced, t):
             if coerced is not value:
                 _log_coercion(param, type(value).__name__, t)
             return _coerce_nested(coerced, prop_schema, defs, param)
-        except (ValueError, TypeError):
-            continue
 
     # Nothing worked — return as-is
     return value

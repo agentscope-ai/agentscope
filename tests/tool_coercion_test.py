@@ -185,6 +185,23 @@ class ToolCoercionTest(unittest.TestCase):
             _coerce_tool_args({"optional": None}, schema)["optional"],
         )
 
+    def test_anyof_coercion_continues_on_failure(self) -> None:
+        """When a coercion attempt fails, the loop continues to the next
+        alternative instead of stopping at the first one."""
+        schema = _schema(
+            {
+                "value": {
+                    "anyOf": [{"type": "integer"}, {"type": "number"}],
+                },
+            },
+        )
+        # "3.14" can't be integer, but can be coerced to number (3.14)
+        result = _coerce_tool_args({"value": "3.14"}, schema)
+        self.assertIsInstance(
+            result["value"], float, "Should coerce to float, not keep str",
+        )
+        self.assertEqual(result["value"], 3.14)
+
     def test_discriminated_unions_are_conservative(self) -> None:
         """Select matching branch, leave unknown branches intact."""
         schema = _schema(
