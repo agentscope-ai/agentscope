@@ -30,7 +30,7 @@ parameter_overrides:
         type: string
       - type: "null"
   # xhigh landed after this generation; max is supported.
-  effort:
+  reasoning_effort:
     anyOf:
       - enum: [low, medium, high, max]
         type: string

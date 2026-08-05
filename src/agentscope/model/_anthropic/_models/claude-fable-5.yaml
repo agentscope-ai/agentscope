@@ -20,7 +20,7 @@ output_size: 128000
 parameter_overrides:
   max_tokens: {"maximum": 128000}
   # Thinking is always on here and cannot be disabled or budgeted —
-  # ``effort`` is the only depth control this model accepts.
+  # ``reasoning_effort`` is the only depth control it accepts.
   thinking_enable:
     hidden: true
   thinking_budget:

@@ -25,6 +25,6 @@ parameter_overrides:
     hidden: true
   thinking_display:
     hidden: true
-  # Sonnet 4.5 does not accept the effort parameter.
-  effort:
+  # Sonnet 4.5 does not accept the reasoning_effort parameter.
+  reasoning_effort:
     hidden: true

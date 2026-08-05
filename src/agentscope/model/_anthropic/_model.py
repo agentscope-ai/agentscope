@@ -80,17 +80,18 @@ class AnthropicChatModel(ChatModelBase):
             ),
         )
 
-        effort: (
+        reasoning_effort: (
             Literal["low", "medium", "high", "xhigh", "max"] | None
         ) = Field(
             default=None,
-            title="Effort",
+            title="Reasoning Effort",
             description=(
-                "How many tokens Claude spends on the whole response, "
-                "thinking included. Sent as ``output_config.effort``. The "
-                "API default is ``high``. Supported levels vary by model "
-                "— see the model card, and note that Claude Sonnet 4.5 "
-                "and Claude Haiku 4.5 do not accept this parameter at all."
+                "How many tokens Claude spends on the whole response — "
+                "not just thinking, but tool calls and explanation too. "
+                "Sent as Anthropic's ``output_config.effort``. The API "
+                "default is ``high``. Supported levels vary by model — see "
+                "the model card, and note that Claude Sonnet 4.5 and "
+                "Claude Haiku 4.5 do not accept this parameter at all."
             ),
         )
 
@@ -234,8 +235,10 @@ class AnthropicChatModel(ChatModelBase):
             kwargs["thinking"] = thinking
 
         # Effort travels inside ``output_config``, not as a top-level field.
-        if self.parameters.effort and "output_config" not in kwargs:
-            kwargs["output_config"] = {"effort": self.parameters.effort}
+        if self.parameters.reasoning_effort and "output_config" not in kwargs:
+            kwargs["output_config"] = {
+                "effort": self.parameters.reasoning_effort,
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
         if fmt_tools:

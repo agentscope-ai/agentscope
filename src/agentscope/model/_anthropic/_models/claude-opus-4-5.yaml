@@ -25,9 +25,9 @@ parameter_overrides:
     hidden: true
   thinking_display:
     hidden: true
-  # The oldest model accepting effort at all; xhigh and max arrived with
-  # the 4.6 generation.
-  effort:
+  # The oldest model accepting reasoning_effort at all; xhigh and max
+  # arrived with the 4.6 generation.
+  reasoning_effort:
     anyOf:
       - enum: [low, medium, high]
         type: string

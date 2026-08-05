@@ -256,7 +256,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
 
 
 class TestAnthropicEffort(IsolatedAsyncioTestCase):
-    """Tests for the ``effort`` parameter."""
+    """Tests for the ``reasoning_effort`` parameter."""
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
@@ -266,14 +266,14 @@ class TestAnthropicEffort(IsolatedAsyncioTestCase):
         self.mock_client.messages.create = self.mock_create
 
     async def test_effort_omitted_by_default(self) -> None:
-        """No output_config is sent when effort is unset."""
+        """No output_config is sent when reasoning_effort is unset."""
         await self.model([])
 
         self.assertNotIn("output_config", self.mock_create.call_args.kwargs)
 
     async def test_effort_nested_in_output_config(self) -> None:
         """Effort travels inside output_config, not as a top-level field."""
-        self.model.parameters.effort = "medium"
+        self.model.parameters.reasoning_effort = "medium"
 
         await self.model([])
 
@@ -283,7 +283,7 @@ class TestAnthropicEffort(IsolatedAsyncioTestCase):
 
     async def test_effort_coexists_with_thinking(self) -> None:
         """Effort and extended thinking are independent controls."""
-        self.model.parameters.effort = "max"
+        self.model.parameters.reasoning_effort = "max"
         self.model.parameters.thinking_enable = True
         self.model.parameters.thinking_budget = 1024
 
@@ -298,7 +298,7 @@ class TestAnthropicEffort(IsolatedAsyncioTestCase):
 
     async def test_caller_output_config_wins(self) -> None:
         """An explicit output_config kwarg is not overwritten."""
-        self.model.parameters.effort = "low"
+        self.model.parameters.reasoning_effort = "low"
 
         await self.model([], output_config={"effort": "high"})
 
