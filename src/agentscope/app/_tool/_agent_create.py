@@ -463,6 +463,7 @@ optional):
                     react_config=template.react_config.model_copy(
                         deep=True,
                     ),
+                    subagent_type=template.type,
                 ),
             )
             await self._storage.upsert_agent(self._user_id, worker_agent)

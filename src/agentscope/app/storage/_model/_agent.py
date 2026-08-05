@@ -102,6 +102,15 @@ class AgentData(BaseModel):
         title="React Config",
     )
 
+    subagent_type: str | None = Field(
+        default=None,
+        description=(
+            "Template type used to spawn this team worker. ``None`` for "
+            "user-owned agents, invited agents, and legacy worker records."
+        ),
+        title="Sub-agent Type",
+    )
+
     invite_config: InviteConfig = Field(
         default_factory=InviteConfig,
         description="The invite config for the agent.",

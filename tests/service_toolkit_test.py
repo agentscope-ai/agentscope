@@ -26,6 +26,7 @@ from agentscope.app._manager import (
     SchedulerManager,
 )
 from agentscope.app._service import ResourceAccessService, get_toolkit
+from agentscope.app._types import SubAgentTemplate
 from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.storage import (
     AgentData,
@@ -71,7 +72,12 @@ class _NullBus:
     nothing in :func:`get_toolkit` actually awaits it."""
 
 
-def _make_agent(*, source: str = "user", name: str = "A") -> AgentRecord:
+def _make_agent(
+    *,
+    source: str = "user",
+    name: str = "A",
+    subagent_type: str | None = None,
+) -> AgentRecord:
     """Build a minimal :class:`AgentRecord`."""
     return AgentRecord(
         user_id="u",
@@ -81,6 +87,7 @@ def _make_agent(*, source: str = "user", name: str = "A") -> AgentRecord:
             system_prompt=f"You are {name}.",
             context_config=ContextConfig(),
             react_config=ReActConfig(),
+            subagent_type=subagent_type,
         ),
     )
 
@@ -319,6 +326,141 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
             "AgentInvite",
         ):
             self.assertNotIn(missing, names)
+
+    async def test_worker_gets_matching_template_tools(self) -> None:
+        """A worker spawned from a template receives that template's
+        scoped extra tools."""
+
+        class _TemplateTool(_StubTool):
+            """Stub tool emitted by a sub-agent template."""
+
+            name: str = "template-tool"
+            description: str = "template scoped tool"
+
+        template_tool = _TemplateTool()
+
+        async def factory(
+            _user_id: str,
+            _agent_id: str,
+            _session_id: str,
+        ) -> list[ToolBase]:
+            """Return the template-scoped tool."""
+            return [template_tool]
+
+        agent = _make_agent(
+            source="team",
+            name="researcher-1",
+            subagent_type="researcher",
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+            team_id="t1",
+        )
+        team = TeamRecord(
+            user_id="u",
+            session_id="leader-sid",
+            data=TeamData(name="team", description="d"),
+        )
+        storage = _NoOpStorage(team_id_map={"t1": team})
+        toolkit = await get_toolkit(
+            storage=storage,  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+            sub_agent_templates={
+                "researcher": SubAgentTemplate(
+                    type="researcher",
+                    description="Research worker.",
+                    system_prompt_template="Research.",
+                    extra_tools_factory=factory,
+                ),
+            },
+            middlewares=[],
+            resource_access_service=_make_access(storage),
+        )
+
+        names = set(_tool_names(toolkit))
+        self.assertIn("TeamSay", names)
+        self.assertIn("template-tool", names)
+
+    async def test_worker_without_matching_template_skips_template_tools(
+        self,
+    ) -> None:
+        """A worker does not receive tools from unrelated templates."""
+
+        class _TemplateTool(_StubTool):
+            """Stub tool emitted by a sub-agent template."""
+
+            name: str = "template-tool"
+            description: str = "template scoped tool"
+
+        async def factory(
+            _user_id: str,
+            _agent_id: str,
+            _session_id: str,
+        ) -> list[ToolBase]:
+            """Return the template-scoped tool."""
+            return [_TemplateTool()]
+
+        agent = _make_agent(
+            source="team",
+            name="coder-1",
+            subagent_type="coder",
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+            team_id="t1",
+        )
+        team = TeamRecord(
+            user_id="u",
+            session_id="leader-sid",
+            data=TeamData(name="team", description="d"),
+        )
+        storage = _NoOpStorage(team_id_map={"t1": team})
+        toolkit = await get_toolkit(
+            storage=storage,  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+            sub_agent_templates={
+                "researcher": SubAgentTemplate(
+                    type="researcher",
+                    description="Research worker.",
+                    system_prompt_template="Research.",
+                    extra_tools_factory=factory,
+                ),
+            },
+            middlewares=[],
+            resource_access_service=_make_access(storage),
+        )
+
+        self.assertNotIn("template-tool", _tool_names(toolkit))
 
 
 class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
