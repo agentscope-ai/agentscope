@@ -1,7 +1,17 @@
 import { toast } from 'sonner';
 
+/**
+ * API 路径前缀（构建期经 VITE_API_PREFIX 注入，默认 /api）。
+ * 后端路由自带 /api 前缀，nginx / vite 代理均不剥前缀，直接透传。
+ */
+const API_PREFIX = import.meta.env.VITE_API_PREFIX ?? '/api';
+
 export const getBaseUrl = () => localStorage.getItem('server_url') ?? '';
 export const getUserId = () => localStorage.getItem('username') ?? '';
+
+/** 构建完整 API URL：统一拼接 /api 前缀与基址（未配置 server_url 时回退到同源）。 */
+export const buildApiUrl = (path: string): URL =>
+	new URL(API_PREFIX + path, getBaseUrl() || window.location.origin);
 
 /**
  * Structured error thrown for non-2xx HTTP responses.
@@ -48,7 +58,7 @@ async function extractErrorDetail(res: Response): Promise<string> {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
 	const { method = 'GET', body, params, silent = false } = options;
-	const url = new URL(path, getBaseUrl());
+	const url = buildApiUrl(path);
 	if (params) {
 		Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 	}
@@ -75,7 +85,7 @@ async function streamRequest(
 	options: RequestOptions & { signal?: AbortSignal } = {},
 ): Promise<Response> {
 	const { method = 'GET', body, params, signal, silent = false } = options;
-	const url = new URL(path, getBaseUrl());
+	const url = buildApiUrl(path);
 	if (params) {
 		Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 	}
