@@ -19,6 +19,8 @@ from ._router import (
     embedding_model_router,
     mcp_router,
     model_router,
+    realtime_model_router,
+    realtime_router,
     tts_model_router,
     schedule_router,
     session_router,
@@ -312,6 +314,7 @@ def create_app(
         agent_router,
         chat_router,
         credential_router,
+        realtime_router,
         health_router,
         hub_router,
         knowledge_base_router,
@@ -322,6 +325,7 @@ def create_app(
         workspace_router,
         model_router,
         tts_model_router,
+        realtime_model_router,
         embedding_model_router,
     ):
         app.include_router(router)

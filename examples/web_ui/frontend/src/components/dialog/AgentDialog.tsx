@@ -2,7 +2,7 @@ import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ContextConfig, InviteConfig, ReActConfig } from '@/api';
+import type { AgentType, ContextConfig, InviteConfig, ReActConfig } from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
@@ -62,9 +62,11 @@ export function AgentDialog({ onCreated, children }: Props) {
 		if (!name) return;
 		setErrorMsg('');
 		setSubmitting(true);
+		const agentType = (values.identity.agent_type as AgentType | undefined) ?? 'chat';
 		try {
 			await create(
 				{
+					agent_type: agentType,
 					name,
 					system_prompt: values.identity.system_prompt as string | undefined,
 					context_config: values.context_config as unknown as ContextConfig,

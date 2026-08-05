@@ -9,6 +9,7 @@ from .._utils._common import _generate_id
 if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase, ModelCard
+    from ..realtime import RealtimeModelBase, RealtimeModelCard
     from ..tts import TTSModelBase
     from ..tts._tts_model_card import TTSModelCard
 
@@ -41,6 +42,38 @@ class CredentialBase(BaseModel):
         )
 
     @classmethod
+    def get_realtime_model_class(cls) -> Type["RealtimeModelBase"] | None:
+        """Return the :class:`RealtimeModelBase` subclass that consumes this
+        credential, or ``None`` if this provider does not support realtime.
+
+        Returns:
+            `Type[RealtimeModelBase] | None`:
+                The realtime model class, or ``None``.
+        """
+        return None
+
+    def resolve_realtime_base_url(self) -> str | None:
+        """Resolve the WebSocket endpoint used by realtime models.
+
+        The default implementation disables realtime for the concrete
+        credential instance. Providers that support realtime override this
+        method and may take instance-level routing fields (for example a
+        custom ``realtime_base_url``) into account.
+
+        Returns:
+            `str | None`: The resolved WebSocket base URL, or ``None`` when
+                realtime is unavailable for this credential instance.
+        """
+        return None
+
+    def supports_realtime(self) -> bool:
+        """Whether this concrete credential can construct a realtime model."""
+        return (
+            type(self).get_realtime_model_class() is not None
+            and self.resolve_realtime_base_url() is not None
+        )
+
+    @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:
         """Return the TTS model classes supported by this credential.
 
@@ -53,6 +86,31 @@ class CredentialBase(BaseModel):
                 The TTS model classes, or an empty list.
         """
         return []
+
+    @classmethod
+    def list_realtime_models(cls) -> list["RealtimeModelCard"]:
+        """List the candidate realtime models supported by this provider.
+
+        Returns:
+            `list[RealtimeModelCard]`:
+                A list of realtime model cards, or empty if the provider does
+                not support realtime.
+        """
+        rt_cls = cls.get_realtime_model_class()
+        if rt_cls is None:
+            return []
+        return rt_cls.list_models()
+
+    def list_available_realtime_models(self) -> list["RealtimeModelCard"]:
+        """List realtime models usable by this credential instance.
+
+        Unlike :meth:`list_realtime_models`, this also applies instance-level
+        routing constraints such as a custom HTTP ``base_url`` requiring an
+        explicit ``realtime_base_url``.
+        """
+        if not self.supports_realtime():
+            return []
+        return type(self).list_realtime_models()
 
     @classmethod
     def list_tts_models(cls) -> list["TTSModelCard"]:

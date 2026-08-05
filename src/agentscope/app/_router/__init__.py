@@ -3,6 +3,7 @@
 from ._agent import agent_router
 from ._chat import chat_router
 from ._credential import credential_router
+from ._realtime import realtime_router
 from ._embedding_model import embedding_model_router
 from ._health import health_router
 from ._hub import hub_router
@@ -13,6 +14,7 @@ from ._session import session_router
 from ._skill import skill_router
 from ._model import model_router
 from ._tts_model import tts_model_router
+from ._realtime_model import realtime_model_router
 from ._workspace import workspace_router
 
 __all__ = [
@@ -20,8 +22,10 @@ __all__ = [
     "model_router",
     "embedding_model_router",
     "tts_model_router",
+    "realtime_model_router",
     "chat_router",
     "credential_router",
+    "realtime_router",
     "health_router",
     "hub_router",
     "knowledge_base_router",

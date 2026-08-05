@@ -8,6 +8,6 @@ export { hubApi } from './hub';
 export { mcpApi } from './mcp';
 export { skillApi } from './skill';
 export { scheduleApi } from './schedule';
-export { embeddingModelApi, modelApi, ttsModelApi } from './model';
+export { embeddingModelApi, modelApi, realtimeModelApi, ttsModelApi } from './model';
 export { knowledgeBaseApi } from './knowledgeBase';
 export { healthApi } from './health';

@@ -61,7 +61,7 @@ async def get_agent_schema() -> AgentSchemaResponse:
     # a dict by hand) keeps Pydantic as the single source of truth for
     # defaults, titles, descriptions, and the ``format: textarea`` hint.
     agent_schema = AgentData.model_json_schema()
-    identity_keys = ("name", "system_prompt")
+    identity_keys = ("agent_type", "name", "system_prompt")
     identity = {
         "type": "object",
         "title": "Identity",
@@ -197,6 +197,7 @@ async def create_agent(
     """
     try:
         data = AgentData(
+            agent_type=body.agent_type,
             name=body.name,
             system_prompt=body.system_prompt,
             context_config=body.context_config,

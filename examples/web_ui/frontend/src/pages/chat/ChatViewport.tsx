@@ -1,9 +1,21 @@
+import { EventType } from '@agentscope-ai/agentscope/event';
+import type { ContentBlock, ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import { UserMsg } from '@agentscope-ai/agentscope/message';
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+	BookText,
+	ChevronDown,
+	Database,
+	ListTodo,
+	Mic,
+	MicOff,
+	PanelRight,
+	ShieldCheck,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
+import type { AgentType, ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
@@ -19,6 +31,7 @@ import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBa
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { RealtimeModelSelect } from '@/components/select/RealtimeModelSelect';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,12 +47,43 @@ import {
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
+import { useMicrophone } from '@/hooks/useMicrophone';
+import { useRealtimeSession } from '@/hooks/useRealtimeSession';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useTranslation } from '@/i18n/useI18n';
+
+const WILDCARD_EXPANSIONS: Record<string, string[]> = {
+	'image/*': ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+	'video/*': ['video/mp4', 'video/webm'],
+	'audio/*': ['audio/wav', 'audio/mp3', 'audio/ogg', 'audio/webm'],
+};
+
+/** Expand wildcard MIME types (e.g. ``image/*``) into concrete types
+ *  that can be matched against file inputs, and filter to types the
+ *  file picker recognises. */
+function expandWildcardTypes(types: string[]): string[] {
+	const result: string[] = [];
+	for (const t of types) {
+		const expanded = WILDCARD_EXPANSIONS[t];
+		if (expanded) {
+			result.push(...expanded);
+		} else if (
+			/^(image|video|audio|text)\/.+/.test(t) ||
+			t === 'application/pdf' ||
+			t.startsWith('application/vnd.') ||
+			t.startsWith('application/msword') ||
+			t.startsWith('application/vnd.openxmlformats')
+		) {
+			result.push(t);
+		}
+	}
+	return result;
+}
 
 interface ChatViewportProps {
 	/**
@@ -53,6 +97,11 @@ interface ChatViewportProps {
 	 * workspace drive every control rendered here.
 	 */
 	sessionId: string | null;
+	/**
+	 * The type of the current agent. Controls which model selectors
+	 * and input modes are shown.
+	 */
+	agentType: AgentType;
 	/**
 	 * Optional hook invoked when a team membership change arrives on
 	 * this viewport's SSE stream. The outer page owns the session list
@@ -151,10 +200,11 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+export function ChatViewport({ agentId, sessionId, agentType, onTeamUpdated }: ChatViewportProps) {
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
+	const { groups: realtimeGroups } = useAvailableRealtimeModels();
 
 	// When the viewport agent differs from the outer page's selected
 	// agent (i.e. user drilled into a team member), `refetchSessions`
@@ -171,6 +221,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<ChatModelConfig | null>(
+		null,
+	);
 	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
 		useState<SessionKnowledgeConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
@@ -196,11 +249,99 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
-		useMessages(agentId, sessionId, {
-			onTeamUpdated: handleTeamUpdated,
-			onStateUpdated: handleStateUpdated,
+	// ── Voice mode ────────────────────────────────────────────────
+	const [voiceMode, setVoiceMode] = useState(false);
+	const [micEnabled, setMicEnabled] = useState(true);
+	const voiceModeRef = useRef(voiceMode);
+	useEffect(() => {
+		voiceModeRef.current = voiceMode;
+	}, [voiceMode]);
+
+	const {
+		msgs,
+		phase,
+		send,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl,
+		processEvent,
+		appendLocalMsg,
+		interrupt,
+	} = useMessages(agentId, sessionId, {
+		onTeamUpdated: handleTeamUpdated,
+		onStateUpdated: handleStateUpdated,
+		voiceModeRef,
+	});
+
+	const {
+		connected: realtimeConnected,
+		sendAudio,
+		sendConfirm,
+		sendContent,
+		sendInterrupt,
+	} = useRealtimeSession(agentId, sessionId, voiceMode, processEvent);
+	useMicrophone(sendAudio, voiceMode && realtimeConnected && micEnabled);
+
+	// In voice mode, route tool-call confirmations through the WebSocket
+	// so RealtimeAgent.handle_user_confirm() resolves the pending future.
+	// Also apply the event locally via processEvent for immediate UI update.
+	const handleUserConfirm = useCallback(
+		async (
+			toolCall: ToolCallBlock,
+			confirm: boolean,
+			replyId: string,
+			rules?: ToolCallBlock['suggested_rules'],
+		) => {
+			if (agentType === 'realtime') {
+				if (!voiceMode || !realtimeConnected) return;
+				const event = {
+					type: EventType.USER_CONFIRM_RESULT,
+					id: crypto.randomUUID(),
+					created_at: new Date().toISOString(),
+					reply_id: replyId,
+					confirm_results: [
+						{ confirmed: confirm, tool_call: toolCall, rules: rules ?? null },
+					],
+				};
+				sendConfirm(event);
+				processEvent(event as never);
+			} else {
+				await onUserConfirm(toolCall, confirm, replyId, rules);
+			}
+		},
+		[agentType, voiceMode, realtimeConnected, sendConfirm, processEvent, onUserConfirm],
+	);
+
+	/** Send handler: realtime agents only use their active WebSocket;
+	 *  regular agents use the HTTP/SSE chat path. */
+	const handleSend = useCallback(
+		(content: ContentBlock[]) => {
+			if (agentType === 'realtime') {
+				if (!voiceMode || !realtimeConnected) return;
+				const userMsg = UserMsg({ name: 'user', content });
+				appendLocalMsg(userMsg);
+				sendContent(content);
+			} else {
+				send(content);
+			}
+		},
+		[agentType, voiceMode, realtimeConnected, appendLocalMsg, sendContent, send],
+	);
+
+	const handleInterrupt = useCallback(() => {
+		if (agentType === 'realtime') {
+			void interrupt(sendInterrupt);
+		} else {
+			void interrupt();
+		}
+	}, [agentType, interrupt, sendInterrupt]);
+
+	const handleToggleVoiceMode = useCallback(() => {
+		setVoiceMode((prev) => {
+			if (!prev) setMicEnabled(true);
+			return !prev;
 		});
+	}, []);
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -386,8 +527,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedRealtimeModel(null);
+		setVoiceMode(false);
 		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
+
+	// Auto-disable voice mode when the realtime model is cleared.
+	useEffect(() => {
+		if (!selectedRealtimeModel) {
+			setVoiceMode(false);
+		}
+	}, [selectedRealtimeModel]);
 
 	const selectedModelCard = useMemo(() => {
 		if (!selectedModel) return null;
@@ -399,6 +549,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 		return null;
 	}, [groups, selectedModel?.type, selectedModel?.model]);
+
+	const selectedRealtimeModelCard = useMemo(() => {
+		if (!selectedRealtimeModel) return null;
+		const items = realtimeGroups[selectedRealtimeModel.type];
+		if (!items) return null;
+		for (const { models } of items) {
+			const card = models.find((m) => m.name === selectedRealtimeModel.model);
+			if (card) return card;
+		}
+		return null;
+	}, [realtimeGroups, selectedRealtimeModel?.type, selectedRealtimeModel?.model]);
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -459,9 +620,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	}, [view]);
 
 	// Sync selectedModel + selectedFallbackModel from the session
-	// record. If the session has no model configured yet, auto-pick
-	// the first available one and persist it back so subsequent
-	// reasoning has a model to call.
+	// record. For chat agents, auto-pick the first available model
+	// if none is configured. For realtime agents, skip auto-picking
+	// a chat model (they use realtime models instead).
 	//
 	// Important: skip while `view` is still loading. Otherwise the
 	// in-flight window between "agentId changed" and "useSessions
@@ -474,7 +635,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 		if (sessionModel) {
 			setSelectedModel(sessionModel);
-		} else {
+		} else if (agentType === 'chat') {
 			const firstModel = getFirstAvailableModel();
 			if (firstModel) {
 				setSelectedModel(firstModel);
@@ -487,12 +648,15 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			} else {
 				setSelectedModel(null);
 			}
+		} else {
+			setSelectedModel(null);
 		}
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedRealtimeModel(view.session.config.realtime_model_config ?? null);
 		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
-	}, [view, groups, sessionId, agentId]);
+	}, [view, groups, sessionId, agentId, agentType]);
 
 	// Sync selectedPermissionMode when the session changes. Same
 	// loading-window guard as above — don't reset the displayed mode
@@ -555,6 +719,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		await refetchSessions();
 	};
 
+	const handleRealtimeChange = async (config: ChatModelConfig | null) => {
+		if (!sessionId || !agentId) return;
+		// Close the active voice session so the stale WebSocket (bound to
+		// the old model) is torn down.  The user can re-enable voice mode
+		// to start a fresh session with the new model.
+		setVoiceMode(false);
+		setSelectedRealtimeModel(config);
+		await sessionApi.update(sessionId, agentId, { realtime_model_config: config });
+		await refetchSessions();
+	};
+
 	/**
 	 * Persist a permission-mode change.
 	 *
@@ -581,24 +756,52 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									<SidebarTrigger className="md:hidden" />
 								</div>
 								<div className="flex flex-row gap-x-1">
-									<LlmSelect
-										id="tour-llm-select"
-										variant="ghost"
-										className="font-mono text-muted-foreground hover:text-foreground"
-										value={selectedModel}
-										onChange={handleLlmChange}
-										onAddCredential={() => setCredentialOpen(true)}
-										refetchTrigger={credentialRefetchTrigger}
-									/>
-									<ModelParametersPopover
-										selectedModel={selectedModel}
-										modelCard={selectedModelCard}
-										onChange={handleParametersChange}
-										selectedFallbackModel={selectedFallbackModel}
-										onFallbackChange={handleFallbackChange}
-										selectedTTSModel={selectedTTSModel}
-										onTTSChange={handleTTSChange}
-									/>
+									{agentType === 'chat' ? (
+										<>
+											<LlmSelect
+												id="tour-llm-select"
+												variant="ghost"
+												className="font-mono text-muted-foreground hover:text-foreground"
+												value={selectedModel}
+												onChange={handleLlmChange}
+												onAddCredential={() => setCredentialOpen(true)}
+												refetchTrigger={credentialRefetchTrigger}
+											/>
+											<ModelParametersPopover
+												selectedModel={selectedModel}
+												modelCard={selectedModelCard}
+												onChange={handleParametersChange}
+												selectedFallbackModel={selectedFallbackModel}
+												onFallbackChange={handleFallbackChange}
+												selectedTTSModel={selectedTTSModel}
+												onTTSChange={handleTTSChange}
+											/>
+										</>
+									) : (
+										<RealtimeModelSelect
+											value={selectedRealtimeModel}
+											onChange={handleRealtimeChange}
+										/>
+									)}
+									{agentType === 'realtime' && (
+										<Button
+											size="icon-sm"
+											variant={voiceMode ? 'default' : 'ghost'}
+											onClick={handleToggleVoiceMode}
+											disabled={
+												!sessionId ||
+												phase !== 'idle' ||
+												!selectedRealtimeModel
+											}
+											aria-label={t('voiceMode.toggle')}
+										>
+											{voiceMode ? (
+												<Mic className="size-4" />
+											) : (
+												<MicOff className="size-4" />
+											)}
+										</Button>
+									)}
 									<PermissionModeSelect
 										id="tour-permission-mode"
 										variant={'ghost'}
@@ -668,10 +871,16 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
 									phase={phase}
-									disabled={selectedModel === null}
-									onSend={send}
-									onUserConfirm={onUserConfirm}
-									onInterrupt={interrupt}
+									disabled={
+										agentType === 'realtime'
+											? selectedRealtimeModel === null ||
+												!voiceMode ||
+												!realtimeConnected
+											: selectedModel === null
+									}
+									onSend={handleSend}
+									onUserConfirm={handleUserConfirm}
+									onInterrupt={handleInterrupt}
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard
@@ -688,19 +897,15 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											/>
 										) : null
 									}
-									allowedInputTypes={(
-										selectedModelCard?.input_types ?? []
-									).filter(
-										(t) =>
-											/^(image|video|audio|text)\/.+/.test(t) ||
-											t === 'application/pdf' ||
-											t.startsWith('application/vnd.') ||
-											t.startsWith('application/msword') ||
-											t.startsWith('application/vnd.openxmlformats'),
+									allowFilesOnly={agentType === 'realtime'}
+									allowedInputTypes={expandWildcardTypes(
+										(agentType === 'realtime'
+											? selectedRealtimeModelCard?.input_types
+											: selectedModelCard?.input_types) ?? [],
 									)}
 									fileProcessor={async (file) => {
 										const filePath = (file as File & { path?: string }).path;
-										if (filePath) {
+										if (filePath && !voiceMode) {
 											return {
 												id: crypto.randomUUID(),
 												type: 'data' as const,

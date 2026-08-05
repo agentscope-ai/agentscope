@@ -9,6 +9,8 @@ from ...._utils._common import _generate_id
 from ._base import _RecordBase
 from ....agent import ContextConfig, ReActConfig
 
+AgentType = Literal["chat", "realtime"]
+
 
 class InviteConfig(BaseModel):
     """User-editable invite settings for :class:`AgentData`.
@@ -77,6 +79,15 @@ class AgentData(BaseModel):
     off that schema) while still being serialised in normal JSON
     dumps (so persisted records keep the id).
     """
+
+    agent_type: AgentType = Field(
+        default="chat",
+        description=(
+            "The type of the agent. 'chat' for text-based chat agents, "
+            "'realtime' for realtime voice agents."
+        ),
+        title="Agent Type",
+    )
 
     name: str = Field(
         description="The name of the agent.",

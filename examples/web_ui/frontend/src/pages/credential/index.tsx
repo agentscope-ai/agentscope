@@ -1,12 +1,13 @@
 import { Eye, EyeOff, Plus, Trash2, Pen } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
-import { credentialApi, embeddingModelApi, modelApi, ttsModelApi } from '@/api';
+import { credentialApi, embeddingModelApi, modelApi, realtimeModelApi, ttsModelApi } from '@/api';
 import type {
 	CredentialView,
 	CredentialSchema,
 	EmbeddingModelCard,
 	ModelCard,
+	RealtimeModelCard,
 	TTSModelCard,
 } from '@/api';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
@@ -43,10 +44,10 @@ import { cn } from '@/lib/utils';
 import { formatNumber } from '@/utils/common.ts';
 
 /** Which model list the detail panel is showing. */
-type ModelTab = 'llm' | 'tts' | 'embedding';
+type ModelTab = 'llm' | 'tts' | 'realtime' | 'embedding';
 
 /** A row in the model table — one of the three card shapes. */
-type ModelRow = ModelCard | TTSModelCard | EmbeddingModelCard;
+type ModelRow = ModelCard | TTSModelCard | RealtimeModelCard | EmbeddingModelCard;
 
 // ─── Masked value ─────────────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ interface ModelTableProps {
  */
 function ModelTable({ models, variant }: ModelTableProps) {
 	const { t } = useTranslation();
-	const isChat = variant === 'llm';
+	const isChat = variant === 'llm' || variant === 'realtime';
 	const isEmbedding = variant === 'embedding';
 
 	return (
@@ -170,7 +171,7 @@ function ModelTable({ models, variant }: ModelTableProps) {
 					</TableHeader>
 					<TableBody>
 						{models.map((model) => {
-							const chat = isChat ? (model as ModelCard) : null;
+							const chat = isChat ? (model as ModelCard | RealtimeModelCard) : null;
 							const embed = isEmbedding ? (model as EmbeddingModelCard) : null;
 							const tts = variant === 'tts' ? (model as TTSModelCard) : null;
 							const context = chat?.context_size ?? embed?.context_size;
@@ -191,6 +192,9 @@ function ModelTable({ models, variant }: ModelTableProps) {
 												<ModelTag>{t('credential.reasoning')}</ModelTag>
 											)}
 											{tts?.realtime && (
+												<ModelTag>{t('credential.realtime')}</ModelTag>
+											)}
+											{variant === 'realtime' && (
 												<ModelTag>{t('credential.realtime')}</ModelTag>
 											)}
 											{model.status !== 'active' && (
@@ -245,13 +249,21 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 	const { t } = useTranslation();
 	const [models, setModels] = useState<ModelCard[]>([]);
 	const [ttsModels, setTtsModels] = useState<TTSModelCard[]>([]);
+	const [realtimeModels, setRealtimeModels] = useState<RealtimeModelCard[]>([]);
 	const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelCard[]>([]);
 	const [modelsLoading, setModelsLoading] = useState(false);
 	const [tab, setTab] = useState<ModelTab>('llm');
 
 	const type = credential.data.type as string | undefined;
-	const shown = tab === 'llm' ? models : tab === 'tts' ? ttsModels : embeddingModels;
-	const total = models.length + ttsModels.length + embeddingModels.length;
+	const shown =
+		tab === 'llm'
+			? models
+			: tab === 'tts'
+				? ttsModels
+				: tab === 'realtime'
+					? realtimeModels
+					: embeddingModels;
+	const total = models.length + ttsModels.length + realtimeModels.length + embeddingModels.length;
 
 	// A credential switch can land on a provider with no TTS models at
 	// all, which would leave the tab pointing at an empty list.
@@ -269,14 +281,19 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 				.list(type)
 				.then((res) => res.models)
 				.catch(() => [] as TTSModelCard[]),
+			realtimeModelApi
+				.list(type)
+				.then((res) => res.models)
+				.catch(() => [] as RealtimeModelCard[]),
 			embeddingModelApi
 				.list(type)
 				.then((res) => res.models)
 				.catch(() => [] as EmbeddingModelCard[]),
 		])
-			.then(([chatModels, tts, embeddings]) => {
+			.then(([chatModels, tts, realtime, embeddings]) => {
 				setModels(chatModels);
 				setTtsModels(tts);
+				setRealtimeModels(realtime);
 				setEmbeddingModels(embeddings);
 			})
 			.finally(() => setModelsLoading(false));
@@ -386,7 +403,9 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 							<span className="font-mono text-[11px] text-text-data">{total}</span>
 						</span>
 						{/* Only worth a switch when there is a second list to switch to. */}
-						{(ttsModels.length > 0 || embeddingModels.length > 0) && (
+						{(ttsModels.length > 0 ||
+							realtimeModels.length > 0 ||
+							embeddingModels.length > 0) && (
 							<TabsList className="bg-surface-muted">
 								{/* Only the shadow is overridden here; the stock one
 							    is shadow-sm. */}
@@ -407,6 +426,17 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 										{t('common.tts')}
 										<span className="font-mono text-[10px] text-text-data">
 											{ttsModels.length}
+										</span>
+									</TabsTrigger>
+								)}
+								{realtimeModels.length > 0 && (
+									<TabsTrigger
+										value="realtime"
+										className="px-2.5 text-[11.5px] text-muted-foreground group-data-[variant=default]/tabs-list:data-active:shadow-tab!"
+									>
+										{t('credential.realtime')}
+										<span className="font-mono text-[10px] text-text-data">
+											{realtimeModels.length}
 										</span>
 									</TabsTrigger>
 								)}
@@ -443,6 +473,9 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 							</TabsContent>
 							<TabsContent value="tts">
 								<ModelTable models={ttsModels} variant="tts" />
+							</TabsContent>
+							<TabsContent value="realtime">
+								<ModelTable models={realtimeModels} variant="realtime" />
 							</TabsContent>
 							<TabsContent value="embedding">
 								<ModelTable models={embeddingModels} variant="embedding" />

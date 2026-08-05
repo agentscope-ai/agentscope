@@ -5,13 +5,20 @@ import warnings
 from pydantic import BaseModel, Field
 
 from ....agent import ContextConfig, ReActConfig
-from ...storage import InviteConfig
+from ...storage import AgentType, InviteConfig
 from ..._service import AgentView
 
 
 class CreateAgentRequest(BaseModel):
     """Request body for creating a new agent."""
 
+    agent_type: AgentType = Field(
+        default="chat",
+        description=(
+            "Type of agent to create. 'chat' for text-based chat agents, "
+            "'realtime' for realtime voice agents."
+        ),
+    )
     name: str = Field(description="Display name of the agent.")
     system_prompt: str = Field(
         default="You're a helpful assistant.",
@@ -47,6 +54,10 @@ class UpdateAgentRequest(BaseModel):
     Omit any field to keep its current value.
     """
 
+    agent_type: AgentType | None = Field(
+        default=None,
+        description="New agent type.",
+    )
     name: str | None = Field(default=None, description="New display name.")
     system_prompt: str | None = Field(
         default=None,
@@ -95,8 +106,8 @@ class AgentSchemaResponse(BaseModel):
 
     identity: dict = Field(
         description=(
-            "Schema for the agent's identity fields (``name``, "
-            "``system_prompt``)."
+            "Schema for the agent's identity fields (``agent_type``, "
+            "``name``, ``system_prompt``)."
         ),
     )
     context_config: dict = Field(

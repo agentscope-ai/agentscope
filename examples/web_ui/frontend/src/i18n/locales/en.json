@@ -159,6 +159,12 @@
 		"description": "Define a new agent's identity and behaviour."
 	},
 	"agent-form": {
+		"type": {
+			"legend": "Agent Type",
+			"description": "Choose the type of agent to create.",
+			"chat": "Chat Agent",
+			"realtime": "Realtime Voice Agent"
+		},
 		"identity": {
 			"legend": "Agent Identity",
 			"description": "Name and instructions that define this agent's behaviour.",
@@ -307,6 +313,12 @@
 		"configured": "Configured",
 		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
+		"maxContext": "Max. Context",
+		"maxOutput": "Max. Output",
+		"inputTypes": "Input",
+		"outputTypes": "Output",
+		"availableTTSModels": "TTS Models",
+		"availableRealtimeModels": "Realtime Models",
 		"realtime": "Realtime",
 		"table": {
 			"model": "Model",
@@ -476,7 +488,11 @@
 		"ttsEmpty": "No TTS models available.",
 		"ttsParameters": "Parameters",
 		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
-		"noTts": "No TTS"
+		"noTts": "No TTS",
+		"realtimeLabel": "Realtime",
+		"realtimeEmpty": "No realtime models available.",
+		"realtimeParametersDescription": "Adjust parameters for the selected realtime model.",
+		"noRealtime": "No realtime model"
 	},
 	"setup": {
 		"title": "Connect to Service",
@@ -596,7 +612,16 @@
 	},
 	"team-sidebar": {
 		"membersHeading": "Members",
-		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate."
+		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+		"running": "Running",
+		"idle": "Idle",
+		"missingSession": "(no session)"
+	},
+	"voiceMode": {
+		"toggle": "Voice mode",
+		"connecting": "Connecting…",
+		"listening": "Listening…",
+		"muted": "Tap to unmute"
 	},
 	"mcp": {
 		"subtitle": "Browse and install MCP servers",

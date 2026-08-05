@@ -1,4 +1,4 @@
-import { Check, ChevronDown } from 'lucide-react';
+import { AudioLines, Check, ChevronDown, MessageSquareText } from 'lucide-react';
 
 import type { AgentView } from '@/api';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,14 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 	className?: string;
 }
 
+function AgentTypeIcon({ agent }: { agent: AgentView }) {
+	return agent.data.agent_type === 'realtime' ? (
+		<AudioLines className="size-3.5 shrink-0" />
+	) : (
+		<MessageSquareText className="size-3.5 shrink-0" />
+	);
+}
+
 /**
  * Agent picker used in the chat sidebar. Rendered on top of the
  * shadcn dropdown-menu primitives (same base as `LlmSelect`) so
@@ -46,7 +54,6 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 	const hasShared = agents.some((a) => !a.editable);
 	const yours = agents.filter((a) => a.editable);
 	const shared = agents.filter((a) => !a.editable);
-
 	const renderItem = (agent: AgentView) => {
 		const isSelected = agent.id === value;
 		return (
@@ -54,6 +61,7 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 				<Check
 					className={`size-3.5 shrink-0 ${isSelected ? 'opacity-100' : 'opacity-0'}`}
 				/>
+				<AgentTypeIcon agent={agent} />
 				<span className="min-w-0 flex-1 truncate">{agent.data.name}</span>
 				{!agent.editable && (
 					<Badge
@@ -77,7 +85,10 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 					className={cn('justify-between gap-1 font-normal', className)}
 					{...props}
 				>
-					<span className="truncate">{displayLabel}</span>
+					<span className="flex min-w-0 items-center gap-1.5 truncate">
+						{selected && <AgentTypeIcon agent={selected} />}
+						<span className="truncate">{displayLabel}</span>
+					</span>
 					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>

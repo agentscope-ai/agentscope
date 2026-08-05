@@ -302,6 +302,11 @@ async def create_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await _ensure_credential_exists(
+        access,
+        user_id,
+        body.realtime_model_config,
+    )
     await _ensure_knowledge_bases_exist(
         access,
         user_id,
@@ -328,6 +333,7 @@ async def create_session(
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
+            realtime_model_config=body.realtime_model_config,
             knowledge_config=body.knowledge_config,
             **({"name": body.name} if body.name is not None else {}),
         ),
@@ -462,6 +468,11 @@ async def update_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await _ensure_credential_exists(
+        access,
+        user_id,
+        body.realtime_model_config,
+    )
     await _ensure_knowledge_bases_exist(
         access,
         user_id,
@@ -803,6 +814,10 @@ async def stream_session_events(
             )
 
             yield f"data: {data}\n\n"
+
+        # Signal replay completion so clients can distinguish replay
+        # from live events (e.g. to suppress audio autoplay).
+        yield f"data: {json.dumps({'type': 'REPLAY_DONE'})}\n\n"
 
         # 2. Live subscribe via a background feeder task that pushes
         #    events into a queue. The main loop reads from the queue

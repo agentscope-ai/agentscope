@@ -22,6 +22,10 @@ from ._embedding_model import (
 )
 from ._model import ListModelsResponse, ListModelsRequest
 from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
+from ._realtime_model import (
+    ListRealtimeModelsResponse,
+    ListRealtimeModelsRequest,
+)
 from ._schedule import (
     CreateScheduleRequest,
     CreateScheduleResponse,
@@ -133,6 +137,9 @@ __all__ = [
     # TTS Model
     "ListTTSModelsRequest",
     "ListTTSModelsResponse",
+    # Realtime Model
+    "ListRealtimeModelsRequest",
+    "ListRealtimeModelsResponse",
     # Schedule
     "CreateScheduleRequest",
     "CreateScheduleResponse",

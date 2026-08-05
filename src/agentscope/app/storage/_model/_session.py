@@ -140,6 +140,9 @@ class SessionConfig(BaseModel):
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
 
+    realtime_model_config: ChatModelConfig | None = None
+    """The realtime model config. None means realtime is not enabled."""
+
     knowledge_config: SessionKnowledgeConfig | None = None
     """Knowledge bases attached to this session and the corresponding
     :class:`~agentscope.middleware.RAGMiddleware` parameters.

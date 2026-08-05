@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
-import type { SessionRecord } from '@/api';
+import type { AgentType, SessionRecord } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
@@ -123,6 +123,10 @@ const ChatPageInner = () => {
 		focusedMember && focusedMember.session_id
 			? focusedMember.session_id
 			: (urlSessionId ?? null);
+	const effectiveAgentType: AgentType =
+		focusedMember && focusedMember.session_id
+			? (focusedMember.agent.data.agent_type ?? 'chat')
+			: (selectedAgent?.data.agent_type ?? 'chat');
 
 	// Redirect: URL is missing an agent → pick the first one and rewrite
 	// the URL in-place (replace so we don't pollute history).
@@ -134,8 +138,12 @@ const ChatPageInner = () => {
 
 	// Redirect: URL has an agent but no session, or its sessionId no
 	// longer exists for this agent → pick the first available session.
+	// Guard: only redirect when sessions actually belong to the current
+	// agent — useSessions clears via useEffect (async), so stale sessions
+	// from the previous agent may still be present on the first render.
 	useEffect(() => {
 		if (!urlAgentId || sessions.length === 0) return;
+		if (sessions[0].session.agent_id !== urlAgentId) return;
 		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
 		if (matches) return;
 		navigate(`/chat/${urlAgentId}/${sessions[0].session.id}`, { replace: true });
@@ -154,14 +162,23 @@ const ChatPageInner = () => {
 	const handleCreateSession = async () => {
 		if (!urlAgentId) return;
 		const seedConfig = currentView?.session.config ?? sessions[0]?.session.config;
+		const agentType = selectedAgent?.data.agent_type ?? 'chat';
 		const res = await createSession({
 			agent_id: urlAgentId,
-			...(seedConfig?.chat_model_config
-				? { chat_model_config: seedConfig.chat_model_config }
-				: {}),
-			...(seedConfig?.fallback_chat_model_config
-				? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
-				: {}),
+			...(agentType === 'realtime'
+				? {
+						...(seedConfig?.realtime_model_config
+							? { realtime_model_config: seedConfig.realtime_model_config }
+							: {}),
+					}
+				: {
+						...(seedConfig?.chat_model_config
+							? { chat_model_config: seedConfig.chat_model_config }
+							: {}),
+						...(seedConfig?.fallback_chat_model_config
+							? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
+							: {}),
+					}),
 		});
 		navigate(`/chat/${urlAgentId}/${res.session_id}`);
 	};
@@ -482,6 +499,7 @@ const ChatPageInner = () => {
 				<ChatViewport
 					agentId={effectiveAgentId}
 					sessionId={effectiveSessionId}
+					agentType={effectiveAgentType}
 					onTeamUpdated={refetchSessions}
 				/>
 			</div>

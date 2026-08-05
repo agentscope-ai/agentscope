@@ -54,6 +54,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		setValues({
 			identity: {
 				...base.identity,
+				agent_type: d.agent_type ?? 'chat',
 				name: d.name,
 				system_prompt: d.system_prompt,
 			},
@@ -111,7 +112,12 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				</DialogHeader>
 				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
 					{schema && values ? (
-						<AgentFormFields schema={schema} values={values} onChange={handleChange} />
+						<AgentFormFields
+							schema={schema}
+							values={values}
+							onChange={handleChange}
+							lockType
+						/>
 					) : (
 						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
 					)}

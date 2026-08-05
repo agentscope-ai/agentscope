@@ -7,6 +7,7 @@ from ._redis_storage import RedisStorage
 from ._model import (
     AgentData,
     AgentRecord,
+    AgentType,
     CredentialRecord,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
@@ -67,6 +68,7 @@ __all__ = [
     "InviteConfig",
     "AgentData",
     "AgentRecord",
+    "AgentType",
     "CredentialRecord",
     "KnowledgeBaseData",
     "KnowledgeBaseRecord",
