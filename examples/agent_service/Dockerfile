@@ -35,10 +35,17 @@ RUN uv sync --extra service --extra storage-redis --extra workspace-docker --no-
 # 源码通过 volume 挂载，修改即时生效
 RUN uv pip install --no-deps -e .
 
-# 复制启动脚本
+# 复制启动脚本 + 外层产品包
 COPY examples/agent_service/main.py ./
+COPY examples/agent_service/bocomadp ./bocomadp
+COPY examples/agent_service/.env.example ./
+
+# 外层包在 PYTHONPATH 上（cwd=/app）
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
 # 启动服务
 CMD ["python", "main.py"]
+# 需要外部参数时改用:
+# CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

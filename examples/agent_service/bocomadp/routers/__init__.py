@@ -1,0 +1,28 @@
+"""Custom routers for BocomADP.
+
+## Directory layout
+
+- ``health.py``       — liveness / readiness probes
+- ``stats.py``        — example business router
+- ``chat_sse.py``     — SSE streaming chat endpoint (Runtime layer)
+- ``agent_manage.py`` — multi-agent CRUD API
+- ``models.py``       — model listing + switching API
+- ``custom/``         — your product-specific routers
+
+Routers are mounted on the FastAPI app in ``main.py`` via
+``app.include_router(...)``.
+"""
+
+from .chat_sse import chat_sse_router
+from .agent_manage import agent_manage_router
+from .models import models_router
+from .health import health_router
+from .stats import stats_router
+
+__all__ = [
+    "chat_sse_router",
+    "agent_manage_router",
+    "models_router",
+    "health_router",
+    "stats_router",
+]
