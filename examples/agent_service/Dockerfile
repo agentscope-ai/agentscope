@@ -35,8 +35,10 @@ RUN uv sync --extra service --extra storage-redis --extra workspace-docker --no-
 # 源码通过 volume 挂载，修改即时生效
 RUN uv pip install --no-deps -e .
 
-# 复制启动脚本
-COPY examples/agent_service/main.py ./
+# 复制启动脚本及其企业扩展子包（bankcomm_adp）
+# 整个 examples/agent_service 目录复制到 /app，main.py 位于 /app/main.py，
+# bankcomm_adp 位于 /app/bankcomm_adp，运行时即可被 import。
+COPY examples/agent_service/ ./
 
 EXPOSE 8000
 

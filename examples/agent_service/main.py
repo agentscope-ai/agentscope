@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
-"""The example script to start the agent service."""
+"""The example script to start the agent service.
+
+本示例在官方入口之上叠加了企业内部扩展（``bankcomm_adp``）：
+    - ``extra_agent_middlewares``: 审计留痕 + 数据脱敏（DLP）
+    - ``extra_agent_tools``:       企业内部工具占位（HR / 文档库 / ITSM）
+    - ``health_router``:           平台自有健康检查路由
+
+认证保持官方默认的 ``X-User-ID`` 头方式（与 ``examples/web_ui`` 前端兼容）。
+"""
 import os
 
 import uvicorn
@@ -15,6 +23,11 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.rag import QdrantStore
+
+# 企业内部扩展：管控中间件 + 工具 + 自有路由
+from bankcomm_adp.middlewares import build_enterprise_middlewares
+from bankcomm_adp.routers import health_router
+from bankcomm_adp.tools import build_enterprise_tools
 
 default_mcps = [
     MCPClient(
@@ -79,6 +92,10 @@ app = create_app(
     # only raises the rate limit.
     mcp_hubs=[GitHubMCPHub()],
     skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
+    # 企业管控中间件：审计 + DLP
+    extra_agent_middlewares=build_enterprise_middlewares,
+    # 企业内部工具：HR / 文档库 / ITSM
+    extra_agent_tools=build_enterprise_tools,
     # Customize your own subagent templates
     custom_subagent_templates=[
         SubAgentTemplate(
@@ -126,6 +143,9 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
         ),
     ],
 )
+
+# 挂载平台自有路由（与 AgentScope 内置路由并列）
+app.include_router(health_router)
 
 
 if __name__ == "__main__":
