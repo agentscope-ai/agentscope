@@ -22,7 +22,7 @@ bus/wakeup infrastructure, which works correctly across processes.
 import asyncio
 import json
 from copy import deepcopy
-from typing import AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable
 
 from .._manager import BackgroundTaskManager
 from ...middleware import MiddlewareBase
@@ -41,6 +41,62 @@ from ..._logging import logger
 
 # Sentinel object used to signal end-of-stream in the drain queue.
 _QUEUE_SENTINEL = object()
+
+_SUMMARY_MAX_LEN = 128
+
+
+def _make_summary(tool_name: str, raw_input: str | None) -> str:
+    """Generate a short human-readable summary for frontend display.
+
+    The result is guaranteed to be at most :data:`_SUMMARY_MAX_LEN`
+    characters. For dict-shaped JSON inputs, multiple key=value pairs
+    are included up to the length budget.
+
+    Args:
+        tool_name (`str`):
+            The tool name (always included as prefix).
+        raw_input (`str | None`):
+            The raw JSON-encoded tool input string.
+
+    Returns:
+        `str`:
+            A concise summary such as ``Bash(command=ls -la, ...)``.
+    """
+    if not raw_input:
+        return tool_name[:_SUMMARY_MAX_LEN]
+
+    try:
+        parsed: Any = json.loads(raw_input)
+    except (json.JSONDecodeError, TypeError):
+        snippet = raw_input[:64]
+        suffix = "..." if len(raw_input) > 64 else ""
+        result = f"{tool_name}({snippet}{suffix})"
+        return result[:_SUMMARY_MAX_LEN]
+
+    if not isinstance(parsed, dict) or not parsed:
+        return tool_name[:_SUMMARY_MAX_LEN]
+
+    prefix = f"{tool_name}("
+    suffix = ")"
+    budget = _SUMMARY_MAX_LEN - len(prefix) - len(suffix)
+    if budget <= 0:
+        return tool_name[:_SUMMARY_MAX_LEN]
+
+    parts: list[str] = []
+    used = 0
+    for key, val in parsed.items():
+        val_str = str(val)
+        if len(val_str) > 40:
+            val_str = val_str[:37] + "..."
+        part = f"{key}={val_str}"
+        separator_len = 2 if parts else 0
+        if used + len(part) + separator_len > budget:
+            parts.append("...")
+            break
+        parts.append(part)
+        used += len(part) + separator_len
+
+    return (prefix + ", ".join(parts) + suffix)[:_SUMMARY_MAX_LEN]
 
 
 class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
@@ -363,6 +419,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             agent_id=self._agent_id,
             user_id=self._user_id,
             tool_name=tool_name,
+            summary=_make_summary(tool_name, tool_call.input),
         )
 
         logger.info(
