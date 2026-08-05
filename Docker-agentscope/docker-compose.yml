@@ -19,6 +19,8 @@ services:
       # 挂载源码（可编辑模式）
       - ../src:/app/src:ro
       - ../examples/agent_service/main.py:/app/main.py:ro
+      # 企业扩展子包：挂载到 /app/bankcomm_adp，随 main.py 一同被 import
+      - ../examples/agent_service/bankcomm_adp:/app/bankcomm_adp:ro
       - ../pyproject.toml:/app/pyproject.toml:ro
       - ../README.md:/app/README.md:ro
       # 工作区数据持久化
