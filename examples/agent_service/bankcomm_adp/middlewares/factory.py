@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from agentscope.middleware import MiddlewareBase
 
-from ..config import settings
+from ..config.audit_config import get_audit_config
 from .audit import AuditMiddleware
-from .dlp import DLPMiddleware
 
 
 async def build_enterprise_middlewares(
@@ -22,15 +21,13 @@ async def build_enterprise_middlewares(
     """按配置返回当前会话需要的企业中间件列表。
 
     被 AgentScope 在每次 agent 组装时调用一次，因此可以在这里
-    根据用户/会话返回不同的中间件组合（例如对某些租户关闭 DLP）。
+    根据用户/会话返回不同的中间件组合。
     """
     middlewares: list[MiddlewareBase] = []
 
-    if settings.audit_enabled:
+    if get_audit_config().enabled:
         middlewares.append(
             AuditMiddleware(user_id=user_id, session_id=session_id),
         )
-    if settings.dlp_enabled:
-        middlewares.append(DLPMiddleware())
 
     return middlewares

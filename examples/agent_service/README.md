@@ -84,22 +84,44 @@ After that, you can set the API endpoint `http://localhost:8000` in the Web UI a
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
-| 审计留痕 | `bankcomm_adp/middlewares/audit.py` | 记录每次 agent 调用（谁、何时、用了哪些工具、输出摘要），以 JSONL 写入 `ADP_AUDIT_LOG_PATH` |
-| 数据脱敏（DLP） | `bankcomm_adp/middlewares/dlp.py` | 对发往模型的输入做手机号 / 身份证 / 银行卡号掩码 |
-| 企业内部工具 | `bankcomm_adp/tools/` | HR / 内部文档库 / ITSM 工单 占位实现，可替换为真实系统调用 |
+| 审计留痕 | `bankcomm_adp/middlewares/audit.py` | 记录每次 agent 调用（谁、何时、用了哪些工具、输出摘要），以 JSONL 写入日志 |
+| 跨知识搜索 | `bankcomm_adp/tools/cross_search.py` | 跨场景 / 团队 / 个人知识库混合召回搜索（全文 + 向量） |
 | 平台健康检查 | `bankcomm_adp/routers/health.py` | `GET /platform/health` 返回服务状态 |
 
 认证保持官方默认的 `X-User-ID` 头方式，前端 `examples/web_ui` 无需任何改动。
 
-### 配置项（前缀 `ADP_`，可选，见 `.env.example`）
+### 配置（单一 YAML + 按工具拆分配置模块）
+
+企业扩展的配置数据为**单一 YAML 文件** `config.yaml`，根节点包含全局配置
+（`app_name` / `audit` / `workspace_dir`）与各工具配置（如 `cross_search`）。
+
+配置的**读取代码按模块拆分**到 `bankcomm_adp/config/` 包，各模块统一采用
+`@dataclass + from_yaml()` 模式，并通过 `get_xxx_config()` 工厂函数获取：
+
+```text
+bankcomm_adp/config/
+├── __init__.py               # 汇总导出（兼容 from ..config import ...）
+├── base.py                   # 公共：.env 自动加载、config.yaml 加载、通用工具
+├── settings_config.py        # 全局配置（Settings：app_name / workspace_dir）
+├── audit_config.py           # 审计配置（AuditConfig：enabled / log_path）
+└── cross_search_config.py    # cross_search_tool 专属配置（CrossSearchConfig）
+```
+
+首次使用前复制并编辑：
 
 ```bash
-ADP_APP_NAME="交通银行智能体平台"   # Web UI 展示的应用名
-ADP_AUDIT_ENABLED=true             # 审计留痕开关
-ADP_AUDIT_LOG_PATH=./logs/audit.jsonl
-ADP_DLP_ENABLED=true               # 数据脱敏开关
-# ADP_WORKSPACE_DIR=./workspaces   # 工作区目录
+cp config.yaml.example config.yaml
+cp .env.example .env
 ```
+
+其中跨知识搜索的必填项为 `cross_search.api_url` / `caller` / `user_code`
+（位于 `config.yaml`），缺少时工具调用会直接报错。
+
+**优先级**：`config.yaml`（含 `$VAR` 环境变量展开）> 代码默认值。
+所有配置以 `config.yaml` 为主；需要动态取值时，在配置值中写 `$VAR` /
+`${VAR}` 引用（取值来源为 `.env` 文件或进程环境变量），例如
+`cross_search.api_url: $CROSS_SEARCH_API_URL`。`.env` 在首次访问配置时
+自动加载。
 
 ### 用 Docker 启动（推荐）
 

@@ -2,7 +2,7 @@
 """The example script to start the agent service.
 
 本示例在官方入口之上叠加了企业内部扩展（``bankcomm_adp``）：
-    - ``extra_agent_middlewares``: 审计留痕 + 数据脱敏（DLP）
+    - ``extra_agent_middlewares``: 审计留痕
     - ``extra_agent_tools``:       企业内部工具占位（HR / 文档库 / ITSM）
     - ``health_router``:           平台自有健康检查路由
 
@@ -25,6 +25,7 @@ from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.rag import QdrantStore
 
 # 企业内部扩展：管控中间件 + 工具 + 自有路由
+from bankcomm_adp.config import get_settings
 from bankcomm_adp.middlewares import build_enterprise_middlewares
 from bankcomm_adp.routers import health_router
 from bankcomm_adp.tools import build_enterprise_tools
@@ -72,10 +73,7 @@ app = create_app(
     #     port=6379,
     # ),
     workspace_manager=LocalWorkspaceManager(
-        basedir=os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "workspaces",
-        ),
+        basedir=get_settings().workspace_dir,
         # The default MCP servers that will be added into the workspace
         default_mcps=default_mcps,
     ),
@@ -92,7 +90,7 @@ app = create_app(
     # only raises the rate limit.
     mcp_hubs=[GitHubMCPHub()],
     skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
-    # 企业管控中间件：审计 + DLP
+    # 企业管控中间件：审计
     extra_agent_middlewares=build_enterprise_middlewares,
     # 企业内部工具：HR / 文档库 / ITSM
     extra_agent_tools=build_enterprise_tools,

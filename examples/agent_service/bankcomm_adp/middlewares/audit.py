@@ -2,7 +2,7 @@
 """审计留痕中间件。
 
 记录每次 agent reply 的起止时间、输入摘要、工具调用与输出摘要，
-以 JSONL 行写入 ``settings.audit_log_path``。
+以 JSONL 行写入 ``AuditConfig.log_path``。
 
 这是企业合规的最低要求：所有 AI 行为必须可追溯。
 """
@@ -16,7 +16,7 @@ from typing import Any, AsyncGenerator, Callable
 
 from agentscope.middleware import MiddlewareBase
 
-from ..config import settings
+from ..config.audit_config import get_audit_config
 
 
 def _safe_str(obj: Any, max_len: int = 500) -> str:
@@ -90,9 +90,10 @@ class AuditMiddleware(MiddlewareBase):
         self._write(entry)
 
     def _write(self, entry: dict[str, Any]) -> None:
-        if not settings.audit_enabled:
+        cfg = get_audit_config()
+        if not cfg.enabled:
             return
-        path = Path(settings.audit_log_path)
+        path = Path(cfg.log_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
