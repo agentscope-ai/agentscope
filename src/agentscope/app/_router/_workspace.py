@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
-import json
-from pathlib import Path
-from urllib.parse import quote
 import os
 
 from fastapi import (
@@ -458,82 +455,20 @@ async def remove_skill(
     await workspace.remove_skill(skill_name)
 
 
-# The external skillhub catalog the agent-skills endpoint queries.
-# Module constants so a deployment can override them in one place.
-_SKILLHUB_BASE_URL = "http://53.12.9.18/skillhub-server"
-_SKILLHUB_TIMEOUT = 30.0
-
-
-def _skillhub_headers(cookie: str) -> dict[str, str]:
-    """Build the request headers expected by the external skillhub."""
-    return {
-        "Accept": "*/*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "User-Agent": "PostmanRuntime-ApipostRuntime/1.1.0",
-    }
-
-
-async def _refresh_skillhub_cookie(guwp_token: str | None) -> str:
-    """Exchange ``guwpToken`` for a fresh ``SESSION=...`` cookie.
-
-    Returns:
-        The new cookie string, or ``""`` when no token was provided or
-        the exchange failed — callers fall back to the initial session.
-    """
-    if not guwp_token:
-        logger.info("guwpToken not provided, using initial session")
-        return ""
-
-    import httpx
-
-    login_url = f"{_SKILLHUB_BASE_URL}/api/v1/auth/third-party/login"
-    body = json.dumps(
-        {
-            "loginMethod": "TOKEN",
-            "platform": "GUWP",
-            "token": guwp_token,
-        },
-    )
-    try:
-        async with httpx.AsyncClient(timeout=_SKILLHUB_TIMEOUT) as client:
-            resp = await client.post(
-                login_url,
-                content=body,
-                headers=_skillhub_headers(""),
-            )
-        resp.raise_for_status()
-        new_session_id = resp.headers.get("x-session-id", "")
-        if new_session_id:
-            logger.info(
-                "Refreshed skillhub cookie with session %s...",
-                new_session_id[:20],
-            )
-            return f"SESSION={new_session_id}"
-    except Exception as e:  # noqa: BLE001
-        logger.error(
-            "Failed to refresh skillhub cookie: %s",
-            e,
-            exc_info=True,
-        )
-
-    return ""
-
-
 @workspace_router.get(
-    "/agents/{agent_id}/skills",
+    "/skills/external",
     response_model=AgentSkillsListResponse,
     summary="Get Agent Skills",
     description=(
         "Query the external skillhub catalog and return it to the "
-        "frontend, marking as ``used`` the skills the agent's workspace "
-        "already holds (``workspaces/<agent_id>/skills``)."
+        "frontend, marking as ``used`` the skills already present in "
+        "the session's workspace (``agent_id`` and ``session_id`` are "
+        "passed as query parameters)."
     ),
 )
 async def get_agent_skills(
-    agent_id: str,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
     page: int = Query(default=0, ge=0),
     q: str = Query(default=""),
     size: int = Query(default=10, ge=1, le=200),
@@ -541,15 +476,17 @@ async def get_agent_skills(
     label: str = Query(default=""),
     guwp_token: str | None = Header(default=None, alias="guwpToken"),
     user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
 ) -> AgentSkillsListResponse:
     """Query the external skillhub and return the skill list.
 
-    ``used`` reflects the skills already present in the agent's
-    workspace directory. With :class:`LocalWorkspaceManager` the workdir
-    is derived from ``agent_id`` alone (``basedir/agent_id``), so no
-    session is required to locate it.
+    ``used`` reflects the skills already present in the session's
+    workspace directory — resolved from the persisted session record
+    (``session_id`` → ``config.workspace_id``), so the marking is exact
+    under every isolation policy, including ``PER_SESSION``.
 
     The remote endpoint mirrors these parameters
     (``page/q/size/sort/label``, ``namespace=global``) and answers
@@ -559,23 +496,22 @@ async def get_agent_skills(
     # the caller, otherwise 404 — mirrors every other agent-scoped route.
     await access.resolve_agent(user_id, agent_id)
 
-    import httpx
-
-    cookie = await _refresh_skillhub_cookie(guwp_token)
-
-    # "Used" = skills already equipped in the agent's workspace
-    # (workspaces/<agent_id>/skills). Resolution failure (no workspace
-    # yet, or a backend that needs a real session) must not fail the
-    # whole request — fall back to marking nothing as used.
+    # "Used" = skills already equipped in the session's workspace
+    # (resolved via the persisted session record). A missing/invalid
+    # session is a 404; other resolution failures fall back to marking
+    # nothing as used.
     try:
-        workspace = await workspace_manager.get_workspace(
+        workspace = await _resolve_workspace(
             user_id,
             agent_id,
-            session_id="",
-            workspace_id=None,
+            session_id,
+            storage,
+            workspace_manager,
         )
         agent_skills = await workspace.list_skills()
         used_names = {s.name for s in agent_skills}
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "Failed to resolve workspace for agent %s, marking no "
@@ -585,161 +521,79 @@ async def get_agent_skills(
         )
         used_names = set()
 
-    url = (
-        f"{_SKILLHUB_BASE_URL}/api/web/skills"
-        f"?page={page}&q={quote(q, safe='')}&size={size}&sort={sort}"
-        f"&label={quote(label, safe='')}&namespace=global"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=_SKILLHUB_TIMEOUT) as client:
-            resp = await client.get(url, headers=_skillhub_headers(cookie))
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:  # noqa: BLE001
-        logger.error("Failed to fetch remote skills: %s", e, exc_info=True)
+    # Query the registered external hub (per-request token refresh).
+    hub = hubs.get("external") if hubs else None
+    if hub is None:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch remote skills: {e}",
-        ) from e
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No 'external' skill hub is registered.",
+        )
+    set_token = getattr(hub, "set_token", None)
+    if set_token is not None:
+        set_token(guwp_token)
 
-    items = (data.get("data") or {}).get("items") or []
-    total = (data.get("data") or {}).get("total") or 0
+    # label folds into the search query; sort is accepted but ignored.
+    merged_q = " ".join(filter(None, [label, q])) or None
+    cursor = f"page:{page}" if page else None
+    page_result = await hub.list_skills(
+        user_id,
+        q=merged_q,
+        cursor=cursor,
+        limit=size,
+    )
 
     skills_list = [
         SkillInfo(
-            name=item.get("slug", ""),
+            name=card.name,
             category="public",
-            description=item.get("summary", "") or "",
-            used=item.get("slug", "") in used_names,
+            description=card.description or "",
+            used=card.name in used_names,
         )
-        for item in items
-        if item.get("slug")
+        for card in page_result.cards
     ]
-    return AgentSkillsListResponse(skills=skills_list, total=total)
-
-
-# ---------------------------------------------------------------------------
-# Remote skillhub download helper
-# ---------------------------------------------------------------------------
-
-#: Alias kept for readability — the external skillhub base URL.
-REMOTE_SKILLHUB_URL = "http://53.12.9.18/skillhub-server/api/web/skills/global"
-
-
-def _remove_if_empty(path: Path) -> None:
-    """Remove ``path`` when it exists and contains nothing."""
-    try:
-        if path.exists() and not any(path.iterdir()):
-            path.rmdir()
-    except OSError:
-        pass
-
-
-async def _download_skill_from_remote(
-    skill_name: str,
-    guwp_token: str | None = None,
-    target_dir: str | Path | None = None,
-) -> bool:
-    """Download a skill from the remote skillhub server.
-
-    Args:
-        skill_name: The skill name to download.
-        guwp_token: Token from the request header for cookie refresh.
-        target_dir: Directory the skill is extracted into (a
-            ``<target_dir>/<skill_name>`` subdirectory is created).
-            Defaults to ``$SKILLHUB_SKILLS_DIR`` when the env var is
-            set, otherwise ``./downloaded_skills``.
-
-    Returns:
-        True if downloaded and saved successfully, False otherwise.
-    """
-    import zipfile
-
-    import httpx
-
-    cookie = await _refresh_skillhub_cookie(guwp_token)
-
-    encoded_skill_name = quote(skill_name, safe="")
-    download_url = f"{REMOTE_SKILLHUB_URL}/{encoded_skill_name}/download"
-    headers = {
-        "Accept": "*/*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "User-Agent": "PostmanRuntime-ApipostRuntime/1.1.0",
-    }
-
-    logger.info("Downloading skill from: %s", download_url)
-
-    if target_dir is None:
-        target_dir = os.environ.get("SKILLHUB_SKILLS_DIR", "downloaded_skills")
-    skill_dir = Path(target_dir) / skill_name
-
-    try:
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = skill_dir / f"{skill_name}.zip"
-
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.get(download_url, headers=headers)
-
-        if resp.status_code != 200:
-            logger.error(
-                "Failed to download skill %s: HTTP %d",
-                skill_name,
-                resp.status_code,
-            )
-            _remove_if_empty(skill_dir)
-            return False
-
-        zip_path.write_bytes(resp.content)
-        logger.info("Downloaded skill %s to %s", skill_name, zip_path)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(skill_dir)
-        logger.info("Extracted skill %s to %s", skill_name, skill_dir)
-
-        zip_path.unlink()
-        logger.info("Removed zip file %s", zip_path)
-        return True
-
-    except Exception as e:  # noqa: BLE001
-        logger.error(
-            "Failed to download skill %s: %s",
-            skill_name,
-            e,
-            exc_info=True,
-        )
-        _remove_if_empty(skill_dir)
-        return False
+    return AgentSkillsListResponse(
+        skills=skills_list,
+        total=(
+            page_result.total
+            if page_result.total is not None
+            else len(skills_list)
+        ),
+    )
 
 
 @workspace_router.post(
-    "/agents/{agent_id}/skills/{skill_full_name}",
+    "/skill/download/{skill_full_name}",
     response_model=SkillActionResponse,
     summary="Enable Skill for Agent",
     description=(
-        "Add a skill to the agent's workspace. When the skill is not "
-        "already equipped, it is downloaded from the remote skillhub "
-        "and extracted into ``workspaces/<agent_id>/skills``."
+        "Download a skill from the remote skillhub into the session's "
+        "workspace. ``skill_full_name`` follows ``category:name`` "
+        "(e.g. ``public:writing``); ``agent_id`` and ``session_id`` are "
+        "passed as query parameters."
     ),
 )
 async def enable_agent_skill(
-    agent_id: str,
     skill_full_name: str,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
     guwp_token: str | None = Header(default=None, alias="guwpToken"),
     user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
 ) -> SkillActionResponse:
     """Enable a skill for a specific agent.
 
     ``skill_full_name`` follows the ``category:name`` convention (e.g.
     ``public:writing``); only ``public`` skills are downloadable. When
     the skill is already equipped in the agent's workspace the call is
-    a no-op success. Equipping means the skill directory lands under
-    ``workspaces/<agent_id>/skills/<name>`` — the workspace's
-    ``list_skills`` picks it up on the next chat turn.
+    a no-op success.
+
+    ``agent_id`` and ``session_id`` are passed as query parameters; the
+    target workspace is resolved from the persisted session record so
+    the skill lands in the exact session's workspace regardless of
+    isolation policy.
     """
     # Ownership check: the agent must belong to (or be shared with) the
     # caller, otherwise 404 — mirrors every other agent-scoped route.
@@ -760,18 +614,25 @@ async def enable_agent_skill(
             detail="Only 'public' skills can be enabled.",
         )
 
-    workspace = await workspace_manager.get_workspace(
+    # Resolve the workspace from the persisted session record — under
+    # PER_SESSION the workspace id is a per-session random value, so it
+    # must come from the database, not from assign_workspace_id.
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
-        session_id="",
-        workspace_id=None,
+        session_id,
+        storage,
+        workspace_manager,
     )
-    backend = workspace.get_backend()
-    skill_dir = backend.join_path(workspace.workdir, "skills", skill_name)
 
-    # Already equipped — no-op success.
+    # Already equipped — no-op success. Match by agent-facing name or
+    # directory basename: the extracted dir is named after the SKILL.md
+    # front matter, which may differ from the requested slug.
     existing = await workspace.list_skills()
-    if any(s.dir == skill_dir for s in existing):
+    if skill_name in {s.name for s in existing} or any(
+        os.path.basename(s.dir.rstrip("/\\")) == skill_name
+        for s in existing
+    ):
         logger.info(
             "Skill '%s' already equipped in agent %s's workspace",
             skill_full_name,
@@ -783,24 +644,41 @@ async def enable_agent_skill(
             skill_id=skill_full_name,
         )
 
-    # Download from the remote skillhub straight into the workspace's
-    # skills/ directory (target_dir → <target>/<skill_name>).
-    ok = await _download_skill_from_remote(
-        skill_name,
-        guwp_token=guwp_token,
-        target_dir=backend.join_path(workspace.workdir, "skills"),
-    )
-    if not ok:
+    # Download from the remote skillhub through the hub abstraction —
+    # streaming the archive into the workspace via its backend.
+    hub = hubs.get("external") if hubs else None
+    if hub is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No 'external' skill hub is registered.",
+        )
+    set_token = getattr(hub, "set_token", None)
+    if set_token is not None:
+        set_token(guwp_token)
+    try:
+        archive = await hub.download(user_id, skill_name)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_name}' not found on the remote skillhub.",
+        ) from None
+    try:
+        await workspace.add_skill_archive(
+            archive.stream,
+            archive.format,
+            skill_name,
+        )
+    except Exception as e:  # noqa: BLE001
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Failed to download skill '{skill_name}' from remote.",
-        )
+            detail=f"Failed to install skill '{skill_name}': {e}",
+        ) from e
 
-    # Verify the download produced a usable skill (SKILL.md with the
-    # required front matter); list_skills also refreshes the index.
+    # Verify something new actually landed (the extracted dir may be
+    # named by the front matter rather than the slug).
     refreshed = await workspace.list_skills()
-    if not any(s.dir == skill_dir for s in refreshed):
-        await backend.delete_path(skill_dir)
+    new_names = {s.name for s in refreshed} - {s.name for s in existing}
+    if not new_names:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
@@ -814,4 +692,98 @@ async def enable_agent_skill(
         success=True,
         action="enabled",
         skill_id=skill_full_name,
+    )
+
+
+@workspace_router.get(
+    "/skills/uploaded",
+    response_model=AgentSkillsListResponse,
+    summary="Get Uploaded Skills",
+    description=(
+        "Query the external skillhub for the skills the caller uploaded "
+        "and return them, marking as ``used`` the ones already present "
+        "in the session's workspace (``agent_id`` and ``session_id`` "
+        "are passed as query parameters)."
+    ),
+)
+async def get_uploaded_skills(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    guwp_token: str | None = Header(default=None, alias="guwpToken"),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
+) -> AgentSkillsListResponse:
+    """Return the skills the caller uploaded to the external skillhub.
+
+    The endpoint is per-user, so ``guwpToken`` is required — the session
+    cookie derived from it carries the caller's identity on the remote
+    side. ``used`` reflects the skills already present in the session's
+    workspace, resolved from the persisted session record
+    (``session_id`` → ``config.workspace_id``).
+    """
+    # Ownership check: the agent must belong to (or be shared with) the
+    # caller, otherwise 404 — mirrors every other agent-scoped route.
+    await access.resolve_agent(user_id, agent_id)
+
+    if not guwp_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="guwpToken header is required for uploaded skills.",
+        )
+
+    # "Used" = skills already equipped in the session's workspace
+    # (resolved via the persisted session record). A missing/invalid
+    # session is a 404; other resolution failures fall back to marking
+    # nothing as used.
+    try:
+        workspace = await _resolve_workspace(
+            user_id,
+            agent_id,
+            session_id,
+            storage,
+            workspace_manager,
+        )
+        agent_skills = await workspace.list_skills()
+        used_names = {s.name for s in agent_skills}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "Failed to resolve workspace for agent %s, marking no "
+            "skills as used: %s",
+            agent_id,
+            e,
+        )
+        used_names = set()
+
+    hub = hubs.get("external") if hubs else None
+    if hub is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No 'external' skill hub is registered.",
+        )
+    set_token = getattr(hub, "set_token", None)
+    if set_token is not None:
+        set_token(guwp_token)
+
+    page_result = await hub.list_uploaded_skills(user_id)
+    skills_list = [
+        SkillInfo(
+            name=card.name,
+            category="public",
+            description=card.description or "",
+            used=card.name in used_names,
+        )
+        for card in page_result.cards
+    ]
+    return AgentSkillsListResponse(
+        skills=skills_list,
+        total=(
+            page_result.total
+            if page_result.total is not None
+            else len(skills_list)
+        ),
     )

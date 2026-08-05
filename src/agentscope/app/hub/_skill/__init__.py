@@ -4,6 +4,7 @@
 from ._base import SkillArchive, SkillHubBase
 from ._card import SkillCard, SkillHubPage
 from ._claw_hub import ClawSkillHub
+from ._external_hub import ExternalSkillHub
 
 __all__ = [
     "SkillArchive",
@@ -11,4 +12,5 @@ __all__ = [
     "SkillCard",
     "SkillHubPage",
     "ClawSkillHub",
+    "ExternalSkillHub",
 ]

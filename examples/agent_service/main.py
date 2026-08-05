@@ -7,7 +7,7 @@ from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
-from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
+from agentscope.app.hub import ClawSkillHub, ExternalSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import RedisStorage
@@ -78,7 +78,10 @@ app = create_app(
     # from the user in its ``inputs_schema``. Passing a ClawHub token
     # only raises the rate limit.
     mcp_hubs=[GitHubMCPHub()],
-    skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
+    skill_hubs=[
+        ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN")),
+        ExternalSkillHub(),
+    ],
     # Customize your own subagent templates
     custom_subagent_templates=[
         SubAgentTemplate(

@@ -150,3 +150,12 @@ class SkillHubPage(BaseModel):
             "when this is the last one."
         ),
     )
+
+    total: int | None = Field(
+        default=None,
+        title="Total",
+        description=(
+            "The total number of matching cards, when the hub reports "
+            "one; ``None`` when the hub does not count."
+        ),
+    )
