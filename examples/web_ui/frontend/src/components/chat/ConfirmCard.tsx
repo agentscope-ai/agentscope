@@ -1,6 +1,6 @@
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { ChevronRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { getDisplayName, renderConfirmBody } from './tool-renderers';
 import { Button } from '@/components/ui/button';
@@ -20,19 +20,28 @@ export function ConfirmCard({
 }) {
 	const { t } = useTranslation();
 	const hasSuggestedRules = !!toolCall.suggested_rules?.length;
-	const options: SelectOption[] = hasSuggestedRules
-		? ['yes', 'yes_with_rule', 'no']
-		: ['yes', 'no'];
+	const options = useMemo<SelectOption[]>(
+		() => (hasSuggestedRules ? ['yes', 'yes_with_rule', 'no'] : ['yes', 'no']),
+		[hasSuggestedRules],
+	);
 	const [selected, setSelected] = useState<SelectOption>('yes');
-	const [hasConfirmed, sethasConfirmed] = useState<boolean>(false);
+	const [hasConfirmed, setHasConfirmed] = useState<boolean>(false);
+	const submittingRef = useRef(false);
 
-	const handleConfirm = async (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => {
-		if (hasConfirmed) return;
-		sethasConfirmed(true);
-		onUserConfirm(confirm, rules).catch(() => {
-			sethasConfirmed(false);
-		});
-	};
+	const handleConfirm = useCallback(
+		async (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => {
+			if (submittingRef.current) return;
+			submittingRef.current = true;
+			setHasConfirmed(true);
+			try {
+				await onUserConfirm(confirm, rules);
+			} catch {
+				submittingRef.current = false;
+				setHasConfirmed(false);
+			}
+		},
+		[onUserConfirm],
+	);
 
 	useEffect(() => {
 		const handleKeyDown = async (e: KeyboardEvent) => {
@@ -59,7 +68,7 @@ export function ConfirmCard({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [onUserConfirm, selected, options]);
+	}, [handleConfirm, selected, options, toolCall.suggested_rules]);
 
 	return (
 		<div className="bg-muted ring ring-border rounded-[28px] w-full px-6 py-5 space-y-4 text-sm overflow-hidden">

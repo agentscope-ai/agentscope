@@ -377,6 +377,7 @@ export function useMessages(
 				});
 			} catch (e) {
 				setError(e as Error);
+				throw e;
 			}
 		},
 		[agentId, sessionId],

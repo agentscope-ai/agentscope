@@ -37,7 +37,7 @@ interface ChatContentProps {
 		confirm: boolean,
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
-	) => void;
+	) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
 	/** Called when the user clicks the stop button. */
@@ -123,15 +123,16 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				>
 					{toConfirmedToolCalls.length > 0 ? (
 						<ConfirmCard
+							key={`${toConfirmedToolCalls[0].replyId}:${toConfirmedToolCalls[0].toolCall.id}`}
 							toolCall={toConfirmedToolCalls[0].toolCall}
-							onUserConfirm={async (confirm, rules) => {
+							onUserConfirm={(confirm, rules) =>
 								onUserConfirm(
 									toConfirmedToolCalls[0].toolCall,
 									confirm,
 									toConfirmedToolCalls[0].replyId,
 									rules,
-								);
-							}}
+								)
+							}
 						/>
 					) : (
 						footerSlot
