@@ -1,0 +1,11 @@
+# The ACP stdio peer. Pinned: the SDK is pre-1.0 and its schema moves.
+agent-client-protocol==0.12.0
+
+# The kernel. The example only uses public API (agentscope.agent/event/
+# permission/tool/message/state); any model-provider SDK it needs comes
+# with the core install (dashscope/openai/anthropic are core deps).
+agentscope>=2.0.5
+
+# For the example's test suite only.
+pytest
+pytest-asyncio
