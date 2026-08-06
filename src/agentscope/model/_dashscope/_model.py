@@ -162,6 +162,14 @@ class DashScopeChatModel(ChatModelBase):
         self.formatter = formatter or DashScopeChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import openai
+
+        self.client: openai.AsyncClient = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import openai
@@ -197,16 +205,6 @@ class DashScopeChatModel(ChatModelBase):
                 The keyword arguments for DashScope chat completions API,
                 e.g. ``temperature``, ``max_tokens``, ``top_p``, etc.
         """
-        import openai
-
-        client = openai.AsyncClient(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         request_kwargs: dict[str, Any] = {
@@ -262,7 +260,7 @@ class DashScopeChatModel(ChatModelBase):
             request_kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**request_kwargs)
+        response = await self.client.chat.completions.create(**request_kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)

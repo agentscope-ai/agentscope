@@ -251,6 +251,8 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": AnyString(),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
                 "state": "success",
@@ -308,6 +310,8 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "source": '{"label": "tool_output", "sublabel": "slow_tool · '
                 'call_bg"}',
                 "hint": [
@@ -315,6 +319,8 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": AnyString(),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
             },

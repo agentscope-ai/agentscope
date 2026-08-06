@@ -16,6 +16,7 @@ from ._builtin import (
     Read,
     Write,
     BackendBase,
+    DirEntry,
     ExecResult,
     LocalBackend,
 )
@@ -44,6 +45,7 @@ __all__ = [
     # Builtin tools
     "BackendBase",
     "LocalBackend",
+    "DirEntry",
     "ExecResult",
     "ResetTools",
     "Bash",

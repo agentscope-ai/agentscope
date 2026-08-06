@@ -11,14 +11,14 @@
 		"credential": "凭证",
 		"date": "日期",
 		"delete": "删除",
-		"deleting": "删除中…",
 		"disabled": "已禁用",
 		"edit": "编辑",
 		"error": "出错了",
 		"information": "信息",
-		"interrupted": "已中断",
 		"knowledge": "知识库",
 		"loading": "加载中...",
+		"shownCount": "已显示 {{count}} 个",
+		"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
 		"model": "模型",
 		"name": "名称",
 		"no": "否",
@@ -31,18 +31,26 @@
 		"save": "保存",
 		"saving": "保存中…",
 		"schedule": "日程",
-		"selectAgent": "选择 Agent",
+		"selectAgent": "选择智能体",
 		"settings": "设置",
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
-		"success": "成功",
 		"team": "团队",
+		"uploading": "上传中",
 		"leader": "队长",
-		"worker": "成员",
 		"time": "时间",
 		"yes": "是",
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
-		"deleteDescription": "此操作无法撤销。"
+		"deleteDescription": "此操作无法撤销。",
+		"mcp-hub": "MCP 中心",
+		"mine": "我的",
+		"my-mcp": "已安装的 MCP",
+		"skill-hub": "技能中心",
+		"my-skill": "已安装的技能",
+		"message": "消息",
+		"llm": "LLM",
+		"tts": "TTS",
+		"embedding": "向量"
 	},
 	"error": {
 		"description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -99,14 +107,17 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
+		"thinkingFor": "思考 {{duration}}",
 		"audioGenerating": "正在生成音频…",
 		"playAudio": "播放音频",
 		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
 			"tool_output": "工具输出",
+			"team": "团队",
 			"team_message": "团队消息",
-			"schedule": "定时任务"
+			"schedule": "定时任务",
+			"system": "系统消息"
 		},
 		"error": {
 			"title": "回复失败",
@@ -117,17 +128,15 @@
 			"upstream": "上游模型服务返回了错误。",
 			"connection": "无法连接模型服务 —— 网络错误或超时。",
 			"internal": "发生了未预期的内部错误。",
+			"setup": "会话准备失败 —— 请检查该 agent 的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
 		}
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",
-		"placeholder": "输入消息...",
-		"send": "发送",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
-		"noSessions": "暂无会话",
 		"greeting": "我们从哪儿开始？",
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
@@ -140,13 +149,14 @@
 			"label": "会话",
 			"emptyTitle": "暂无会话",
 			"emptyNoAgent": "请先选择一个 Agent。",
-			"emptyHasAgent": "创建会话开始对话。"
+			"emptyHasAgent": "创建会话开始对话。",
+			"today": "今天",
+			"earlier": "更早"
 		}
 	},
 	"dialog-agent-create": {
 		"title": "创建 Agent",
-		"description": "定义新 Agent 的身份与行为。",
-		"trigger": "创建 Agent"
+		"description": "定义新 Agent 的身份与行为。"
 	},
 	"agent-form": {
 		"identity": {
@@ -287,7 +297,6 @@
 	},
 	"credential": {
 		"noProviders": "暂无可用提供商",
-		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
 		"selectHintDescription": "从左侧选择一个凭证以查看详情。",
 		"availableModels": "可用模型",
@@ -298,17 +307,21 @@
 		"configured": "已配置",
 		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
-		"maxContext": "最大上下文",
-		"maxOutput": "最大输出",
-		"inputTypes": "输入模态",
-		"outputTypes": "输出模态",
-		"availableTTSModels": "语音合成模型"
+		"realtime": "实时",
+		"table": {
+			"model": "模型",
+			"context": "上下文",
+			"maxOutput": "最大输出",
+			"accepts": "输入",
+			"outputs": "输出",
+			"legend": "上下文与最大输出均以 token 计。REASONING 表示模型支持深度思考。",
+			"dimensions": "维度"
+		}
 	},
 	"knowledge": {
 		"subtitle": "管理 Agent 使用的知识库",
 		"selectHint": "未选择知识库",
 		"selectHintDescription": "从左侧选择一个知识库以查看详情。",
-		"deleteEntity": "知识库",
 		"list": {
 			"label": "知识库",
 			"emptyTitle": "暂无知识库",
@@ -316,24 +329,16 @@
 			"createButton": "创建知识库"
 		},
 		"document": {
-			"label": "文档",
 			"emptyTitle": "暂无文档",
 			"emptyDescription": "上传文档以索引到该知识库中。",
 			"uploadButton": "上传文档",
 			"uploadButtonShort": "上传",
-			"countLabel": "文档（{{count}}）",
-			"size": "大小",
-			"chunks": "分块",
 			"chunkCount_one": "{{count}} 个分块",
 			"chunkCount_other": "{{count}} 个分块",
-			"uploadedAt": "{{when}} 上传",
-			"deleteEntity": "文档",
 			"deleteConfirmTitle": "删除文档",
 			"deleteConfirmDescription": "确认删除 \"{{name}}\"？该操作将一并移除文档及其全部已索引分块，且不可撤销。",
 			"deleteError": "删除文档失败。",
-			"dropHint": "拖拽文件到此处上传",
 			"dropHintIdle": "或拖拽文件到此处",
-			"invalidFile": "\"{{name}}\" 添加失败。",
 			"unsupportedExtension": "\"{{name}}\" 已跳过——不支持该文件类型。",
 			"status": {
 				"queued": "排队中",
@@ -348,11 +353,11 @@
 			},
 			"actions": {
 				"cancel": "取消",
-				"retry": "重试",
 				"dismiss": "关闭",
 				"remove": "删除",
 				"clearFinished": "清除已完成"
-			}
+			},
+			"title": "文档"
 		},
 		"test": {
 			"button": "测试",
@@ -370,12 +375,10 @@
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
-		"fallbackPlaceholder": "兜底模型",
 		"loading": "加载中…",
 		"empty": {
 			"title": "暂无可用模型",
-			"description": "请先添加凭证。",
-			"addButton": "添加凭证"
+			"description": "请先添加凭证。"
 		},
 		"addCredential": "添加凭证",
 		"clear": "清除选择",
@@ -388,8 +391,7 @@
 			"title": "暂无可用的 Embedding 模型",
 			"description": "请先添加支持 Embedding 的凭证。"
 		},
-		"addCredential": "添加凭证",
-		"clear": "清除选择"
+		"addCredential": "添加凭证"
 	},
 	"dimension-select": {
 		"placeholder": "选择维度",
@@ -406,13 +408,9 @@
 		"dont_ask-tooltip": "将所有 ASK 决策转为 DENY，适合定时任务或用户不在场时的后台执行"
 	},
 	"dialog-mcp-create": {
-		"title": "添加 MCP 服务器",
-		"description": "通过配置添加新的 MCP 服务器。",
 		"configLabel": "MCP 配置",
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
-		"adding": "添加中…",
-		"added": "已添加",
 		"parseError": "JSON 配置无效：{{message}}",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
@@ -421,12 +419,6 @@
 		"entity": "MCP 服务器",
 		"skillEntity": "技能",
 		"skillDescription": "确定要将该技能从工作区中移除吗？"
-	},
-	"dialog-skill-add": {
-		"title": "添加技能",
-		"description": "输入技能目录的路径以添加到工作区。",
-		"pathLabel": "技能路径",
-		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "日历",
@@ -438,8 +430,7 @@
 			"title": "创建日程"
 		},
 		"deleteSchedule": {
-			"entity": "日程",
-			"successToast": "日程已删除。"
+			"entity": "日程"
 		},
 		"endAt": "结束日期",
 		"end_at": "结束时间",
@@ -455,8 +446,6 @@
 		"more": "更多",
 		"nextMonth": "下个月",
 		"nextYear": "下一年",
-		"noExecutions": "暂无执行记录",
-		"noExecutionsDescription": "该日程尚未执行过。",
 		"noSchedules": "暂无日程",
 		"noSchedulesDescription": "创建日程以自动化 Agent 任务。",
 		"pickDate": "选择日期",
@@ -470,7 +459,6 @@
 		"previousMonth": "上个月",
 		"previousYear": "上一年",
 		"saturday": "周六",
-		"startAt": "开始时间",
 		"sunday": "周日",
 		"thursday": "周四",
 		"today": "今天",
@@ -498,6 +486,12 @@
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
 		"submit": "开始使用",
+		"checking": "连接中...",
+		"errorUnreachable": "无法连接到该服务器。请检查地址是否正确、服务是否已启动，以及是否允许跨域请求。",
+		"errorTimeout": "服务器已建立连接，但在超时时间内没有响应。可能负载过高或启动卡住了。",
+		"errorNotAgentScope": "地址可以访问，但它不是 AgentScope 服务。请检查地址，或升级尚未提供健康检查接口的旧版本后端。",
+		"errorUnauthorized": "服务器拒绝了该用户名，请填写有效的用户名。",
+		"errorNotReady": "服务器可以连接，但尚未就绪。以下子系统启动失败：",
 		"hint": "此应用仅提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
 	},
 	"tour": {
@@ -529,11 +523,6 @@
 		}
 	},
 	"task-panel": {
-		"heading": "任务",
-		"noTasks": "暂无任务。",
-		"pending": "待处理",
-		"inProgress": "进行中",
-		"completed": "已完成",
 		"blockedBy": "依赖"
 	},
 	"panel": {
@@ -545,13 +534,19 @@
 			"emptyDescription": "智能体规划的任务会显示在这里。"
 		},
 		"mcp": {
-			"title": "MCP",
 			"description": "工作区中配置的 MCP 服务器。",
 			"searchPlaceholder": "在工作区中搜索 MCP",
 			"add": "添加 MCP",
+			"addDescription": "复用已安装的 MCP，或粘贴一份配置。",
+			"fromConfig": "从 configuration 导入",
 			"tools": "{{count}} 个工具",
+			"unhealthy": "该 MCP 无法连接",
+			"healthy": "连接正常",
 			"emptyTitle": "暂无 MCP 服务器",
-			"emptyDescription": "添加 MCP 服务器为工作区配备工具。"
+			"emptyDescription": "添加 MCP 服务器为工作区配备工具。",
+			"fromInstalled": "导入已安装的 MCP",
+			"installedEmptyTitle": "还没有安装任何 MCP",
+			"installedEmptyDescription": "去 MCP 中心安装一个，或在这里粘贴配置。"
 		},
 		"skill": {
 			"title": "技能",
@@ -559,7 +554,17 @@
 			"searchPlaceholder": "在工作区中搜索技能",
 			"add": "添加技能",
 			"emptyTitle": "暂无技能",
-			"emptyDescription": "添加技能为工作区配备能力。"
+			"emptyDescription": "添加技能为工作区配备能力。",
+			"addDescription": "从已安装的 Skill 中选择，或上传本地文件夹。",
+			"fromInstalled": "导入已安装 Skill",
+			"fromFolder": "从文件夹上传",
+			"installedEmptyTitle": "还没有已安装的 Skill",
+			"installedEmptyDescription": "先到 Skill 市场安装，再从这里加入工作区。",
+			"pickFolderTitle": "选择一个 Skill 文件夹",
+			"pickFolderDescription": "文件夹根目录需要包含 SKILL.md。",
+			"pickFolder": "选择文件夹",
+			"pickAnother": "重新选择",
+			"fileCount": "{{count}} 个文件"
 		},
 		"knowledge": {
 			"title": "知识库",
@@ -568,8 +573,7 @@
 			"emptyTitle": "暂无知识库",
 			"emptyDescription": "请先在「知识库」页面创建一个。",
 			"parametersTitle": "检索配置",
-			"parametersDescription": "知识库检索参数设置",
-			"selectedCount": "已挂载 {{count}} 个"
+			"parametersDescription": "知识库检索参数设置"
 		},
 		"permission": {
 			"title": "权限",
@@ -592,9 +596,64 @@
 	},
 	"team-sidebar": {
 		"membersHeading": "成员",
-		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
-		"running": "运行中",
-		"idle": "空闲",
-		"missingSession": "（无会话）"
+		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。"
+	},
+	"mcp": {
+		"subtitle": "浏览并安装 MCP 服务",
+		"hubsLabel": "来源",
+		"searchPlaceholder": "在该来源中搜索",
+		"mineSearchPlaceholder": "搜索你的 MCP",
+		"noHubsTitle": "暂无可用来源",
+		"noHubsDescription": "请联系管理员添加。",
+		"noCardsTitle": "没有找到内容",
+		"noCardsDescription": "换个关键词试试。",
+		"mineDescription": "你已安装的 MCP 服务",
+		"mineEmptyTitle": "还没有 MCP 服务",
+		"mineEmptyDescription": "从左侧的来源中安装一个。",
+		"needsConfig": "需要配置",
+		"stateful": "有状态",
+		"configLabel": "配置",
+		"install": "安装",
+		"installed": "已安装",
+		"installTitle": "安装 {{name}}",
+		"installDescription": "添加到你的 MCP 中，之后可在会话里启用。",
+		"editTitle": "编辑 {{name}}",
+		"editDescription": "密钥留空则沿用已保存的值。",
+		"nameLabel": "名称",
+		"loadFailedTitle": "无法连接服务",
+		"loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
+		"retry": "重试"
+	},
+	"skill": {
+		"subtitle": "浏览并安装技能",
+		"hubsLabel": "来源",
+		"searchPlaceholder": "在该来源中搜索",
+		"mineSearchPlaceholder": "搜索你的技能",
+		"noHubsTitle": "暂无可用来源",
+		"noHubsDescription": "请联系管理员添加。",
+		"noCardsTitle": "没有找到内容",
+		"noCardsDescription": "换个关键词试试。",
+		"mineDescription": "你已安装的技能",
+		"mineEmptyTitle": "还没有技能",
+		"mineEmptyDescription": "从左侧的来源中安装一个。",
+		"install": "安装",
+		"installed": "已安装",
+		"versionLabel": "版本",
+		"hubLabel": "来源",
+		"updatedLabel": "更新于",
+		"updatedAgo": "{{ago}}前更新",
+		"updatedRecently": "刚刚更新",
+		"installsLabel": "安装量",
+		"downloadsLabel": "下载量",
+		"linkLabel": "页面",
+		"viewOnHub": "在来源站点查看",
+		"noReadme": "该技能没有提供 SKILL.md 正文。",
+		"loadFailedTitle": "无法连接服务",
+		"loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
+		"retry": "重试"
+	},
+	"agent-menu": {
+		"settings": "设置",
+		"delete": "删除 Agent"
 	}
 }

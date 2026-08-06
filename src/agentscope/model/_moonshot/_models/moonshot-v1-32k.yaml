@@ -1,6 +1,7 @@
 name: moonshot-v1-32k
 label: Kimi Moonshot v1 32K
-status: active
+status: deprecated
+deprecated_at: "2026-08-31T00:00:00"
 
 input_types:
   - text/plain

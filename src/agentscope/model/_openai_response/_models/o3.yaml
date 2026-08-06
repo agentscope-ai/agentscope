@@ -1,6 +1,7 @@
 name: o3
 label: o3 (Responses API)
-status: active
+status: deprecated
+deprecated_at: "2026-12-11T00:00:00"
 
 input_types:
   - text/plain

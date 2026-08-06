@@ -56,6 +56,45 @@ class AnthropicChatModel(ChatModelBase):
             gt=0,
         )
 
+        thinking_mode: (
+            Literal["adaptive", "enabled", "disabled"] | None
+        ) = Field(
+            default=None,
+            title="Thinking Mode",
+            description=(
+                "How Claude thinks. ``adaptive`` lets the model decide when "
+                "and how deeply, and is the only mode Claude Opus 4.7 and "
+                "later accept — those models reject the ``enabled`` "
+                "(budget-based) mode. Takes precedence over "
+                "``thinking_enable``; leave unset to fall back to it."
+            ),
+        )
+
+        thinking_display: Literal["summarized", "omitted"] | None = Field(
+            default=None,
+            title="Thinking Display",
+            description=(
+                "Whether thinking blocks carry readable summaries or come "
+                "back empty. Claude Opus 4.7 and later default to "
+                "``omitted``, so set ``summarized`` to see the reasoning."
+            ),
+        )
+
+        reasoning_effort: (
+            Literal["low", "medium", "high", "xhigh", "max"] | None
+        ) = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "How many tokens Claude spends on the whole response — "
+                "not just thinking, but tool calls and explanation too. "
+                "Sent as Anthropic's ``output_config.effort``. The API "
+                "default is ``high``. Supported levels vary by model — see "
+                "the model card, and note that Claude Sonnet 4.5 and "
+                "Claude Haiku 4.5 do not accept this parameter at all."
+            ),
+        )
+
     def __init__(
         self,
         credential: AnthropicCredential,
@@ -108,6 +147,14 @@ class AnthropicChatModel(ChatModelBase):
         self.formatter = formatter or AnthropicChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import anthropic
+
+        self.client: anthropic.AsyncAnthropic = anthropic.AsyncAnthropic(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import anthropic
@@ -118,6 +165,16 @@ class AnthropicChatModel(ChatModelBase):
             anthropic.RateLimitError,
             anthropic.InternalServerError,
         )
+
+    def _thinking_mode(self) -> str | None:
+        """Resolve the effective thinking mode.
+
+        ``thinking_mode`` is the modern control; ``thinking_enable`` is the
+        legacy toggle that only ever meant the budget-based mode.
+        """
+        if self.parameters.thinking_mode is not None:
+            return self.parameters.thinking_mode
+        return "enabled" if self.parameters.thinking_enable else None
 
     async def _call_api(
         self,
@@ -150,16 +207,6 @@ class AnthropicChatModel(ChatModelBase):
                 enabled.
         """
 
-        import anthropic
-
-        client = anthropic.AsyncAnthropic(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         # Anthropic requires max_tokens; fall back to a safe default when
         # the user hasn't configured one explicitly.
         max_tokens = self.parameters.max_tokens or 8192
@@ -171,17 +218,26 @@ class AnthropicChatModel(ChatModelBase):
             **generate_kwargs,
         }
 
-        # Anthropic extended thinking — only set when explicitly enabled.
-        # Anthropic requires max_tokens > budget_tokens strictly.
-        if self.parameters.thinking_enable and "thinking" not in kwargs:
-            budget = self.parameters.thinking_budget or (max_tokens // 2)
-            if budget >= max_tokens:
-                # Auto-expand max_tokens to satisfy the strict inequality.
-                max_tokens = budget + 1024
-                kwargs["max_tokens"] = max_tokens
-            kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": budget,
+        mode = self._thinking_mode()
+        if mode is not None and "thinking" not in kwargs:
+            thinking: dict[str, Any] = {"type": mode}
+            if mode == "enabled":
+                # Anthropic requires max_tokens > budget_tokens strictly.
+                budget = self.parameters.thinking_budget or (max_tokens // 2)
+                if budget >= max_tokens:
+                    # Auto-expand max_tokens to satisfy the inequality.
+                    max_tokens = budget + 1024
+                    kwargs["max_tokens"] = max_tokens
+                thinking["budget_tokens"] = budget
+            # ``display`` is invalid alongside ``type: "disabled"``.
+            if mode != "disabled" and self.parameters.thinking_display:
+                thinking["display"] = self.parameters.thinking_display
+            kwargs["thinking"] = thinking
+
+        # Effort travels inside ``output_config``, not as a top-level field.
+        if self.parameters.reasoning_effort and "output_config" not in kwargs:
+            kwargs["output_config"] = {
+                "effort": self.parameters.reasoning_effort,
             }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
@@ -201,7 +257,7 @@ class AnthropicChatModel(ChatModelBase):
 
         start_datetime = datetime.now()
 
-        response = await client.messages.create(**kwargs)
+        response = await self.client.messages.create(**kwargs)
 
         if self.stream:
             return self._parse_anthropic_stream_completion_response(
@@ -531,14 +587,14 @@ class AnthropicChatModel(ChatModelBase):
     ) -> StructuredResponse:
         """Anthropic-specific override for structured output.
 
-        Anthropic's extended thinking mode only supports
+        Anthropic's budget-based thinking mode only supports
         ``tool_choice={"type": "auto"}`` or ``{"type": "none"}``; any
         forcing form (``"any"`` or a specific tool) raises an API error.
-        When ``thinking_enable`` is on we default ``tool_choice`` to
-        ``"auto"`` and rely on the base class's injected system-reminder
-        prompt to guide the model. When thinking is disabled, this falls
+        In that mode we default ``tool_choice`` to ``"auto"`` and rely on
+        the base class's injected system-reminder prompt to guide the
+        model. Adaptive thinking accepts forced tool use, so it falls
         through to the base implementation (force the structured-output
-        tool).
+        tool) just like thinking being off entirely.
 
         See:
          https://platform.claude.com/docs/en/build-with-claude/extended-thinking#extended-thinking-with-tool-use
@@ -564,7 +620,7 @@ class AnthropicChatModel(ChatModelBase):
                 The structured response whose ``content`` is the validated
                 output dict matching ``structured_model``.
         """
-        if tool_choice is None and self.parameters.thinking_enable:
+        if tool_choice is None and self._thinking_mode() == "enabled":
             tool_choice = ToolChoice(mode="auto")
         return await super()._call_api_with_structured_output(
             model_name=model_name,

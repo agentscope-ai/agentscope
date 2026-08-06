@@ -24,10 +24,12 @@ from agentscope.app.storage import (
     KnowledgeBaseRecord,
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
+    MCPRecord,
     ScheduleData,
     ScheduleRecord,
     SessionConfig,
     SessionSource,
+    SkillRecord,
     AsyncSQLAlchemyStorage,
     TeamData,
     TeamMember,
@@ -35,6 +37,7 @@ from agentscope.app.storage import (
 )
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.credential import DashScopeCredential
+from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.message import AssistantMsg, UserMsg
 
 
@@ -113,6 +116,18 @@ def _schedule_record(user_id: str, agent_id: str) -> ScheduleRecord:
                 model="gpt-4o",
                 parameters={},
             ),
+        ),
+    )
+
+
+def _mcp_record(user_id: str, name: str = "deepwiki") -> MCPRecord:
+    """Build an installed-MCP record wrapping a stateless HTTP MCP."""
+    return MCPRecord(
+        user_id=user_id,
+        client=MCPClient(
+            name=name,
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(url="https://mcp.deepwiki.com/mcp"),
         ),
     )
 
@@ -778,6 +793,100 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             await self.storage.delete_schedule("user-1", s1.id),
         )
 
+    # ------------------------------------------------------------------
+    # Installed MCPs and skills
+    # ------------------------------------------------------------------
+
+    async def test_mcps_round_trip(self) -> None:
+        """Upsert / get / get-by-name / list / delete + owner scoping."""
+        record = _mcp_record("user-1")
+        mcp_id = await self.storage.upsert_mcp("user-1", record)
+
+        fetched = await self.storage.get_mcp("user-1", mcp_id)
+        self.assertEqual(fetched.client.mcp_config.type, "http_mcp")
+        self.assertEqual(fetched.name, "deepwiki")
+
+        by_name = await self.storage.get_mcp_by_name("user-1", "deepwiki")
+        self.assertEqual(by_name.id, mcp_id)
+        self.assertIsNone(
+            await self.storage.get_mcp_by_name("user-1", "nope"),
+        )
+
+        self.assertEqual(
+            [m.id for m in await self.storage.list_mcps("user-1")],
+            [mcp_id],
+        )
+        self.assertEqual(await self.storage.list_mcps("user-2"), [])
+        self.assertIsNone(await self.storage.get_mcp("user-2", mcp_id))
+
+        self.assertTrue(await self.storage.delete_mcp("user-1", mcp_id))
+        self.assertFalse(await self.storage.delete_mcp("user-1", mcp_id))
+
+    async def test_mcp_name_is_unique_per_user(self) -> None:
+        """A second record may not claim a name, but another user may."""
+        await self.storage.upsert_mcp("user-1", _mcp_record("user-1"))
+        with self.assertRaises(ValueError):
+            await self.storage.upsert_mcp("user-1", _mcp_record("user-1"))
+
+        other = await self.storage.upsert_mcp("user-2", _mcp_record("user-2"))
+        self.assertIsNotNone(await self.storage.get_mcp("user-2", other))
+
+    async def test_mcp_rename_frees_the_old_name(self) -> None:
+        """Re-upserting the same record renames rather than clashing."""
+        record = _mcp_record("user-1")
+        await self.storage.upsert_mcp("user-1", record)
+
+        record.client.name = "renamed"
+        await self.storage.upsert_mcp("user-1", record)
+
+        self.assertIsNone(
+            await self.storage.get_mcp_by_name("user-1", "deepwiki"),
+        )
+        renamed = await self.storage.get_mcp_by_name("user-1", "renamed")
+        self.assertEqual(renamed.id, record.id)
+
+    async def test_skills_round_trip(self) -> None:
+        """Upsert / get / get-by-name / list / delete + owner scoping."""
+        record = SkillRecord(user_id="user-1", name="gifgrep")
+        skill_id = await self.storage.upsert_skill("user-1", record)
+
+        fetched = await self.storage.get_skill("user-1", skill_id)
+        self.assertEqual(fetched.name, "gifgrep")
+
+        by_name = await self.storage.get_skill_by_name("user-1", "gifgrep")
+        self.assertEqual(by_name.id, skill_id)
+
+        self.assertEqual(
+            [s.id for s in await self.storage.list_skills("user-1")],
+            [skill_id],
+        )
+        self.assertEqual(await self.storage.list_skills("user-2"), [])
+        self.assertIsNone(await self.storage.get_skill("user-2", skill_id))
+
+        self.assertTrue(await self.storage.delete_skill("user-1", skill_id))
+        self.assertFalse(await self.storage.delete_skill("user-1", skill_id))
+
+    async def test_skill_name_is_unique_per_user(self) -> None:
+        """Mirrors the MCP rule; the two libraries are independent."""
+        await self.storage.upsert_skill(
+            "user-1",
+            SkillRecord(user_id="user-1", name="shared"),
+        )
+        with self.assertRaises(ValueError):
+            await self.storage.upsert_skill(
+                "user-1",
+                SkillRecord(user_id="user-1", name="shared"),
+            )
+
+        # The same name on the MCP side is a different table entirely.
+        await self.storage.upsert_mcp(
+            "user-1",
+            _mcp_record("user-1", name="shared"),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_mcp_by_name("user-1", "shared"),
+        )
+
 
 class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
     """Boot via ``auto_migrate=True`` and confirm the schema is live.
@@ -854,3 +963,26 @@ class LegacyRecordShapeTest(IsolatedAsyncioTestCase):
         self.assertEqual(record.status, "ready")
         # The fields moved to the top level and no longer shadow ``data``.
         self.assertNotIn("status", record.data.model_dump())
+
+    async def test_mcp_name_is_derived_not_read(self) -> None:
+        """``MCPRecord.name`` comes from the client, so a payload written
+        before the field existed — or one carrying a stale value — still
+        yields the right name."""
+        for stored_name in (None, "stale"):
+            payload: dict = {
+                "user_id": "u1",
+                "client": {
+                    "name": "deepwiki",
+                    "is_stateful": False,
+                    "mcp_config": {
+                        "type": "http_mcp",
+                        "url": "https://mcp.deepwiki.com/mcp",
+                    },
+                },
+            }
+            if stored_name is not None:
+                payload["name"] = stored_name
+            self.assertEqual(
+                MCPRecord.model_validate(payload).name,
+                "deepwiki",
+            )

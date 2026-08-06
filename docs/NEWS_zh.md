@@ -2,6 +2,8 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
+- **[2026-08] `功能`:** 支持 MCP & Skill Hub —— 浏览 hub、安装到个人库、再添加到工作区。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
 - **[2026-07] `集成`:** 集成 Daytona 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `集成`:** 集成 K8s，OpenSandbox 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `集成`:** 集成 ReMe 长期记忆。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)

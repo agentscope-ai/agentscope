@@ -17,6 +17,8 @@ import json
 import time
 from collections import OrderedDict
 
+from ..._utils._common import _generate_id
+
 from fastapi import HTTPException
 
 from .._bus_ops import enqueue_run_trigger, publish_session_event
@@ -56,7 +58,7 @@ from ...event import (
     ExternalExecutionResultEvent,
     UserInterruptEvent,
 )
-from ._errors import _classify_error
+from ._errors import _classify_error, _classify_setup_error
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory, PermissionEngine
 
@@ -725,29 +727,20 @@ class ChatService:
 
             except Exception as e:  # pylint: disable=broad-except
                 # The reply stream died before emitting its terminating
-                # ReplyEndEvent. Synthesize one so the reply is closed on
-                # both channels (publish → live SSE stops loading;
-                # append_event → persisted reply gets finished_at/reason/
-                # error for refresh), then re-raise for logging + the
-                # finally-persist. CancelledError is a BaseException, so
-                # interrupts are unaffected; reply_msg is None only when we
-                # failed before REPLY_START (nothing to close). The
-                # finished_reason guard skips the case where the agent
-                # already closed the reply and the failure is downstream
-                # (publish/projection) — don't overwrite a completed reply.
-                if reply_msg is not None and reply_msg.finished_reason is None:
-                    end_event = ReplyEndEvent(
-                        session_id=session_id,
-                        reply_id=reply_msg.id,
-                        finished_reason=ReplyFinishedReason.ERROR,
-                        error=_classify_error(e),
-                    )
-                    reply_msg.append_event(end_event)
-                    await publish_session_event(
-                        self._message_bus,
+                # ReplyEndEvent. Report it the same way upstream does:
+                # synthesize an end event for a mid-stream failure, or a
+                # fresh failed reply when REPLY_START never happened.
+                # CancelledError is a BaseException, so interrupts are
+                # unaffected.
+                if reply_msg is None:
+                    await self._report_failure(
+                        user_id,
                         session_id,
-                        end_event.model_dump(mode="json"),
+                        agent_id,
+                        e,
                     )
+                else:
+                    await self._close_failed_reply(session_id, reply_msg, e)
                 raise
 
             finally:
@@ -780,6 +773,131 @@ class ChatService:
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+    async def _close_failed_reply(
+        self,
+        session_id: str,
+        reply_msg: Msg,
+        error: Exception,
+    ) -> None:
+        """Close a reply that died mid-stream, and say why.
+
+        The stream never emitted its terminating ``ReplyEndEvent``, so
+        one is synthesized: publishing it stops the live SSE spinner,
+        and appending it gives the persisted reply a finished_at, reason
+        and error for anyone who refreshes.
+
+        Nothing is reported when the agent already closed the reply and
+        the failure is downstream (publish, projection): overwriting a
+        completed reply with an error would tell the user their answer
+        failed when it did not.
+
+        Args:
+            session_id (`str`):
+                The session the reply belongs to.
+            reply_msg (`Msg`):
+                The reply in flight.
+            error (`Exception`):
+                What killed the stream.
+        """
+        if reply_msg.finished_reason is not None:
+            logger.exception(
+                "Post-reply failure for session %r; the reply itself "
+                "completed.",
+                session_id,
+            )
+            return
+
+        end_event = ReplyEndEvent(
+            session_id=session_id,
+            reply_id=reply_msg.id,
+            finished_reason=ReplyFinishedReason.ERROR,
+            error=_classify_error(error),
+        )
+        reply_msg.append_event(end_event)
+        await publish_session_event(
+            self._message_bus,
+            session_id,
+            end_event.model_dump(mode="json"),
+        )
+        logger.exception(
+            "Reply failed for session %r; reported to the client as %s.",
+            session_id,
+            end_event.error.type if end_event.error else "error",
+        )
+
+    async def _report_failure(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        error: Exception,
+    ) -> None:
+        """Tell the client about a failure that reached no reply.
+
+        The caller is responsible for holding the session lock: these
+        events go on the same channel as a real reply's, so publishing
+        them unserialised would interleave a "reply failed" into an
+        answer another run is streaming. It is not taken here because
+        one call site already holds it.
+
+        Publishes a start/end pair so the failure lands the same way a
+        mid-reply one does — the UI has exactly one shape for "a reply
+        failed", and a stream that merely stops is not it. The pair is
+        persisted too, so the failure survives a refresh rather than
+        vanishing from the transcript.
+
+        Best-effort by construction: this runs on a path that has
+        already failed, so its own failure is logged and dropped rather
+        than replacing the error the caller is reporting.
+
+        Args:
+            user_id (`str`):
+                Authenticated caller's user ID.
+            session_id (`str`):
+                The session whose run failed.
+            agent_id (`str`):
+                The agent that was being assembled.
+            error (`Exception`):
+                What went wrong while setting the run up.
+        """
+        try:
+            reply_id = _generate_id()
+            start_event = ReplyStartEvent(
+                session_id=session_id,
+                reply_id=reply_id,
+                name=agent_id,
+            )
+            end_event = ReplyEndEvent(
+                session_id=session_id,
+                reply_id=reply_id,
+                finished_reason=ReplyFinishedReason.ERROR,
+                error=_classify_setup_error(error),
+            )
+
+            reply_msg = AssistantMsg(
+                id=reply_id,
+                name=agent_id,
+                content=[],
+            )
+            for event in (start_event, end_event):
+                reply_msg.append_event(event)
+                await publish_session_event(
+                    self._message_bus,
+                    session_id,
+                    event.model_dump(mode="json"),
+                )
+            await self._storage.upsert_message(
+                user_id,
+                session_id,
+                reply_msg,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to report a failure for session %r; the original "
+                "error is logged above.",
+                session_id,
+            )
 
     async def _project_event(
         self,

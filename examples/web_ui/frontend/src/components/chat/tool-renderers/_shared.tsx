@@ -92,7 +92,7 @@ export function ToolCallRow({
 			{expandable && (
 				<ChevronRight
 					className={
-						'size-3 shrink-0 transition-transform hidden group-hover:flex group-data-[state=open]:flex group-data-[state=open]:rotate-90'
+						'size-3 shrink-0 transition-transform text-transparent group-hover:text-current group-data-[state=open]:flex group-data-[state=open]:rotate-90'
 					}
 				/>
 			)}
@@ -200,6 +200,7 @@ export function FramedFileBody({ filePath, children }: { filePath?: string; chil
  * how many lines were inserted and deleted.
  */
 export function DiffStats({ insertions, deletions }: { insertions: number; deletions: number }) {
+	if (insertions === 0 && deletions === 0) return null;
 	return (
 		<div className="flex items-center gap-0.5">
 			<div className="flex items-center text-emerald-600 dark:text-emerald-400">

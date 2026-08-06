@@ -153,7 +153,13 @@ class TestTeamCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -199,7 +205,13 @@ class TestTeamCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -247,7 +259,13 @@ class TestAgentCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -297,6 +315,8 @@ class TestAgentCreate(_TeamToolsTestBase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "hint": AnyString(),
                 "source": '{"label": "team_message", "sublabel": "leader"}',
             },
@@ -575,7 +595,13 @@ class TestAgentCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -604,7 +630,13 @@ class TestAgentCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -916,7 +948,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -938,6 +976,8 @@ class TestTeamSay(_TeamToolsTestBase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "hint": AnyString(),
                 "source": AnyString(),
             },
@@ -976,7 +1016,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -1023,7 +1069,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1049,7 +1101,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1075,7 +1133,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1162,7 +1226,13 @@ class TestTeamDelete(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -1199,7 +1269,13 @@ class TestTeamDelete(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1328,7 +1404,13 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -1392,7 +1474,13 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
 
     _EXPECTED_ERROR_CHUNK = {
         "content": [
-            {"type": "text", "text": AnyString(), "id": AnyString()},
+            {
+                "type": "text",
+                "text": AnyString(),
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ],
         "state": "error",
         "is_last": True,

@@ -65,6 +65,41 @@ interface ChatViewportProps {
 /** Maximum number of panels stacked in a single dock column. */
 const MAX_PANELS_PER_COLUMN = 2;
 
+/** localStorage key holding the dock layout across page navigations. */
+const PANEL_LAYOUT_KEY = 'chat_panel_layout';
+
+// Typed as a full Record so adding a PanelKey without listing it here
+// is a compile error rather than a silently unrestorable panel.
+const KNOWN_PANELS: Record<PanelKey, true> = {
+	plan: true,
+	mcp: true,
+	skill: true,
+	permission: true,
+	knowledge: true,
+};
+
+/**
+ * Restore the persisted dock layout, dropping anything that is no
+ * longer a known panel (keys get renamed/removed across releases).
+ *
+ * @returns The stored layout, or an empty one when absent or corrupt.
+ */
+function loadPanelLayout(): PanelKey[][] {
+	try {
+		const parsed: unknown = JSON.parse(localStorage.getItem(PANEL_LAYOUT_KEY) ?? '[]');
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.map((column: unknown) =>
+				Array.isArray(column)
+					? column.filter((key): key is PanelKey => key in KNOWN_PANELS)
+					: [],
+			)
+			.filter((column) => column.length > 0);
+	} catch {
+		return [];
+	}
+}
+
 /**
  * Insert a panel into the dock layout. Scans columns left to right and
  * appends to the first one with spare room; if every column is full a
@@ -145,7 +180,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
-	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>([]);
+	// Persisted so leaving and returning to /chat keeps the same panels.
+	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+
+	useEffect(() => {
+		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
+	}, [panelLayout]);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
@@ -165,10 +205,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		mcps,
 		loading: mcpsLoading,
 		addMcps,
+		addMcpsFromLibrary,
 		removeMcp,
 		skills,
 		skillsLoading,
-		addSkill,
+		uploadSkill,
+		addSkillsFromLibrary,
 		removeSkill,
 	} = useWorkspace(agentId, sessionId);
 	const { knowledgeBases, loading: knowledgeBasesLoading } = useKnowledgeBases();
@@ -233,6 +275,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						mcps={mcps}
 						loading={mcpsLoading}
 						onAdd={addMcps}
+						onAddFromLibrary={addMcpsFromLibrary}
 						onRemove={removeMcp}
 					/>
 				),
@@ -244,7 +287,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					<SkillPanel
 						skills={skills}
 						loading={skillsLoading}
-						onAdd={addSkill}
+						onUpload={uploadSkill}
+						onAddFromLibrary={addSkillsFromLibrary}
 						onRemove={removeSkill}
 					/>
 				),
@@ -300,10 +344,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			mcps,
 			mcpsLoading,
 			addMcps,
+			addMcpsFromLibrary,
 			removeMcp,
 			skills,
 			skillsLoading,
-			addSkill,
+			uploadSkill,
+			addSkillsFromLibrary,
 			removeSkill,
 			permissionContext,
 			knowledgeBases,
@@ -525,15 +571,20 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		<>
 			<main className="flex size-full">
 				<ResizablePanelGroup orientation="horizontal">
-					<ResizablePanel className="flex flex-1" minSize="24rem">
+					<ResizablePanel
+						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
+						minSize="24rem"
+					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div
-									id="tour-llm-select"
-									className="flex flex-row items-center gap-x-1"
-								>
+								<div className="flex flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
+								</div>
+								<div className="flex flex-row gap-x-1">
 									<LlmSelect
+										id="tour-llm-select"
+										variant="ghost"
+										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
@@ -548,9 +599,10 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										selectedTTSModel={selectedTTSModel}
 										onTTSChange={handleTTSChange}
 									/>
-								</div>
-								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
 									<PermissionModeSelect
+										id="tour-permission-mode"
+										variant={'ghost'}
+										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedPermissionMode}
 										disabled={!sessionId}
 										onChange={handlePermissionModeChange}
@@ -622,22 +674,18 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									onInterrupt={interrupt}
 									footerSlot={
 										subagentHitl.length > 0 ? (
-											<div className="space-y-2 pb-2">
-												{subagentHitl.map((entry) => (
-													<SubagentHitlCard
-														key={`${entry.worker_session_id}:${entry.reply_id}`}
-														entry={entry}
-														onConfirm={(toolCall, confirm, rules) =>
-															onSubagentConfirm(
-																entry,
-																toolCall,
-																confirm,
-																rules,
-															)
-														}
-													/>
-												))}
-											</div>
+											<SubagentHitlCard
+												key={`${subagentHitl[0].worker_session_id}:${subagentHitl[0].reply_id}`}
+												entry={subagentHitl[0]}
+												onConfirm={(toolCall, confirm, rules) =>
+													onSubagentConfirm(
+														subagentHitl[0],
+														toolCall,
+														confirm,
+														rules,
+													)
+												}
+											/>
 										) : null
 									}
 									allowedInputTypes={(
@@ -663,6 +711,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 														file.type || 'application/octet-stream',
 												},
 												name: file.name,
+												created_at: new Date().toISOString(),
 											};
 										}
 										if (file.type === 'text/plain') {
@@ -671,6 +720,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												id: crypto.randomUUID(),
 												type: 'text' as const,
 												text: `[File: ${file.name}]\n${text}`,
+												created_at: new Date().toISOString(),
 											};
 										}
 										const buffer = await file.arrayBuffer();
@@ -689,6 +739,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												data: base64,
 											},
 											name: file.name,
+											created_at: new Date().toISOString(),
 										};
 									}}
 								/>
@@ -696,7 +747,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						</div>
 					</ResizablePanel>
 					{panelLayout.length > 0 && (
-						<ResizableHandle withHandle className="bg-transparent" />
+						<ResizableHandle withHandle className="bg-transparent w-1.5" />
 					)}
 					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>

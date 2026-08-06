@@ -1,3 +1,4 @@
+import { format, isToday } from 'date-fns';
 import {
 	BotMessageSquare,
 	CalendarClock,
@@ -32,20 +33,17 @@ import {
 	EmptyHeader,
 	EmptyTitle,
 	EmptyDescription,
-	EmptyContent,
 	EmptyMedia,
 } from '@/components/ui/empty';
 import {
 	Sidebar,
 	SidebarContent,
-	SidebarFooter,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
-	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuAction,
+	SidebarMenuBadge,
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarProvider,
@@ -193,8 +191,11 @@ const ChatPageInner = () => {
 		await updateSession(renameSession.id, { name });
 	};
 
+	const todaySessions = sessions.filter((sess) => isToday(new Date(sess.session.created_at)));
+	const earlierSessions = sessions.filter((sess) => !isToday(new Date(sess.session.created_at)));
+
 	return (
-		<div className="flex h-full w-full">
+		<div className="flex h-full w-full p-2 gap-2">
 			{/*
 			 * Desktop stays `collapsible="none"` so the session list sits in
 			 * normal flow beside the app rail (AppSidebar). Mobile switches to
@@ -202,65 +203,76 @@ const ChatPageInner = () => {
 			 * (the drawer we want) — instead of the desktop `fixed left-0`
 			 * container, which would otherwise cover the app rail.
 			 */}
-			<Sidebar collapsible={isMobile ? 'offcanvas' : 'none'} className="border-r">
-				<SidebarHeader>
-					<div className="flex flex-col gap-y-2">
-						<span className="text-muted-foreground text-xs">
-							{localStorage.getItem('server_url')}
-						</span>
-						<div className="flex flex-row gap-x-2 items-center">
+			<Sidebar collapsible={isMobile ? 'offcanvas' : 'none'} className="rounded-[22px]">
+				<SidebarContent className="my-2">
+					<SidebarGroup className="px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('common.agent')}
+							<AgentDialog onCreated={refetchAgents}>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									title={t('dialog-agent-create.title')}
+								>
+									<Plus id="tour-create-agent" className="size-3.5" />
+								</Button>
+							</AgentDialog>
+						</SidebarGroupLabel>
+						<SidebarGroupContent className="flex items-center">
 							<AgentSelect
+								className="flex-1 min-w-0"
 								agents={agents}
 								value={urlAgentId ?? null}
 								onChange={(id) => navigate(`/chat/${id}`)}
+								variant="ghost"
+								size="default"
 							/>
-							<Button
-								size="icon"
-								variant="ghost"
-								disabled={!urlAgentId || !selectedAgent?.editable}
-								tooltip={
-									selectedAgent && !selectedAgent.editable
-										? t('common.readOnlyTooltip')
-										: undefined
-								}
-								onClick={() => setEditOpen(true)}
-							>
-								<Settings2 />
-							</Button>
-							<Button
-								size="icon"
-								variant="ghost"
-								disabled={!urlAgentId || !selectedAgent?.editable}
-								tooltip={
-									selectedAgent && !selectedAgent.editable
-										? t('common.readOnlyTooltip')
-										: undefined
-								}
-								onClick={() => setDeleteOpen(true)}
-							>
-								<Trash2 className="text-destructive" />
-							</Button>
-						</div>
-						<AgentDialog onCreated={refetchAgents} triggerId="tour-create-agent" />
-					</div>
-				</SidebarHeader>
-				<SidebarContent className="my-5">
-					<SidebarGroup>
-						<SidebarGroupLabel>{t('chat.session.label')}</SidebarGroupLabel>
-						<SidebarGroupAction asChild>
-							<div>
-								<Button
-									id="tour-create-session"
-									size="icon-xs"
-									variant="default"
-									disabled={!urlAgentId}
-									onClick={handleCreateSession}
-								>
-									<Plus />
-								</Button>
-							</div>
-						</SidebarGroupAction>
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										className="shrink-0 text-muted-foreground"
+										variant="ghost"
+										size="icon"
+										disabled={!urlAgentId || !selectedAgent?.editable}
+									>
+										<Ellipsis />
+									</Button>
+								</DropdownMenuTrigger>
+								{/* w-auto: the default pins the menu to the
+								    trigger's width, which is a 32px icon button. */}
+								<DropdownMenuContent className="w-auto">
+									<DropdownMenuItem onClick={() => setEditOpen(true)}>
+										<Settings2 />
+										{t('agent-menu.settings')}
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										onClick={() => setDeleteOpen(true)}
+										variant="destructive"
+									>
+										<Trash2 />
+										{t('agent-menu.delete')}
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+					<SidebarGroup className="mt-5 px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('chat.session.label')}
+							<span className="text-[10px] text-text-data font-mono">
+								{sessions.length}
+							</span>
+						</SidebarGroupLabel>
 						<SidebarGroupContent>
+							<SidebarGroup>
+								<SidebarMenu className="mb-2">
+									<Button id="tour-create-session" onClick={handleCreateSession}>
+										<Plus />
+										{t('chat.newSession')}
+									</Button>
+								</SidebarMenu>
+							</SidebarGroup>
+
 							{sessions.length === 0 ? (
 								<Empty className="border-none py-4 min-h-50">
 									<EmptyHeader>
@@ -274,81 +286,186 @@ const ChatPageInner = () => {
 												: t('chat.session.emptyNoAgent')}
 										</EmptyDescription>
 									</EmptyHeader>
-									<EmptyContent>
-										<Button
-											variant="outline"
-											size="sm"
-											disabled={!urlAgentId}
-											onClick={handleCreateSession}
-										>
-											Create Session
-										</Button>
-									</EmptyContent>
 								</Empty>
 							) : (
-								<SidebarMenu>
-									{sessions.map((view) => {
-										const session = view.session;
-										return (
-											<SidebarMenuItem key={session.id}>
-												<SidebarMenuButton
-													isActive={urlSessionId === session.id}
-													onClick={() => {
-														navigate(
-															`/chat/${urlAgentId}/${session.id}`,
-														);
-														setOpenMobile(false);
-													}}
-												>
-													{hasScheduleSessions &&
-														(session.source === 'schedule' ? (
-															<CalendarClock />
-														) : (
-															<BotMessageSquare />
-														))}
-													<span className="truncate">
-														{session.config.name || session.id}
-													</span>
-												</SidebarMenuButton>
-												<SidebarMenuAction showOnHover>
-													<DropdownMenu>
-														<DropdownMenuTrigger asChild>
-															<Ellipsis />
-														</DropdownMenuTrigger>
-														<DropdownMenuContent
-															side="right"
-															align="start"
-														>
-															<DropdownMenuItem
+								<>
+									<SidebarGroup>
+										<SidebarGroupLabel>
+											{t('chat.session.today')}
+										</SidebarGroupLabel>
+										<SidebarGroupContent>
+											<SidebarMenu>
+												{todaySessions.map((view) => {
+													const session = view.session;
+													return (
+														<SidebarMenuItem key={session.id}>
+															{/* Wider right gutter than the stock
+															    pr-8: the badge holds a mono timestamp. */}
+															<SidebarMenuButton
+																className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
+																isActive={
+																	urlSessionId === session.id
+																}
 																onClick={() => {
-																	setRenameSession(session);
-																	setRenameOpen(true);
+																	navigate(
+																		`/chat/${urlAgentId}/${session.id}`,
+																	);
+																	setOpenMobile(false);
 																}}
 															>
-																<Pencil />
-																{t('session-menu.rename')}
-															</DropdownMenuItem>
-															<DropdownMenuItem
-																variant="destructive"
-																onClick={() =>
-																	requestDeleteSession(session)
+																{hasScheduleSessions &&
+																	(session.source ===
+																	'schedule' ? (
+																		<CalendarClock />
+																	) : (
+																		<BotMessageSquare />
+																	))}
+																<span className="truncate">
+																	{session.config.name ||
+																		session.id}
+																</span>
+															</SidebarMenuButton>
+															{/* Badge and action are mutually exclusive.
+															    Keyboard focus reveals the action, plain
+															    focus-within does not — otherwise clicking
+															    the row would pin it open. */}
+															<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
+																{format(
+																	new Date(
+																		view.session.created_at,
+																	),
+																	'HH:mm',
+																)}
+															</SidebarMenuBadge>
+															<DropdownMenu>
+																<DropdownMenuTrigger asChild>
+																	<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
+																		<Ellipsis />
+																	</SidebarMenuAction>
+																</DropdownMenuTrigger>
+																<DropdownMenuContent
+																	className="w-auto"
+																	side="right"
+																	align="start"
+																>
+																	<DropdownMenuItem
+																		onClick={() => {
+																			setRenameSession(
+																				session,
+																			);
+																			setRenameOpen(true);
+																		}}
+																	>
+																		<Pencil />
+																		{t('session-menu.rename')}
+																	</DropdownMenuItem>
+																	<DropdownMenuItem
+																		variant="destructive"
+																		onClick={() =>
+																			requestDeleteSession(
+																				session,
+																			)
+																		}
+																	>
+																		<Trash2 />
+																		{t('session-menu.delete')}
+																	</DropdownMenuItem>
+																</DropdownMenuContent>
+															</DropdownMenu>
+														</SidebarMenuItem>
+													);
+												})}
+											</SidebarMenu>
+										</SidebarGroupContent>
+									</SidebarGroup>
+									<SidebarGroup>
+										<SidebarGroupLabel>
+											{t('chat.session.earlier')}
+										</SidebarGroupLabel>
+										<SidebarGroupContent>
+											<SidebarMenu>
+												{earlierSessions.map((view) => {
+													const session = view.session;
+													return (
+														<SidebarMenuItem key={session.id}>
+															<SidebarMenuButton
+																className="group-has-data-[sidebar=menu-action]/menu-item:pr-16"
+																isActive={
+																	urlSessionId === session.id
 																}
+																onClick={() => {
+																	navigate(
+																		`/chat/${urlAgentId}/${session.id}`,
+																	);
+																	setOpenMobile(false);
+																}}
 															>
-																<Trash2 />
-																{t('session-menu.delete')}
-															</DropdownMenuItem>
-														</DropdownMenuContent>
-													</DropdownMenu>
-												</SidebarMenuAction>
-											</SidebarMenuItem>
-										);
-									})}
-								</SidebarMenu>
+																{hasScheduleSessions &&
+																	(session.source ===
+																	'schedule' ? (
+																		<CalendarClock />
+																	) : (
+																		<BotMessageSquare />
+																	))}
+																<span className="truncate">
+																	{session.config.name ||
+																		session.id}
+																</span>
+															</SidebarMenuButton>
+															<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
+																{format(
+																	new Date(
+																		view.session.created_at,
+																	),
+																	'MMM dd',
+																)}
+															</SidebarMenuBadge>
+															<DropdownMenu>
+																<DropdownMenuTrigger asChild>
+																	<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
+																		<Ellipsis />
+																	</SidebarMenuAction>
+																</DropdownMenuTrigger>
+																<DropdownMenuContent
+																	className="w-auto"
+																	side="right"
+																	align="start"
+																>
+																	<DropdownMenuItem
+																		onClick={() => {
+																			setRenameSession(
+																				session,
+																			);
+																			setRenameOpen(true);
+																		}}
+																	>
+																		<Pencil />
+																		{t('session-menu.rename')}
+																	</DropdownMenuItem>
+																	<DropdownMenuItem
+																		variant="destructive"
+																		onClick={() =>
+																			requestDeleteSession(
+																				session,
+																			)
+																		}
+																	>
+																		<Trash2 />
+																		{t('session-menu.delete')}
+																	</DropdownMenuItem>
+																</DropdownMenuContent>
+															</DropdownMenu>
+														</SidebarMenuItem>
+													);
+												})}
+											</SidebarMenu>
+										</SidebarGroupContent>
+									</SidebarGroup>
+								</>
 							)}
 						</SidebarGroupContent>
 					</SidebarGroup>
 				</SidebarContent>
-				<SidebarFooter />
 			</Sidebar>
 			{/*
 			 * Team sidebar lives at the outer page level (not inside

@@ -1,6 +1,7 @@
 name: gpt-4.1-nano
 label: GPT-4.1 Nano
-status: active
+status: deprecated
+deprecated_at: "2026-10-23T00:00:00"
 
 input_types:
   - text/plain

@@ -7,18 +7,22 @@ import json
 import os
 import re
 import shutil
-from typing import TypedDict
+from typing import AsyncIterator, Literal, TypedDict
 
 import frontmatter
 
 from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
-from .._utils._common import _normalize_local_path
+from .._utils._common import _generate_id, _normalize_local_path
 from ..mcp import MCPClient
 from ..skill import Skill
 from ..tool import ToolBase
 from ..tool._builtin._backend import LocalBackend
-from ._base import WorkspaceBase
+from ._base import (
+    DEFAULT_MAX_EXTRACTED_BYTES,
+    _EXTRACT_ARCHIVE_SHIM,
+    WorkspaceBase,
+)
 
 
 class _SkillEntry(TypedDict):
@@ -686,8 +690,18 @@ class LocalWorkspace(WorkspaceBase):
         Args:
             mcp_client (`MCPClient`):
                 The MCP client to add.
+
+        Raises:
+            ValueError:
+                If an MCP with the same name already exists. Names are
+                unique because they compose the model-facing tool name
+                ``mcp__{name}__{tool}``.
         """
         async with self._mcp_lock:
+            if any(m.name == mcp_client.name for m in self._mcps):
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists in workspace.",
+                )
             if mcp_client.is_stateful and not mcp_client.is_connected:
                 await mcp_client.connect()
             self._mcps.append(mcp_client)
@@ -804,6 +818,65 @@ class LocalWorkspace(WorkspaceBase):
                 mtime if mtime is not None else 0.0
             )
             await self._save_skills_file(skills_dir, skills_file)
+
+    async def add_skill_archive(
+        self,
+        stream: AsyncIterator[bytes],
+        fmt: Literal["zip", "tar", "tar.gz"],
+        dir_name: str,
+        max_extracted_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
+    ) -> None:
+        """Expand a skill archive, then install it as a local directory.
+
+        Unpacks inside the workspace and hands the result to
+        :meth:`add_skill`, so hash dedup, name conflict resolution and
+        the ``.skills`` index behave exactly as for a path install —
+        which is also why ``dir_name`` is ignored here: the directory
+        name comes from the ``SKILL.md`` front matter.
+
+        Args:
+            stream (`AsyncIterator[bytes]`):
+                The archive bytes, in order.
+            fmt (`Literal["zip", "tar", "tar.gz"]`):
+                The archive format.
+            dir_name (`str`):
+                Unused; kept for interface compatibility.
+            max_extracted_bytes (`int`):
+                Ceiling on the archive's expanded size.
+
+        Raises:
+            ValueError:
+                If the archive holds no valid ``SKILL.md``.
+            RuntimeError:
+                If expanding the archive fails.
+        """
+        staging = os.path.join(
+            self.workdir,
+            f".skill-staging-{_generate_id()}",
+        )
+        archive_path = f"{staging}.{'tar.gz' if fmt == 'tar.gz' else fmt}"
+        try:
+            await self._backend.write_stream(archive_path, stream)
+            result = await self._backend.exec_shell(
+                [
+                    "python3",
+                    "-c",
+                    _EXTRACT_ARCHIVE_SHIM,
+                    archive_path,
+                    staging,
+                    fmt,
+                    str(max_extracted_bytes),
+                ],
+            )
+            if not result.ok():
+                raise RuntimeError(
+                    f"Failed to expand skill archive: "
+                    f"{result.stderr.decode('utf-8', 'replace')}",
+                )
+            await self.add_skill(await self._find_skill_root(staging))
+        finally:
+            await self._backend.delete_path(staging)
+            await self._backend.delete_path(archive_path)
 
     async def remove_skill(self, name: str) -> None:
         """Remove a skill from the workspace by its agent-facing name.

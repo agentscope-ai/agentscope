@@ -11,7 +11,7 @@ export function defaultGetDisplayName(call: ToolCallBlock): string {
 
 export function defaultRenderConfirmBody(call: ToolCallBlock): ReactNode {
 	return (
-		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
+		<div className="w-full max-w-full overflow-hidden break-words">
 			<div className="text-secondary-foreground">{call.input}</div>
 		</div>
 	);
