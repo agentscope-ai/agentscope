@@ -38,9 +38,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
-from agentscope.app.storage import RedisStorage
+from agentscope.app.storage import AsyncSQLAlchemyStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import QdrantStore
 
@@ -204,9 +204,9 @@ async def build_agent_middlewares(
 # ---------------------------------------------------------------------------
 # 4. 存储 / 消息总线 / 工作区 / 知识库
 # ---------------------------------------------------------------------------
-storage = RedisStorage(
-    host=config.redis.host,
-    port=config.redis.port,
+storage = AsyncSQLAlchemyStorage(
+    url=config.db.url,
+    create_tables=config.db.create_tables,
 )
 
 vector_store = QdrantStore(location=":memory:")
@@ -240,7 +240,10 @@ def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
 
 app = create_app(
     storage=storage,
-    message_bus=InMemoryMessageBus(),
+    message_bus=RedisMessageBus(
+        host=config.redis.host,
+        port=config.redis.port,
+    ),
     workspace_manager=workspace_manager,
     knowledge_base_manager=CollectionPerKbManager(
         storage=storage,
