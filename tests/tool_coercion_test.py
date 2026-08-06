@@ -346,6 +346,10 @@ class ToolCoercionTest(unittest.TestCase):
 
     def test_boolean_subschema_is_handled_gracefully(self) -> None:
         """Boolean sub-schemas (true/false) don't crash coercion."""
+        root_value = {"x": "42"}
+        self.assertEqual(_coerce_tool_args(root_value, True), root_value)
+        self.assertEqual(_coerce_tool_args(root_value, False), root_value)
+
         # x: true — any value is valid, coercion should pass through
         schema = {"type": "object", "properties": {"x": True}}
         result = _coerce_tool_args({"x": "42"}, schema)

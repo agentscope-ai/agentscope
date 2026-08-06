@@ -179,7 +179,7 @@ def _extract_input_schema(
 
 def _coerce_tool_args(
     kwargs: dict[str, Any],
-    schema: dict[str, Any],
+    schema: dict[str, Any] | bool,
 ) -> dict[str, Any]:
     """Coerce tool arguments to match the expected JSON schema types.
 
@@ -191,7 +191,7 @@ def _coerce_tool_args(
     Args:
         kwargs (`dict[str, Any]`):
             The tool input arguments to coerce.
-        schema (`dict[str, Any]`):
+        schema (`dict[str, Any] | bool`):
             The JSON schema describing the expected parameter types.
 
     Returns:
@@ -199,6 +199,9 @@ def _coerce_tool_args(
             The coerced arguments.  Keys not present in the schema are
             returned unchanged.
     """
+    if not isinstance(schema, dict):
+        return kwargs
+
     properties = schema.get("properties", {})
     if not properties or not kwargs:
         return kwargs
