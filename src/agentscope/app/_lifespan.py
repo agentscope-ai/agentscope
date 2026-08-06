@@ -146,9 +146,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # subprocess instead of blocking the event-loop thread
                 # that also serves concurrent requests. See
                 # ``IndexWorker.__init__``'s ``parser_executor`` doc.
-                parser_executor = stack.enter_context(
-                    ProcessPoolExecutor(),
-                )
+                # Skipped when ``offload_parsing`` is False (a custom
+                # parser holds non-picklable state).
+                parser_executor = None
+                if app.state.offload_parsing:
+                    parser_executor = stack.enter_context(
+                        ProcessPoolExecutor(
+                            max_workers=app.state.parser_max_workers,
+                        ),
+                    )
                 worker = IndexWorker(
                     storage=storage,
                     blob_store=blob_store,
@@ -156,6 +162,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     parsers=app.state.knowledge_parsers,
                     chunker=app.state.knowledge_chunker,
                     node_id=node_id,
+                    max_concurrency=app.state.index_worker_max_concurrency,
                     parser_executor=parser_executor,
                 )
                 await stack.enter_async_context(

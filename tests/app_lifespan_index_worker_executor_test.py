@@ -21,6 +21,7 @@ Two things are checked:
 """
 import asyncio
 import tempfile
+import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
@@ -76,6 +77,22 @@ class _SlowParser(ParserBase):
     async def parse(self, file: bytes | str, filename: str) -> list:
         time.sleep(_PARSE_SECONDS)  # noqa: ASYNC101 — the point of the test
         return [Section(content=TextBlock(text="ok"), source=filename)]
+
+
+class _LockHoldingParser(ParserBase):
+    """A thread-safe-but-not-picklable parser (a valid ``ParserBase``
+    per its contract, which requires stateless-or-thread-safe, not
+    picklable). Standing in for a custom parser holding a lock, an
+    HTTP client, or other process-bound state."""
+
+    supported_media_types: list[str] = ["application/x-lock-test"]
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    async def parse(self, file: bytes | str, filename: str) -> list:
+        with self._lock:
+            return [Section(content=TextBlock(text="ok"), source=filename)]
 
 
 # ----------------------------------------------------------------------
@@ -243,6 +260,51 @@ class LifespanParserExecutorWiringTest(IsolatedAsyncioTestCase):
         # TestClient's __exit__ ran the lifespan shutdown path.
         self.assertTrue(pool._shutdown_thread)
 
+    async def test_parser_pool_size_defaults_to_worker_concurrency(
+        self,
+    ) -> None:
+        """``parser_max_workers`` defaults to ``index_worker_max_concurrency``
+        rather than the process's CPU count, so the pool never holds more
+        idle workers than the pipeline can keep busy."""
+        captured: dict[str, Any] = {}
+        real_pool = lifespan_module.ProcessPoolExecutor
+
+        def _spy(*args: Any, **kwargs: Any) -> ProcessPoolExecutor:
+            captured["max_workers"] = kwargs.get("max_workers")
+            return real_pool(*args, **kwargs)
+
+        with patch.object(
+            lifespan_module,
+            "ProcessPoolExecutor",
+            side_effect=_spy,
+        ):
+            with TestClient(self._app):
+                pass
+        self.assertEqual(captured["max_workers"], 4)
+
+    async def test_offload_parsing_false_skips_the_process_pool(
+        self,
+    ) -> None:
+        """``offload_parsing=False`` builds the embedded ``IndexWorker``
+        with ``parser_executor=None``: parsing stays in-process, so a
+        custom parser holding non-picklable state keeps working."""
+        self._app.state.offload_parsing = False
+        captured: dict[str, Any] = {}
+        real_index_worker = lifespan_module.IndexWorker
+
+        def _spy(*args: Any, **kwargs: Any) -> IndexWorker:
+            captured["parser_executor"] = kwargs.get("parser_executor")
+            return real_index_worker(*args, **kwargs)
+
+        with patch.object(
+            lifespan_module,
+            "IndexWorker",
+            side_effect=_spy,
+        ):
+            with TestClient(self._app):
+                pass
+        self.assertIsNone(captured["parser_executor"])
+
 
 class IndexWorkerParseOffloadTest(IsolatedAsyncioTestCase):
     """The behavior the wiring above exists for: with a
@@ -298,3 +360,28 @@ class IndexWorkerParseOffloadTest(IsolatedAsyncioTestCase):
         finally:
             pool.shutdown(wait=True)
         self.assertGreater(ticks, 5, ticks)
+
+    async def test_non_picklable_parser_needs_offload_disabled(self) -> None:
+        """A parser holding a lock (valid per ``ParserBase`` — stateless
+        or thread-safe, not picklable) fails across a real process pool,
+        and succeeds with ``parser_executor=None`` (``offload_parsing=
+        False``'s effect)."""
+        pool = ProcessPoolExecutor(max_workers=1)
+        try:
+            offloaded_worker = self._make_worker(pool)
+            with self.assertRaises(TypeError):
+                await offloaded_worker._parse(
+                    _LockHoldingParser(),
+                    b"irrelevant",
+                    "locked.bin",
+                )
+        finally:
+            pool.shutdown(wait=True)
+
+        inline_worker = self._make_worker(None)
+        sections = await inline_worker._parse(
+            _LockHoldingParser(),
+            b"irrelevant",
+            "locked.bin",
+        )
+        self.assertEqual(sections[0].source, "locked.bin")

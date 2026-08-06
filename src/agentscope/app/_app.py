@@ -49,6 +49,9 @@ def create_app(
     knowledge_chunker: ChunkerBase | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
+    index_worker_max_concurrency: int = 4,
+    parser_max_workers: int | None = None,
+    offload_parsing: bool = True,
     *,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
@@ -143,6 +146,24 @@ def create_app(
             process is expected to consume tasks from the message
             bus.  No effect when ``knowledge_base_manager`` is
             ``None``.
+        index_worker_max_concurrency (`int`, defaults to ``4``):
+            Max documents the embedded :class:`IndexWorker` parses
+            concurrently. Also the default size of the process pool
+            used to offload parsing (see ``parser_max_workers``), so
+            a high-core host doesn't spawn far more worker processes
+            than the pipeline can actually keep busy.
+        parser_max_workers (`int | None`, optional):
+            Size of the process pool parsing is offloaded to.
+            Defaults to ``index_worker_max_concurrency`` when
+            ``None``; set independently if parsing parallelism should
+            differ from pipeline concurrency. No effect when
+            ``offload_parsing`` is ``False``.
+        offload_parsing (`bool`, defaults to ``True``):
+            Run parsing in a subprocess pool instead of the event
+            loop thread. The built-in parsers are picklable; a custom
+            parser holding non-picklable state (a lock, an open
+            connection) should pass ``False`` here to keep parsing
+            in-process.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -237,6 +258,13 @@ def create_app(
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None
     )
+    app.state.index_worker_max_concurrency = index_worker_max_concurrency
+    app.state.parser_max_workers = (
+        parser_max_workers
+        if parser_max_workers is not None
+        else index_worker_max_concurrency
+    )
+    app.state.offload_parsing = offload_parsing
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state
