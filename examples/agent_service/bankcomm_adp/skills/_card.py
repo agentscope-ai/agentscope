@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""The skill card models."""
+"""skill 卡片模型（迁移自 ``agentscope.app.hub._skill._card``）。
+
+相对 src 原版仅新增 ``SkillHubPage.total`` 字段——外部 skillhub 的
+目录接口返回总数，透传给前端用于分页。
+"""
+from __future__ import annotations
+
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -148,5 +154,14 @@ class SkillHubPage(BaseModel):
         description=(
             "The opaque cursor fetching the following page, or ``None`` "
             "when this is the last one."
+        ),
+    )
+
+    total: int | None = Field(
+        default=None,
+        title="Total",
+        description=(
+            "The total number of matching cards, when the hub reports "
+            "one; ``None`` when the hub does not count."
         ),
     )

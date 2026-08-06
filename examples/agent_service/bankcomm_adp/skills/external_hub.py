@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from agentscope._logging import logger
 from agentscope.app.hub._error import HubError
 from agentscope.app.hub._skill._base import SkillArchive, SkillHubBase
-from agentscope.app.hub._skill._card import SkillCard, SkillHubPage
+
+from ._card import SkillCard, SkillHubPage
 
 from ..config import settings
 

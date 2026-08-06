@@ -12,11 +12,6 @@ import os
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from agentscope._logging import logger
-from agentscope.app._router._schema import (
-    AgentSkillsListResponse,
-    SkillActionResponse,
-    SkillInfo,
-)
 from agentscope.app._service import ResourceAccessService
 from agentscope.app.deps import (
     get_current_user_id,
@@ -28,6 +23,8 @@ from agentscope.app.deps import (
 from agentscope.app.hub import SkillHubBase
 from agentscope.app.storage import StorageBase
 from agentscope.app.workspace_manager import WorkspaceManagerBase
+
+from ..skills._schema import AgentSkillsListResponse, SkillActionResponse, SkillInfo
 
 router = APIRouter(prefix="/workspace", tags=["skill-external"])
 
