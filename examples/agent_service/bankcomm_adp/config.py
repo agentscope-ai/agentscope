@@ -84,6 +84,16 @@ class Settings:
     def workspace_dir(self) -> Path:
         return Path(_getenv("WORKSPACE_DIR") or str(BASE_DIR / "workspaces"))
 
+    # ---------- K8s 沙箱（通过 workspace 模块读取 ADP_K8S_* 变量） ----------
+    @property
+    def k8s_enabled(self) -> bool:
+        """是否启用 K8s 沙箱模式。
+
+        启用后，智能体的代码执行将在 K8s Pod 中进行，
+        而非本地文件系统或 Docker。需要配合预构建镜像使用。
+        """
+        return _env_bool("K8S_ENABLED", True)
+
 
 @lru_cache
 def get_settings() -> Settings:

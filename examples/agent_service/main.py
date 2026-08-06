@@ -24,10 +24,12 @@ from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.rag import QdrantStore
 
-# 企业内部扩展：管控中间件 + 工具 + 自有路由
+# 企业内部扩展：管控中间件 + 工具 + 自有路由 + K8s 沙箱
+from bankcomm_adp.config import settings
 from bankcomm_adp.middlewares import build_enterprise_middlewares
 from bankcomm_adp.routers import health_router
 from bankcomm_adp.tools import build_enterprise_tools
+from bankcomm_adp.workspace import build_k8s_workspace_manager
 
 default_mcps = [
     MCPClient(
@@ -59,26 +61,35 @@ storage = RedisStorage(
 
 vector_store = QdrantStore(location=":memory:")
 
-app = create_app(
-    storage=storage,
-    message_bus=InMemoryMessageBus(),
-    # -- To use a Redis-backed message bus instead (recommended for
-    # -- multi-process / production deployments), uncomment the lines
-    # -- below and replace the InMemoryMessageBus() above:
-    #
-    # from agentscope.app.message_bus import RedisMessageBus
-    # message_bus=RedisMessageBus(
-    #     host="localhost",
-    #     port=6379,
-    # ),
-    workspace_manager=LocalWorkspaceManager(
+# ── K8s 沙箱 vs 本地工作区 ──
+# 生产环境使用 K8s 沙箱（ADP_K8S_ENABLED=true，默认），
+# 本地开发可设置 ADP_K8S_ENABLED=false 退回到 LocalWorkspaceManager。
+if settings.k8s_enabled:
+    # -- K8s 沙箱模式 —— 每个智能体的代码执行在独立的 K8s Pod 中运行。
+    # -- 配置通过 ADP_K8S_* 环境变量注入（kubeconfig、镜像、资源等）。
+    # -- 推荐配合预构建镜像（跳过 bootstrap），详见 bankcomm_adp/docker/。
+    from agentscope.app.message_bus import RedisMessageBus
+
+    workspace_manager = build_k8s_workspace_manager()
+    message_bus = RedisMessageBus(
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", "6379")),
+    )
+else:
+    # -- 本地模式 —— 工作区直接使用宿主机文件系统（开发/测试用）
+    message_bus = InMemoryMessageBus()
+    workspace_manager = LocalWorkspaceManager(
         basedir=os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             "workspaces",
         ),
-        # The default MCP servers that will be added into the workspace
         default_mcps=default_mcps,
-    ),
+    )
+
+app = create_app(
+    storage=storage,
+    message_bus=message_bus,
+    workspace_manager=workspace_manager,
     # Knowledge base feature — backed by an in-memory Qdrant store. The
     # CollectionPerKbManager allocates one collection per knowledge base,
     # so any embedding dimension is allowed.
