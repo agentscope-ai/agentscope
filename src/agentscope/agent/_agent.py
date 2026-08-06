@@ -2668,7 +2668,7 @@ class Agent:
 
         # Find the index of the block that will exceed the limit
         boundary_index = 0
-        for i in range(len(copied_tool_result.output) - 1, 0, -1):
+        for i in range(len(copied_tool_result.output) - 1, -1, -1):
             copied_tool_result.output = tool_result.output[:i]
             cur_tokens = await self.model.count_tokens(
                 [
