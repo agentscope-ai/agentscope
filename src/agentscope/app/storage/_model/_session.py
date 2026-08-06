@@ -130,6 +130,28 @@ class SessionConfig(BaseModel):
     )
     """The session display name."""
 
+    cwd: str | None = Field(
+        default=None,
+        description=(
+            "Directory the session is focused on, relative to the "
+            "workspace root. ``None`` means the root itself."
+        ),
+    )
+    """The directory this session is currently focused on.
+
+    Stored **relative to the workspace root** rather than as an
+    absolute path: the root is backend-dependent (a host directory for
+    :class:`LocalWorkspace`, a fixed in-sandbox path for the container
+    backends) and only resolvable asynchronously, so denormalising it
+    here would go stale the moment a session moves between backends.
+    Resolve with ``backend.abspath(cwd, cwd=workspace.workdir)`` at the
+    point of use.
+
+    Constrained to stay inside the workspace root — that root is the
+    only entry the chat service registers in
+    :attr:`PermissionContext.working_directories`.
+    """
+
     chat_model_config: ChatModelConfig | None = None
     """The chat model config. None means no model has been configured yet."""
 

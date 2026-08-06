@@ -2,6 +2,8 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
+import ntpath
+import posixpath
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -181,6 +183,47 @@ async def _ensure_knowledge_bases_exist(
             user_id,
             ResourceKind.KNOWLEDGE_BASE,
             kb_id,
+        )
+
+
+def _validate_session_cwd(cwd: str) -> None:
+    """Reject a ``cwd`` that is absolute or escapes the workspace root.
+
+    :attr:`SessionConfig.cwd` is stored relative to the workspace root
+    so that validating it costs nothing — an absolute path would have
+    to be checked against ``workspace.workdir``, and resolving the
+    workspace here would provision a sandbox as a side effect of a
+    configuration change.
+
+    Containment is what makes the value safe to hand to
+    ``BackendBase.abspath(cwd, cwd=workdir)`` later: the workspace root
+    is the only directory registered in
+    :attr:`PermissionContext.working_directories`, so a ``cwd`` outside
+    it would widen the permission surface through a UI text field.
+
+    Args:
+        cwd (`str`):
+            The requested working directory, relative to the workspace
+            root. The empty string means the root itself.
+
+    Raises:
+        `HTTPException`: 400 if the path is absolute or normalises to
+            somewhere outside the workspace root.
+    """
+    if posixpath.isabs(cwd) or ntpath.isabs(cwd):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "cwd must be relative to the workspace root, not an "
+                "absolute path."
+            ),
+        )
+
+    normalised = posixpath.normpath(cwd.replace("\\", "/"))
+    if normalised == ".." or normalised.startswith("../"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cwd must stay inside the workspace root.",
         )
 
 
@@ -431,8 +474,14 @@ async def update_session(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> SessionRecord:
-    """Update the model configuration of an existing session.
+    """Update the configuration of an existing session.
+
+    Rejected while a chat run holds the session: the agent snapshots
+    its configuration once at run start, so a mid-run change would be
+    ignored for the current reply anyway — and writing it would race
+    the run's own state persistence.
 
     Args:
         session_id (`str`): The session to update.
@@ -440,19 +489,34 @@ async def update_session(
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
         access (`ResourceAccessService`): Injected access service.
+        message_bus (`MessageBus`): Injected message bus; used to
+            detect an in-flight run.
 
     Returns:
         `SessionRecord`: The full session record after the update.
 
     Raises:
         `HTTPException`: 404 if the session does not exist, or if the
-            referenced credential / KB is not visible to the caller.
+            referenced credential / KB is not visible to the caller;
+            409 if a chat run is currently active on the session; 400
+            if ``cwd`` escapes the workspace root.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found.",
+        )
+
+    # Checked after the 404 so a missing session reports as missing, and
+    # before the validation round trips below so we fail fast.
+    if await message_bus.is_locked(MessageBusKeys.session_lock(session_id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot modify session configuration while the session "
+                "is running."
+            ),
         )
 
     await _ensure_credential_exists(access, user_id, body.chat_model_config)
@@ -468,7 +532,16 @@ async def update_session(
         body.knowledge_config,
     )
 
-    updated_state = existing.state
+    if body.cwd is not None:
+        _validate_session_cwd(body.cwd)
+
+    # ``None`` leaves the stored state untouched (see
+    # ``StorageBase.upsert_session``). ``permission_mode`` is the only
+    # request field living inside ``state``; every other field is a
+    # pure config write, and rewriting ``state`` for those would put
+    # this handler's opening snapshot back over whatever the run has
+    # persisted since.
+    updated_state = None
     if body.permission_mode is not None:
         updated_ctx = existing.state.permission_context.model_copy(
             update={"mode": body.permission_mode},

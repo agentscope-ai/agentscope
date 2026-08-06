@@ -139,6 +139,14 @@ class UpdateSessionRequest(BaseModel):
         default=None,
         description="New permission mode for the session.",
     )
+    cwd: str | None = Field(
+        default=None,
+        description=(
+            "New working directory, relative to the workspace root and "
+            "constrained to stay inside it. Pass null to reset to the "
+            "root; omit to leave unchanged."
+        ),
+    )
 
 
 class SessionView(BaseModel):
