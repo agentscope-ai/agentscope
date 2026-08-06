@@ -1878,5 +1878,65 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
         self.assertTrue(any(e["state"] == "error" for e in tool_result_end))
 
+    async def test_agent_preserves_invalid_original_tool_input(self) -> None:
+        """Failed validation does not overwrite the original tool input."""
+        executed = False
+
+        class MockBoundedIntegerTool(ToolBase):
+            """A test tool with an integer lower bound."""
+
+            name: str = "mock_bounded_integer_tool"
+            description: str = "A tool with a bounded integer parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {"n": {"type": "integer", "minimum": 100}},
+                "required": ["n"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, n: int, **kwargs: Any) -> ToolChunk:
+                nonlocal executed
+                executed = True
+                return ToolChunk(content=[TextBlock(text="Executed")])
+
+        self.agent.toolkit = Toolkit(tools=[MockBoundedIntegerTool()])
+        tool_call = ToolCallBlock(
+            id="tool_call_invalid_coercion",
+            name="mock_bounded_integer_tool",
+            input='{"n": "42"}',
+        )
+        self.model.set_responses(
+            [
+                [ChatResponse(content=[tool_call], is_last=True)],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        async for _ in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            pass
+
+        self.assertFalse(executed)
+        self.assertEqual(tool_call.input, '{"n": "42"}')
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

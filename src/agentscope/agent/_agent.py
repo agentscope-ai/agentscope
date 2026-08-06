@@ -2109,9 +2109,6 @@ class Agent:
                     "non-finite numbers are not valid JSON values.",
                 )
 
-            if parsed_input and tool.input_schema:
-                tool_call.input = json.dumps(parsed_input)
-
             # Validate the coerced input against the tool schema.
             # TODO: feed validation errors back to the model so it can
             # auto-correct.  Type coercion above already handles common
@@ -2124,6 +2121,9 @@ class Agent:
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message}",
                 ) from e
+
+            if parsed_input and tool.input_schema:
+                tool_call.input = json.dumps(parsed_input)
 
         # The exceptions that
         #  - cannot found tool
