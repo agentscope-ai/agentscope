@@ -2,6 +2,7 @@
 """The lifespan of the agent service."""
 import socket
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -184,6 +185,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # re-enqueues from storage.
             if enable_index_worker:
                 node_id = f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
+                # A single pool shared by every parse this worker runs,
+                # so CPU-bound parsers (PDF, Office) offload to a
+                # subprocess instead of blocking the event-loop thread
+                # that also serves concurrent requests. See
+                # ``IndexWorker.__init__``'s ``parser_executor`` doc.
+                parser_executor = stack.enter_context(
+                    ProcessPoolExecutor(),
+                )
                 worker = IndexWorker(
                     storage=storage,
                     blob_store=blob_store,
@@ -191,6 +200,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     parsers=app.state.knowledge_parsers,
                     chunker=app.state.knowledge_chunker,
                     node_id=node_id,
+                    parser_executor=parser_executor,
                 )
                 await stack.enter_async_context(
                     IndexTaskConsumer(
