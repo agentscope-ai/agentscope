@@ -8,6 +8,7 @@ import sys
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Callable
 
+import jsonschema
 from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
 
@@ -278,6 +279,7 @@ def _coerce_value(
         if isinstance(alternatives, list):
             return _coerce_composite(
                 value,
+                prop_schema,
                 alternatives,
                 defs,
                 param,
@@ -303,7 +305,8 @@ def _coerce_value(
 
 def _coerce_composite(
     value: Any,
-    alternatives: list[dict[str, Any]],
+    composite_schema: dict[str, Any],
+    alternatives: list[Any],
     defs: dict[str, Any],
     param: str,
 ) -> Any:
@@ -315,7 +318,9 @@ def _coerce_composite(
     Args:
         value (`Any`):
             The value to coerce.
-        alternatives (`list[dict]`):
+        composite_schema (`dict[str, Any]`):
+            The enclosing schema containing the alternatives.
+        alternatives (`list[Any]`):
             The ``anyOf`` / ``oneOf`` list from the schema.
         defs (`dict[str, Any]`):
             The ``$defs`` block for resolving ``$ref``.
@@ -326,6 +331,9 @@ def _coerce_composite(
         `Any`:
             The coerced value.
     """
+    if _schema_is_valid(value, composite_schema, defs):
+        return value
+
     # Collect all type-matching alternatives (for discriminated unions we
     # need the best match, not just the first).
     type_matches: list[tuple[dict[str, Any], int]] = []
@@ -348,7 +356,15 @@ def _coerce_composite(
         best_alt, best_score = type_matches[0]
         if len(type_matches) > 1 and type_matches[1][1] == best_score:
             return value
-        return _coerce_value(value, best_alt, defs, param)
+        candidate = _coerce_value(value, best_alt, defs, param)
+        if _is_valid_composite_candidate(
+            candidate,
+            best_alt,
+            composite_schema,
+            defs,
+        ):
+            return candidate
+        return value
 
     # If the value matched the type of some alternatives but every one
     # was disqualified by discriminator/required, don't fall through to
@@ -371,9 +387,74 @@ def _coerce_composite(
         if _value_matches_type(coerced, alt_type):
             if coerced is not value:
                 _log_coercion(param, type(value).__name__, alt_type)
-            return _coerce_value(coerced, resolved_alt, defs, param)
+            candidate = _coerce_value(coerced, resolved_alt, defs, param)
+            if _is_valid_composite_candidate(
+                candidate,
+                resolved_alt,
+                composite_schema,
+                defs,
+            ):
+                return candidate
 
     return value
+
+
+def _is_valid_composite_candidate(
+    candidate: Any,
+    alternative: dict[str, Any],
+    composite_schema: dict[str, Any],
+    defs: dict[str, Any],
+) -> bool:
+    """Check that a repaired value satisfies a branch and its composite.
+
+    Args:
+        candidate (`Any`):
+            The repaired value to validate.
+        alternative (`dict[str, Any]`):
+            The selected composite branch.
+        composite_schema (`dict[str, Any]`):
+            The enclosing ``anyOf`` or ``oneOf`` schema.
+        defs (`dict[str, Any]`):
+            Local schema definitions for resolving references.
+
+    Returns:
+        `bool`:
+            Whether the candidate is valid for both schemas.
+    """
+    return _schema_is_valid(candidate, alternative, defs) and _schema_is_valid(
+        candidate,
+        composite_schema,
+        defs,
+    )
+
+
+def _schema_is_valid(
+    value: Any,
+    schema: dict[str, Any],
+    defs: dict[str, Any],
+) -> bool:
+    """Check a value against a schema with locally supplied definitions.
+
+    Args:
+        value (`Any`):
+            The value to validate.
+        schema (`dict[str, Any]`):
+            The schema to validate against.
+        defs (`dict[str, Any]`):
+            Local schema definitions for resolving references.
+
+    Returns:
+        `bool`:
+            Whether the value satisfies the schema.
+    """
+    schema_with_defs = dict(schema)
+    schema_with_defs.setdefault("$defs", defs)
+    schema_with_defs.setdefault("definitions", defs)
+    try:
+        jsonschema.validate(value, schema_with_defs)
+    except jsonschema.ValidationError:
+        return False
+    return True
 
 
 def _discriminator_score(value: Any, schema: dict[str, Any]) -> int:
@@ -401,7 +482,7 @@ def _discriminator_score(value: Any, schema: dict[str, Any]) -> int:
         return 0
     # const contradiction → disqualify
     for key, prop_schema in props.items():
-        if "const" in prop_schema:
+        if isinstance(prop_schema, dict) and "const" in prop_schema:
             if key not in value or value[key] != prop_schema["const"]:
                 return -1
     # missing required field → disqualify
@@ -413,7 +494,7 @@ def _discriminator_score(value: Any, schema: dict[str, Any]) -> int:
     for key in schema.get("required", []):
         score += 1  # each is present (already verified above)
     for key, prop_schema in props.items():
-        if "const" in prop_schema:
+        if isinstance(prop_schema, dict) and "const" in prop_schema:
             score += 10
     return score
 

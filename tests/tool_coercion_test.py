@@ -5,6 +5,7 @@ import math
 import unittest
 from typing import Any, Optional
 
+import jsonschema
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.tool import (
     FunctionTool,
@@ -204,6 +205,20 @@ class ToolCoercionTest(unittest.TestCase):
         )
         self.assertEqual(result["value"], 3.14)
 
+    def test_composite_coercion_preserves_valid_values(self) -> None:
+        """Coercion does not invalidate an already-valid oneOf value."""
+        schema = _schema(
+            {
+                "value": {
+                    "oneOf": [True, {"type": "integer"}],
+                },
+            },
+        )
+        result = _coerce_tool_args({"value": "42"}, schema)
+
+        self.assertEqual(result, {"value": "42"})
+        jsonschema.validate(result, schema)
+
     def test_discriminated_unions_are_conservative(self) -> None:
         """Select matching branch, leave unknown branches intact."""
         schema = _schema(
@@ -342,6 +357,30 @@ class ToolCoercionTest(unittest.TestCase):
             schema_ref,
         )
         self.assertEqual(result, {"allowed": "42", "denied": 42})
+
+    def test_boolean_property_in_object_union_is_handled_gracefully(
+        self,
+    ) -> None:
+        """Boolean property schemas do not break union discrimination."""
+        schema = _schema(
+            {
+                "item": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {"anything": True},
+                            "required": ["required_key"],
+                        },
+                    ],
+                },
+            },
+        )
+        value = {"anything": "value"}
+
+        self.assertEqual(
+            _coerce_tool_args({"item": value}, schema),
+            {"item": value},
+        )
 
     def test_number_rejects_non_finite_strings(self) -> None:
         """NaN, Infinity, -Infinity stay as strings so schema validation
