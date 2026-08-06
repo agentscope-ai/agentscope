@@ -225,13 +225,27 @@ class ExternalSkillHub(SkillHubBase):
             },
         )
 
-    async def list_uploaded_skills(self, user_id: str) -> SkillHubPage:
+    async def list_uploaded_skills(
+        self,
+        user_id: str,
+        page: int = 0,
+        size: int = 5,
+    ) -> SkillHubPage:
         """浏览当前用户上传到 skillhub 的 skill。
 
         需先通过 :meth:`set_token` 设置 ``guwpToken``——端点按用户
-        隔离，会话 cookie 携带身份。
+        隔离，会话 cookie 携带身份。``page`` / ``size`` 以查询参数
+        拼接到远程 URL（``?page=..&size=..``）。
+
+        Args:
+            user_id (`str`): 用户标识。
+            page (`int`): 页码，默认 0。
+            size (`int`): 每页数量，默认 5。
         """
-        url = f"{self.base_url}{MY_SKILLS_PATH}"
+        url = (
+            f"{self.base_url}{MY_SKILLS_PATH}"
+            f"?page={page}&size={size}"
+        )
         try:
             resp = await self._http().get(
                 url,

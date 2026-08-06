@@ -200,6 +200,8 @@ async def get_agent_skills(
 async def get_uploaded_skills(
     agent_id: str = Query(...),
     session_id: str = Query(...),
+    page: int = Query(default=0, ge=0),
+    size: int = Query(default=5, ge=1, le=200),
     guwp_token: str | None = Header(default=None, alias="guwpToken"),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
@@ -231,7 +233,7 @@ async def get_uploaded_skills(
     hub = _external_hub(hubs)
     _set_token(hub, guwp_token)
 
-    page_result = await hub.list_uploaded_skills(user_id)
+    page_result = await hub.list_uploaded_skills(user_id, page=page, size=size)
     skills_list = [
         SkillInfo(
             name=card.name,
