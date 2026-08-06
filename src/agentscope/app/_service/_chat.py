@@ -471,6 +471,39 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+            | None
+        ),
+    ) -> None:
+        """Run one session turn while holding its distributed lock.
+
+        The lock deliberately covers preparation as well as execution.  In
+        particular, the mutable session record must be loaded only after this
+        run owns the lock; otherwise a waiter can assemble an agent from a
+        snapshot that the preceding holder replaces before releasing the
+        lock.
+        """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            await self._run_locked(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+            )
+
+    async def _run_locked(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
         input_msg: Msg
         | list[Msg]
         | UserConfirmResultEvent
@@ -478,9 +511,7 @@ class ChatService:
         | UserInterruptEvent
         | None,
     ) -> None:
-        """The actual chat-run body; wrapped by :meth:`run` for error
-        swallowing. Separated so the try/except doesn't bury the
-        per-step logic at one extra indentation level."""
+        """Prepare, execute, and persist a run with ``session_lock`` held."""
 
         # Steps 1-6 assemble the run; step 7 performs it. A failure
         # here has no reply to attach to, so one is synthesized —
@@ -699,164 +730,155 @@ class ChatService:
             # to make: these events share a channel with a live reply's,
             # so publishing them unserialised would drop a "reply failed"
             # into the middle of an answer another run is streaming.
-            async with self._message_bus.acquire_lock(
-                MessageBusKeys.session_lock(session_id),
-                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-            ):
-                await self._report_failure(user_id, session_id, agent_id, e)
+            await self._report_failure(user_id, session_id, agent_id, e)
             return
 
         # --------------------------------------------------------------------
-        # 7. Run the agent inside the distributed session lock
+        # 7. Run the agent with the distributed session lock held
         # ---------------------------------------------------------------------
-        lock_key = MessageBusKeys.session_lock(session_id)
         events_key = MessageBusKeys.session_events(session_id)
-        async with self._message_bus.acquire_lock(
-            lock_key,
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-        ):
-            reply_msg: Msg | None = None
-            try:
-                if input_msg is None or isinstance(input_msg, (Msg, list)):
-                    # Case A: new reply (user message(s), or retrigger with
-                    # empty input)
-                    if isinstance(input_msg, (Msg, list)):
-                        input_msgs = (
-                            [input_msg]
-                            if isinstance(input_msg, Msg)
-                            else input_msg
-                        )
-                        for msg in input_msgs:
-                            await self._storage.upsert_message(
-                                user_id,
-                                session_id,
-                                msg,
-                            )
-
-                    async for event in agent.reply_stream(inputs=input_msg):
-                        # Apply to reply_msg FIRST (sync — never
-                        # interrupted), so an interrupt in the awaits below
-                        # can't lose this event.
-                        if isinstance(event, ReplyStartEvent):
-                            reply_msg = AssistantMsg(
-                                id=event.reply_id,
-                                name=event.name,
-                                content=[],
-                            )
-                        elif reply_msg is not None:
-                            reply_msg.append_event(event)
-                        try:
-                            await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                event.model_dump(mode="json"),
-                            )
-                            await self._project_event(
-                                user_id,
-                                session_record,
-                                agent_record,
-                                event,
-                            )
-                        except asyncio.CancelledError:
-                            # Interrupt landed here, not at ``__anext__``.
-                            # Re-arm it so it's redelivered into the agent at
-                            # the next ``__anext__`` (which runs its
-                            # interruption cleanup) instead of abandoning the
-                            # generator and dropping that cleanup.
-                            current = asyncio.current_task()
-                            if current is not None:
-                                current.cancel()
-
-                else:
-                    # Case B: continuation (UserConfirmResult
-                    #  / ExternalExecResult)
-                    reply_msg = await self._storage.get_message(
-                        user_id,
-                        session_id,
-                        agent.state.reply_id,
+        reply_msg: Msg | None = None
+        try:
+            if input_msg is None or isinstance(input_msg, (Msg, list)):
+                # Case A: new reply (user message(s), or retrigger with
+                # empty input)
+                if isinstance(input_msg, (Msg, list)):
+                    input_msgs = (
+                        [input_msg]
+                        if isinstance(input_msg, Msg)
+                        else input_msg
                     )
-
-                    if reply_msg is None:
-                        logger.warning(
-                            "Reply message %r not found in storage for "
-                            "session %r; tool-call state changes from the "
-                            "incoming event will not be persisted.",
-                            agent.state.reply_id,
-                            session_id,
-                        )
-                    elif input_msg:
-                        reply_msg.append_event(input_msg)
-
-                    async for event in agent.reply_stream(inputs=input_msg):
-                        # Apply to the persisted reply FIRST (synchronous),
-                        # then publish/project — see Case A above.
-                        if reply_msg is not None:
-                            reply_msg.append_event(event)
-                        try:
-                            await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                event.model_dump(mode="json"),
-                            )
-                            await self._project_event(
-                                user_id,
-                                session_record,
-                                agent_record,
-                                event,
-                            )
-                        except asyncio.CancelledError:
-                            # See Case A: redirect an interrupt landing here
-                            # back into the agent via the next ``__anext__``.
-                            current = asyncio.current_task()
-                            if current is not None:
-                                current.cancel()
-
-            except Exception as e:  # pylint: disable=broad-except
-                # CancelledError is a BaseException, so interrupts are
-                # unaffected. The lock is already held here, so the
-                # reporter is called directly.
-                if reply_msg is None:
-                    # Failed before REPLY_START: nothing to close, so a
-                    # fresh reply carries the failure instead.
-                    await self._report_failure(
-                        user_id,
-                        session_id,
-                        agent_id,
-                        e,
-                    )
-                else:
-                    await self._close_failed_reply(session_id, reply_msg, e)
-
-            finally:
-                # All persistence in a single coroutine, shielded from
-                # outer cancellation.  Must complete BEFORE the session
-                # lock is released — otherwise another worker could
-                # acquire the lock and load a stale state from storage
-                # before this write lands.
-                async def _persist() -> None:
-                    if reply_msg is not None:
+                    for msg in input_msgs:
                         await self._storage.upsert_message(
                             user_id,
                             session_id,
-                            reply_msg,
+                            msg,
                         )
-                    await self._storage.update_session_state(
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        state=agent.state,
-                    )
-                    await self._message_bus.log_trim(events_key)
 
-                persist_task = asyncio.create_task(_persist())
-                try:
-                    await asyncio.shield(persist_task)
-                except asyncio.CancelledError:
-                    # Await the shielded task so the lock is only
-                    # released after storage is consistent, then
-                    # propagate to honour asyncio semantics.
-                    await persist_task
-                    raise
+                async for event in agent.reply_stream(inputs=input_msg):
+                    # Apply to reply_msg FIRST (sync — never
+                    # interrupted), so an interrupt in the awaits below
+                    # can't lose this event.
+                    if isinstance(event, ReplyStartEvent):
+                        reply_msg = AssistantMsg(
+                            id=event.reply_id,
+                            name=event.name,
+                            content=[],
+                        )
+                    elif reply_msg is not None:
+                        reply_msg.append_event(event)
+                    try:
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            event.model_dump(mode="json"),
+                        )
+                        await self._project_event(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            event,
+                        )
+                    except asyncio.CancelledError:
+                        # Interrupt landed here, not at ``__anext__``.
+                        # Re-arm it so it's redelivered into the agent at
+                        # the next ``__anext__`` (which runs its
+                        # interruption cleanup) instead of abandoning the
+                        # generator and dropping that cleanup.
+                        current = asyncio.current_task()
+                        if current is not None:
+                            current.cancel()
+
+            else:
+                # Case B: continuation (UserConfirmResult
+                #  / ExternalExecResult)
+                reply_msg = await self._storage.get_message(
+                    user_id,
+                    session_id,
+                    agent.state.reply_id,
+                )
+
+                if reply_msg is None:
+                    logger.warning(
+                        "Reply message %r not found in storage for "
+                        "session %r; tool-call state changes from the "
+                        "incoming event will not be persisted.",
+                        agent.state.reply_id,
+                        session_id,
+                    )
+                elif input_msg:
+                    reply_msg.append_event(input_msg)
+
+                async for event in agent.reply_stream(inputs=input_msg):
+                    # Apply to the persisted reply FIRST (synchronous),
+                    # then publish/project — see Case A above.
+                    if reply_msg is not None:
+                        reply_msg.append_event(event)
+                    try:
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            event.model_dump(mode="json"),
+                        )
+                        await self._project_event(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            event,
+                        )
+                    except asyncio.CancelledError:
+                        # See Case A: redirect an interrupt landing here
+                        # back into the agent via the next ``__anext__``.
+                        current = asyncio.current_task()
+                        if current is not None:
+                            current.cancel()
+
+        except Exception as e:  # pylint: disable=broad-except
+            # CancelledError is a BaseException, so interrupts are
+            # unaffected. The lock is already held here, so the
+            # reporter is called directly.
+            if reply_msg is None:
+                # Failed before REPLY_START: nothing to close, so a
+                # fresh reply carries the failure instead.
+                await self._report_failure(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    e,
+                )
+            else:
+                await self._close_failed_reply(session_id, reply_msg, e)
+
+        finally:
+            # All persistence in a single coroutine, shielded from
+            # outer cancellation.  Must complete BEFORE the session
+            # lock is released — otherwise another worker could
+            # acquire the lock and load a stale state from storage
+            # before this write lands.
+            async def _persist() -> None:
+                if reply_msg is not None:
+                    await self._storage.upsert_message(
+                        user_id,
+                        session_id,
+                        reply_msg,
+                    )
+                await self._storage.update_session_state(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    state=agent.state,
+                )
+                await self._message_bus.log_trim(events_key)
+
+            persist_task = asyncio.create_task(_persist())
+            try:
+                await asyncio.shield(persist_task)
+            except asyncio.CancelledError:
+                # Await the shielded task so the lock is only
+                # released after storage is consistent, then
+                # propagate to honour asyncio semantics.
+                await persist_task
+                raise
 
     async def _project_event(
         self,
