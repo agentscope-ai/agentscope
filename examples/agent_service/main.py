@@ -30,10 +30,16 @@ from bankcomm_adp.routers import health_router, skill_router
 from bankcomm_adp.skills import ExternalSkillHub
 from bankcomm_adp.tools import build_enterprise_tools
 
-# 默认 MCP：沙箱（Bubblewrap）环境下不预置 npx 类 MCP——
-# gateway 启动时要用 npx 拉 playwright，容器里没有 node/npx 会
-# 直接导致 gateway 失败。需要浏览器能力时再按需安装 node 并注册。
-default_mcps: list[MCPClient] = []
+default_mcps = [
+    MCPClient(
+        name="browser-use",
+        mcp_config=StdioMCPConfig(
+            command="npx",
+            args=["@playwright/mcp@latest"],
+        ),
+        is_stateful=True,
+    ),
+]
 
 if os.getenv("AMAP_API_KEY"):
     default_mcps.append(
@@ -48,8 +54,8 @@ if os.getenv("AMAP_API_KEY"):
     )
 
 storage = RedisStorage(
-    host="localhost",
-    port=6379,
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
 )
 
 vector_store = QdrantStore(location=":memory:")
