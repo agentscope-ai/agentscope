@@ -649,7 +649,9 @@ def _coerce_to_type(value: Any, expected_type: str) -> Any:
         if isinstance(value, str):
             stripped = value.strip()
             try:
-                return float(stripped)
+                parsed = float(stripped)
+                if math.isfinite(parsed):
+                    return parsed
             except (ValueError, TypeError):
                 pass
         return value

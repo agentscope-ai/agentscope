@@ -316,6 +316,20 @@ class ToolCoercionTest(unittest.TestCase):
                     v,
                 )
 
+    def test_number_rejects_non_finite_strings(self) -> None:
+        """NaN, Infinity, -Infinity stay as strings so schema validation
+        can reject them with a clear error."""
+        schema = _schema({"value": {"type": "number"}})
+        for v in ("NaN", "Infinity", "-Infinity", "inf", "-inf"):
+            with self.subTest(value=v):
+                result = _coerce_tool_args({"value": v}, schema)
+                self.assertIsInstance(
+                    result["value"],
+                    str,
+                    f"'{v}' should stay str, not become float",
+                )
+                self.assertEqual(result["value"], v)
+
 
 class ToolCoercionIntegrationTest(unittest.IsolatedAsyncioTestCase):
     """Integration tests for the ToolBase and Toolkit invocation paths."""
