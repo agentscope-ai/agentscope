@@ -73,6 +73,10 @@ from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
 
+# K8s 沙箱工作区（纯配置驱动，零框架侵入）
+from bankcomm_adp.config import settings
+from bocomadp.workspace import build_k8s_workspace_manager
+
 # ---------------------------------------------------------------------------
 # 1. 配置加载 + 日志初始化
 # ---------------------------------------------------------------------------
@@ -213,10 +217,27 @@ storage = RedisStorage(
 
 vector_store = QdrantStore(location=":memory:")
 
-workspace_manager = LocalWorkspaceManager(
-    basedir=str(config.workspace_dir),
-    default_mcps=build_default_mcps(),
-)
+# ── K8s 沙箱 vs 本地工作区 ──
+# 生产环境使用 K8s 沙箱（ADP_K8S_ENABLED=true，默认），
+# 本地开发可设置 ADP_K8S_ENABLED=false 退回到 LocalWorkspaceManager。
+if settings.k8s_enabled:
+    # -- K8s 沙箱模式 —— 每个智能体的代码执行在独立的 K8s Pod 中运行。
+    # -- 双 PVC 模式下 skills/.mcp 共享（agent PVC），session 数据隔离。
+    from agentscope.app.message_bus import RedisMessageBus
+
+    workspace_manager = build_k8s_workspace_manager()
+    message_bus = RedisMessageBus(
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", "6379")),
+    )
+else:
+    # -- 本地模式 —— 工作区直接使用宿主机文件系统（开发/测试用）
+    message_bus = InMemoryMessageBus()
+    workspace_manager = LocalWorkspaceManager(
+        basedir=str(config.workspace_dir),
+        default_mcps=build_default_mcps(),
+    )
+
 runtime.workspace_manager = workspace_manager
 
 # ---------------------------------------------------------------------------
@@ -242,7 +263,7 @@ def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
 
 app = create_app(
     storage=storage,
-    message_bus=InMemoryMessageBus(),
+    message_bus=message_bus,
     workspace_manager=workspace_manager,
     knowledge_base_manager=CollectionPerKbManager(
         storage=storage,

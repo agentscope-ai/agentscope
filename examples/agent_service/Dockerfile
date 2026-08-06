@@ -29,7 +29,7 @@ ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 # 这样只要 pyproject.toml 不变，这层就会被 Docker 缓存
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN uv sync --extra service --extra storage-redis --extra workspace-docker --no-install-project
+RUN uv sync --extra service --extra storage-redis --extra workspace-docker --extra workspace-k8s --no-install-project
 
 # 第二步：复制完整源码并以可编辑模式安装项目本身
 # 源码通过 volume 挂载，修改即时生效

@@ -32,6 +32,8 @@ services:
       - workspace-data:/app/workspaces
       # Docker Socket（支持 Docker 工作区沙箱）
       - /var/run/docker.sock:/var/run/docker.sock
+      # K8s kubeconfig（K8s 沙箱模式必需）
+      - C:\Users\86199\.kube\config:/app/kubeconfig/config:ro
 
   webui-backend:
     image: webui-backend:dev
