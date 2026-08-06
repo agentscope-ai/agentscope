@@ -68,4 +68,3 @@ class MCPClientStatus(MCPClient):
             "unreachable host and a missing command all look the same."
         ),
     )
-
