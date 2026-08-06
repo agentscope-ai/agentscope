@@ -316,6 +316,18 @@ class ToolCoercionTest(unittest.TestCase):
                     v,
                 )
 
+    def test_boolean_subschema_is_handled_gracefully(self) -> None:
+        """Boolean sub-schemas (true/false) don't crash coercion."""
+        # x: true — any value is valid, coercion should pass through
+        schema = {"type": "object", "properties": {"x": True}}
+        result = _coerce_tool_args({"x": "42"}, schema)
+        self.assertEqual(result["x"], "42")
+
+        # x: false — value should be preserved, schema validation rejects
+        schema_false = {"type": "object", "properties": {"x": False}}
+        result = _coerce_tool_args({"x": 42}, schema_false)
+        self.assertEqual(result["x"], 42)
+
     def test_number_rejects_non_finite_strings(self) -> None:
         """NaN, Infinity, -Infinity stay as strings so schema validation
         can reject them with a clear error."""

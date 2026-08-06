@@ -237,6 +237,11 @@ def _coerce_value(
         `Any`:
             The coerced value, or the original value if coercion fails.
     """
+    # Boolean sub-schemas (true / false) are valid JSON Schema but
+    # carry no type information — let jsonschema handle them.
+    if not isinstance(prop_schema, dict):
+        return value
+
     # Resolve local references before examining the schema.
     resolved_schema = _resolve_alt_ref(prop_schema, defs)
     if resolved_schema is not None:
@@ -303,7 +308,7 @@ def _coerce_composite(
     any_type_match = False
     for alt in alternatives:
         resolved_alt = _resolve_alt_ref(alt, defs)
-        if resolved_alt is None:
+        if resolved_alt is None or not isinstance(resolved_alt, dict):
             continue
         alt_type = resolved_alt.get("type")
         if alt_type == "null" and value is None:
@@ -330,7 +335,7 @@ def _coerce_composite(
     # Try coercion against each non-null alternative
     for alt in alternatives:
         resolved_alt = _resolve_alt_ref(alt, defs)
-        if resolved_alt is None:
+        if resolved_alt is None or not isinstance(resolved_alt, dict):
             continue
         alt_type = resolved_alt.get("type")
         if alt_type == "null" or not isinstance(alt_type, str):
@@ -405,6 +410,8 @@ def _resolve_alt_ref(
         `dict | None`:
             The resolved schema, or ``None`` if unresolvable.
     """
+    if not isinstance(alt, dict):
+        return alt
     if "$ref" not in alt:
         return alt
     ref_name = alt["$ref"].split("/")[-1]
