@@ -1,163 +1,303 @@
 # -*- coding: utf-8 -*-
-"""The example script to start the agent service.
+"""BocomADP — built on top of AgentScope's ``create_app``.
 
-本示例在官方入口之上叠加了企业内部扩展（``bankcomm_adp``）：
-    - ``extra_agent_middlewares``: 审计留痕 + 数据脱敏（DLP）
-    - ``extra_agent_tools``:       企业内部工具占位（HR / 文档库 / ITSM）
-    - ``health_router``:           平台自有健康检查路由
+本示例在官方入口之上叠加企业内部扩展，同时也是所有关注点
+统一装配的唯一入口（企业能力已全部整合进 ``bocomadp``）：
 
-认证保持官方默认的 ``X-User-ID`` 头方式（与 ``examples/web_ui`` 前端兼容）。
+1. Load config (:mod:`bocomadp.config`).
+2. Configure logging once at startup (:func:`configure_logging`).
+3. Initialize the framework modules:
+   - :class:`ToolRegistry`         — custom tools
+   - :class:`MiddlewareRegistry`   — agent middlewares
+   - :class:`ProviderManager`      — multi-model routing
+   - :class:`HookRegistry`         — 8-phase lifecycle hooks
+   - :class:`Runtime`              — 8-phase orchestrator
+4. Build the AgentScope app via :func:`create_app` (12 built-in routers).
+5. Inject ASGI middlewares via ``extra_middlewares``.
+6. Mount custom routers (chat SSE, agent manage, models, health, stats).
+7. Register sub-agent templates via ``custom_subagent_templates``.
+
+企业扩展能力（bocomadp）：
+   - 企业 agent 中间件（审计留痕）：``middleware/factory.py`` 主动 build 装配
+   - 企业工具（HR / Doc / ITSM）：``tools/enterprise.py`` 主动 build 装配
+   - ``platform_health_router``:  platform health check (``/platform/health``)
+
+Run::
+
+    cd agentscope/examples/agent_service
+    python main.py
+    # or
+    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 """
+import logging
 import os
 
 import uvicorn
 from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
-from agentscope.app import create_app, SubAgentTemplate
+from agentscope.app import create_app
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
-from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
-from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.rag import QdrantStore
 
-# 企业内部扩展：管控中间件 + 工具 + 自有路由
-from bankcomm_adp.middlewares import build_enterprise_middlewares
-from bankcomm_adp.routers import health_router, skill_router
-from bankcomm_adp.skills import ExternalSkillHub
-from bankcomm_adp.tools import build_enterprise_tools
+from bocomadp.agents.templates import load_subagent_templates
+from bocomadp.config import (
+    get_app_config,
+    is_trace_correlation_enabled,
+    load_models_from_yaml,
+    build_model_instance,
+)
+from bocomadp.logging.logging_config import configure_logging
+from bocomadp.logging.trace_middleware import TraceMiddleware
+from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
+from bocomadp.middleware.factory import build_enterprise_middlewares
+from bocomadp.middleware.registry import MiddlewareRegistry
+from bocomadp.middleware.request_log import AccessLogMiddleware
+from bocomadp.providers import ProviderManager
+from bocomadp.routers.agent_manage import (
+    MultiAgentManager,
+    agent_manage_router,
+)
+from bocomadp.routers.chat_sse import chat_sse_router
+from bocomadp.routers.health import health_router
+from bocomadp.routers.models import models_router
+from bocomadp.routers.platform_health import platform_health_router
+from bocomadp.routers.skill_router import skill_router
+from bocomadp.routers.stats import stats_router
+from bocomadp.mcp import McpRegistry
+from bocomadp.runtime import Runtime, HookRegistry
+from bocomadp.skills import ExternalSkillHub
+from bocomadp.tools import ToolRegistry, build_enterprise_tools
 
-default_mcps = [
-    MCPClient(
-        name="browser-use",
-        mcp_config=StdioMCPConfig(
-            command="npx",
-            args=["@playwright/mcp@latest"],
-        ),
-        is_stateful=True,
-    ),
-]
+# ---------------------------------------------------------------------------
+# 1. 配置加载 + 日志初始化
+# ---------------------------------------------------------------------------
+config = get_app_config()
+configure_logging(config)
+logger = logging.getLogger("bocomadp.main")
 
-if os.getenv("AMAP_API_KEY"):
-    default_mcps.append(
-        MCPClient(
-            name="amap",
-            mcp_config=HttpMCPConfig(
-                url=f"https://mcp.amap.com/mcp?key="
-                f"{os.environ['AMAP_API_KEY']}",
-            ),
-            is_stateful=False,
-        ),
+# ---------------------------------------------------------------------------
+# 2. 框架模块初始化
+# ---------------------------------------------------------------------------
+tool_registry = ToolRegistry()
+if config.tools.enabled:
+    tool_registry.load_builtin_tools()
+    if config.tools.load_custom:
+        tool_registry.load_custom_tools()
+logger.info("tools loaded: %s", tool_registry.list_tool_names())
+
+# agent 级中间件：load_builtin 扫描 agent_middleware.py 的模块级实例，
+# load_custom 扫描 middleware/custom/ 下的模块级实例。
+middleware_registry = MiddlewareRegistry()
+if config.middlewares.enabled:
+    middleware_registry.load_builtin()
+    if config.middlewares.load_custom:
+        middleware_registry.load_custom()
+
+# MCP 注册表：load_builtin 扫描 builtin_mcps.py，load_custom 扫描 mcp/custom/。
+mcp_registry = McpRegistry()
+if config.mcp.enabled:
+    mcp_registry.load_builtin()
+    if config.mcp.load_custom:
+        mcp_registry.load_custom()
+
+provider_manager = ProviderManager()
+
+# 从 config.yaml 加载模型配置并自动注册到 ProviderManager
+if config.providers.enabled:
+    _model_entries = load_models_from_yaml(config.providers.config_file)
+    for _entry in _model_entries:
+        try:
+            _model = build_model_instance(_entry)
+            provider_manager.register(
+                provider_id=_entry.provider_id,
+                model=_model,
+                model_name=_entry.model_name or _entry.provider_id,
+                display_name=_entry.display_name,
+                supports_multimodal=_entry.supports_multimodal,
+                metadata={"base_url": _entry.base_url} if _entry.base_url else {},
+            )
+            # 非首条或显式标记为活跃的，覆盖默认激活项
+            if _entry.is_active:
+                provider_manager.set_active(_entry.provider_id)
+            logger.info(
+                "provider registered from config.yaml: %s (model=%s)",
+                _entry.provider_id,
+                _entry.model_name or _entry.provider_id,
+            )
+        except Exception:
+            logger.warning(
+                "failed to register provider '%s' from config.yaml",
+                _entry.provider_id,
+                exc_info=True,
+            )
+
+hook_registry = HookRegistry()
+
+multi_agent_manager = MultiAgentManager()
+
+runtime = Runtime(
+    hook_registry=hook_registry,
+    tool_registry=tool_registry,
+    middleware_registry=middleware_registry,
+    provider_manager=provider_manager,
+    multi_agent_manager=multi_agent_manager,
+    heartbeat_interval=config.runtime.heartbeat_interval_seconds,
+)
+
+logger.info(
+    "framework modules initialized: "
+    "tools=%d middlewares=%d providers=%d agents=%d mcps=%d",
+    len(tool_registry.list_tools()),
+    len(middleware_registry.list_middlewares()),
+    len(provider_manager.list_providers()),
+    len(multi_agent_manager.list_agents()),
+    len(mcp_registry.list_mcps()),
+)
+
+# ---------------------------------------------------------------------------
+# 3. MCP 服务器 + Agent 工具工厂
+# ---------------------------------------------------------------------------
+# MCP 列表从 mcp_registry 获取（builtin + custom 自动扫描），
+# 不再手写 build_default_mcps()。新增 MCP：在 mcp/builtin_mcps.py
+# 或 mcp/custom/xxx.py 导出 MCPClient 实例即可，重启生效。
+def build_default_mcps() -> list:
+    """返回注册表中的 MCPClient 实例列表。"""
+    return mcp_registry.list_mcps()
+
+
+# 通用工具构建入口（AgentScope ``AgentToolFactory``）：
+# 合并「ToolRegistry 自动扫描的内置/自定义工具」+「主动 build 的企业工具」，
+# 同时供 Runtime 层的 ``AgentBuilder`` 注入使用（AgentBuilder 侧取 registry 部分）。
+# 企业工具采用主动 build（tools/enterprise.py），不依赖 custom/ 被动扫描。
+async def build_agent_tools(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+):
+    tools = tool_registry.list_tools()
+    tools.extend(
+        await build_enterprise_tools(user_id, agent_id, session_id),
     )
+    return tools
 
+
+# 通用中间件构建入口（AgentScope ``AgentMiddlewareFactory``）：
+# 合并「MiddlewareRegistry 自动扫描的内置中间件」+「主动 build 的企业中间件」，
+# 与 Runtime 层 AgentBuilder 注入的中间件视图保持一致。
+# 企业中间件（审计留痕）采用主动 build（middleware/factory.py），
+# 按会话创建独立实例，不依赖 custom/ 被动扫描。
+async def build_agent_middlewares(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+):
+    middlewares = middleware_registry.list_middlewares()
+    middlewares.extend(
+        await build_enterprise_middlewares(user_id, agent_id, session_id),
+    )
+    return middlewares
+
+
+# ---------------------------------------------------------------------------
+# 4. 存储 / 消息总线 / 工作区 / 知识库
+# ---------------------------------------------------------------------------
 storage = RedisStorage(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
+    host=config.redis.host,
+    port=config.redis.port,
 )
 
 vector_store = QdrantStore(location=":memory:")
 
-app = create_app(
-    storage=storage,
-    message_bus=InMemoryMessageBus(),
-    # -- To use a Redis-backed message bus instead (recommended for
-    # -- multi-process / production deployments), uncomment the lines
-    # -- below and replace the InMemoryMessageBus() above:
-    #
-    # from agentscope.app.message_bus import RedisMessageBus
-    # message_bus=RedisMessageBus(
-    #     host="localhost",
-    #     port=6379,
-    # ),
-    workspace_manager=LocalWorkspaceManager(
-        basedir=os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "workspaces",
-        ),
-        # The default MCP servers that will be added into the workspace
-        default_mcps=default_mcps,
-    ),
-    # Knowledge base feature — backed by an in-memory Qdrant store. The
-    # CollectionPerKbManager allocates one collection per knowledge base,
-    # so any embedding dimension is allowed.
-    knowledge_base_manager=CollectionPerKbManager(
-        storage=storage,
-        vector_store=vector_store,
-    ),
-    # Resource hubs the UI browses under /hub. Neither needs credentials
-    # of its own — an individual MCP card declares whatever key it wants
-    # from the user in its ``inputs_schema``. Passing a ClawHub token
-    # only raises the rate limit.
-    mcp_hubs=[GitHubMCPHub()],
-    skill_hubs=[
-        ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN")),
-        ExternalSkillHub(),
-    ],
-    # 企业管控中间件：审计 + DLP
-    extra_agent_middlewares=build_enterprise_middlewares,
-    # 企业内部工具：HR / 文档库 / ITSM
-    extra_agent_tools=build_enterprise_tools,
-    # Customize your own subagent templates
-    custom_subagent_templates=[
-        SubAgentTemplate(
-            type="explorer",
-            description=(
-                "Read-only agents specialized in exploration tasks. It can "
-                "read files but cannot modify, create, or delete them. Use "
-                "this agent type when you need to investigate the codebase, "
-                "understand its structure, or gather information from files "
-                "to support planning—without making any changes."
-            ),
-            system_prompt_template="""You are {member_name}, an explorer \
-agent in team '{team_name}' led by {leader_name}.
+workspace_manager = LocalWorkspaceManager(
+    basedir=str(config.workspace_dir),
+    default_mcps=build_default_mcps(),
+)
+runtime.workspace_manager = workspace_manager
 
-Team purpose: {team_description}
+# ---------------------------------------------------------------------------
+# 5. 构建 App —— create_app 自动注册 12 个内置路由
+# ---------------------------------------------------------------------------
+trace_enabled = is_trace_correlation_enabled(config)
 
-Your role: {member_description}
 
-## Responsibilities
-- Complete the exploration tasks assigned by the team leader.
-- You are read-only: you may inspect files and the codebase, but you must \
-never modify, create, or delete anything.
-
-## Reporting
-- Always report the task result back to {leader_name} using the TeamSay \
-tool, whether the task succeeds or fails.
-- Keep your private reasoning private; only share conclusions and findings \
-that the leader needs.
-
-Note: `TeamSay` is your ONLY channel to communicate with {leader_name} and \
-the other team members. Any other output you produce is invisible to them, \
-so anything you want them to see MUST be sent through `TeamSay`.""",
-            permission_context=PermissionContext(
-                # Read-only
-                mode=PermissionMode.EXPLORE,
-            ),
-        ),
-    ],
-    extra_middlewares=[
+def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
+    """构建 ASGI 中间件栈（由内到外）。"""
+    return [
+        Middleware(TraceMiddleware, enabled=trace_enabled),
+        Middleware(AccessLogMiddleware, skip_paths=("/healthz", "/readyz")),
+        Middleware(ErrorHandlingMiddleware),
         Middleware(
             CORSMiddleware,
             allow_origins=["*"],
             allow_methods=["*"],
             allow_headers=["*"],
         ),
+    ]
+
+
+app = create_app(
+    storage=storage,
+    message_bus=InMemoryMessageBus(),
+    workspace_manager=workspace_manager,
+    knowledge_base_manager=CollectionPerKbManager(
+        storage=storage,
+        vector_store=vector_store,
+    ),
+    mcp_hubs=[GitHubMCPHub()],
+    skill_hubs=[
+        ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN")),
+        ExternalSkillHub(),
     ],
+    custom_subagent_templates=load_subagent_templates(),
+    # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
+    extra_agent_middlewares=build_agent_middlewares,
+    # 通用工具构建入口：registry 自动扫描 + 企业工具主动 build（HR / Doc / ITSM）
+    extra_agent_tools=build_agent_tools,
+    title="BocomADP",
+    extra_middlewares=build_asgi_middlewares(trace_enabled),
 )
 
-# 挂载平台自有路由（与 AgentScope 内置路由并列）
+# ---------------------------------------------------------------------------
+# 6. 将框架模块挂载到 app.state，供路由层访问
+# ---------------------------------------------------------------------------
+app.state.runtime = runtime
+app.state.provider_manager = provider_manager
+app.state.multi_agent_manager = multi_agent_manager
+app.state.tool_registry = tool_registry
+app.state.middleware_registry = middleware_registry
+app.state.hook_registry = hook_registry
+
+# ---------------------------------------------------------------------------
+# 7. 在 12 个内置路由之上挂载自定义路由
+# ---------------------------------------------------------------------------
 app.include_router(health_router)
+app.include_router(stats_router)
+app.include_router(chat_sse_router)
+app.include_router(agent_manage_router)
+app.include_router(models_router)
+# 平台健康检查（/platform/health）
+app.include_router(platform_health_router)
+# 外部 skill hub（目录查询 / 我的上传 / 下载安装）
 app.include_router(skill_router)
 
 
 if __name__ == "__main__":
-    # Start the service
+    logger.info(
+        "Starting BocomADP on %s:%s (trace_enhance=%s, format=%s, reload=%s)",
+        config.service.host,
+        config.service.port,
+        trace_enabled,
+        config.logging.enhance.format,
+        config.service.reload,
+    )
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=config.service.host,
+        port=config.service.port,
+        reload=config.service.reload,
     )

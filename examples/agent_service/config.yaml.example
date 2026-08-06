@@ -1,0 +1,77 @@
+# ==========================================================
+# BocomADP 配置模板（复制为 config.yaml 后按需修改）
+# cp config.yaml.example config.yaml
+#
+# 本文件为唯一配置源模板：框架级参数（logging/service/redis/
+# runtime/tools/middlewares/mcp/providers）与业务配置（models/
+# app_name/audit/workspace_dir）统一在此声明。
+# 读取优先级：进程环境变量（BOCOMADP_*）> .env > config.yaml > 代码默认值
+# ==========================================================
+
+# ---------- 服务 ----------
+# Web UI 标题与健康检查展示的应用名
+app_name: "交通银行智能体平台"
+
+# ---------- 日志 ----------
+log_level: info
+logging:
+  enhance:
+    enabled: true
+    format: text           # text | json
+
+# ---------- HTTP 服务 ----------
+service:
+  host: 0.0.0.0
+  port: 8000
+  reload: false            # 仅开发期开启自动重载
+
+# ---------- Redis（AgentScope storage / message bus） ----------
+redis:
+  host: localhost
+  port: 6379
+
+# ---------- 运行时 ----------
+runtime:
+  enabled: true
+  heartbeat_interval_seconds: 15.0
+
+# ---------- 组件注册表 ----------
+tools:
+  enabled: true
+  load_custom: true
+
+middlewares:
+  enabled: true
+  load_custom: true
+
+mcp:
+  enabled: true
+  load_custom: true
+
+# ---------- 模型 Provider ----------
+providers:
+  enabled: true
+  config_file: null        # null 表示使用本文件
+
+models:
+  - provider_id: deepseek
+    display_name: "DeepSeek Chat"
+    provider_type: deepseek
+    model_name: deepseek-chat
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com
+    is_active: true
+    supports_multimodal: false
+    parameters:
+      temperature: 0.7
+      max_tokens: 4096
+      thinking_enable: false
+
+# ---------- 审计（Audit） ----------
+audit:
+  enabled: true
+  log_path: "./logs/audit.jsonl"
+
+# ---------- 运行时目录 ----------
+# 工作区目录（AgentScope 沙箱文件读写根目录），支持 $VAR 展开
+workspace_dir: "./workspaces"
