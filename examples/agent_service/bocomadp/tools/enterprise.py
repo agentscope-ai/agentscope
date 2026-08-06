@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from agentscope.tool import FunctionTool, ToolBase
 
+from .cross_search import cross_search_tool
 from .placeholder import (
     query_employee_info,
     query_internal_doc,
@@ -33,4 +34,5 @@ async def build_enterprise_tools(
         FunctionTool(query_employee_info, is_read_only=True),
         FunctionTool(query_internal_doc, is_read_only=True),
         FunctionTool(submit_it_ticket),
+        FunctionTool(cross_search_tool, is_read_only=True),
     ]

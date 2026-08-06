@@ -75,3 +75,35 @@ audit:
 # ---------- 运行时目录 ----------
 # 工作区目录（AgentScope 沙箱文件读写根目录），支持 $VAR 展开
 workspace_dir: "./workspaces"
+
+# ---------- 跨知识搜索（cross_search 工具） ----------
+# 扁平结构：键与 bocomadp/config/cross_search_config.py 字段一一对应。
+# 字符串值支持 $VAR / ${VAR} 环境变量引用展开（如 api_url: $CROSS_SEARCH_API_URL）。
+cross_search:
+  # api_url 支持环境变量引用展开，运行时需设置 CROSS_SEARCH_API_URL
+  api_url: $CROSS_SEARCH_API_URL
+  timeout: 30
+  caller: "VD2026000"          # 调用方编码，必填
+  search_type: "0"             # 0=混合检索 1=全文 2=向量
+  text_top_n: 5
+  vector_top_n: 5
+  qa_type: [0, 1]
+  attach_flag: 1
+  rerank_flag: 1
+  rewrite_flag: "ON"
+  rerank_top_n: 5
+  rerank_rule_code: "RR0005"
+  vector_min_score: 0.54
+  user_role: "0"
+  user_code: "U000000000000000"         # 调用方用户编码，必填
+  psnl_space_code_id: "PER754964863350213"
+  space_code_list: []          # 场景知识空间代码列表
+  team_space_code_list: []     # 团队知识空间代码列表
+  psnl_category_id_list: []
+  second_search_kb_codes: []   # 二次检索的知识库代码（可选）
+  headers:
+    Accept: "*/*"
+    Accept-Encoding: "gzip, deflate, br"
+    Connection: "keep-alive"
+    Content-Type: "multipart/form-data"
+    jumpcloud-ENV: "BASE"
