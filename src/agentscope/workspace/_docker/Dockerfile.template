@@ -21,6 +21,7 @@ RUN apt-get update \
 
 {node_copy_block}ENV UV_PROJECT_ENVIRONMENT={gateway_home}/.venv \
     UV_LINK_MODE=copy \
+    UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PATH={gateway_home}/.venv/bin:$PATH
 WORKDIR {gateway_home}
 RUN uv venv {gateway_home}/.venv
