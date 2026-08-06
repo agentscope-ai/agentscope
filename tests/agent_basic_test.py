@@ -1738,5 +1738,78 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             any(e["state"] == "success" for e in tool_result_end),
         )
 
+    async def test_agent_rejects_unquoted_nan_tool_argument(self) -> None:
+        """Agent rejects non-finite numbers before tool execution."""
+        executed_args: list[float] = []
+
+        class MockBoundedNumberTool(ToolBase):
+            """A test tool that expects a number within a fixed range."""
+
+            name: str = "mock_bounded_number_tool"
+            description: str = "A tool with a bounded number parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                },
+                "required": ["x"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, x: float, **kwargs: Any) -> ToolChunk:
+                executed_args.append(x)
+                return ToolChunk(content=[TextBlock(text="Executed")])
+
+        self.agent.toolkit = Toolkit(tools=[MockBoundedNumberTool()])
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tool_call_nan",
+                                name="mock_bounded_number_tool",
+                                input='{"x": NaN}',
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        self.assertEqual(executed_args, [])
+        tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
+        self.assertTrue(any(e["state"] == "error" for e in tool_result_end))
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

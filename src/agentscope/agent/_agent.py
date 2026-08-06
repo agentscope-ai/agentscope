@@ -94,7 +94,7 @@ from ..tool import (
     ToolChoice,
     ToolResponse,
 )
-from ..tool._utils import _coerce_tool_args
+from ..tool._utils import _coerce_tool_args, _contains_non_finite_float
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
@@ -2102,6 +2102,14 @@ class Agent:
                     parsed_input,
                     tool.input_schema,
                 )
+
+            if _contains_non_finite_float(parsed_input):
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    "non-finite numbers are not valid JSON values.",
+                )
+
+            if parsed_input and tool.input_schema:
                 tool_call.input = json.dumps(parsed_input)
 
             # Validate the coerced input against the tool schema.

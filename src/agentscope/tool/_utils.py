@@ -214,6 +214,27 @@ def _coerce_tool_args(
     return result
 
 
+def _contains_non_finite_float(value: Any) -> bool:
+    """Check whether a JSON-compatible value contains NaN or infinity.
+
+    Args:
+        value (`Any`):
+            The value to inspect.
+
+    Returns:
+        `bool`:
+            Whether the value or one of its nested values is a non-finite
+            float.
+    """
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_contains_non_finite_float(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_non_finite_float(item) for item in value)
+    return False
+
+
 def _coerce_value(
     value: Any,
     prop_schema: dict[str, Any],
