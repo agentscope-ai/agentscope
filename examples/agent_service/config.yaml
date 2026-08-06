@@ -32,7 +32,15 @@ service:
   port: 8000
   reload: false            # 仅开发期开启 uvicorn 自动重载
 
-# ---------- Redis（AgentScope storage / message bus） ----------
+# ---------- 数据库（AgentScope 持久化存储 / AsyncSQLAlchemyStorage） ----------
+db:
+  url: "postgresql+asyncpg://agentscope:agentscope@localhost:5432/agentscope"
+  create_tables: true        # dev/单机自动建表；多副本生产改用 alembic upgrade head
+
+# ---------- Redis（消息总线 / 分布式锁 / 缓存） ----------
+# 存储后端已迁至上方 db（AsyncSQLAlchemyStorage）；Redis 仅保留给
+# RedisMessageBus 等瞬时协调用途。当前 main.py 用 InMemoryMessageBus，
+# 此段为预留，多 worker 时切 RedisMessageBus 即用。
 redis:
   host: localhost
   port: 6379
@@ -59,7 +67,7 @@ mcp:
 
 # ---------- 模型 Provider（启动时自动注册到 ProviderManager） ----------
 providers:
-  enabled: true
+  enabled: false
   config_file: null        # null 表示使用本文件（config.yaml）；可指向其他 YAML
 
 models:

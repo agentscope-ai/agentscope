@@ -38,9 +38,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
-from agentscope.app.storage import RedisStorage
+from agentscope.app.storage import AsyncSQLAlchemyStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import QdrantStore
 
@@ -210,9 +210,9 @@ async def build_agent_middlewares(
 # ---------------------------------------------------------------------------
 # 4. 存储 / 消息总线 / 工作区 / 知识库
 # ---------------------------------------------------------------------------
-storage = RedisStorage(
-    host=config.redis.host,
-    port=config.redis.port,
+storage = AsyncSQLAlchemyStorage(
+    url=config.db.url,
+    create_tables=config.db.create_tables,
 )
 
 vector_store = QdrantStore(location=":memory:")
@@ -227,8 +227,8 @@ if settings.k8s_enabled:
 
     workspace_manager = build_k8s_workspace_manager()
     message_bus = RedisMessageBus(
-        host=os.getenv("REDIS_HOST", "localhost"),
-        port=int(os.getenv("REDIS_PORT", "6379")),
+        host=config.redis.host,
+        port=config.redis.port,
     )
 else:
     # -- 本地模式 —— 工作区直接使用宿主机文件系统（开发/测试用）
