@@ -3,11 +3,11 @@
 
 import base64
 import os
-import re
 from typing import AsyncGenerator, Any, List
 
 from ._backend import BackendBase, LocalBackend, _normalize_newlines
 from ._powershell_parser import PowerShellCommandParser
+from ._wildcard_match import match_wildcard_pattern
 from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
@@ -244,7 +244,7 @@ are easier for the user to review and authorize:
 
         - Case-insensitive matching
         - Alias normalization (``ls`` matches ``Get-ChildItem*``)
-        - ``:*`` prefix patterns, ``*`` wildcards, and substring match
+        - ``:*`` prefix patterns require every pipeline segment to match
         - ``None`` rule content matches all invocations
 
         Args:
@@ -261,60 +261,25 @@ are easier for the user to review and authorize:
             return True
 
         command = tool_input.get("command", "")
-        command = self._powershell_parser.normalize_command_for_match(command)
-        pattern_source = self._powershell_parser.normalize_command_for_match(
+        rule_cf = self._powershell_parser.normalize_command_for_match(
             rule_content,
-        )
-        command_cf = command.casefold()
-        rule_cf = pattern_source.casefold()
+        ).casefold()
 
         if rule_cf.endswith(":*"):
-            prefix = rule_cf[:-2].strip()
-            return command_cf.startswith(prefix + " ") or command_cf == prefix
+            prefix = self._powershell_parser.normalize_cmdlet_name(
+                rule_cf[:-2].strip(),
+            ).casefold()
+            names = self._powershell_parser.extract_canonical_command_names(
+                command,
+            )
+            if not names:
+                return False
+            return all(name.casefold() == prefix for name in names)
 
-        def has_wildcards(pattern: str) -> bool:
-            """Check if pattern contains unescaped * wildcards."""
-            i = 0
-            while i < len(pattern):
-                if pattern[i] == "\\":
-                    i += 2
-                elif pattern[i] == "*":
-                    return True
-                else:
-                    i += 1
-            return False
-
-        if not has_wildcards(rule_cf):
-            pattern = rule_cf
-            pattern = pattern.replace("\\\\", "\x00BACKSLASH\x00")
-            pattern = pattern.replace("\\*", "*")
-            pattern = pattern.replace("\x00BACKSLASH\x00", "\\")
-            return pattern in command_cf
-
-        escaped_star = "\x00ESCAPED_STAR\x00"
-        escaped_backslash = "\x00ESCAPED_BACKSLASH\x00"
-
-        pattern = rule_cf
-        pattern = pattern.replace("\\\\", escaped_backslash)
-        pattern = pattern.replace("\\*", escaped_star)
-
-        special_chars = r".^$+?{}[]|()"
-        for char in special_chars:
-            pattern = pattern.replace(char, "\\" + char)
-
-        pattern = pattern.replace("*", ".*")
-        pattern = pattern.replace(escaped_star, r"\*")
-        pattern = pattern.replace(escaped_backslash, r"\\")
-
-        if pattern.endswith(".*"):
-            base_pattern = pattern[:-2].rstrip()
-            if re.fullmatch(base_pattern, command_cf):
-                return True
-
-        try:
-            return bool(re.fullmatch(pattern, command_cf))
-        except re.error:
-            return rule_cf.replace("*", "") in command_cf
+        command_cf = self._powershell_parser.normalize_command_for_match(
+            command,
+        ).casefold()
+        return match_wildcard_pattern(rule_cf, command_cf)
 
     async def generate_suggestions(
         self,

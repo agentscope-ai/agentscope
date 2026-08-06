@@ -155,6 +155,18 @@ class PowerShellPermissionTest(IsolatedAsyncioTestCase):
         )
         self.assertTrue(
             await self.tool.match_rule(
+                "rm:*",
+                {"command": "rm ./tmp"},
+            ),
+        )
+        self.assertTrue(
+            await self.tool.match_rule(
+                "rm:*",
+                {"command": "Remove-Item ./tmp"},
+            ),
+        )
+        self.assertTrue(
+            await self.tool.match_rule(
                 None,
                 {"command": "anything"},
             ),
@@ -163,6 +175,63 @@ class PowerShellPermissionTest(IsolatedAsyncioTestCase):
             await self.tool.match_rule(
                 "Remove-Item*",
                 {"command": "Get-ChildItem"},
+            ),
+        )
+        self.assertFalse(
+            await self.tool.match_rule(
+                "Get-ChildItem:*",
+                {"command": "Get-ChildItem | Remove-Item"},
+            ),
+        )
+        self.assertFalse(
+            await self.tool.match_rule(
+                "Get-Content:*",
+                {"command": "Get-Content a.txt | Set-Content b.txt"},
+            ),
+        )
+
+    async def test_dangerous_table_through_permissions(self) -> None:
+        """Every dangerous cmdlet is non-RO and bypass-immune ASK."""
+        from agentscope.tool._constants import POWERSHELL_DANGEROUS_COMMANDS
+
+        for name in POWERSHELL_DANGEROUS_COMMANDS:
+            command = f"{name} spoof"
+            with self.subTest(command=command):
+                self.assertFalse(
+                    await self.tool.check_read_only({"command": command}),
+                )
+                decision = await self.tool.check_permissions(
+                    {"command": command},
+                    PermissionContext(),
+                )
+                self.assertEqual(
+                    {
+                        "behavior": decision.behavior,
+                        "bypass_immune": decision.bypass_immune,
+                    },
+                    {
+                        "behavior": PermissionBehavior.ASK,
+                        "bypass_immune": True,
+                    },
+                )
+
+        format_volume = await self.tool.check_permissions(
+            {"command": "Format-Volume -DriveLetter C"},
+            PermissionContext(),
+        )
+        self.assertEqual(
+            {
+                "behavior": format_volume.behavior,
+                "bypass_immune": format_volume.bypass_immune,
+            },
+            {
+                "behavior": PermissionBehavior.ASK,
+                "bypass_immune": True,
+            },
+        )
+        self.assertFalse(
+            await self.tool.check_read_only(
+                {"command": "Format-Volume -DriveLetter C"},
             ),
         )
 

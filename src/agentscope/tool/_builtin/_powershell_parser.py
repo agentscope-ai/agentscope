@@ -11,17 +11,19 @@ Mirrors :class:`BashCommandParser` method surface for PowerShell:
 from __future__ import annotations
 
 import re
-from typing import Iterator, List, Optional, Set
+from typing import Iterator, List, Optional, Set, Tuple
 
 import tree_sitter_pwsh as tspwsh
-from tree_sitter import Language, Node, Parser
+from tree_sitter import Language, Node, Parser, Tree
 
 from .._constants import (
     POWERSHELL_ALIASES,
     POWERSHELL_DANGEROUS_COMMANDS,
     POWERSHELL_INJECTION_NODE_TYPES,
     POWERSHELL_READ_ONLY_COMMANDS,
-    POWERSHELL_READ_ONLY_VERB_PREFIXES,
+    POWERSHELL_REMOVE_ITEM_DANGEROUS_PARAMS,
+    POWERSHELL_SET_ITEM_PROPERTY_PATH_PARAMS,
+    POWERSHELL_STOP_PROCESS_DANGEROUS_PARAMS,
 )
 
 
@@ -40,6 +42,15 @@ class PowerShellCommandParser:
         self._dangerous_lookup = {
             name.casefold(): name for name in POWERSHELL_DANGEROUS_COMMANDS
         }
+        self._cache_key: str | None = None
+        self._cache_tree: Tree | None = None
+
+    def _parse(self, command: str) -> Tree:
+        """Parse ``command``, memoizing the tree for repeated checks."""
+        if self._cache_key != command or self._cache_tree is None:
+            self._cache_tree = self.parser.parse(bytes(command, "utf8"))
+            self._cache_key = command
+        return self._cache_tree
 
     def normalize_cmdlet_name(self, name: str) -> str:
         """Resolve aliases to canonical cmdlet names (case-insensitive).
@@ -84,11 +95,7 @@ class PowerShellCommandParser:
         if not command.strip():
             return command
 
-        try:
-            tree = self.parser.parse(bytes(command, "utf8"))
-        except Exception:
-            return self._normalize_command_fallback(command)
-
+        tree = self._parse(command)
         replacements: list[tuple[int, int, str]] = []
         for node in self._iter_nodes(tree.root_node):
             if node.type != "command":
@@ -115,6 +122,29 @@ class PowerShellCommandParser:
         parts.append(command[cursor:])
         return "".join(parts)
 
+    def extract_canonical_command_names(self, command: str) -> List[str]:
+        """Return alias-normalized cmdlet names for every command node.
+
+        Args:
+            command (`str`):
+                PowerShell command text.
+
+        Returns:
+            `List[str]`:
+                Canonical names in source order (may be empty on ERROR).
+        """
+        if not command.strip():
+            return []
+        tree = self._parse(command)
+        if self._has_error_nodes(tree.root_node):
+            return []
+        names: list[str] = []
+        for cmd_node in self._extract_command_nodes(tree.root_node):
+            raw = self._command_name_text(command, cmd_node)
+            if raw:
+                names.append(self.normalize_cmdlet_name(raw))
+        return names
+
     def is_read_only_command(self, command: str) -> bool:
         """Check whether a PowerShell command is read-only.
 
@@ -137,11 +167,8 @@ class PowerShellCommandParser:
         if self.check_injection_risk(cmd):
             return False
 
-        try:
-            tree = self.parser.parse(bytes(cmd, "utf8"))
-            root = tree.root_node
-        except Exception:
-            return False
+        tree = self._parse(cmd)
+        root = tree.root_node
 
         if self._has_error_nodes(root):
             return False
@@ -181,18 +208,13 @@ class PowerShellCommandParser:
         if not cmd:
             return None
 
-        try:
-            tree = self.parser.parse(bytes(cmd, "utf8"))
-            root = tree.root_node
-        except Exception:
-            return "unparseable PowerShell command"
+        tree = self._parse(cmd)
+        root = tree.root_node
 
-        # Prefer the more specific download-to-iex label when both apply.
         download_pattern = self._check_download_to_iex(cmd, root)
         if download_pattern:
             return download_pattern
 
-        # Always-dangerous cmdlets (exact name match after alias normalize)
         for cmd_node in self._extract_command_nodes(root):
             name = self._command_name_text(cmd, cmd_node)
             if not name:
@@ -202,39 +224,36 @@ class PowerShellCommandParser:
             if folded in self._dangerous_lookup:
                 return self._dangerous_lookup[folded]
 
-            params = self._command_parameters(cmd, cmd_node)
-            param_fold = {p.casefold() for p in params}
+            resolved = self._resolved_parameters(cmd, cmd_node)
 
-            if folded == "remove-item" and (
-                "-recurse" in param_fold or "-force" in param_fold
-            ):
+            if folded == "remove-item" and resolved & {
+                p.casefold() for p in POWERSHELL_REMOVE_ITEM_DANGEROUS_PARAMS
+            }:
                 return "Remove-Item -Recurse/-Force"
 
-            if folded == "stop-process" and "-force" in param_fold:
+            if folded == "stop-process" and "-force" in resolved:
                 return "Stop-Process -Force"
 
-            if folded == "set-itemproperty" and self._mentions_hklm(
-                cmd,
-                cmd_node,
-            ):
-                return "Set-ItemProperty HKLM:"
+            if folded == "set-itemproperty":
+                hklm = self._set_itemproperty_hklm_status(cmd, cmd_node)
+                if hklm == "hklm":
+                    return "Set-ItemProperty HKLM:"
 
-        # Textual fallback for always-dangerous names that may appear
-        # oddly tokenized
-        normalized = " ".join(cmd.split())
-        for pattern in POWERSHELL_DANGEROUS_COMMANDS:
-            if re.search(
-                r"(?i)\b" + re.escape(pattern) + r"\b",
-                normalized,
-            ):
-                return pattern
-            alias_hit = self._alias_for_canonical(pattern)
-            for alias in alias_hit:
+        # Textual fallback only when the AST is unusable.
+        if self._has_error_nodes(root):
+            normalized = " ".join(cmd.split())
+            for pattern in POWERSHELL_DANGEROUS_COMMANDS:
                 if re.search(
-                    r"(?i)\b" + re.escape(alias) + r"\b",
+                    r"(?i)\b" + re.escape(pattern) + r"\b",
                     normalized,
                 ):
                     return pattern
+                for alias in self._alias_for_canonical(pattern):
+                    if re.search(
+                        r"(?i)\b" + re.escape(alias) + r"\b",
+                        normalized,
+                    ):
+                        return pattern
 
         return None
 
@@ -253,8 +272,7 @@ class PowerShellCommandParser:
         if not cmd:
             return None
 
-        # Heuristics that do not require a clean AST
-        if re.search(r"(?i)(^|[\s|;])-EncodedCommand\b", cmd):
+        if self._has_encoded_command_flag(cmd):
             return (
                 "Command contains -EncodedCommand which cannot be "
                 "statically analyzed"
@@ -270,20 +288,19 @@ class PowerShellCommandParser:
                 "statically analyzed"
             )
 
-        try:
-            tree = self.parser.parse(bytes(cmd, "utf8"))
-            root = tree.root_node
-        except Exception:
-            return "Command parsing failed, cannot verify safety"
+        tree = self._parse(cmd)
+        root = tree.root_node
 
         if self._has_error_nodes(root):
             return "Command parsing failed, cannot verify safety"
 
-        reason = self._walk_for_injection_nodes(root)
-        if reason:
-            return reason
+        for node in self._iter_nodes(root):
+            if node.type in POWERSHELL_INJECTION_NODE_TYPES:
+                return (
+                    f"Command contains {node.type} which cannot be "
+                    f"statically analyzed"
+                )
 
-        # Call operator / dot-sourcing on dynamic targets
         for cmd_node in self._extract_command_nodes(root):
             if self._has_child_type(cmd_node, "command_invocation_operator"):
                 return (
@@ -291,13 +308,22 @@ class PowerShellCommandParser:
                     "statically analyzed"
                 )
             name = self._command_name_text(cmd, cmd_node)
-            if name and self.normalize_cmdlet_name(name).casefold() == (
-                "invoke-expression"
-            ):
+            if not name:
+                continue
+            canonical = self.normalize_cmdlet_name(name)
+            folded = canonical.casefold()
+            if folded == "invoke-expression":
                 return (
                     "Command contains Invoke-Expression which cannot be "
                     "statically analyzed"
                 )
+            if folded == "set-itemproperty":
+                status = self._set_itemproperty_hklm_status(cmd, cmd_node)
+                if status == "dynamic":
+                    return (
+                        "Command contains dynamic Set-ItemProperty -Path "
+                        "which cannot be statically analyzed"
+                    )
 
         return None
 
@@ -325,11 +351,8 @@ class PowerShellCommandParser:
         if not command or not command.strip():
             return []
 
-        try:
-            tree = self.parser.parse(bytes(command, "utf8"))
-            root = tree.root_node
-        except Exception:
-            return []
+        tree = self._parse(command)
+        root = tree.root_node
 
         prefixes: list[str] = []
         seen: Set[str] = set()
@@ -353,16 +376,6 @@ class PowerShellCommandParser:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _normalize_command_fallback(self, command: str) -> str:
-        """Token-based alias normalization when parsing fails."""
-        tokens = command.split(None, 1)
-        if not tokens:
-            return command
-        canonical = self.normalize_cmdlet_name(tokens[0])
-        if len(tokens) == 1:
-            return canonical
-        return f"{canonical} {tokens[1]}"
-
     def _is_single_command_read_only(
         self,
         source: str,
@@ -385,12 +398,9 @@ class PowerShellCommandParser:
     def _is_readonly_cmdlet_name(self, name: str) -> bool:
         """Return whether a canonical cmdlet name is read-only."""
         folded = name.casefold()
-        if folded in self._readonly_lookup:
-            return True
-        for prefix in POWERSHELL_READ_ONLY_VERB_PREFIXES:
-            if folded.startswith(prefix.casefold()):
-                return True
-        return False
+        if folded in self._dangerous_lookup:
+            return False
+        return folded in self._readonly_lookup
 
     def _command_name_node(self, cmd_node: Node) -> Optional[Node]:
         """Return the name node for a command AST node."""
@@ -406,56 +416,138 @@ class PowerShellCommandParser:
             return None
         return source[name_node.start_byte : name_node.end_byte].strip()
 
-    def _command_parameters(self, source: str, cmd_node: Node) -> list[str]:
-        """Collect ``command_parameter`` texts for a command node."""
-        params: list[str] = []
-        for node in self._iter_nodes(cmd_node):
-            if node.type == "command_parameter":
-                params.append(source[node.start_byte : node.end_byte])
-        return params
+    def _command_parameter_pairs(
+        self,
+        source: str,
+        cmd_node: Node,
+    ) -> list[Tuple[str, Optional[Node]]]:
+        """Return ``(raw_param, value_node)`` pairs for a command."""
+        elements = None
+        for child in cmd_node.children:
+            if child.type == "command_elements":
+                elements = child
+                break
+        if elements is None:
+            return []
 
-    def _mentions_hklm(self, source: str, cmd_node: Node) -> bool:
-        """Return whether a command node references an HKLM path."""
-        text = source[cmd_node.start_byte : cmd_node.end_byte]
-        return bool(re.search(r"(?i)\bHKLM:", text))
+        pairs: list[Tuple[str, Optional[Node]]] = []
+        kids = list(elements.children)
+        i = 0
+        while i < len(kids):
+            node = kids[i]
+            if node.type == "command_parameter":
+                raw = source[node.start_byte : node.end_byte]
+                value: Optional[Node] = None
+                j = i + 1
+                while j < len(kids) and kids[j].type == "command_argument_sep":
+                    j += 1
+                if j < len(kids) and kids[j].type != "command_parameter":
+                    value = kids[j]
+                    i = j
+                pairs.append((raw, value))
+            i += 1
+        return pairs
+
+    def _resolve_parameter_name(
+        self,
+        raw: str,
+        known: frozenset[str],
+    ) -> Optional[str]:
+        """Resolve a possibly abbreviated parameter against ``known``."""
+        folded = raw.casefold()
+        exact = [p for p in known if p.casefold() == folded]
+        if exact:
+            return exact[0]
+        matches = [p for p in known if p.casefold().startswith(folded)]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def _resolved_parameters(
+        self,
+        source: str,
+        cmd_node: Node,
+    ) -> Set[str]:
+        """Resolve abbreviated switch names for dangerous-parameter checks."""
+        known = (
+            POWERSHELL_REMOVE_ITEM_DANGEROUS_PARAMS
+            | POWERSHELL_STOP_PROCESS_DANGEROUS_PARAMS
+            | POWERSHELL_SET_ITEM_PROPERTY_PATH_PARAMS
+        )
+        resolved: Set[str] = set()
+        for raw, _value in self._command_parameter_pairs(source, cmd_node):
+            canonical = self._resolve_parameter_name(raw, known)
+            if canonical is not None:
+                resolved.add(canonical.casefold())
+        return resolved
+
+    def _set_itemproperty_hklm_status(
+        self,
+        source: str,
+        cmd_node: Node,
+    ) -> Optional[str]:
+        """Classify Set-ItemProperty path: ``hklm``, ``dynamic``, or None."""
+        for raw, value in self._command_parameter_pairs(source, cmd_node):
+            resolved = self._resolve_parameter_name(
+                raw,
+                POWERSHELL_SET_ITEM_PROPERTY_PATH_PARAMS,
+            )
+            if resolved is None or value is None:
+                continue
+            if value.type == "variable" or self._contains_node_types(
+                value,
+                {"variable", "sub_expression", "expandable_string_literal"},
+            ):
+                return "dynamic"
+            text = source[value.start_byte : value.end_byte].strip("\"'")
+            if re.search(r"(?i)^HKLM:", text):
+                return "hklm"
+        return None
 
     def _check_download_to_iex(
         self,
         source: str,
         root: Node,
     ) -> Optional[str]:
-        """Detect download-to-iex patterns such as ``irm ... | iex``."""
-        normalized = " ".join(source.split())
-        if re.search(
-            r"(?i)\b(irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b.*"
-            r"\|\s*(iex|Invoke-Expression)\b",
-            normalized,
-        ):
-            return "download-to-iex"
-        if re.search(
-            r"(?i)\b(iex|Invoke-Expression)\b\s*\(.*\b"
-            r"(irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b",
-            normalized,
-        ):
-            return "download-to-iex"
+        """Detect adjacent download→iex pipelines via the AST only."""
+        download = {"invoke-restmethod", "invoke-webrequest"}
 
-        # Also catch adjacent pipeline commands via AST
-        names = [
-            self.normalize_cmdlet_name(n).casefold()
-            for n in (
-                self._command_name_text(source, node)
-                for node in self._extract_command_nodes(root)
-            )
-            if n
-        ]
-        download = {
-            "invoke-restmethod",
-            "invoke-webrequest",
-        }
-        if any(n in download for n in names) and any(
-            n == "invoke-expression" for n in names
-        ):
-            return "download-to-iex"
+        for node in self._iter_nodes(root):
+            if node.type != "pipeline_chain":
+                continue
+            commands = [c for c in node.children if c.type == "command"]
+            for left, right in zip(commands, commands[1:]):
+                left_name = self._command_name_text(source, left)
+                right_name = self._command_name_text(source, right)
+                if not left_name or not right_name:
+                    continue
+                if (
+                    self.normalize_cmdlet_name(left_name).casefold()
+                    in download
+                    and self.normalize_cmdlet_name(right_name).casefold()
+                    == "invoke-expression"
+                ):
+                    return "download-to-iex"
+
+        # iex (irm ...) — download nested under Invoke-Expression
+        for cmd_node in self._extract_command_nodes(root):
+            name = self._command_name_text(source, cmd_node)
+            if not name:
+                continue
+            if self.normalize_cmdlet_name(name).casefold() != (
+                "invoke-expression"
+            ):
+                continue
+            for nested in self._extract_command_nodes(cmd_node):
+                if nested is cmd_node:
+                    continue
+                nested_name = self._command_name_text(source, nested)
+                if (
+                    nested_name
+                    and self.normalize_cmdlet_name(nested_name).casefold()
+                    in download
+                ):
+                    return "download-to-iex"
         return None
 
     def _alias_for_canonical(self, canonical: str) -> list[str]:
@@ -467,17 +559,42 @@ class PowerShellCommandParser:
             if name.casefold() == target
         ]
 
+    def _has_encoded_command_flag(self, command: str) -> bool:
+        """Detect ``-EncodedCommand`` including unique abbreviations."""
+        # ``-en...`` is unique vs ``-ErrorAction`` (which needs ``-er...``).
+        for match in re.finditer(
+            r"(?i)(^|[\s|;])(-en[a-z]*)\b",
+            command,
+        ):
+            flag = match.group(2).lstrip("-").casefold()
+            if "encodedcommand".startswith(flag):
+                return True
+        # ``pwsh -e`` / ``powershell -e`` (CLI short form).
+        return bool(
+            re.search(
+                r"(?i)\b(pwsh|powershell)(\.exe)?(\s+\S+)*\s+-e\b",
+                command,
+            ),
+        )
+
+    def _strip_quoted_strings(self, command: str) -> str:
+        """Remove single- and double-quoted spans for heuristic scans."""
+        return re.sub(
+            r"'(?:[^']|'')*'|\"(?:[^\"`]|`.)*\"",
+            '""',
+            command,
+        )
+
     def _has_backtick_obfuscation(self, command: str) -> bool:
         """Detect backtick-obfuscated command text."""
+        unscanned = self._strip_quoted_strings(command)
         # e.g. Inv`oke-Expression or Get`-ChildItem
-        if re.search(r"[A-Za-z]`+[A-Za-z]", command):
+        if re.search(r"[A-Za-z]`+[A-Za-z]", unscanned):
             return True
-        # Many backticks are a strong obfuscation signal
-        return command.count("`") >= 3
+        return unscanned.count("`") >= 3
 
     def _has_string_built_cmdlet(self, command: str) -> bool:
         """Detect string-concatenated / expandable cmdlet names."""
-        # & ("Get-" + "ChildItem") or & "Get-$verb"
         if re.search(
             r"""(?i)&\s*[\(\"'].*(?:\+|\$)""",
             command,
@@ -489,19 +606,6 @@ class PowerShellCommandParser:
                 command,
             ),
         )
-
-    def _walk_for_injection_nodes(self, node: Node) -> Optional[str]:
-        """Walk the AST for injection-related node types."""
-        if node.type in POWERSHELL_INJECTION_NODE_TYPES:
-            return (
-                f"Command contains {node.type} which cannot be "
-                f"statically analyzed"
-            )
-        for child in node.children:
-            result = self._walk_for_injection_nodes(child)
-            if result:
-                return result
-        return None
 
     def _extract_command_nodes(self, root: Node) -> list[Node]:
         """Collect all ``command`` nodes under ``root``."""

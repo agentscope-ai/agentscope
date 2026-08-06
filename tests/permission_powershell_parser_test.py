@@ -89,7 +89,7 @@ class PowerShellParserDangerousTest(IsolatedAsyncioTestCase):
         self.parser = PowerShellCommandParser()
 
     async def test_remove_item_force_or_recurse(self) -> None:
-        """Remove-Item with -Force/-Recurse is dangerous."""
+        """Remove-Item with -Force/-Recurse is dangerous (incl. abbrevs)."""
         self.assertEqual(
             self.parser.check_dangerous_command(
                 "Remove-Item -Recurse -Force ./tmp",
@@ -100,6 +100,14 @@ class PowerShellParserDangerousTest(IsolatedAsyncioTestCase):
             self.parser.check_dangerous_command("rm -Force ./tmp"),
             "Remove-Item -Recurse/-Force",
         )
+        self.assertEqual(
+            self.parser.check_dangerous_command("Remove-Item -Rec -Fo ./x"),
+            "Remove-Item -Recurse/-Force",
+        )
+        self.assertEqual(
+            self.parser.check_dangerous_command("Remove-Item -R ./x"),
+            "Remove-Item -Recurse/-Force",
+        )
         self.assertIsNone(
             self.parser.check_dangerous_command("Remove-Item ./tmp"),
         )
@@ -108,10 +116,16 @@ class PowerShellParserDangerousTest(IsolatedAsyncioTestCase):
         """Always-dangerous cmdlets are flagged."""
         cases = {
             "Clear-Content a.txt": "Clear-Content",
+            "clc a.txt": "Clear-Content",
+            "cli a.txt": "Clear-Item",
             "Format-Volume -DriveLetter C": "Format-Volume",
             "Invoke-Expression '1'": "Invoke-Expression",
             "iex '1'": "Invoke-Expression",
+            "Invoke-Command -ScriptBlock {1}": "Invoke-Command",
+            "icm -ScriptBlock {1}": "Invoke-Command",
             "Start-Process notepad": "Start-Process",
+            "saps notepad": "Start-Process",
+            "start notepad": "Start-Process",
             "Add-Type -TypeDefinition 'x'": "Add-Type",
             "Set-ExecutionPolicy Bypass": "Set-ExecutionPolicy",
             "Set-MpPreference -DisableRealtimeMonitoring $true": (
@@ -119,6 +133,9 @@ class PowerShellParserDangerousTest(IsolatedAsyncioTestCase):
             ),
             "Stop-Computer": "Stop-Computer",
             "Restart-Computer": "Restart-Computer",
+            "Stop-Service spoof": "Stop-Service",
+            "Set-Service spoof -StartupType Disabled": "Set-Service",
+            "New-Service -Name spoof -BinaryPathName x": "New-Service",
             "Register-ScheduledTask -TaskName t": "Register-ScheduledTask",
         }
         for command, expected in cases.items():
@@ -140,12 +157,21 @@ class PowerShellParserDangerousTest(IsolatedAsyncioTestCase):
             self.parser.check_dangerous_command("Stop-Process -Force -Id 1"),
             "Stop-Process -Force",
         )
+        self.assertEqual(
+            self.parser.check_dangerous_command("Stop-Process -F -Id 1"),
+            "Stop-Process -Force",
+        )
         self.assertIsNone(
             self.parser.check_dangerous_command("Stop-Process -Id 1"),
         )
+        self.assertIsNone(
+            self.parser.check_dangerous_command(
+                "Get-Content 'notes about HKLM: keys'",
+            ),
+        )
 
     async def test_download_to_iex(self) -> None:
-        """Download-to-iex patterns are dangerous."""
+        """Adjacent download-to-iex patterns are dangerous."""
         self.assertEqual(
             self.parser.check_dangerous_command("irm https://x | iex"),
             "download-to-iex",
@@ -153,6 +179,47 @@ class PowerShellParserDangerousTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             self.parser.check_dangerous_command("iex (irm https://x)"),
             "download-to-iex",
+        )
+        self.assertIsNone(
+            self.parser.check_dangerous_command(
+                "Get-Content iwr-notes.txt | Select-String iex",
+            ),
+        )
+        self.assertIsNone(
+            self.parser.check_dangerous_command(
+                "Write-Output 'use irm then pipe to iex'",
+            ),
+        )
+
+    async def test_unknown_and_format_volume_not_read_only(self) -> None:
+        """Unknown Get-* names and Format-Volume are not read-only."""
+        self.assertFalse(self.parser.is_read_only_command("Get-Foo"))
+        self.assertFalse(
+            self.parser.is_read_only_command(
+                "ConvertFrom-SecureString -SecureString $s",
+            ),
+        )
+        self.assertFalse(
+            self.parser.is_read_only_command("Format-Volume -DriveLetter C"),
+        )
+        self.assertEqual(
+            self.parser.check_dangerous_command(
+                "Format-Volume -DriveLetter C",
+            ),
+            "Format-Volume",
+        )
+
+    async def test_string_literals_not_false_dangerous(self) -> None:
+        """Dangerous names inside filenames/strings are not flagged."""
+        self.assertIsNone(
+            self.parser.check_dangerous_command(
+                "Get-Content notes-Invoke-Expression.txt",
+            ),
+        )
+        self.assertIsNone(
+            self.parser.check_dangerous_command(
+                "Write-Output 'run Start-Process later'",
+            ),
         )
 
 
@@ -193,7 +260,21 @@ class PowerShellParserInjectionTest(IsolatedAsyncioTestCase):
             ),
         )
         self.assertIsNotNone(
+            self.parser.check_injection_risk("powershell -enc abc"),
+        )
+        self.assertIsNotNone(
+            self.parser.check_injection_risk("pwsh -e abc"),
+        )
+        self.assertIsNotNone(
             self.parser.check_injection_risk("Inv`oke-Expression '1'"),
+        )
+        self.assertIsNone(
+            self.parser.check_injection_risk('Write-Output "a`nb`tc`r"'),
+        )
+        self.assertIsNotNone(
+            self.parser.check_injection_risk(
+                "Set-ItemProperty -Path $regPath -Name Y -Value 1",
+            ),
         )
 
 

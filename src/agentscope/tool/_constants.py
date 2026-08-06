@@ -110,7 +110,12 @@ DANGEROUS_NODE_TYPES = {
 # for known-safe environment variables ($HOME, $PWD, etc.)
 
 
+# Alias map from PowerShell 7.4 `Get-Alias` (built-in aliases). Includes
+# every built-in alias for names in POWERSHELL_DANGEROUS_COMMANDS so
+# incomplete coverage cannot skip a dangerous check. Unknown names are
+# never auto-allowed as read-only.
 POWERSHELL_ALIASES: dict[str, str] = {
+    # Read-oriented
     "ls": "Get-ChildItem",
     "dir": "Get-ChildItem",
     "gci": "Get-ChildItem",
@@ -125,16 +130,20 @@ POWERSHELL_ALIASES: dict[str, str] = {
     "measure": "Measure-Object",
     "echo": "Write-Output",
     "write": "Write-Output",
+    "pwd": "Get-Location",
+    "gl": "Get-Location",
+    "gps": "Get-Process",
+    "ps": "Get-Process",
+    "gsv": "Get-Service",
+    "ft": "Format-Table",
+    "fl": "Format-List",
+    "fw": "Format-Wide",
+    "foreach": "ForEach-Object",
+    "%": "ForEach-Object",
+    # Location / item mutation
     "cd": "Set-Location",
     "chdir": "Set-Location",
     "sl": "Set-Location",
-    "pwd": "Get-Location",
-    "gl": "Get-Location",
-    "rm": "Remove-Item",
-    "del": "Remove-Item",
-    "ri": "Remove-Item",
-    "rmdir": "Remove-Item",
-    "rd": "Remove-Item",
     "ni": "New-Item",
     "mi": "Move-Item",
     "move": "Move-Item",
@@ -142,23 +151,34 @@ POWERSHELL_ALIASES: dict[str, str] = {
     "copy": "Copy-Item",
     "cp": "Copy-Item",
     "ii": "Invoke-Item",
+    "rm": "Remove-Item",
+    "del": "Remove-Item",
+    "erase": "Remove-Item",
+    "ri": "Remove-Item",
+    "rmdir": "Remove-Item",
+    "rd": "Remove-Item",
+    # Dangerous cmdlets (complete built-in alias coverage)
+    "clc": "Clear-Content",
+    "cli": "Clear-Item",
+    "clp": "Clear-ItemProperty",
     "iex": "Invoke-Expression",
+    "icm": "Invoke-Command",
     "irm": "Invoke-RestMethod",
     "iwr": "Invoke-WebRequest",
     "curl": "Invoke-WebRequest",
     "wget": "Invoke-WebRequest",
-    "kill": "Stop-Process",
+    "saps": "Start-Process",
+    "start": "Start-Process",
+    "sasv": "Start-Service",
     "spps": "Stop-Process",
-    "gps": "Get-Process",
-    "ps": "Get-Process",
-    "ft": "Format-Table",
-    "fl": "Format-List",
-    "foreach": "ForEach-Object",
-    "%": "ForEach-Object",
+    "kill": "Stop-Process",
+    "spsv": "Stop-Service",
+    "sc": "Set-Content",
+    "si": "Set-Item",
+    "sp": "Set-ItemProperty",
+    "sv": "Set-Variable",
+    "set": "Set-Variable",
 }
-# Built-in PowerShell alias map (lowercase key → canonical cmdlet name).
-# Used for read-only classification, dangerous-command checks, and
-# case-insensitive permission rule matching.
 
 
 POWERSHELL_READ_ONLY_COMMANDS: set[str] = {
@@ -205,39 +225,45 @@ POWERSHELL_READ_ONLY_COMMANDS: set[str] = {
     "Write-Debug",
     "Write-Information",
 }
-# Cmdlets treated as read-only for auto-ALLOW / EXPLORE mode.
-# Verb prefixes such as Get- / Select- / Format- / ConvertTo- /
-# ConvertFrom- are handled separately in the PowerShell parser.
-
-
-POWERSHELL_READ_ONLY_VERB_PREFIXES: tuple[str, ...] = (
-    "Get-",
-    "Select-",
-    "Format-",
-    "ConvertTo-",
-    "ConvertFrom-",
-)
-# Verb prefixes that are generally read-only when the cmdlet has no
-# script block, call operator, or redirection.
+# Exact cmdlet names treated as read-only for auto-ALLOW / EXPLORE.
+# Unknown names are never assumed safe (no verb-prefix matching).
 
 
 POWERSHELL_DANGEROUS_COMMANDS: list[str] = [
     "Clear-Content",
     "Clear-Item",
+    "Clear-ItemProperty",
     "Format-Volume",
     "Invoke-Expression",
+    "Invoke-Command",
     "Start-Process",
+    "Start-Service",
     "Add-Type",
     "Set-ExecutionPolicy",
     "Set-MpPreference",
+    "Set-Service",
+    "New-Service",
     "Stop-Computer",
     "Restart-Computer",
+    "Stop-Service",
     "Register-ScheduledTask",
 ]
 # Dangerous PowerShell cmdlets that always require a bypass-immune ASK.
 # Parameter-sensitive patterns (Remove-Item -Recurse/-Force,
 # Stop-Process -Force, HKLM registry writes, download-to-iex) are
 # handled in the parser.
+
+
+# Parameter sets used for unique-prefix resolution (PowerShell abbrevs).
+POWERSHELL_REMOVE_ITEM_DANGEROUS_PARAMS: frozenset[str] = frozenset(
+    {"-Recurse", "-Force"},
+)
+POWERSHELL_STOP_PROCESS_DANGEROUS_PARAMS: frozenset[str] = frozenset(
+    {"-Force"},
+)
+POWERSHELL_SET_ITEM_PROPERTY_PATH_PARAMS: frozenset[str] = frozenset(
+    {"-Path", "-LiteralPath"},
+)
 
 
 POWERSHELL_INJECTION_NODE_TYPES: set[str] = {
