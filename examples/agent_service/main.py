@@ -263,10 +263,7 @@ def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
 
 app = create_app(
     storage=storage,
-    message_bus=RedisMessageBus(
-        host=config.redis.host,
-        port=config.redis.port,
-    ),
+    message_bus=message_bus,
     workspace_manager=workspace_manager,
     knowledge_base_manager=CollectionPerKbManager(
         storage=storage,
