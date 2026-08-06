@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
+
 import base64
 import mimetypes
 import tempfile
@@ -109,9 +110,16 @@ class FormatterBase(BaseModel):
                 ):
                     # If supported, promote the block
 
-                    # Create an identifier for such multimodal data for
-                    # accurate reference (in terms of order, position, etc.)
-                    identifier = shortuuid.uuid()
+                    # Create a deterministic identifier based on the source
+                    # data so that identical blocks produce the same identifier
+                    source_data = (
+                        block.source.data
+                        if isinstance(block.source, Base64Source)
+                        else str(block.source.url)
+                    )
+                    identifier = shortuuid.uuid(
+                        name=source_data,
+                    )  # noqa: FBT003
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
