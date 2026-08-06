@@ -1050,6 +1050,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
         if session_id:
@@ -1070,6 +1072,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
             config=config,
             source=source,
             source_schedule_id=source_schedule_id,
+            source_chat_id=source_chat_id,
+            source_channel_id=source_channel_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -1199,6 +1203,36 @@ class AsyncSQLAlchemyStorage(StorageBase):
                         .where(
                             SessionRow.user_id == user_id,
                             SessionRow.source_schedule_id == schedule_id,
+                        )
+                        .order_by(SessionRow.created_at.desc()),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, SessionRecord) for r in rows]
+
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Sessions derived from *channel_id* — newest first.
+
+        ``source_channel_id`` lives in the JSON payload (not a promoted
+        column), so it is matched inside the payload.
+        """
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(SessionRow)
+                        .where(
+                            SessionRow.user_id == user_id,
+                            SessionRow.payload["source_channel_id"].as_string()
+                            == channel_id,
                         )
                         .order_by(SessionRow.created_at.desc()),
                     )

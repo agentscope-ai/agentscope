@@ -493,7 +493,7 @@ class WorkspaceBase:
                         block.source,
                         Base64Source,
                     ):
-                        block = await self._offload_data_block(block)
+                        block = await self.offload_data_block(block)
                     content.append(block)
                 msg.content = content
             lines.append(msg.model_dump_json())
@@ -555,7 +555,7 @@ class WorkspaceBase:
                     parts.append(block.text)
                 elif isinstance(block, DataBlock):
                     if isinstance(block.source, Base64Source):
-                        d = await self._offload_data_block(block)
+                        d = await self.offload_data_block(block)
                         url = str(d.source.url)
                     else:
                         url = str(block.source.url)
@@ -567,7 +567,7 @@ class WorkspaceBase:
         await backend.write_file(path, "".join(parts).encode("utf-8"))
         return path
 
-    async def _offload_data_block(self, block: DataBlock) -> DataBlock:
+    async def offload_data_block(self, block: DataBlock) -> DataBlock:
         """Persist a base64 :class:`DataBlock` under ``data/``.
 
         The decoded payload is stored at
@@ -583,9 +583,9 @@ class WorkspaceBase:
 
         Returns:
             `DataBlock`:
-                A new :class:`DataBlock` whose source is a ``file://``
-                URL pointing at the persisted file inside the
-                workspace.
+                A new :class:`DataBlock` whose source is a portable
+                ``workspace://`` URL pointing at the persisted file
+                inside the workspace.
         """
         if not isinstance(block.source, Base64Source):
             return block
@@ -593,6 +593,7 @@ class WorkspaceBase:
         backend = self.get_backend()
         hash_str = hashlib.sha256(block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
+        rel = f"{DEFAULT_DATA_DIR}/{hash_str}{ext}"
         path = backend.join_path(self._data_dir, f"{hash_str}{ext}")
 
         if not await backend.file_exists(path):
@@ -601,11 +602,16 @@ class WorkspaceBase:
                 base64.b64decode(block.source.data),
             )
 
+        # A ``workspace://`` reference (workspace-relative path). Unlike a
+        # node-local ``file://`` path it is portable: a serving endpoint
+        # resolves the actual workspace from the request's session
+        # context and reads the relative path. See docs TODO (frontend
+        # ``workspace://`` rendering).
         return DataBlock(
             id=block.id,
             name=block.name,
             source=URLSource(
-                url=AnyUrl(self._path_to_file_uri(path)),
+                url=AnyUrl(f"workspace:///{rel}"),
                 media_type=block.source.media_type,
             ),
         )

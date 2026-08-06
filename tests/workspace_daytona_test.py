@@ -1205,7 +1205,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         )
         context_raw = await self.workspace._backend.read_file(context_path)
         self.assertIn(
-            "file:///home/daytona/data/",
+            "workspace:///data/",
             context_raw.decode("utf-8"),
         )
 
@@ -1505,7 +1505,7 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
             )
             context_raw = await ws._backend.read_file(context_path)
             self.assertIn("live context", context_raw.decode("utf-8"))
-            self.assertIn("file://", context_raw.decode("utf-8"))
+            self.assertIn("workspace://", context_raw.decode("utf-8"))
 
             tool_path = await ws.offload_tool_result(
                 "session-live-reset",
@@ -1610,7 +1610,7 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                 context_raw.decode("utf-8"),
             )
             self.assertIn(
-                "file://",
+                "workspace://",
                 context_raw.decode("utf-8"),
             )
             tool_raw = await reattached._backend.read_file(tool_path)

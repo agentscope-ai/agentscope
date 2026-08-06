@@ -6,6 +6,7 @@ from ._access import (
     KnowledgeBaseView,
     ResourceAccessService,
 )
+from ._channel import ChannelService
 from ._chat import ChatService
 from ._embedding import get_embedding_model
 from ._index_sweeper import IndexSweeper
@@ -22,6 +23,7 @@ from ._toolkit import get_toolkit
 
 __all__ = [
     "AgentView",
+    "ChannelService",
     "ChatService",
     "CredentialView",
     "IndexSweeper",

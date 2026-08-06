@@ -33,11 +33,14 @@ from pydantic import TypeAdapter
 from ..._logging import logger
 from ...event import (
     ExternalExecutionResultEvent,
+    ReplyEndEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
+from ...message import Msg
+from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
 from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import enqueue_run_trigger, publish_session_event
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -178,7 +181,7 @@ class WakeupDispatcher:
                 MessageBusKeys.wakeup_queue(),
                 max_count=64,
             )
-            entries = [payload for _entry_id, payload in raw_entries]
+            entries = [payload for _, payload in raw_entries]
         except Exception:  # pylint: disable=broad-except
             logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
             return
@@ -228,26 +231,41 @@ class WakeupDispatcher:
                 ``None``.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
+        is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
+        # ``resume`` and ``message`` both carry input that must be
+        # delivered — never dropped while the session is busy.
+        carries_input = is_resume or is_message
 
-        # Parse the resume input early so every downstream path
-        # (lock-retry, spawn-retry) receives a typed event object
-        # rather than a raw dict.
-        input_msg: UserConfirmResultEvent | ExternalExecutionResultEvent | None
-        input_msg = None
-        if is_resume:
+        # Parse the carried input early so every downstream path
+        # (lock-retry, spawn-retry) receives a typed object rather than a
+        # raw dict.
+        input_msg: (
+            UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+            | Msg
+            | None
+        ) = None
+        if carries_input:
             if raw_input is None:
                 logger.warning(
-                    "WakeupDispatcher: dropping resume trigger for session "
-                    "%s — no input event carried.",
+                    "WakeupDispatcher: dropping %s trigger for session "
+                    "%s — no input carried.",
+                    kind,
                     session_id,
                 )
                 return
             try:
-                input_msg = _RESUME_INPUT_ADAPTER.validate_python(raw_input)
+                input_msg = (
+                    Msg.model_validate(raw_input)
+                    if is_message
+                    else _RESUME_INPUT_ADAPTER.validate_python(raw_input)
+                )
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
-                    "WakeupDispatcher: dropping resume trigger for session "
-                    "%s — input event failed to parse: %r",
+                    "WakeupDispatcher: dropping %s trigger for session "
+                    "%s — input failed to parse: %r",
+                    kind,
                     session_id,
                     raw_input,
                 )
@@ -256,14 +274,15 @@ class WakeupDispatcher:
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
-            if is_resume:
-                # The session is busy finishing its parked tail. Do NOT
-                # drop the resume — re-queue it after a short backoff so
-                # it lands once the parked run releases its lock.
-                self._schedule_resume_retry(
+            if carries_input:
+                # The session is busy. Do NOT drop input-carrying triggers
+                # — re-queue after a short backoff so they land once the
+                # running turn releases its lock.
+                self._schedule_input_retry(
                     user_id,
                     session_id,
                     agent_id,
+                    kind,
                     input_msg,
                 )
             # ``wake`` triggers are safe to drop while running — the
@@ -289,6 +308,21 @@ class WakeupDispatcher:
                 agent_id,
                 user_id,
             )
+            # Surface an error on the event stream so collectors (e.g. the
+            # channel gateway) fail fast instead of waiting for a timeout.
+            await publish_session_event(
+                self._bus,
+                session_id,
+                ReplyEndEvent(
+                    session_id=session_id,
+                    reply_id="",
+                    finished_reason=ReplyFinishedReason.ERROR,
+                    error=ErrorInfo(
+                        type=ErrorType.INTERNAL,
+                        message="Session no longer exists.",
+                    ),
+                ).model_dump(mode="json"),
+            )
             return
 
         try:
@@ -305,12 +339,13 @@ class WakeupDispatcher:
         except RuntimeError:
             # A local run was registered between the running-check and
             # the spawn. For ``wake`` that run will drain the inbox; for
-            # ``resume`` re-queue so the result is not lost.
-            if is_resume:
-                self._schedule_resume_retry(
+            # input-carrying kinds re-queue so the input is not lost.
+            if carries_input:
+                self._schedule_input_retry(
                     user_id,
                     session_id,
                     agent_id,
+                    kind,
                     input_msg,
                 )
             else:
@@ -320,31 +355,37 @@ class WakeupDispatcher:
                     session_id,
                 )
 
-    def _schedule_resume_retry(
+    def _schedule_input_retry(
         self,
         user_id: str,
         session_id: str,
         agent_id: str,
+        kind: str,
         input_msg: UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | UserInterruptEvent
+        | Msg
         | None,
     ) -> None:
-        """Re-enqueue a ``resume`` trigger after a short backoff.
+        """Re-enqueue an input-carrying (``resume``/``message``) trigger
+        after a short backoff.
 
-        Spawns a detached timer that sleeps, then re-enqueues the resume
+        Spawns a detached timer that sleeps, then re-enqueues the trigger
         (which re-fires the signal, re-driving the drain). This keeps the
-        resume alive across the window where the parked run still holds
+        input alive across the window where the running turn still holds
         the session lock, without a hot re-enqueue loop.
 
         Args:
             user_id (`str`):
                 The owning user id.
             session_id (`str`):
-                The session to resume.
+                The session to trigger.
             agent_id (`str`):
                 The agent that owns the session.
+            kind (`str`):
+                The trigger kind to re-enqueue (``resume`` / ``message``).
             input_msg:
-                The parsed input event to redeliver.
+                The parsed input to redeliver.
         """
 
         async def _retry() -> None:
@@ -355,21 +396,22 @@ class WakeupDispatcher:
                     user_id=user_id,
                     session_id=session_id,
                     agent_id=agent_id,
-                    kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+                    kind=kind,  # type: ignore[arg-type]  # resume | message
                     inputs=input_msg,
                 )
             except asyncio.CancelledError:
                 pass
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
-                    "WakeupDispatcher: failed to re-enqueue resume trigger "
+                    "WakeupDispatcher: failed to re-enqueue %s trigger "
                     "for session %s.",
+                    kind,
                     session_id,
                 )
 
         task = asyncio.create_task(
             _retry(),
-            name=f"resume-retry:{session_id}",
+            name=f"{kind}-retry:{session_id}",
         )
         self._retry_tasks.add(task)
         task.add_done_callback(self._retry_tasks.discard)

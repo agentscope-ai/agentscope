@@ -14,6 +14,7 @@ class SessionSource(str, Enum):
 
     USER = "user"
     SCHEDULE = "schedule"
+    CHANNEL = "channel"
 
 
 class ChatModelConfig(BaseModel):
@@ -182,6 +183,17 @@ class SessionRecord(_RecordBase):
 
     source_schedule_id: str | None = None
     """The source schedule Id."""
+
+    source_chat_id: str | None = None
+    """For channel-created sessions, the platform chat this session maps
+    to. Recorded so agent output can be delivered back to the right chat
+    even on a background / scheduled wake, where no inbound message is
+    available to supply it."""
+
+    source_channel_id: str | None = None
+    """For channel-created sessions, the owning channel id. Lets the
+    output forwarder locate the channel adapter + presentation settings
+    on a background / scheduled wake."""
 
     team_id: str | None = None
     """The team this session participates in, if any.

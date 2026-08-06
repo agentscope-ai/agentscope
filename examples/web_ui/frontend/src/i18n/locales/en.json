@@ -3,6 +3,7 @@
 		"add": "Add",
 		"agent": "Agent",
 		"cancel": "Cancel",
+		"channel": "Channels",
 		"chat": "Chat",
 		"close": "Close",
 		"confirm": "Confirm",
@@ -117,7 +118,8 @@
 			"team": "Team",
 			"team_message": "Team",
 			"schedule": "Schedule",
-			"system": "System"
+			"system": "System",
+			"channel": "Channel"
 		},
 		"error": {
 			"title": "Reply failed",
@@ -421,6 +423,7 @@
 		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
 	},
 	"schedule": {
+		"subtitle": "Schedule recurring or one-off tasks for your agents",
 		"calendar": "Calendar",
 		"createSchedule": {
 			"description": "Set up a recurring or one-time scheduled task for an agent.",
@@ -597,7 +600,88 @@
 			"membersHeading": "Members",
 			"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
 			"emptyTitle": "No team",
-			"emptyDescription": "This session is not part of a team. The agent forms one with TeamCreate."
+			"emptyDescription": "This session is not part of a team. The agent forms one with TeamCreate.",
+			"running": "Running",
+			"idle": "Idle",
+			"missingSession": "(no session)"
+		}
+	},
+	"channel": {
+		"title": "Channels",
+		"subtitle": "Connect external platforms like Feishu and Discord so agents work in group chats",
+		"status": "Status",
+		"connected": "Connected",
+		"enable": "Enable",
+		"disable": "Disable",
+		"deleteEntity": "channel",
+		"routing": "Routing",
+		"routingDesc": "Match inbound messages to an agent and a session scope. The last rule matches everything else.",
+		"sectionActive": "Connected",
+		"sectionAdd": "Add Channel",
+		"rules": "{{count}} rules",
+		"empty": {
+			"title": "No channels",
+			"description": "Create a channel to connect your agent to external platforms like Feishu, DingTalk, etc."
+		},
+		"create": {
+			"title": "Create Channel",
+			"titleFor": "Connect {{name}}",
+			"description": "Connect an agent to an external messaging platform.",
+			"channelType": "Platform",
+			"nameLabel": "Name",
+			"namePlaceholder": "e.g. Support desk",
+			"nameDesc": "Tells apart channels on the same platform",
+			"modelDesc": "Initial model for a new session",
+			"permissionMode": "Permission Mode",
+			"permissionModeDesc": "Initial permission mode for a new session",
+			"showToolMessages": "Show Tool Messages",
+			"showToolMessagesDesc": "Display tool call/result messages in the channel.",
+			"showThinking": "Show Thinking",
+			"showThinkingDesc": "Display model reasoning process in the channel."
+		},
+		"edit": {
+			"title": "Edit Channel",
+			"description": "Update routing, model, and reply settings. Platform and credentials are immutable."
+		},
+		"sessionScope": {
+			"per_chat": "Per Chat",
+			"per_chat_user": "Per Chat User"
+		},
+		"sessions": {
+			"title": "Sessions",
+			"empty": "No sessions yet",
+			"openInChat": "Open in chat"
+		},
+		"detail": {
+			"config": "Configuration",
+			"configDesc": "Initial configuration applied to new sessions",
+			"configItem": "Item",
+			"configValue": "Value",
+			"condition": "Condition",
+			"created": "Created",
+			"deleteChannel": "Delete channel",
+			"routingDesc": "How inbound messages map to an agent and session scope",
+			"sessionsDesc": "Sessions this channel has spawned",
+			"selectHint": "Select a channel to see details"
+		},
+		"state": {
+			"stopped": "Stopped",
+			"connecting": "Connecting",
+			"retrying": "Reconnecting",
+			"connected": "Connected",
+			"failed": "Failed"
+		},
+		"binding": {
+			"rule": "Match Rule",
+			"matchKey": "Match field",
+			"matchValue": "Match value",
+			"matchValuePlaceholder": "e.g. a chat_id",
+			"routeTo": "Route to",
+			"scope": "Session scope",
+			"fallback": "Fallback Rule",
+			"fallbackDesc": "Messages not matched by any rule above are routed here",
+			"catchAll": "All other messages",
+			"addRule": "Add rule"
 		}
 	},
 	"mcp": {

@@ -13,6 +13,7 @@ from ._manager import (
     WakeupDispatcher,
 )
 from ._service import (
+    ChannelService,
     ChatService,
     IndexSweeper,
     IndexTaskConsumer,
@@ -101,6 +102,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.resource_access_service = resource_access_service
 
+        # Channel wiring is built here (before ChatService) so the chat
+        # service can hand the dispatcher to get_toolkit: a session that
+        # came from a channel gets that channel's platform tools. The
+        # type registry has no lifecycle and was built in create_app; the
+        # reconcile/heartbeat loops start later via the dispatcher's
+        # lifespan context.
+        from .channel import (
+            ChannelGateway,
+            ChannelLifecycleDispatcher,
+        )
+
+        # Only wire the channel subsystem when channel types are
+        # registered — otherwise the dispatcher's reconcile would hit
+        # storage backends that don't implement channel methods.
+        channel_type_registry = app.state.channel_type_registry
+        channel_dispatcher = None
+        if channel_type_registry:
+            channel_dispatcher = ChannelLifecycleDispatcher(
+                storage=storage,
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+                gateway=ChannelGateway(
+                    storage=storage,
+                    message_bus=message_bus,
+                    workspace_manager=workspace_manager,
+                ),
+            )
+            app.state.channel_service = ChannelService(
+                storage=storage,
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+            )
+        app.state.channel_dispatcher = channel_dispatcher
+
         chat_service = ChatService(
             storage=storage,
             workspace_manager=workspace_manager,
@@ -113,6 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
+            channel_dispatcher=channel_dispatcher,
         )
         app.state.chat_service = chat_service
 
@@ -198,5 +234,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 bg_manager=bg_manager,
             ),
         )
+
+        # Start the channel reconcile/heartbeat/outbound loops (the
+        # dispatcher itself was built above, before ChatService) — only
+        # when the channel subsystem is enabled.
+        if channel_dispatcher is not None:
+            await stack.enter_async_context(channel_dispatcher.lifespan())
 
         yield

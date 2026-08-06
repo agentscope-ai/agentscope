@@ -1,8 +1,9 @@
 {
 	"common": {
 		"add": "添加",
-		"agent": "Agent",
+		"agent": "智能体",
 		"cancel": "取消",
+		"channel": "频道",
 		"chat": "聊天",
 		"close": "关闭",
 		"confirm": "确认",
@@ -117,7 +118,8 @@
 			"team": "团队",
 			"team_message": "团队消息",
 			"schedule": "定时任务",
-			"system": "系统消息"
+			"system": "系统消息",
+			"channel": "频道"
 		},
 		"error": {
 			"title": "回复失败",
@@ -128,7 +130,7 @@
 			"upstream": "上游模型服务返回了错误。",
 			"connection": "无法连接模型服务 —— 网络错误或超时。",
 			"internal": "发生了未预期的内部错误。",
-			"setup": "会话准备失败 —— 请检查该 agent 的模型、工具和知识库配置。",
+			"setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
 		}
 	},
@@ -139,32 +141,32 @@
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
 		"agent": {
-			"selectPlaceholder": "选择 Agent",
-			"emptyTitle": "暂无 Agent",
-			"emptyDescription": "创建一个 Agent 开始使用。",
+			"selectPlaceholder": "选择智能体",
+			"emptyTitle": "暂无智能体",
+			"emptyDescription": "创建一个智能体开始使用。",
 			"groupYours": "我的",
 			"groupShared": "共享给我"
 		},
 		"session": {
 			"label": "会话",
 			"emptyTitle": "暂无会话",
-			"emptyNoAgent": "请先选择一个 Agent。",
+			"emptyNoAgent": "请先选择一个智能体。",
 			"emptyHasAgent": "创建会话开始对话。",
 			"today": "今天",
 			"earlier": "更早"
 		}
 	},
 	"dialog-agent-create": {
-		"title": "创建 Agent",
-		"description": "定义新 Agent 的身份与行为。"
+		"title": "创建智能体",
+		"description": "定义新智能体的身份与行为。"
 	},
 	"agent-form": {
 		"identity": {
-			"legend": "Agent 身份",
-			"description": "定义此 Agent 行为的名称和指令。",
+			"legend": "智能体身份",
+			"description": "定义此智能体行为的名称和指令。",
 			"name": {
 				"label": "名称",
-				"placeholder": "我的 Agent"
+				"placeholder": "我的智能体"
 			},
 			"system-prompt": {
 				"label": "系统提示词"
@@ -201,22 +203,22 @@
 		},
 		"invite-config": {
 			"legend": "邀请配置",
-			"description": "控制此 Agent 是否可被其他 Agent 通过 AgentInvite 邀请。",
+			"description": "控制此智能体是否可被其他智能体通过 AgentInvite 邀请。",
 			"invitable": {
 				"label": "允许被邀请"
 			},
 			"invite-description": {
 				"label": "邀请说明",
-				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
+				"placeholder": "简要描述此智能体的专长；允许被邀请时必填。"
 			}
 		}
 	},
 	"dialog-agent-edit": {
-		"title": "编辑 Agent",
-		"description": "更新此 Agent 的配置。"
+		"title": "编辑智能体",
+		"description": "更新此智能体的配置。"
 	},
 	"dialog-agent-delete": {
-		"entity": "Agent",
+		"entity": "智能体",
 		"confirm": "删除"
 	},
 	"dialog-session-delete": {
@@ -319,7 +321,7 @@
 		}
 	},
 	"knowledge": {
-		"subtitle": "管理 Agent 使用的知识库",
+		"subtitle": "管理智能体使用的知识库",
 		"selectHint": "未选择知识库",
 		"selectHintDescription": "从左侧选择一个知识库以查看详情。",
 		"list": {
@@ -421,9 +423,10 @@
 		"skillDescription": "确定要将该技能从工作区中移除吗？"
 	},
 	"schedule": {
+		"subtitle": "为智能体设置定时或一次性的计划任务",
 		"calendar": "日历",
 		"createSchedule": {
-			"description": "为 Agent 设置定时或一次性的计划任务。",
+			"description": "为智能体设置定时或一次性的计划任务。",
 			"descriptionLabel": "描述",
 			"descriptionPlaceholder": "描述这个计划任务的用途...",
 			"namePlaceholder": "例如：每日报告",
@@ -447,7 +450,7 @@
 		"nextMonth": "下个月",
 		"nextYear": "下一年",
 		"noSchedules": "暂无日程",
-		"noSchedulesDescription": "创建日程以自动化 Agent 任务。",
+		"noSchedulesDescription": "创建日程以自动化智能体任务。",
 		"pickDate": "选择日期",
 		"permissionMode": "权限模式",
 		"timezone": "时区",
@@ -502,8 +505,8 @@
 		"skip": "跳过",
 		"step": "第 {{current}} / {{total}} 步",
 		"createAgent": {
-			"title": "创建 Agent",
-			"content": "先创建一个 Agent —— 与你对话的智能体。"
+			"title": "创建智能体",
+			"content": "先创建一个智能体 —— 与你对话的智能体。"
 		},
 		"createSession": {
 			"title": "创建会话",
@@ -597,7 +600,88 @@
 			"membersHeading": "成员",
 			"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
 			"emptyTitle": "没有团队",
-			"emptyDescription": "当前会话不属于任何团队。agent 会用 TeamCreate 建立团队。"
+			"emptyDescription": "当前会话不属于任何团队。agent 会用 TeamCreate 建立团队。",
+			"running": "运行中",
+			"idle": "空闲",
+			"missingSession": "（无会话）"
+		}
+	},
+	"channel": {
+		"title": "频道",
+		"subtitle": "接入飞书、Discord 等外部平台，让智能体在群聊里工作",
+		"status": "状态",
+		"connected": "已连接",
+		"enable": "启用",
+		"disable": "停用",
+		"deleteEntity": "频道",
+		"routing": "路由",
+		"routingDesc": "将入站消息匹配到某个智能体和会话粒度。最后一条规则匹配其余所有消息。",
+		"sectionActive": "已接入",
+		"sectionAdd": "添加频道",
+		"rules": "{{count}} 条规则",
+		"empty": {
+			"title": "暂无频道",
+			"description": "创建一个频道，将智能体连接到飞书、钉钉等外部平台。"
+		},
+		"create": {
+			"title": "创建频道",
+			"titleFor": "接入 {{name}}",
+			"description": "将智能体连接到外部消息平台。",
+			"channelType": "平台",
+			"nameLabel": "名称",
+			"namePlaceholder": "如：客服值班",
+			"nameDesc": "便于区分同平台的多个频道",
+			"modelDesc": "新会话创建时的初始模型",
+			"permissionMode": "权限模式",
+			"permissionModeDesc": "新会话创建时的初始权限模式",
+			"showToolMessages": "显示工具消息",
+			"showToolMessagesDesc": "在频道中展示工具调用和返回消息。",
+			"showThinking": "显示思维过程",
+			"showThinkingDesc": "在频道中展示模型推理过程。"
+		},
+		"edit": {
+			"title": "编辑频道",
+			"description": "修改路由、模型与回复设置。平台与凭据不可修改。"
+		},
+		"sessionScope": {
+			"per_chat": "按聊天",
+			"per_chat_user": "按聊天+用户"
+		},
+		"sessions": {
+			"title": "派生会话",
+			"empty": "还没有会话",
+			"openInChat": "在对话中打开"
+		},
+		"detail": {
+			"config": "配置",
+			"configDesc": "新会话创建时应用的初始配置",
+			"configItem": "配置项",
+			"configValue": "值",
+			"condition": "条件",
+			"created": "创建时间",
+			"deleteChannel": "删除频道",
+			"routingDesc": "入站消息如何匹配到智能体与会话粒度",
+			"sessionsDesc": "该频道派生出的会话",
+			"selectHint": "选择一个频道查看详情"
+		},
+		"state": {
+			"stopped": "已停止",
+			"connecting": "连接中",
+			"retrying": "重连中",
+			"connected": "已连接",
+			"failed": "连接失败"
+		},
+		"binding": {
+			"rule": "匹配规则",
+			"matchKey": "匹配字段",
+			"matchValue": "匹配值",
+			"matchValuePlaceholder": "如某个 chat_id",
+			"routeTo": "路由到",
+			"scope": "会话粒度",
+			"fallback": "兜底规则",
+			"fallbackDesc": "未命中上面任何规则的消息，都路由到这里",
+			"catchAll": "其余所有消息",
+			"addRule": "添加规则"
 		}
 	},
 	"mcp": {
@@ -656,6 +740,6 @@
 	},
 	"agent-menu": {
 		"settings": "设置",
-		"delete": "删除 Agent"
+		"delete": "删除智能体"
 	}
 }

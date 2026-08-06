@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from utils import MockModel
 
 from agentscope.agent import Agent
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.app._manager import (
     CancelDispatcher,
     ChatRunRegistry,
@@ -137,6 +138,9 @@ class ServiceAgentInterruptTest(IsolatedAsyncioTestCase):
                 self.stream = True
                 self.max_retries = 0
                 self.context_size = 1000
+                # The agent reads formatter.supported_input_media_types
+                # on every incoming message, like a real model exposes.
+                self.formatter = OpenAIChatFormatter()
 
             async def __call__(
                 self,
