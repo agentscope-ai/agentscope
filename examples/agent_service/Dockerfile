@@ -27,9 +27,14 @@ ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 第一步：只复制依赖文件，安装所有依赖（不含项目本身）
 # 这样只要 pyproject.toml 不变，这层就会被 Docker 缓存
+# storage-sql 必需：main.py 使用 AsyncSQLAlchemyStorage（sqlalchemy[asyncio] + alembic）
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN uv sync --extra service --extra storage-redis --extra workspace-docker --extra workspace-k8s --no-install-project
+RUN uv sync --extra service --extra storage-redis --extra storage-sql --extra workspace-docker --extra workspace-k8s --no-install-project
+
+# 数据库驱动：storage-sql extra 不含具体驱动（aiosqlite / asyncpg / aiomysql 由部署方自选），
+# 本项目使用 PostgreSQL（config.yaml db.url 为 postgresql+asyncpg://...），显式安装 asyncpg
+RUN uv pip install asyncpg
 
 # 第二步：复制完整源码并以可编辑模式安装项目本身
 # 源码通过 volume 挂载，修改即时生效
