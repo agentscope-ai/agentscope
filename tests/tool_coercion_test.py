@@ -45,6 +45,19 @@ class ToolCoercionTest(unittest.TestCase):
                 self.assertEqual(result["value"], expected)
                 self.assertIsInstance(result["value"], python_type)
 
+    def test_string_coercion_preserves_non_scalar_values(self) -> None:
+        """Only scalar values are coerced to strings."""
+        schema = _schema({"value": {"type": "string"}})
+        for value in ({"key": "value"}, ["value"], None, b"value"):
+            with self.subTest(value=value):
+                result = _coerce_tool_args({"value": value}, schema)
+                self.assertEqual(result["value"], value)
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                result = _coerce_tool_args({"value": value}, schema)
+                self.assertIs(result["value"], value)
+
     def test_integer_coercion_is_lossless_and_safe(self) -> None:
         """Avoid truncation, precision loss, and exceptions."""
         schema = _schema({"value": {"type": "integer"}})

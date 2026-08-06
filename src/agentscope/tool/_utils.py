@@ -708,7 +708,9 @@ def _coerce_to_type(value: Any, expected_type: str) -> Any:
             applicable or fails.
     """
     if expected_type == "string":
-        if not isinstance(value, str):
+        if isinstance(value, (bool, int)):
+            return str(value)
+        if isinstance(value, float) and math.isfinite(value):
             return str(value)
         return value
 

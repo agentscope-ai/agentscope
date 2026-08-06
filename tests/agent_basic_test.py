@@ -1811,5 +1811,72 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
         self.assertTrue(any(e["state"] == "error" for e in tool_result_end))
 
+    async def test_agent_rejects_nan_for_string_tool_argument(self) -> None:
+        """Agent rejects NaN before string coercion can hide it."""
+        executed_args: list[str] = []
+
+        class MockStringTool(ToolBase):
+            """A test tool that expects a string parameter."""
+
+            name: str = "mock_string_tool"
+            description: str = "A tool with a string parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {"x": {"type": "string"}},
+                "required": ["x"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, x: str, **kwargs: Any) -> ToolChunk:
+                executed_args.append(x)
+                return ToolChunk(content=[TextBlock(text="Executed")])
+
+        self.agent.toolkit = Toolkit(tools=[MockStringTool()])
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tool_call_nan_string",
+                                name="mock_string_tool",
+                                input='{"x": NaN}',
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        self.assertEqual(executed_args, [])
+        tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
+        self.assertTrue(any(e["state"] == "error" for e in tool_result_end))
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
