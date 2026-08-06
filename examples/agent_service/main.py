@@ -66,9 +66,11 @@ from bocomadp.routers.chat_sse import chat_sse_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
 from bocomadp.routers.platform_health import platform_health_router
+from bocomadp.routers.skill_router import skill_router
 from bocomadp.routers.stats import stats_router
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
+from bocomadp.skills import ExternalSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
 
 # ---------------------------------------------------------------------------
@@ -247,7 +249,10 @@ app = create_app(
         vector_store=vector_store,
     ),
     mcp_hubs=[GitHubMCPHub()],
-    skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
+    skill_hubs=[
+        ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN")),
+        ExternalSkillHub(),
+    ],
     custom_subagent_templates=load_subagent_templates(),
     # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
     extra_agent_middlewares=build_agent_middlewares,
@@ -277,6 +282,8 @@ app.include_router(agent_manage_router)
 app.include_router(models_router)
 # 平台健康检查（/platform/health）
 app.include_router(platform_health_router)
+# 外部 skill hub（目录查询 / 我的上传 / 下载安装）
+app.include_router(skill_router)
 
 
 if __name__ == "__main__":
