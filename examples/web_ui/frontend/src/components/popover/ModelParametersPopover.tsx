@@ -210,6 +210,12 @@ interface Props {
 	selectedTTSModel: TTSModelConfig | null;
 	/** Called when the user picks a TTS model+voice or disables TTS. */
 	onTTSChange: (config: TTSModelConfig | null) => void;
+	/**
+	 * Locks the trigger while a session config write is in flight, so a
+	 * second edit cannot race the first. The trigger is also locked
+	 * whenever no primary model is selected.
+	 */
+	disabled?: boolean;
 }
 
 /**
@@ -229,6 +235,7 @@ export function ModelParametersPopover({
 	onFallbackChange,
 	selectedTTSModel,
 	onTTSChange,
+	disabled: locked = false,
 }: Props) {
 	const [values, setValues] = useState<Record<string, unknown>>({});
 	const { t } = useTranslation();
@@ -265,7 +272,7 @@ export function ModelParametersPopover({
 		});
 	};
 
-	const disabled = !selectedModel;
+	const disabled = locked || !selectedModel;
 	const hasFallbackOptions = Object.keys(groups).length > 0;
 
 	return (

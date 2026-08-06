@@ -21,8 +21,26 @@ export const sessionApi = {
 
 	create: (body: CreateSessionRequest) => client.post<CreateSessionResponse>('/sessions/', body),
 
-	update: (sessionId: string, agentId: string, body: UpdateSessionRequest) =>
-		client.patch<SessionRecord>(`/sessions/${sessionId}`, body, { agent_id: agentId }),
+	/**
+	 * Update a session's configuration.
+	 *
+	 * Returns 409 while a chat run holds the session — the agent
+	 * snapshots its configuration at run start, so the change could not
+	 * apply to the reply in flight. Pass `silent` for automatic writes
+	 * the user did not initiate, where a toast would be noise.
+	 */
+	update: (
+		sessionId: string,
+		agentId: string,
+		body: UpdateSessionRequest,
+		options?: { silent?: boolean },
+	) =>
+		client.patch<SessionRecord>(
+			`/sessions/${sessionId}`,
+			body,
+			{ agent_id: agentId },
+			options,
+		),
 
 	delete: (sessionId: string, agentId: string) =>
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),

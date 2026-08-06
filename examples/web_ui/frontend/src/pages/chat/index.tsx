@@ -19,7 +19,6 @@ import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
 import { AgentSelect } from '@/components/select/AgentSelect';
-import { TeamSidebar } from '@/components/team/TeamSidebar';
 import { ChatTourController } from '@/components/tour/ChatTourController';
 import { Button } from '@/components/ui/button';
 import {
@@ -467,17 +466,6 @@ const ChatPageInner = () => {
 					</SidebarGroup>
 				</SidebarContent>
 			</Sidebar>
-			{/*
-			 * Team sidebar lives at the outer page level (not inside
-			 * ChatViewport) so navigating between leader and member
-			 * sessions does NOT unmount it. The team data comes from
-			 * the leader's session view, which is stable across that
-			 * navigation; only `currentSessionId` changes to drive
-			 * row highlighting.
-			 */}
-			{currentView?.team && effectiveSessionId && (
-				<TeamSidebar team={currentView.team} currentSessionId={effectiveSessionId} />
-			)}
 			<div className="flex flex-1 min-w-0">
 				<ChatViewport
 					agentId={effectiveAgentId}

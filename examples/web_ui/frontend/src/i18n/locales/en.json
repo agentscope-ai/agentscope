@@ -592,11 +592,13 @@
 			"emptyTitle": "No results",
 			"emptyDescription": "Nothing matches “{{query}}”."
 		},
-		"loading": "Loading…"
-	},
-	"team-sidebar": {
-		"membersHeading": "Members",
-		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate."
+		"loading": "Loading…",
+		"team": {
+			"membersHeading": "Members",
+			"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+			"emptyTitle": "No team",
+			"emptyDescription": "This session is not part of a team. The agent forms one with TeamCreate."
+		}
 	},
 	"mcp": {
 		"subtitle": "Browse and install MCP servers",

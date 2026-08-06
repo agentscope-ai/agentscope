@@ -592,11 +592,13 @@
 			"emptyTitle": "无结果",
 			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
 		},
-		"loading": "加载中…"
-	},
-	"team-sidebar": {
-		"membersHeading": "成员",
-		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。"
+		"loading": "加载中…",
+		"team": {
+			"membersHeading": "成员",
+			"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
+			"emptyTitle": "没有团队",
+			"emptyDescription": "当前会话不属于任何团队。agent 会用 TeamCreate 建立团队。"
+		}
 	},
 	"mcp": {
 		"subtitle": "浏览并安装 MCP 服务",

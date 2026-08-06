@@ -123,6 +123,12 @@ export interface SessionConfig {
 	/** Knowledge bases attached to this session + KB middleware parameters. */
 	knowledge_config: SessionKnowledgeConfig | null;
 	workspace_id: string;
+	/**
+	 * Directory the session is focused on, relative to the workspace
+	 * root. `null` means the root itself. Always inside the root — the
+	 * backend rejects absolute paths and `..` escapes.
+	 */
+	cwd: string | null;
 }
 
 // TODO: update when Python side is finalised
@@ -189,6 +195,14 @@ export interface UpdateSessionRequest {
 	 */
 	knowledge_config?: SessionKnowledgeConfig | null;
 	permission_mode?: PermissionMode;
+	/**
+	 * New working directory, relative to the workspace root. PATCH
+	 * semantics:
+	 *   - omit the field → leave unchanged
+	 *   - set to `null`  → reset to the workspace root
+	 *   - set to a value → focus that directory
+	 */
+	cwd?: string | null;
 }
 
 export interface SessionListResponse {
