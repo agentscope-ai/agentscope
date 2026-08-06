@@ -1,7 +1,7 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
@@ -178,6 +178,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
+	const userDismissedPanelRef = useRef(false);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
@@ -189,7 +190,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
-			setTasksContext(value.tasks_context as TaskContext);
+			const tc = value.tasks_context as TaskContext;
+			setTasksContext(tc);
+			if (tc.tasks?.length && !userDismissedPanelRef.current) {
+				setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+			}
 		}
 		if (value.permission_context) {
 			setPermissionContext(value.permission_context as PermissionContext);
@@ -218,15 +223,19 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 	// Toggle a panel open/closed from the top-bar buttons.
 	const togglePanel = useCallback((key: PanelKey) => {
-		setPanelLayout((layout) =>
-			layout.some((column) => column.includes(key))
-				? closePanelInLayout(layout, key)
-				: openPanelInLayout(layout, key),
-		);
+		setPanelLayout((layout) => {
+			const willClose = layout.some((column) => column.includes(key));
+			if (willClose && key === 'plan') {
+				userDismissedPanelRef.current = true;
+			}
+			return willClose ? closePanelInLayout(layout, key) : openPanelInLayout(layout, key);
+		});
 	}, []);
 
-	// Close a panel (driven by the panel's own close button).
 	const closePanel = useCallback((key: PanelKey) => {
+		if (key === 'plan') {
+			userDismissedPanelRef.current = true;
+		}
 		setPanelLayout((layout) => closePanelInLayout(layout, key));
 	}, []);
 
@@ -383,6 +392,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// before `view` repopulates — and an immediate send would post to
 	// a session whose backend config doesn't actually have that model.
 	useEffect(() => {
+		userDismissedPanelRef.current = false;
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
