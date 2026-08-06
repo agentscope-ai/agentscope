@@ -5,7 +5,7 @@ Implements the ``acp.interfaces.Client`` protocol surface the kernel
 uses: it records every ``session/update``, answers
 ``session/request_permission`` from a script, serves ``fs/*`` against
 the real filesystem, and backs ``terminal/*`` with real subprocesses —
-so Read/Write/Edit/Grep/Bash execute end-to-end against a temp dir.
+so Read/Write/Edit/Bash execute end-to-end against a temp dir.
 """
 # pylint: disable=unused-argument  # the Client protocol fixes signatures
 import asyncio

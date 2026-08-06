@@ -1,23 +1,31 @@
 # -*- coding: utf-8 -*-
 """ACP Agent-role handlers and the stdio entrypoint (DESIGN.md §16).
 
-One ACP turn == one (possibly resumed) ``Agent.reply_stream`` run,
-driven in a *child* asyncio task so that ``session/cancel`` cancels the
-turn, never the ``session/prompt`` request handler. Since #1995 the
-core converts that cancellation into a graceful ending — interrupted
-tool-result events plus ``ReplyEndEvent(finished_reason=INTERRUPTED)``
-— so the stop reason is derived from ``finished_reason`` rather than
-from exception plumbing.
+One ACP turn == one (possibly resumed) ``Agent.reply_stream`` run.
+
+Cancellation architecture: the generator is consumed by a dedicated
+**driver task** whose only awaits are the generator's ``__anext__``
+steps; events are handed to the request handler through a queue. A
+``session/cancel`` therefore cancels the *driver*, which guarantees the
+``CancelledError`` is delivered *inside* ``reply_stream`` — where the
+core (#1995) catches it, closes running tools with ``INTERRUPTED``
+results, and ends the stream with
+``ReplyEndEvent(finished_reason=INTERRUPTED)``. Cancelling the
+forwarding coroutine instead (or closing the generator with
+``aclose()``, which raises ``GeneratorExit``) would bypass that cleanup
+and orphan concurrent tool workers. The stop reason is then derived
+from ``finished_reason`` rather than from exception plumbing.
 """
+# pylint: disable=unused-argument  # the ACP handler signatures are fixed
 import asyncio
 import contextlib
+import os
 import posixpath
 import sys
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from acp import (
     PROTOCOL_VERSION,
-    Agent as AcpAgentBase,
     InitializeResponse,
     NewSessionResponse,
     PromptResponse,
@@ -31,6 +39,7 @@ from acp.schema import (
 )
 
 from agentscope.event import (
+    AgentEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     RequireExternalExecutionEvent,
@@ -47,6 +56,9 @@ from .agent import build_agent
 from .bridge import OpRegistry, request_permission_for
 from .config import Config, load_config
 from .session import Session, SessionManager
+
+# Queue sentinel marking the end of one reply_stream run.
+_STREAM_END = object()
 
 
 def _prompt_to_msg(prompt: list[Any]) -> UserMsg:
@@ -104,8 +116,20 @@ def _stop_reason(finished: ReplyFinishedReason | None) -> str:
     return "end_turn"
 
 
-class AgentScopeAcpAgent(AcpAgentBase):
-    """The ACP Agent role wrapping AgentScope agents."""
+def _is_abs(path: str) -> bool:
+    """Absolute on either POSIX or the host platform (Windows drives)."""
+    return posixpath.isabs(path) or os.path.isabs(path)
+
+
+class AgentScopeAcpAgent:
+    """The ACP Agent role wrapping AgentScope agents.
+
+    Deliberately NOT a subclass of ``acp.Agent``: the SDK dispatches
+    handlers structurally via ``getattr``, and inheriting the Protocol's
+    placeholder method bodies would turn every unimplemented optional
+    method (``session/load``, ``session/list``, …) into a bogus no-op
+    success instead of the correct ``-32601`` method-not-found error.
+    """
 
     def __init__(self, config: Config | None = None) -> None:
         self._conn: Any = None
@@ -153,7 +177,7 @@ class AgentScopeAcpAgent(AcpAgentBase):
         **kwargs: Any,
     ) -> NewSessionResponse:
         """Mint a session; ACP sessionId == AgentState.session_id."""
-        if not posixpath.isabs(cwd):
+        if not _is_abs(cwd):
             raise RequestError.invalid_params(
                 {"cwd": f"cwd must be an absolute path, got {cwd!r}"},
             )
@@ -201,8 +225,8 @@ class AgentScopeAcpAgent(AcpAgentBase):
             )
         try:
             user_msg = _prompt_to_msg(prompt)
-            # Child task, so session/cancel cancels the *turn*, not this
-            # request handler.
+            # Child task, so a cancel aimed at the parked-permission
+            # window cancels the *turn*, not this request handler.
             sess.turn_task = asyncio.create_task(
                 self._run_turn(sess, user_msg),
             )
@@ -210,8 +234,8 @@ class AgentScopeAcpAgent(AcpAgentBase):
                 stop = await sess.turn_task
             except asyncio.CancelledError:
                 if sess.turn_task.cancelled():
-                    # session/cancel won the race before the turn could
-                    # end gracefully; the stop reason MUST still be
+                    # The cancel won a race before the turn could end
+                    # gracefully; the stop reason MUST still be
                     # returned (never a JSON-RPC error).
                     stop = "cancelled"
                 else:
@@ -220,46 +244,99 @@ class AgentScopeAcpAgent(AcpAgentBase):
             sess.end_turn()
         return PromptResponse(stop_reason=stop)
 
+    @staticmethod
+    async def _drive_stream(
+        stream: AsyncGenerator[AgentEvent, None],
+        queue: "asyncio.Queue[Any]",
+    ) -> None:
+        """Consume one reply_stream run in a task of its own.
+
+        This task's only awaits are the generator's ``__anext__`` steps
+        (``put_nowait`` never suspends), so cancelling it delivers the
+        ``CancelledError`` inside the generator, triggering the core's
+        graceful INTERRUPTED close-out. The close-out events still flow
+        into the queue before the sentinel.
+        """
+        try:
+            async for event in stream:
+                queue.put_nowait(event)
+        finally:
+            queue.put_nowait(_STREAM_END)
+
     async def _run_turn(self, sess: Session, inputs: Any) -> str:
         """One ACP turn: a reply_stream, resumed across permission gates."""
-        stream = None
         try:
             while True:
                 pending_confirm: RequireUserConfirmEvent | None = None
+                pending_external = False
                 finished: ReplyFinishedReason | None = None
+                error: Any = None
+                queue: asyncio.Queue = asyncio.Queue()
                 stream = sess.agent.reply_stream(inputs)
-                async for event in stream:
-                    if isinstance(event, ReplyStartEvent):
-                        sess.last_reply_id = event.reply_id
-                    if isinstance(event, RequireUserConfirmEvent):
-                        pending_confirm = event
-                        break
-                    if isinstance(event, RequireExternalExecutionEvent):
-                        # The fixed tool set has no external tools; a
-                        # forker who adds one must extend this handler.
-                        print(
-                            "acp_example: external tool execution is not "
-                            "supported by this example; interrupting.",
-                            file=sys.stderr,
-                        )
-                        return await self._abort_parked(
-                            sess,
-                            event.reply_id,
-                        )
-                    if isinstance(event, ReplyEndEvent):
-                        finished = event.finished_reason
-                        if event.error is not None:
-                            raise RequestError.internal_error(
-                                {"error": str(event.error)},
+                sess.driver_task = asyncio.create_task(
+                    self._drive_stream(stream, queue),
+                )
+                try:
+                    while True:
+                        event = await queue.get()
+                        if event is _STREAM_END:
+                            break
+                        if isinstance(event, ReplyStartEvent):
+                            sess.last_reply_id = event.reply_id
+                        elif isinstance(event, RequireUserConfirmEvent):
+                            # The reply is parking; the stream ends
+                            # right after this event.
+                            pending_confirm = event
+                            continue
+                        elif isinstance(
+                            event,
+                            RequireExternalExecutionEvent,
+                        ):
+                            # The fixed tool set has no external tools;
+                            # a forker who adds one must extend this.
+                            print(
+                                "acp_example: external tool execution "
+                                "is not supported by this example; "
+                                "interrupting.",
+                                file=sys.stderr,
                             )
-                    for update in sess.translator.translate(event):
-                        await self._conn.session_update(
-                            session_id=sess.id,
-                            update=update,
-                        )
-                stream = None
+                            pending_external = True
+                            continue
+                        elif isinstance(event, ReplyEndEvent):
+                            finished = event.finished_reason
+                            error = event.error
+                        for update in sess.translator.translate(event):
+                            await self._conn.session_update(
+                                session_id=sess.id,
+                                update=update,
+                            )
+                finally:
+                    driver = sess.driver_task
+                    sess.driver_task = None
+                    if driver is not None:
+                        if not driver.done():
+                            driver.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            # Surfaces agent-side exceptions; a
+                            # cancelled driver is the graceful path.
+                            await driver
+                if error is not None:
+                    raise RequestError.internal_error(
+                        {"error": str(error)},
+                    )
+                if pending_external:
+                    return await self._abort_parked(
+                        sess,
+                        sess.last_reply_id,
+                    )
                 if pending_confirm is None:
                     return _stop_reason(finished)
+                if sess.cancel_requested:
+                    # session/cancel raced the park: don't prompt.
+                    return await self._abort_parked(
+                        sess,
+                        pending_confirm.reply_id,
+                    )
                 # Resolve the gate at the client, bound to the exact
                 # toolCallId (invariant d).
                 confirm_results = await request_permission_for(
@@ -278,23 +355,40 @@ class AgentScopeAcpAgent(AcpAgentBase):
                     confirm_results=confirm_results,
                 )
         except asyncio.CancelledError:
-            # The cancellation landed while awaiting something *other*
-            # than reply_stream (a session/update write, a permission
-            # round-trip) — otherwise the agent itself would have ended
-            # the stream gracefully with finished_reason=INTERRUPTED.
-            if stream is not None:
-                with contextlib.suppress(Exception):
-                    await stream.aclose()
-            elif sess.last_reply_id is not None:
-                # Parked (awaiting permission): close the ASKING tool
-                # calls through the public interrupt input.
-                with contextlib.suppress(Exception):
-                    await self._drain_interrupt(sess, sess.last_reply_id)
+            # Only reachable when cancel() targeted the turn task: the
+            # reply was parked (permission round-trip) or the cancel
+            # raced a forwarding await after the stream had ended. The
+            # generator itself is never suspended here (the driver owns
+            # it), so closing out the parked state is safe.
+            await self._close_out_cancelled(sess)
             return "cancelled"
+        except Exception:
+            # Never leave a parked reply behind — it would brick every
+            # subsequent prompt on this session ("Agent is waiting for
+            # N tool calls..."). Interrupting an idle agent is a no-op.
+            await self._close_out_cancelled(sess)
+            raise
 
-    async def _abort_parked(self, sess: Session, reply_id: str) -> str:
+    async def _close_out_cancelled(self, sess: Session) -> None:
+        """Best-effort close-out of a parked reply after an abort.
+
+        Runs under ``asyncio.shield`` so a repeated ``session/cancel``
+        (or the surrounding task's cancellation) cannot abort the
+        close-out halfway and leave dangling ASKING tool calls in the
+        agent context. ``cancel()`` is additionally idempotent per
+        turn, so no second cancellation targets this path.
+        """
+        if sess.last_reply_id is None:
+            return
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await asyncio.shield(
+                self._drain_interrupt(sess, sess.last_reply_id),
+            )
+
+    async def _abort_parked(self, sess: Session, reply_id: str | None) -> str:
         """Abort a parked reply and surface its close-out updates."""
-        await self._drain_interrupt(sess, reply_id)
+        if reply_id is not None:
+            await self._drain_interrupt(sess, reply_id)
         return "cancelled"
 
     async def _drain_interrupt(self, sess: Session, reply_id: str) -> None:
@@ -302,7 +396,8 @@ class AgentScopeAcpAgent(AcpAgentBase):
 
         The core closes pending ASKING/SUBMITTED tool calls with
         INTERRUPTED results and ends the reply; the client sees the
-        corresponding ``tool_call_update`` notifications.
+        corresponding ``tool_call_update`` notifications. On an idle
+        agent (nothing parked) this yields nothing.
         """
         async for event in sess.agent.reply_stream(
             UserInterruptEvent(reply_id=reply_id),
@@ -314,8 +409,27 @@ class AgentScopeAcpAgent(AcpAgentBase):
                 )
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        """``session/cancel``: cancel the child turn task (§18)."""
-        sess = self._sessions.get(session_id)
+        """``session/cancel``: cancel the in-flight turn (§18).
+
+        Prefers cancelling the stream **driver** (the graceful path:
+        the core converts it into INTERRUPTED results and the turn
+        resolves through the normal event flow). Only when no driver is
+        running — the reply is parked at the permission round-trip —
+        is the turn task itself cancelled. Idempotent per turn: repeated
+        cancels while the close-out is in flight are no-ops, so they
+        cannot abort the cleanup halfway.
+        """
+        try:
+            sess = self._sessions.get(session_id)
+        except RequestError:
+            return  # cancelling an unknown session is a no-op
+        if sess.cancel_requested:
+            return
+        sess.cancel_requested = True
+        driver = sess.driver_task
+        if driver is not None and not driver.done():
+            driver.cancel()
+            return
         task = sess.turn_task
         if task is not None and not task.done():
             task.cancel()

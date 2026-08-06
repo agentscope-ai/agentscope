@@ -310,10 +310,14 @@ class ClientBackend(BackendBase):
                 # for internal failures.
                 exit_code = -1
             record.exit_code = exit_code
+            # The builtin tools detect timeouts via the LocalBackend
+            # convention: exit_code == -1 with stderr == b"timed out"
+            # (e.g. Bash reports "Command timed out after Nms"). Honor
+            # it so shell-delegated timeouts are not misreported.
             return ExecResult(
                 exit_code=exit_code,
                 stdout=out.output.encode("utf-8"),
-                stderr=b"",
+                stderr=b"timed out" if timed_out else b"",
             )
         finally:
             self._ops.record(record)
@@ -374,13 +378,31 @@ def _rules_for(
     suggested = getattr(tool_call, "suggested_rules", None) or []
     if behavior == PermissionBehavior.ALLOW and suggested:
         return list(suggested)
+    # rule_content=None means "match every invocation of this tool" —
+    # the right semantics for an unqualified always-allow/always-reject.
     return [
         PermissionRule(
             tool_name=tool_call.name,
+            rule_content=None,
             behavior=behavior,
             source="acp-client",
         ),
     ]
+
+
+def _install_deny_rules(sess: "Session", rules: list[PermissionRule]) -> None:
+    """Install persistent DENY rules on the session's agent.
+
+    ``ConfirmResult.rules`` is only applied by the core when
+    ``confirmed=True``, so a *reject_always* rule cannot ride the
+    confirmation. The engine evaluates the public
+    ``agent.state.permission_context`` live, so appending there (in the
+    same shape as ``PermissionEngine.add_rule``) makes the rejection
+    stick without touching any private attribute.
+    """
+    context = sess.agent.state.permission_context
+    for rule in rules:
+        context.deny_rules.setdefault(rule.tool_name, []).append(rule)
 
 
 async def request_permission_for(
@@ -416,9 +438,17 @@ async def request_permission_for(
         confirmed = outcome.option_id in ("allow_once", "allow_always")
         rules: list[PermissionRule] | None = None
         if outcome.option_id == "allow_always":
+            # ALLOW rules ride the confirmation; the core applies them
+            # on resume (only honored when confirmed=True).
             rules = _rules_for(tool_call, PermissionBehavior.ALLOW)
         elif outcome.option_id == "reject_always":
-            rules = _rules_for(tool_call, PermissionBehavior.DENY)
+            # DENY rules would be silently dropped on a confirmed=False
+            # ConfirmResult, so install them directly on the public
+            # permission context instead.
+            _install_deny_rules(
+                sess,
+                _rules_for(tool_call, PermissionBehavior.DENY),
+            )
         results.append(
             ConfirmResult(
                 confirmed=confirmed,

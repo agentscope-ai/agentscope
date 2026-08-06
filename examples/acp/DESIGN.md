@@ -284,6 +284,9 @@ The runnable package is named **`acp_example`** — it cannot be named
 examples/acp/
 ├── DESIGN.md            # this document
 ├── README.md            # what it is; how to run; Zed setup; fork guide
+├── pyproject.toml       # pip install -e . puts acp_example on sys.path
+│                        #   (an editor spawns the agent with the USER's
+│                        #    project as cwd, so -m must resolve anywhere)
 ├── requirements.txt     # agent-client-protocol==0.12.0 ; agentscope ; pytest
 ├── pytest.ini
 ├── acp_example/
@@ -305,6 +308,8 @@ examples/acp/
     ├── mock_model.py    # scripted ChatModelBase (mirrors tests/utils.py)
     ├── test_translate.py
     ├── test_server.py
+    ├── test_regressions.py  # *_always options, Edit e2e, URL data,
+    │                        #   timeout sentinel, cancel races
     └── test_stdio_rpc.py  # wire-level smoke test over a socket pair
 ```
 
@@ -507,7 +512,7 @@ minimal transformation.
 | `ToolCallBlock(name, input, state)` | `ToolCallStart` / `ToolCallProgress` | Not a ContentBlock — the tool-call channel (§10, §12). `input` (JSON string) → `rawInput`. |
 | `ToolResultBlock(output, state, metadata)` | `ToolCallContent[]` on `tool_call_update` | text → `Content{type:"content"}`; `state` → `status` + taxonomy. |
 | `DataBlock` w/ `Base64Source(data, media_type)` | `ImageContent` / `AudioContent` | By media type; other media degrade to a textual stand-in. Prompt-direction use gated by `promptCapabilities` (PR1: false). |
-| `DataBlock` w/ `URLSource(url, media_type)` | `ResourceLink` | `url` → `uri`. Baseline in prompts. |
+| `DataBlock` w/ `URLSource(url, media_type)` | `ResourceLink` | Tool-result direction only: the core emits `ToolResultDataDeltaEvent(url=..., data=None)`, which the translator surfaces as a `resource_link` content block on the final `tool_call_update`. Unreachable in the assistant-message direction (the core streams only `Base64Source` there). |
 | `HintBlock` | — | Dropped (§10). |
 | Inbound `resource_link` | `TextBlock` | Rendered as a readable link mention for the model. |
 | Inbound embedded `resource` | `TextBlock` | Text resources are inlined defensively even though `embeddedContext` is not advertised. |
@@ -554,13 +559,19 @@ The AgentScope permission flow is a **park/resume** flow:
 3. The client returns `RequestPermissionResponse.outcome`:
    - `{"outcome":"selected","optionId":...}` → mapped to a
      `ConfirmResult(confirmed=..., tool_call=..., rules=...)`:
-     `allow_always` carries the core's own `suggested_rules` (they
-     encode the tool-specific `rule_content` — a path glob, a command
-     prefix) or a minted `PermissionRule(tool_name=...,
-     behavior=ALLOW, source="acp-client")`; `reject_always` a DENY
-     rule. Rules ride in `ConfirmResult.rules` and are applied by the
-     agent internally on resume — the example never touches the
-     private `agent._engine` (§15 gap 5).
+     - `allow_always` carries the core's own `suggested_rules` (they
+       encode the tool-specific `rule_content` — a path glob, a
+       command prefix) or a minted, match-everything
+       `PermissionRule(tool_name=..., rule_content=None,
+       behavior=ALLOW, source="acp-client")`, riding in
+       `ConfirmResult.rules` — the core applies them on resume.
+     - `reject_always` **cannot** ride the confirmation: the core
+       applies `ConfirmResult.rules` only when `confirmed=True` (the
+       documented contract). The example instead appends the DENY rule
+       directly to the public
+       `agent.state.permission_context.deny_rules` — which the engine
+       evaluates live — so the rejection persists. Neither path
+       touches the private `agent._engine` (§15 gap 3).
    - `{"outcome":"cancelled"}` → the turn is aborted: the parked reply
      is closed via `reply_stream(inputs=UserInterruptEvent(reply_id))`
      (closing ASKING calls as `INTERRUPTED`) and the open
@@ -882,49 +893,59 @@ def build_agent(*, cwd, state, conn, caps, ops, config) -> Agent:
 ```
 
 **The turn (`server.py`)** — one ACP turn = a `reply_stream`, resumed
-across permission gates, in a child task:
+across permission gates. The generator is consumed by a dedicated
+**driver task** whose only awaits are the generator's `__anext__`
+steps; events are handed to the request handler through a queue and
+forwarded from there:
 
 ```python
 async def _run_turn(self, sess, inputs) -> str:
     while True:
-        pending_confirm, finished = None, None
-        async for event in sess.agent.reply_stream(inputs):
-            if isinstance(event, RequireUserConfirmEvent):
-                pending_confirm = event; break
-            if isinstance(event, ReplyEndEvent):
-                finished = event.finished_reason        # #1995: the one
-                ...                                     # terminal signal
+        queue = asyncio.Queue()
+        stream = sess.agent.reply_stream(inputs)
+        sess.driver_task = asyncio.create_task(
+            self._drive_stream(stream, queue))     # only awaits __anext__
+        while (event := await queue.get()) is not _STREAM_END:
+            ...  # record reply_id / finished_reason; park on confirm
             for update in sess.translator.translate(event):
                 await self._conn.session_update(session_id=sess.id,
                                                 update=update)
-        if pending_confirm is None:
-            return _stop_reason(finished)               # §9 table
-        results = await request_permission_for(self._conn, sess,
-                                               pending_confirm)
-        if results is None:                             # client cancelled
-            await self._drain_interrupt(sess, pending_confirm.reply_id)
-            return "cancelled"
-        inputs = UserConfirmResultEvent(reply_id=pending_confirm.reply_id,
-                                        confirm_results=results)
+        ...  # await driver; derive stop reason; permission round-trip;
+        ...  # resume with UserConfirmResultEvent
 ```
 
-Cancellation notes (differ from the v1 sketch, because of #1995):
-- When `session/cancel` cancels the child task **inside**
-  `reply_stream`, no exception surfaces — the agent swallows the
-  `CancelledError` and the stream ends normally with
-  `finished_reason=interrupted`, which the loop above maps to
-  `"cancelled"`. The `except asyncio.CancelledError` branch exists
-  only for cancellation landing *outside* the generator (mid
-  `session_update` write, mid permission round-trip), where the
-  example closes the generator or aborts the parked reply via
-  `UserInterruptEvent`.
+Cancellation notes (differ from the v1 sketch, because of #1995 and
+review findings):
+- `session/cancel` cancels the **driver task**, which guarantees the
+  `CancelledError` is delivered *inside* `reply_stream` — the core
+  catches it, closes running tools with `INTERRUPTED` results (also
+  cancelling concurrent tool workers and repairing the context), and
+  ends the stream with `finished_reason=interrupted` → `"cancelled"`.
+  Cancelling the forwarding coroutine instead — or closing the
+  generator with `aclose()`, which raises `GeneratorExit` — would
+  bypass that cleanup, orphan concurrent workers, and leave dangling
+  tool calls in the context.
+- Only when no driver is running (the reply is parked at the
+  permission round-trip) is the **turn task** cancelled; the parked
+  ASKING calls are then closed via `UserInterruptEvent` under
+  `asyncio.shield`, and `cancel()` is idempotent per turn, so a
+  repeated `session/cancel` cannot abort the close-out halfway (which
+  would brick the session — every later prompt would fail with "Agent
+  is waiting for N tool calls").
+- Any *other* exception while a reply is parked also triggers the
+  close-out before propagating, for the same reason.
 - `PromptResponse{stopReason}` is **always** returned on cancel —
   never a JSON-RPC error.
 
 **SDK surface used** (verified against `agent-client-protocol==0.12.0`):
-`acp.run_agent` (binds stdio, 50 MB buffer), `acp.Agent` base class
-(handlers: `initialize`, `new_session`, `prompt`, `cancel`,
-`authenticate`, `on_connect`), the `acp.interfaces.Client` methods
+`acp.run_agent` (binds stdio, 50 MB buffer), the Agent-role handlers
+(`initialize`, `new_session`, `prompt`, `cancel`, `authenticate`,
+`on_connect`) — implemented **structurally**, deliberately not
+subclassing `acp.Agent`: the SDK dispatches via `getattr`, and
+inheriting the Protocol's placeholder bodies would turn every
+unimplemented optional method (`session/load`, `session/list`, …) into
+a bogus no-op success instead of the correct `-32601` — plus the
+`acp.interfaces.Client` methods
 (`session_update`, `request_permission`, `read_text_file`,
 `write_text_file`, `create_terminal`, `wait_for_terminal_exit`,
 `terminal_output`, `kill_terminal`, `release_terminal`),
@@ -1010,11 +1031,11 @@ outstanding `session/request_permission`, the client answers
 | Case | Handling |
 |---|---|
 | **JSON-RPC errors** | Handler exceptions map to JSON-RPC `Error{code,message}` (SDK does the encoding; `RequestError.invalid_params` / `.resource_not_found` / `.internal_error` helpers). Unknown sessions → invalid params; relative `cwd` → invalid params; a turn ending `finished_reason=error` → internal error carrying the `ErrorInfo`. Notifications never get responses. |
-| **Cancellation mid-tool** | `session/cancel` → cancel the **child turn task**, never the request-handler task. Core (#1995) converts this into `ToolResultState.INTERRUPTED` chunks + `ReplyEndEvent(finished_reason=interrupted)` and swallows the `CancelledError` (default `ReActConfig.interruption_raise_cancelled_error=False`); the turn loop maps it to `stopReason:"cancelled"`. Never leaks as a JSON-RPC error. Receipt taxonomy: `interrupted`. |
-| **Cancellation mid-permission** | The client answers the outstanding `session/request_permission` with `{"outcome":"cancelled"}` (per spec); the kernel aborts the parked reply via `UserInterruptEvent` — ASKING calls close as `INTERRUPTED` — and resolves `cancelled`. If the task cancel lands first, the `except CancelledError` path does the same close-out. |
+| **Cancellation mid-tool** | `session/cancel` → cancel the **stream driver task** (never the request handler), so the `CancelledError` lands inside `reply_stream`. Core (#1995) converts this into `ToolResultState.INTERRUPTED` chunks + `ReplyEndEvent(finished_reason=interrupted)`; the turn loop maps it to `stopReason:"cancelled"`. This holds even when the cancel arrives while the handler is blocked forwarding a `session/update` (transport backpressure) — the driver owns the generator, so the graceful close-out still runs. Never leaks as a JSON-RPC error. Receipt taxonomy: `interrupted`. |
+| **Cancellation mid-permission** | The client answers the outstanding `session/request_permission` with `{"outcome":"cancelled"}` (per spec); the kernel aborts the parked reply via `UserInterruptEvent` — ASKING calls close as `INTERRUPTED` — and resolves `cancelled`. If the task cancel lands first, the `except CancelledError` path does the same close-out under `asyncio.shield`; repeated cancels are per-turn no-ops so they cannot abort the close-out halfway. |
 | **Second `session/prompt` while a turn is active** | Rejected with `-32603`. One `Agent`/`AgentState` must not be driven by two concurrent `reply_stream`s (context/state corruption). **Single-active-turn-per-session** invariant; different sessions remain fully independent. |
-| **Permission denial** | `reject_once`/`reject_always` → `ConfirmResult(confirmed=False)` → agent emits a `DENIED` `ToolResultEnd` → `tool_call_update{status:"failed"}` (taxonomy `denied`). The turn always continues — the model sees the denial and answers accordingly. *(v1 said "unless `ReActConfig.stop_on_reject=True`"; that field exists but is consumed nowhere in core — dead config, dropped here.)* |
-| **fs/terminal errors** | Client returns a JSON-RPC error for `fs/*`/`terminal/*`; the backend surfaces it as a raised read/write error or a non-zero `ExecResult`, which the tool converts into `ToolResultState.ERROR` → `tool_call_update{status:"failed"}`. Relative paths are resolved against the session cwd before any call leaves the process. |
+| **Permission denial** | `reject_once`/`reject_always` → `ConfirmResult(confirmed=False)` → agent emits a `DENIED` `ToolResultEnd` → `tool_call_update{status:"failed"}` (taxonomy `denied`). `reject_always` additionally installs a persistent DENY rule on the public permission context (§12), so the identical operation auto-denies next time without a prompt. The turn always continues — the model sees the denial and answers accordingly. *(v1 said "unless `ReActConfig.stop_on_reject=True`"; that field exists but is consumed nowhere in core — dead config, dropped here.)* |
+| **fs/terminal errors** | Client returns a JSON-RPC error for `fs/*`/`terminal/*`; the backend surfaces it as a raised read/write error or a non-zero `ExecResult`, which the tool converts into `ToolResultState.ERROR` → `tool_call_update{status:"failed"}`. A `terminal/*` timeout reports the LocalBackend convention (`exit_code=-1`, `stderr=b"timed out"`) so `Bash`/`Grep` report timeouts as timeouts. Relative paths are resolved against the session cwd before any call leaves the process. |
 | **Capability absent** | Never call an fs/terminal method whose capability is false (§13). Degrade (omit the affected tool in `build_agent()`, log to stderr) rather than fall back to silently touching local disk in shell mode. |
 | **Large tool outputs / backpressure** | `terminal/create.outputByteLimit` (1 MiB) truncates from the beginning; tool-result text buffering keyed by `tool_call_id` sends accumulated `content` (which *replaces* the collection). The SDK's 50 MB stdio buffer covers large frames; `ContextConfig.tool_result_limit` (default 50000) caps what re-enters model context. |
 | **External tools** | `RequireExternalExecutionEvent` is not supported by the fixed tool set; if a forker's toolkit emits it, the example logs to stderr and aborts the turn via `UserInterruptEvent` (extend `server.py` for real external execution). |
@@ -1030,19 +1051,24 @@ Implemented in `tests/` (all §14 invariants asserted):
 1. **Mock ACP client harness** (`mock_client.py`): serves `fs/*`
    against a temp dir, backs `terminal/*` with **real subprocesses**,
    records every `session/update`, and answers
-   `session/request_permission` from a script — so
-   Read/Write/Edit/Bash execute the full shell-delegation path
-   end-to-end.
-2. **Translator unit tests** (`test_translate.py`): block_id →
-   messageId and tool_call_id → toolCallId correlation; delta
-   buffering; `usage_update` omission; hint-drop; the
-   `ToolResultState` → status + taxonomy table.
-3. **Permission round-trip** (`test_server.py`):
+   `session/request_permission` from a script — so Read, Write, Edit
+   and Bash all execute the full shell-delegation path end-to-end
+   (Grep/Glob are constructed and capability-gated but not driven).
+2. **Translator unit tests** (`test_translate.py`,
+   `test_regressions.py`): block_id → messageId and tool_call_id →
+   toolCallId correlation; delta buffering; `usage_update` omission;
+   hint-drop; the `ToolResultState` → status + taxonomy table; the
+   URL-sourced data variant (→ `resource_link`, no crash); the
+   exec_shell timeout sentinel.
+3. **Permission round-trip** (`test_server.py`, `test_regressions.py`):
    `session/request_permission{toolCall.toolCallId == tool_call_id}`
    (invariant d); allow → the write lands via `fs/write_text_file`;
    reject → `DENIED` taxonomy and the turn continues;
    `{"outcome":"cancelled"}` → parked reply aborted, `stopReason:
-   "cancelled"`, ASKING call closed as `interrupted`.
+   "cancelled"`, ASKING call closed as `interrupted`; `allow_always` →
+   the installed rule suppresses the prompt for the identical
+   operation next turn; `reject_always` → a DENY rule lands on the
+   public permission context and auto-denies without a prompt.
 4. **Read-only fast path**: a `Read` turn produces **no** permission
    prompt under DEFAULT (#2117) and binds its `fs/read` + `terminal`
    ops to the tool_call_id (invariant c).
@@ -1050,7 +1076,11 @@ Implemented in `tests/` (all §14 invariants asserted):
    `Bash sleep` yields `stopReason:"cancelled"` (not a JSON-RPC
    error), an `interrupted` tool result, and the session accepts a
    fresh turn afterwards; a second `session/prompt` on a busy session
-   is rejected while parked at the gate.
+   is rejected while parked at the gate; a flurry of repeated cancels
+   while parked still closes out cleanly; a cancel landing while the
+   handler is **blocked forwarding a `session/update`** (backpressured
+   transport) still produces the graceful `interrupted` close-out and
+   a repaired context (`test_regressions.py`).
 6. **Capability gating**: no `terminal` → no tools; no `fs.*` →
    exactly `{Grep, Glob, Bash}`.
 7. **Wire-level smoke test** (`test_stdio_rpc.py`): the kernel behind

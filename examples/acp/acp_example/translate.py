@@ -22,6 +22,7 @@ from typing import Any, TypeAlias
 from acp import (
     audio_block,
     image_block,
+    resource_link_block,
     text_block,
     tool_content,
 )
@@ -84,6 +85,7 @@ class _ToolCallBuffer:
     result_text: str = ""
     data_blocks: dict[str, list[str]] = field(default_factory=dict)
     data_media_types: dict[str, str] = field(default_factory=dict)
+    data_urls: dict[str, str] = field(default_factory=dict)
 
 
 def _parse_args(raw: str) -> Any:
@@ -255,6 +257,13 @@ class Translator:
         buf = self._tool_calls.get(event.tool_call_id)
         if buf is None:
             return []
+        # ``data`` and ``url`` are mutually exclusive: the core emits
+        # data=None with url=... for URL-sourced DataBlocks. URLs are
+        # one-shot, base64 payloads stream in chunks.
+        if event.data is None:
+            if event.url is not None:
+                buf.data_urls[event.block_id] = event.url
+            return []
         buf.data_blocks.setdefault(event.block_id, []).append(event.data)
         buf.data_media_types[event.block_id] = event.media_type
         return []
@@ -282,6 +291,10 @@ class Translator:
                 )
                 if block is not None:
                     content.append(tool_content(block))
+            for url in buf.data_urls.values():
+                content.append(
+                    tool_content(resource_link_block(name=url, uri=url)),
+                )
         return [
             ToolCallProgress(
                 session_update="tool_call_update",
@@ -310,6 +323,7 @@ class Translator:
 
 def _data_to_content(chunks: list[str], media_type: str) -> Any:
     """Assemble buffered base64 chunks into an ACP content block."""
+    chunks = [c for c in chunks if c is not None]
     if not chunks:
         return None
     data = "".join(chunks)

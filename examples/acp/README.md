@@ -46,11 +46,17 @@ AgentScope Agent  (public API only)
 ```bash
 cd examples/acp
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # or: pip install -e ../..  + the pin
+pip install -e .                  # installs acp_example + its deps
+# (to use the repo checkout instead of PyPI agentscope: pip install -e ../..)
 
 export DASHSCOPE_API_KEY=sk-...   # default provider
 python -m acp_example             # speaks ACP on stdin/stdout
 ```
+
+The editable install puts `acp_example` on the venv's `sys.path`, so
+`python -m acp_example` works from **any** working directory — which is
+what an editor needs, since it spawns the agent with your project as
+cwd.
 
 The process is silent until an ACP client drives it (all logs go to
 stderr — stdout carries only protocol frames).
@@ -112,7 +118,7 @@ the example into your own ACP agent:
 
 ```bash
 cd examples/acp
-pip install pytest pytest-asyncio
+pip install -e ".[test]"
 pytest
 ```
 

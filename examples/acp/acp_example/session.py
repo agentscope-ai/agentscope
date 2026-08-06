@@ -47,6 +47,17 @@ class Session:
     turn_task: asyncio.Task | None = None
     """The child task running the current turn, if any."""
 
+    driver_task: asyncio.Task | None = None
+    """The task consuming the current reply_stream run, if any.
+    ``session/cancel`` targets this first — cancelling the driver
+    delivers the CancelledError inside the generator, the core's
+    graceful-interruption path."""
+
+    cancel_requested: bool = False
+    """Set once a ``session/cancel`` has been processed for the current
+    turn; makes repeated cancels no-ops so they cannot abort the
+    close-out halfway."""
+
     last_reply_id: str | None = None
     """The reply_id of the most recent turn (for interrupt-on-parked)."""
 
@@ -64,12 +75,14 @@ class Session:
         if self._turn_active:
             return False
         self._turn_active = True
+        self.cancel_requested = False
         return True
 
     def end_turn(self) -> None:
         """Release the single-active-turn guard."""
         self._turn_active = False
         self.turn_task = None
+        self.driver_task = None
 
 
 class SessionManager:
