@@ -5,6 +5,23 @@ services:
     volumes:
       - redis-data:/data
 
+  postgres:
+    image: postgres:16-alpine
+    ports: ["5432:5432"]
+    environment:
+      # 与 config.yaml db.url 中的凭据保持一致
+      - POSTGRES_USER=agentscope
+      - POSTGRES_PASSWORD=agentscope
+      - POSTGRES_DB=agentscope
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      # 就绪探测：agentscope-service 等待其 healthy 后再启动
+      test: ["CMD-SHELL", "pg_isready -U agentscope -d agentscope"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   agentscope-service:
     # build:
     #   context: ..
@@ -16,10 +33,16 @@ services:
       # 注意：AppConfig 只识别 BOCOMADP_ 前缀（嵌套字段用 __ 分隔），
       # 裸 REDIS_HOST 不会生效，会导致容器内连 localhost:6379 失败
       - BOCOMADP_REDIS__HOST=redis
+      # 数据库：容器内走 postgres 服务（config.yaml 默认 localhost 无法直连）
+      - BOCOMADP_DB__URL=postgresql+asyncpg://agentscope:agentscope@postgres:5432/agentscope
       # K8s 沙箱：kubeconfig 挂载自宿主机 .kube/config（容器内路径）
       - ADP_K8S_KUBECONFIG=/app/kubeconfig/config
       - ADP_K8S_ENABLED=false
-    depends_on: [redis]
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
       # 挂载源码（可编辑模式）
       - ../src:/app/src:ro
@@ -92,4 +115,5 @@ services:
 
 volumes:
   redis-data:
+  pg-data:
   workspace-data:
