@@ -215,10 +215,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 exc,
             )
             return None
-        url = endpoint.endpoint
+        url = str(endpoint.endpoint or "").rstrip("/")
         if not url:
             return None
-        return str(url).rstrip("/"), dict(endpoint.headers or {})
+        # SDK endpoint may be a bare host:port (no scheme); httpx requires
+        # an explicit http:// prefix for the proxy-direct transport.
+        if not url.startswith(("http://", "https://")):
+            url = f"http://{url}"
+        return url, dict(endpoint.headers or {})
 
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.
