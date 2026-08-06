@@ -227,8 +227,8 @@ if settings.k8s_enabled:
 
     workspace_manager = build_k8s_workspace_manager()
     message_bus = RedisMessageBus(
-        host=os.getenv("REDIS_HOST", "localhost"),
-        port=int(os.getenv("REDIS_PORT", "6379")),
+        host=config.redis.host,
+        port=config.redis.port,
     )
 else:
     # -- 本地模式 —— 工作区直接使用宿主机文件系统（开发/测试用）
