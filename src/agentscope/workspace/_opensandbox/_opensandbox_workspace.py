@@ -168,6 +168,27 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
 
+    def _fork_config_lines(self) -> list[str]:
+        lines = super()._fork_config_lines()
+        lines.append(
+            "AGENTSCOPE_GATEWAY_PROXY_DIRECT="
+            f"{'1' if AGENTSCOPE_GATEWAY_PROXY_DIRECT_ENABLED else '0'}"
+            "（OpenSandbox server-proxy 直连）：gateway 以 --host 0.0.0.0 启动，"
+            "GatewayClient 经 server-proxy 直连，工具调用跳过 exec_shell shim 的"
+            "spawn 开销（~1.03s→~0.5s）；传输层故障自动 fallback 回 shim。"
+            "关闭：AGENTSCOPE_GATEWAY_PROXY_DIRECT=0",
+        )
+        lines.append(
+            "use_server_proxy 强制=True（fork 定制）：沙箱 endpoint 返回 "
+            "172.19.124.30:8101 固定可路由地址，容器免 --network host"
+            "（防 SDK 默认 127.0.0.1 动态 docker-proxy 端口漂移）",
+        )
+        lines.append(
+            f"skip_system_bootstrap={self.skip_system_bootstrap}："
+            "预装镜像跳过 bootstrap，沙箱启动 <3s",
+        )
+        return lines
+
     @property
     def sandbox_id(self) -> str | None:
         """OpenSandbox sandbox id, or ``None`` before initialize."""
