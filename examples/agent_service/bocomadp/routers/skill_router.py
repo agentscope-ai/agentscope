@@ -26,7 +26,7 @@ from agentscope.app.workspace_manager import WorkspaceManagerBase
 
 from ..skills._schema import AgentSkillsListResponse, SkillActionResponse, SkillInfo
 
-router = APIRouter(prefix="/workspace", tags=["skill-external"])
+skill_router = APIRouter(prefix="/workspace", tags=["skill-external"])
 
 
 async def _resolve_workspace(
@@ -108,7 +108,7 @@ async def _session_used_names(
         return set()
 
 
-@router.get(
+@skill_router.get(
     "/skills/external",
     response_model=AgentSkillsListResponse,
     summary="Get Agent Skills",
@@ -183,7 +183,7 @@ async def get_agent_skills(
     )
 
 
-@router.get(
+@skill_router.get(
     "/skills/uploaded",
     response_model=AgentSkillsListResponse,
     summary="Get Uploaded Skills",
@@ -250,7 +250,7 @@ async def get_uploaded_skills(
     )
 
 
-@router.post(
+@skill_router.post(
     "/skill/download/{skill_full_name}",
     response_model=SkillActionResponse,
     summary="Enable Skill for Agent",
