@@ -268,6 +268,9 @@ def _coerce_value(
     if resolved_schema is not None:
         prop_schema = resolved_schema
 
+    if not isinstance(prop_schema, dict):
+        return value
+
     # Handle anyOf / oneOf (Pydantic's canonical form for Optional[int],
     # int | str, etc.)
     for comb_key in ("anyOf", "oneOf"):

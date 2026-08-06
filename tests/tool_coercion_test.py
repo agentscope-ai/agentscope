@@ -328,6 +328,21 @@ class ToolCoercionTest(unittest.TestCase):
         result = _coerce_tool_args({"x": 42}, schema_false)
         self.assertEqual(result["x"], 42)
 
+        # Boolean schemas resolved through $ref also pass through.
+        schema_ref = {
+            "type": "object",
+            "properties": {
+                "allowed": {"$ref": "#/$defs/allow_any"},
+                "denied": {"$ref": "#/$defs/deny_all"},
+            },
+            "$defs": {"allow_any": True, "deny_all": False},
+        }
+        result = _coerce_tool_args(
+            {"allowed": "42", "denied": 42},
+            schema_ref,
+        )
+        self.assertEqual(result, {"allowed": "42", "denied": 42})
+
     def test_number_rejects_non_finite_strings(self) -> None:
         """NaN, Infinity, -Infinity stay as strings so schema validation
         can reject them with a clear error."""
