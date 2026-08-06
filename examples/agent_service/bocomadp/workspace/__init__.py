@@ -6,9 +6,10 @@
 
 使用方式::
 
-    from bankcomm_adp.workspace import build_k8s_workspace_manager
+    from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
 
-    manager = build_k8s_workspace_manager()
+    if is_k8s_enabled():
+        manager = build_k8s_workspace_manager()
 
     app = create_app(
         ...,
@@ -17,10 +18,11 @@
 """
 
 from .factory import build_k8s_workspace_manager
-from .config import K8sWorkspaceConfig, get_k8s_workspace_config
+from .config import K8sWorkspaceConfig, get_k8s_workspace_config, is_k8s_enabled
 
 __all__ = [
     "build_k8s_workspace_manager",
     "K8sWorkspaceConfig",
     "get_k8s_workspace_config",
+    "is_k8s_enabled",
 ]

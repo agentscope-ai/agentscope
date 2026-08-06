@@ -7,7 +7,7 @@
 #
 # 构建（构建上下文为 agentscope 仓库根目录）：
 #   docker build \
-#       -f examples/agent_service/bankcomm_adp/docker/k8s_workspace.Dockerfile \
+#       -f examples/agent_service/bocomadp/docker/k8s_workspace.Dockerfile \
 #       -t <your-registry>/agentscope-k8s-workspace:<version> \
 #       .
 #

@@ -16,6 +16,9 @@ services:
       # 注意：AppConfig 只识别 BOCOMADP_ 前缀（嵌套字段用 __ 分隔），
       # 裸 REDIS_HOST 不会生效，会导致容器内连 localhost:6379 失败
       - BOCOMADP_REDIS__HOST=redis
+      # K8s 沙箱：kubeconfig 挂载自宿主机 .kube/config（容器内路径）
+      - ADP_K8S_KUBECONFIG=/app/kubeconfig/config
+      - ADP_K8S_ENABLED=false
     depends_on: [redis]
     volumes:
       # 挂载源码（可编辑模式）

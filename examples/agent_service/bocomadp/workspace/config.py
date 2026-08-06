@@ -196,6 +196,16 @@ class K8sWorkspaceConfig:
 
 
 @lru_cache
+def is_k8s_enabled() -> bool:
+    """是否启用 K8s 沙箱模式（读取 ``ADP_K8S_ENABLED``，默认启用）。
+
+    生产环境默认开启；本地开发可设置 ``ADP_K8S_ENABLED=false``
+    退回到 LocalWorkspaceManager。仅读取环境变量，不触发配置校验。
+    """
+    return _env_bool("ENABLED", True)
+
+
+@lru_cache
 def get_k8s_workspace_config() -> K8sWorkspaceConfig:
     """获取 K8s 沙箱配置单例并校验。"""
     cfg = K8sWorkspaceConfig()

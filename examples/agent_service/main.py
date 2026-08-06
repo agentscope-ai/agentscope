@@ -74,8 +74,7 @@ from bocomadp.skills import ExternalSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
 
 # K8s 沙箱工作区（纯配置驱动，零框架侵入）
-from bankcomm_adp.config import settings
-from bocomadp.workspace import build_k8s_workspace_manager
+from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
 
 # ---------------------------------------------------------------------------
 # 1. 配置加载 + 日志初始化
@@ -220,12 +219,13 @@ vector_store = QdrantStore(location=":memory:")
 # ── K8s 沙箱 vs 本地工作区 ──
 # 生产环境使用 K8s 沙箱（ADP_K8S_ENABLED=true，默认），
 # 本地开发可设置 ADP_K8S_ENABLED=false 退回到 LocalWorkspaceManager。
-if settings.k8s_enabled:
+if is_k8s_enabled():
     # -- K8s 沙箱模式 —— 每个智能体的代码执行在独立的 K8s Pod 中运行。
     # -- 双 PVC 模式下 skills/.mcp 共享（agent PVC），session 数据隔离。
     from agentscope.app.message_bus import RedisMessageBus
 
     workspace_manager = build_k8s_workspace_manager()
+    # 与 AppConfig 单源一致：Redis 连接统一走 config.redis，避免裸环境变量前缀坑
     message_bus = RedisMessageBus(
         host=config.redis.host,
         port=config.redis.port,

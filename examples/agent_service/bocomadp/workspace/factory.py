@@ -5,7 +5,7 @@
 
 使用方式::
 
-    from bankcomm_adp.workspace import build_k8s_workspace_manager
+    from bocomadp.workspace import build_k8s_workspace_manager
 
     manager = build_k8s_workspace_manager()
 """
