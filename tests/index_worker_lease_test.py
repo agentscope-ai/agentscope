@@ -97,6 +97,8 @@ class _SlowPipelineWorker(IndexWorker):
         self.pipeline_started = asyncio.Event()
         self.pipeline_cancelled = False
         self.pipeline_completed = False
+        self.heartbeat_started = asyncio.Event()
+        self.heartbeat_stopped = False
 
     async def _run_pipeline(
         self,
@@ -113,6 +115,23 @@ class _SlowPipelineWorker(IndexWorker):
         except asyncio.CancelledError:
             self.pipeline_cancelled = True
             raise
+
+    async def _heartbeat(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
+        """Record heartbeat lifecycle while preserving worker behavior."""
+        self.heartbeat_started.set()
+        try:
+            await super()._heartbeat(
+                user_id,
+                knowledge_base_id,
+                document_id,
+            )
+        finally:
+            self.heartbeat_stopped = True
 
 
 class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
@@ -180,22 +199,27 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(storage.released), 1)
 
-    async def test_external_cancellation_stops_child_tasks(self) -> None:
-        """Caller cancellation must tear down pipeline and heartbeat tasks."""
+    async def test_external_cancel_stops_child_tasks_and_releases(
+        self,
+    ) -> None:
+        """Caller cancellation must tear down pipeline and heartbeat."""
         storage = _LeaseStorage()
 
-        worker = _SlowPipelineWorker(storage, pipeline_seconds=0.5)
-        task = asyncio.create_task(
-            worker.process("u", "kb", "doc-cancel"),
+        worker = _SlowPipelineWorker(storage, pipeline_seconds=5.0)
+        process_task = asyncio.create_task(
+            worker.process("u", "kb", "doc-cancelled"),
         )
-        await asyncio.wait_for(worker.pipeline_started.wait(), timeout=1.0)
+        await asyncio.wait_for(
+            asyncio.gather(
+                worker.pipeline_started.wait(),
+                worker.heartbeat_started.wait(),
+            ),
+            timeout=1.0,
+        )
 
-        task.cancel()
+        process_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=1.0)
-
-        renew_calls_after_cancel = storage.renew_calls
-        await asyncio.sleep(0.15)
+            await asyncio.wait_for(process_task, timeout=1.0)
 
         self.assertTrue(
             worker.pipeline_cancelled,
@@ -205,10 +229,9 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
             worker.pipeline_completed,
             "Pipeline completed after worker.process was cancelled.",
         )
-        self.assertEqual(
-            storage.renew_calls,
-            renew_calls_after_cancel,
-            "Heartbeat kept renewing after worker.process was cancelled.",
+        self.assertTrue(
+            worker.heartbeat_stopped,
+            "Heartbeat kept running after worker.process was cancelled.",
         )
         self.assertEqual(
             [u for u in storage.status_updates if u["status"] == "error"],
