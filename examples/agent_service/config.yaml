@@ -157,3 +157,18 @@ cross_search:
     Content-Type: "multipart/form-data"
     jumpcloud-ENV: "BASE"
 
+
+# ---------- 文件上传能力 ----------
+# 非图片文件上传 / 格式转换（-> Markdown）/ 上下文注入。
+# base_dir 为独立上传根（不挂在 workspace 下），相对路径基于 BASE_DIR 归一化。
+# 支持文本/代码、PDF、Word、PPT、Excel、HTML 转 .md；图片在接口层拒绝；
+# 其余格式（压缩包等）暂不支持。
+uploads:
+  enabled: true
+  base_dir: "./uploads"          # 上传文件根目录 {base}/{user_id}/sessions/{session_id}/files/
+  max_file_size_mb: 50.0         # 单文件大小上限（MB）
+  max_files_per_session: 50       # 单会话最大文件数
+  streaming_threshold_mb: 10.0    # 超过此阈值走流式/分块上传（MB）
+  max_pdf_pages: 1000            # PDF 页数上限（超出拒绝）
+  max_filename_length: 255       # 文件名最大长度
+

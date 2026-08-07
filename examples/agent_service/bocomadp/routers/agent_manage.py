@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-agent_manage_router = APIRouter(prefix="/api/agents", tags=["agent-manage"])
+agent_manage_router = APIRouter(prefix="/agents", tags=["agent-manage"])
 
 
 # ------------------------------------------------------------------

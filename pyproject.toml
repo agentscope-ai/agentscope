@@ -63,6 +63,12 @@ service = [
     "uvicorn",
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
+    # 文件上传能力：文档/HTML 转 Markdown 依赖
+    "pdfplumber",
+    "python-docx",
+    "python-pptx",
+    "openpyxl",
+    "html2text",
 ]
 # ------------ Storage backends ------------
 storage-redis = ["redis"]

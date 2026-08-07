@@ -35,7 +35,9 @@ from .base import (
 # 由独立读取器消费（models → load_models_from_yaml；audit → AuditConfig；
 # cross_search → get_cross_search_config）。
 # 新增此类业务节点时，必须加入本集合，否则启动校验会 fail-fast。
-_BUSINESS_KEYS: frozenset[str] = frozenset({"models", "audit", "cross_search"})
+_BUSINESS_KEYS: frozenset[str] = frozenset(
+    {"models", "audit", "cross_search", "uploads"},
+)
 
 # 拼写校验相似度阈值：YAML 键与声明字段的相似度达到该值即视为疑似拼写错误。
 _SPELL_CHECK_CUTOFF = 0.7
