@@ -355,6 +355,23 @@ export interface ChatRequest {
 	agent_id: string;
 	session_id: string;
 	input: Msg | Msg[] | UserConfirmResultEvent | ExternalExecutionResultEvent | null;
+	/**
+	 * Optional uploaded-file references. When present, the backend's
+	 * `UploadsMiddleware` injects each file's converted outline (plus a
+	 * virtual path) into the human message. Files are uploaded beforehand
+	 * via `POST /api/uploads/files` and referenced by `virtual_path`.
+	 */
+	files?: ChatFileRef[];
+}
+
+/**
+ * A reference to a file previously uploaded through `POST /api/uploads/files`.
+ * Mirrors the `files` field of `POST /api/chat/run` on the BocomADP backend.
+ */
+export interface ChatFileRef {
+	filename: string;
+	filetype: string;
+	virtual_path: string;
 }
 
 // ─── MCP ──────────────────────────────────────────────────────────────────────

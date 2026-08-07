@@ -52,6 +52,8 @@ interface ChatContentProps {
 	footerSlot?: React.ReactNode;
 	/** @see TextInputProps.allowedInputTypes */
 	allowedInputTypes: string[];
+	/** @see TextInputProps.acceptTypes */
+	acceptTypes?: string[];
 	/** @see TextInputProps.fileProcessor */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
 }
@@ -67,6 +69,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onInterrupt,
 	footerSlot,
 	allowedInputTypes,
+	acceptTypes,
 	fileProcessor,
 }) => {
 	const { t } = useTranslation();
@@ -141,6 +144,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					disabled={disabled}
 					autoComplete={autoComplete}
 					allowedInputTypes={allowedInputTypes}
+					acceptTypes={acceptTypes}
 					fileProcessor={fileProcessor}
 					phase={phase}
 					onInterrupt={onInterrupt}
