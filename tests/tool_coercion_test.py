@@ -232,6 +232,31 @@ class ToolCoercionTest(unittest.TestCase):
         self.assertEqual(result, {"value": "42"})
         jsonschema.validate(result, schema)
 
+    def test_composite_coercion_keeps_root_reference_context(self) -> None:
+        """Composite schemas retain access to root definitions."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "$defs": {"LocalType": {"type": "null"}},
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "x": {"$ref": "#/$defs/RootType"},
+                            },
+                        },
+                    ],
+                },
+            },
+            "$defs": {"RootType": {"type": "integer"}},
+        }
+
+        result = _coerce_tool_args({"value": {"x": "42"}}, schema)
+
+        self.assertEqual(result, {"value": {"x": 42}})
+        jsonschema.validate(result, schema)
+
     def test_discriminated_unions_are_conservative(self) -> None:
         """Select matching branch, leave unknown branches intact."""
         schema = _schema(

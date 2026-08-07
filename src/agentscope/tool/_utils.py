@@ -450,9 +450,11 @@ def _schema_is_valid(
         `bool`:
             Whether the value satisfies the schema.
     """
-    schema_with_defs = dict(schema)
-    schema_with_defs.setdefault("$defs", defs)
-    schema_with_defs.setdefault("definitions", defs)
+    schema_with_defs = {
+        "$defs": defs,
+        "definitions": defs,
+        "allOf": [schema],
+    }
     try:
         jsonschema.validate(value, schema_with_defs)
     except jsonschema.ValidationError:
