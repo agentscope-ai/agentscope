@@ -16,17 +16,17 @@ from typing import Any, Literal, Self, Type
 from pydantic import ConfigDict, Field, SecretStr, model_validator
 
 from agentscope.credential import CredentialBase
-from agentscope.model import ChatModelBase, OpenAIChatModel
+from agentscope.model import ChatModelBase, OpenAIChatModel, EllmChatModel
 
 
-class ELLMChatModel(OpenAIChatModel):
-    """ELLM 的聊天模型——继承 OpenAI 兼容实现。
+# class ELLMChatModel(OpenAIChatModel):
+#     """ELLM 的聊天模型——继承 OpenAI 兼容实现。
 
-    基类 :meth:`list_models` 会读取**本类源文件旁**的 ``_models/``
-    目录（即 ``bocomadp/credential/_models/*.yaml``），因此前端候选
-    列表只有 ELLM 自己的模型（deepseek-v4-flash），而不是官方
-    OpenAI 的 gpt-* 候选。
-    """
+#     基类 :meth:`list_models` 会读取**本类源文件旁**的 ``_models/``
+#     目录（即 ``bocomadp/credential/_models/*.yaml``），因此前端候选
+#     列表只有 ELLM 自己的模型（deepseek-v4-flash），而不是官方
+#     OpenAI 的 gpt-* 候选。
+#     """
 
 
 class ELLMCredential(CredentialBase):
