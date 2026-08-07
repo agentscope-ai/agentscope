@@ -8,7 +8,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
@@ -577,55 +577,6 @@ class AnthropicChatModel(ChatModelBase):
         }
         return fmt_tools, type_mapping[mode]
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """Anthropic-specific override for structured output.
-
-        Anthropic's budget-based thinking mode only supports
-        ``tool_choice={"type": "auto"}`` or ``{"type": "none"}``; any
-        forcing form (``"any"`` or a specific tool) raises an API error.
-        In that mode we default ``tool_choice`` to ``"auto"`` and rely on
-        the base class's injected system-reminder prompt to guide the
-        model. Adaptive thinking accepts forced tool use, so it falls
-        through to the base implementation (force the structured-output
-        tool) just like thinking being off entirely.
-
-        See:
-         https://platform.claude.com/docs/en/build-with-claude/extended-thinking#extended-thinking-with-tool-use
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self._thinking_mode() == "enabled":
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Anthropic uses ``thinking.type=disabled`` as a top-level kwarg."""
+        return {"thinking": {"type": "disabled"}}
