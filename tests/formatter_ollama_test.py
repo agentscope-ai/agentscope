@@ -3,7 +3,6 @@
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
@@ -255,13 +254,8 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """Base64 images in tool results are promoted to a follow-up user
         message with images list."""
@@ -281,6 +275,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=Base64Source(
                                     data=self.image_b64,
                                     media_type="image/png",

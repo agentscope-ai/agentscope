@@ -4,7 +4,6 @@ DashScopeMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import (
     DashScopeChatFormatter,
@@ -373,18 +372,14 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
     async def test_chat_formatter_url_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """URL images in tool results are promoted to a follow-up user message.
 
         The textual part of the tool result contains a system-reminder with a
-        unique identifier; the identifier is mocked to be deterministic.
+        unique identifier; the identifier comes from the block's own stable
+        id.
         """
         fmt = DashScopeChatFormatter()
         msgs = [
@@ -402,6 +397,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=URLSource(
                                     url=self.image_url,
                                     media_type="image/png",
