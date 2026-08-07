@@ -8,6 +8,7 @@ the base :class:`MessageBus` class.
 
 No external dependencies (no Redis, no fakeredis) — just asyncio.
 """
+
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
@@ -359,6 +360,21 @@ class TestRegistryPrimitive(IsolatedAsyncioTestCase):
             await self.bus.registry_getall("ns"),
             {"f": "v"},
         )
+
+    async def test_namespace_ttl_expires_without_another_access(self) -> None:
+        """Registry TTL actively removes short-lived private state."""
+        await self.bus.registry_set("ns", "secret", "value", ttl_secs=1)
+        self.assertTrue(await self.bus.registry_exists("ns", "secret"))
+        await asyncio.sleep(1.05)
+        self.assertFalse(await self.bus.registry_exists("ns", "secret"))
+
+    async def test_namespace_ttl_is_refreshed(self) -> None:
+        """A later TTL write replaces the previous expiry timer."""
+        await self.bus.registry_set("ns", "f", "v1", ttl_secs=1)
+        await asyncio.sleep(0.6)
+        await self.bus.registry_set("ns", "f", "v2", ttl_secs=1)
+        await asyncio.sleep(0.6)
+        self.assertEqual(await self.bus.registry_get("ns", "f"), "v2")
 
 
 class TestDomainHelpers(IsolatedAsyncioTestCase):

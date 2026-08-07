@@ -105,9 +105,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Channel wiring is built here (before ChatService) so the chat
         # service can hand the dispatcher to get_toolkit: a session that
         # came from a channel gets that channel's platform tools. The
-        # type registry has no lifecycle and was built in create_app; the
-        # reconcile/heartbeat loops start later via the dispatcher's
-        # lifespan context.
+        # type registry was built in create_app; provider-local credential
+        # binding tasks are closed through the stack before MessageBus, and
+        # reconcile/heartbeat loops start later via the dispatcher's context.
         from .channel import (
             ChannelGateway,
             ChannelLifecycleDispatcher,
@@ -119,6 +119,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         channel_type_registry = app.state.channel_type_registry
         channel_dispatcher = None
         if channel_type_registry:
+            stack.push_async_callback(
+                channel_type_registry.close_credential_bindings,
+            )
             channel_dispatcher = ChannelLifecycleDispatcher(
                 storage=storage,
                 message_bus=message_bus,

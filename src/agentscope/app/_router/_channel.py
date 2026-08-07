@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
 """Channel HTTP API.
 
-    GET    /channels/types              List channel types + schemas
-    GET    /channels/                   List the user's channels
-    POST   /channels/                   Create a channel
-    GET    /channels/{id}               Channel details
-    PATCH  /channels/{id}               Update routing/session/config
-    DELETE /channels/{id}               Delete a channel
-    POST   /channels/{id}/enable        Enable
-    POST   /channels/{id}/disable       Disable
-    GET    /channels/{id}/status        Aggregated runtime status
-    GET    /channels/{id}/chat_ids      Known chats (for routing config)
+GET    /channels/types              List channel types + schemas
+GET    /channels/                   List the user's channels
+POST   /channels/                   Create a channel
+POST   /channels/bindings           Start QR credential binding
+GET    /channels/bindings/{type}/{id} Poll QR credential binding
+DELETE /channels/bindings/{type}/{id} Cancel QR credential binding
+GET    /channels/{id}               Channel details
+PATCH  /channels/{id}               Update routing/session/config
+DELETE /channels/{id}               Delete a channel
+POST   /channels/{id}/enable        Enable
+POST   /channels/{id}/disable       Disable
+GET    /channels/{id}/status        Aggregated runtime status
+GET    /channels/{id}/chat_ids      Known chats (for routing config)
 """
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..channel import (
+    ChannelCredentialBindingBase,
+    ChannelCredentialBindingStore,
     ChannelError,
     ChannelLifecycleDispatcher,
     ChannelStatus,
@@ -27,8 +33,10 @@ from ..deps import (
     get_channel_service,
     get_channel_type_registry,
     get_current_user_id,
+    get_message_bus,
     get_storage,
 )
+from ..message_bus import MessageBus
 from ..storage import ChannelRecord, StorageBase
 from ._schema import (
     ChannelActionResponse,
@@ -36,7 +44,10 @@ from ._schema import (
     ChannelChatIdsResponse,
     ChannelResponse,
     ChannelSessionsResponse,
+    ChannelCredentialBindingSessionResponse,
+    ChannelCredentialBindingStatusResponse,
     CreateChannelRequest,
+    StartChannelCredentialBindingRequest,
     UpdateChannelRequest,
 )
 
@@ -139,6 +150,7 @@ async def create_channel(
             channel_type=body.channel_type,
             name=body.name,
             credentials=body.credentials,
+            credential_binding_id=body.credential_binding_id,
             platform_config=body.platform_config,
             routing=body.routing,
             session=body.session,
@@ -149,6 +161,94 @@ async def create_channel(
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     return _to_response(record, registry)
+
+
+def _require_binding_provider(
+    channel_type: str,
+    registry: ChannelTypeRegistry,
+) -> ChannelCredentialBindingBase:
+    """Return a type's binding provider or raise a client-facing 404."""
+    if not registry.has_type(channel_type):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Channel type '{channel_type}' is not registered.",
+        )
+    provider = registry.get_credential_binding(channel_type)
+    if provider is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Channel type '{channel_type}' does not support QR binding.",
+        )
+    return provider
+
+
+@channel_router.post("/bindings", status_code=status.HTTP_201_CREATED)
+async def start_credential_binding(
+    body: StartChannelCredentialBindingRequest,
+    registry: ChannelTypeRegistry = Depends(get_channel_type_registry),
+    message_bus: MessageBus = Depends(get_message_bus),
+    user_id: str = Depends(get_current_user_id),
+) -> ChannelCredentialBindingSessionResponse:
+    """Start a platform-specific QR authorization session."""
+    provider = _require_binding_provider(body.channel_type, registry)
+    try:
+        session = await provider.start(
+            user_id,
+            ChannelCredentialBindingStore(message_bus),
+        )
+    except ChannelError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    return ChannelCredentialBindingSessionResponse(
+        **session.model_dump(),
+        channel_type=body.channel_type,
+    )
+
+
+@channel_router.get("/bindings/{channel_type}/{binding_id}")
+async def get_credential_binding_status(
+    channel_type: str,
+    binding_id: str,
+    registry: ChannelTypeRegistry = Depends(get_channel_type_registry),
+    message_bus: MessageBus = Depends(get_message_bus),
+    user_id: str = Depends(get_current_user_id),
+) -> ChannelCredentialBindingStatusResponse:
+    """Poll a QR authorization session without exposing credentials."""
+    provider = _require_binding_provider(channel_type, registry)
+    try:
+        binding_status = await provider.get_status(
+            user_id,
+            binding_id,
+            ChannelCredentialBindingStore(message_bus),
+        )
+    except ChannelError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    return ChannelCredentialBindingStatusResponse(
+        **binding_status.model_dump(),
+        channel_type=channel_type,
+    )
+
+
+@channel_router.delete(
+    "/bindings/{channel_type}/{binding_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cancel_credential_binding(
+    channel_type: str,
+    binding_id: str,
+    registry: ChannelTypeRegistry = Depends(get_channel_type_registry),
+    message_bus: MessageBus = Depends(get_message_bus),
+    user_id: str = Depends(get_current_user_id),
+) -> None:
+    """Cancel an unfinished QR authorization session."""
+    provider = _require_binding_provider(channel_type, registry)
+    try:
+        await provider.cancel(
+            user_id,
+            binding_id,
+            ChannelCredentialBindingStore(message_bus),
+        )
+    except ChannelError as e:
+        raise HTTPException(e.status_code, str(e)) from e
 
 
 @channel_router.get("/{channel_id}")

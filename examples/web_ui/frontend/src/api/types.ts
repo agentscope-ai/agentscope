@@ -974,7 +974,8 @@ export interface ChannelRecord {
 export interface CreateChannelRequest {
 	channel_type: string;
 	name?: string | null;
-	credentials: Record<string, unknown>;
+	credentials?: Record<string, unknown>;
+	credential_binding_id?: string;
 	platform_config?: Record<string, unknown>;
 	routing: RoutingConfig;
 	session: SessionSettings;
@@ -997,6 +998,38 @@ export interface ChannelTypeSchema {
 	credentials_schema: Record<string, unknown>;
 	config_schema: Record<string, unknown>;
 	platform_bot_id_field?: string;
+	credential_modes: ChannelCredentialMode[];
+}
+
+export interface ChannelCredentialMode {
+	id: string;
+	type: 'manual' | 'qr_code';
+	display_name: string;
+	description?: string;
+}
+
+export type ChannelCredentialBindingState =
+	| 'pending'
+	| 'scanned'
+	| 'authorized'
+	| 'expired'
+	| 'failed';
+
+export interface ChannelCredentialBindingSession {
+	id: string;
+	channel_type: string;
+	qr_code_url: string;
+	expires_at: string;
+	state: ChannelCredentialBindingState;
+	message: string;
+}
+
+export interface ChannelCredentialBindingStatus {
+	id: string;
+	channel_type: string;
+	state: ChannelCredentialBindingState;
+	expires_at: string;
+	message: string;
 }
 
 export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';

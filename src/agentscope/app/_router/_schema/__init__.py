@@ -5,9 +5,12 @@ from ._channel import (
     ChannelActionResponse,
     ChannelChatId,
     ChannelChatIdsResponse,
+    ChannelCredentialBindingSessionResponse,
+    ChannelCredentialBindingStatusResponse,
     ChannelResponse,
     ChannelSessionsResponse,
     CreateChannelRequest,
+    StartChannelCredentialBindingRequest,
     UpdateChannelRequest,
 )
 from ._chat import ChatRequest, ChatTriggerResponse
@@ -114,9 +117,12 @@ __all__ = [
     "ChannelActionResponse",
     "ChannelChatId",
     "ChannelChatIdsResponse",
+    "ChannelCredentialBindingSessionResponse",
+    "ChannelCredentialBindingStatusResponse",
     "ChannelResponse",
     "ChannelSessionsResponse",
     "CreateChannelRequest",
+    "StartChannelCredentialBindingRequest",
     "UpdateChannelRequest",
     # Chat
     "ChatRequest",

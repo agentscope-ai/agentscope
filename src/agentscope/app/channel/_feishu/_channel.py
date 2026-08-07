@@ -12,6 +12,7 @@ event loop); inbound events are bridged to the app loop with
 ``run_coroutine_threadsafe``. Connection/reconnect is driven via the
 SDK's public ``start()`` — the one place to adapt if the SDK changes.
 """
+
 import asyncio
 import base64
 import json
@@ -39,6 +40,7 @@ from ._card_templates import (
     _build_toast,
     _parse_action,
 )
+from ._credential_binding import FeishuCredentialBinding
 
 if TYPE_CHECKING:
     import httpx
@@ -95,6 +97,7 @@ class FeishuChannel(ChannelBase):
     description = "Group and direct-message bot with card interactions."
     icon_url = "https://www.google.com/s2/favicons?domain=feishu.cn&sz=128"
     platform_bot_id_field = "app_id"
+    credential_binding = FeishuCredentialBinding()
 
     class Credentials(BaseModel):
         """Feishu bot application credentials."""

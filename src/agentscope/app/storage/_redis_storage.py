@@ -1311,10 +1311,16 @@ class RedisStorage(StorageBase):
             self.key_config.channel_botid_index,
             platform_bot_id=platform_bot_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
-        await self._client.sadd(self.key_config.channel_all_index, record.id)
-        await self._set_with_ttl(botid_key, record.id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json())
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+            pipe.sadd(index_key, record.id)
+            pipe.sadd(self.key_config.channel_all_index, record.id)
+            pipe.set(botid_key, record.id)
+            if self.key_ttl is not None:
+                pipe.expire(botid_key, self.key_ttl)
+            await pipe.execute()
         return record.id
 
     async def get_channel(
@@ -1381,21 +1387,23 @@ class RedisStorage(StorageBase):
             return False
         record = ChannelRecord.model_validate_json(raw)
 
-        await self._client.delete(key)
-        await self._client.srem(
-            self._key(
-                self.key_config.channel_index,
-                user_id=record.user_id,
-            ),
-            channel_id,
-        )
-        await self._client.srem(self.key_config.channel_all_index, channel_id)
-        await self._client.delete(
-            self._key(
-                self.key_config.channel_botid_index,
-                platform_bot_id=platform_bot_id,
-            ),
-        )
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            pipe.srem(
+                self._key(
+                    self.key_config.channel_index,
+                    user_id=record.user_id,
+                ),
+                channel_id,
+            )
+            pipe.srem(self.key_config.channel_all_index, channel_id)
+            pipe.delete(
+                self._key(
+                    self.key_config.channel_botid_index,
+                    platform_bot_id=platform_bot_id,
+                ),
+            )
+            await pipe.execute()
         return True
 
     async def get_channel_id_by_platform_bot_id(

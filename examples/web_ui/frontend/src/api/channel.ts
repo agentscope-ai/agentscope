@@ -1,6 +1,8 @@
 import { client } from './client';
 import type {
 	ChannelChatIdsResponse,
+	ChannelCredentialBindingSession,
+	ChannelCredentialBindingStatus,
 	ChannelRecord,
 	ChannelSessionsResponse,
 	ChannelStatus,
@@ -35,4 +37,19 @@ export const channelApi = {
 
 	listChatIds: (channelId: string) =>
 		client.get<ChannelChatIdsResponse>(`/channels/${channelId}/chat_ids`),
+
+	startBinding: (channelType: string) =>
+		client.post<ChannelCredentialBindingSession>('/channels/bindings', {
+			channel_type: channelType,
+		}),
+
+	bindingStatus: (channelType: string, bindingId: string) =>
+		client.get<ChannelCredentialBindingStatus>(
+			`/channels/bindings/${encodeURIComponent(channelType)}/${encodeURIComponent(bindingId)}`,
+		),
+
+	cancelBinding: (channelType: string, bindingId: string) =>
+		client.delete(
+			`/channels/bindings/${encodeURIComponent(channelType)}/${encodeURIComponent(bindingId)}`,
+		),
 };

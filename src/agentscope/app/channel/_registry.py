@@ -9,11 +9,17 @@ channel classes passed to :func:`~agentscope.app.create_app` via
 ``channels=[...]`` and exposes them to the service — frontend form
 schemas, bot-uniqueness checks, and per-record instance construction.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+
+from ._credential_binding import (
+    ChannelCredentialBindingBase,
+    ChannelCredentialMode,
+)
 
 if TYPE_CHECKING:
     from ._base import ChannelBase
@@ -33,6 +39,7 @@ class ChannelTypeSchema(BaseModel):
     credentials_schema: dict
     config_schema: dict
     platform_bot_id_field: str
+    credential_modes: list[ChannelCredentialMode]
 
 
 class ChannelTypeRegistry:
@@ -127,6 +134,25 @@ class ChannelTypeRegistry:
         Args:
             channel_cls (`type[ChannelBase]`): The channel class.
         """
+        modes = [
+            ChannelCredentialMode(
+                id="manual",
+                type="manual",
+                display_name="Manual setup",
+                description="Enter the platform credentials manually.",
+            ),
+        ]
+        binding = channel_cls.credential_binding
+        if binding is not None:
+            modes.insert(
+                0,
+                ChannelCredentialMode(
+                    id="qr_code",
+                    type="qr_code",
+                    display_name=binding.display_name,
+                    description=binding.description,
+                ),
+            )
         return ChannelTypeSchema(
             channel_type=channel_cls.channel_type,
             display_name=channel_cls.display_name or channel_cls.channel_type,
@@ -135,11 +161,47 @@ class ChannelTypeRegistry:
             credentials_schema=channel_cls.Credentials.model_json_schema(),
             config_schema=channel_cls.Config.model_json_schema(),
             platform_bot_id_field=channel_cls.platform_bot_id_field,
+            credential_modes=modes,
         )
 
     def list_types(self) -> list[ChannelTypeSchema]:
         """List frontend schemas for all registered types."""
         return [self.schema_of(c) for c in self._classes.values()]
+
+    def get_credential_binding(
+        self,
+        channel_type: str,
+    ) -> ChannelCredentialBindingBase | None:
+        """Return the QR binding provider configured for a channel type."""
+        channel_cls = self._classes.get(channel_type)
+        return channel_cls.credential_binding if channel_cls else None
+
+    async def close_credential_bindings(self) -> None:
+        """Close each distinct credential provider registered by the app."""
+        seen: set[int] = set()
+        for channel_cls in self._classes.values():
+            binding = channel_cls.credential_binding
+            if binding is None or id(binding) in seen:
+                continue
+            seen.add(id(binding))
+            await binding.aclose()
+
+    def validate_credentials(
+        self,
+        channel_type: str,
+        credentials: dict,
+    ) -> dict:
+        """Validate credentials using the channel model."""
+        channel_cls = self._classes.get(channel_type)
+        if channel_cls is None:
+            raise ValueError(
+                f"Channel type '{channel_type}' is not registered; pass it "
+                f"to create_app(channels=[...]).",
+            )
+        channel_cls.Credentials.model_validate(credentials)
+        # Preserve the original secret values. Serializing a model containing
+        # ``SecretStr`` would replace them with masking text before storage.
+        return credentials
 
     def extract_platform_bot_id(
         self,

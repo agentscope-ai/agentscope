@@ -8,9 +8,11 @@ the abstract surface (queue / log / pubsub / lock) and the domain helpers
 (``session_run`` / ``session_publish_event`` / ``inbox_*`` / ``wakeup_*``)
 that are layered on top.
 """
+
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 
@@ -459,7 +461,13 @@ class TestRegistryPrimitive(IsolatedAsyncioTestCase):
     async def test_set_with_ttl_applies_expire_and_refreshes(self) -> None:
         """``registry_set`` with ``ttl_secs`` sets a TTL on the hash key;
         a subsequent set with a longer ``ttl_secs`` refreshes it."""
-        await self.bus.registry_set("ns", "f", "v", ttl_secs=60)
+        with patch.object(
+            self.fr,
+            "pipeline",
+            wraps=self.fr.pipeline,
+        ) as pipeline:
+            await self.bus.registry_set("ns", "f", "v", ttl_secs=60)
+        pipeline.assert_called_once_with(transaction=True)
         ttl_first = await self.fr.ttl("ns")
         self.assertGreater(ttl_first, 0)
         self.assertLessEqual(ttl_first, 60)
