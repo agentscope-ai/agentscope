@@ -45,6 +45,7 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
+from bocomadp.credential import ELLMCredential  # noqa: F401 — import 即注册自定义供应商
 from bocomadp.config import (
     get_app_config,
     is_trace_correlation_enabled,
@@ -65,6 +66,7 @@ from bocomadp.routers.agent_manage import (
     agent_manage_router,
 )
 from bocomadp.routers.chat_sse import chat_sse_router
+from bocomadp.routers.credential_model import credential_model_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
 from bocomadp.routers.platform_health import platform_health_router
@@ -325,6 +327,8 @@ app.include_router(models_router)
 app.include_router(platform_health_router)
 # 外部 skill hub（目录查询 / 我的上传 / 下载安装）
 app.include_router(skill_router)
+# 按凭证查询模型（含单模型绑定过滤）
+app.include_router(credential_model_router)
 
 
 if __name__ == "__main__":
