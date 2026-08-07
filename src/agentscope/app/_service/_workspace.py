@@ -7,7 +7,7 @@ import hmac
 import re
 import tarfile
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 from fastapi import HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
@@ -462,7 +462,7 @@ class WorkspaceService:
         self,
         workspace: WorkspaceBase,
         stream: AsyncIterator[bytes],
-        archive_format: str,
+        archive_format: Literal["zip", "tar", "tar.gz"],
         name: str,
     ) -> None:
         """Pipe a skill archive into a workspace, one install at a time.
@@ -473,7 +473,8 @@ class WorkspaceService:
         Args:
             workspace (`WorkspaceBase`): The target workspace.
             stream (`AsyncIterator[bytes]`): The archive's bytes.
-            archive_format (`str`): The archive format, e.g. ``"tar"``.
+            archive_format (`Literal["zip", "tar", "tar.gz"]`): How the
+                stream is packed.
             name (`str`): The skill's name, for the backend's logging.
         """
         async with self._install_slots:
