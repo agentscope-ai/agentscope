@@ -138,6 +138,9 @@
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
+		"error": {
+			"exceedMaxIters": "Agent \"{{name}}\" reached the maximum iteration limit and stopped early. The response may be incomplete — try breaking the task into smaller steps or increasing max_iters."
+		},
 		"newSession": "New Session",
 		"greeting": "Where should we start?",
 		"agent": {

@@ -5,6 +5,7 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+	ExceedMaxItersEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
@@ -16,6 +17,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import { useTranslation } from '@/i18n/useI18n';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -147,6 +149,7 @@ export function useMessages(
 	}, []);
 
 	const audioManager = useAudioManager();
+	const { t } = useTranslation();
 
 	const optionsRef = useRef(options);
 	useEffect(() => {
@@ -187,15 +190,22 @@ export function useMessages(
 				}
 				return;
 			}
-			if (event.type === EventType.REPLY_START) {
-				audioManager?.stopAllPlayback();
-				const e = event as ReplyStartEvent;
-				const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
-				msgsRef.current = [...msgsRef.current, msg];
-				currentReplyRef.current = msg;
-				clearInterruptTimer();
-				setPhase('streaming');
-			} else if (event.type === EventType.REPLY_END) {
+		if (event.type === EventType.REPLY_START) {
+			audioManager?.stopAllPlayback();
+			const e = event as ReplyStartEvent;
+			const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
+			msgsRef.current = [...msgsRef.current, msg];
+			currentReplyRef.current = msg;
+			clearInterruptTimer();
+			setError(null);
+			setPhase('streaming');
+		} else if (event.type === EventType.EXCEED_MAX_ITERS) {
+			// The agent hit its iteration cap and stopped early. Surface a
+			// visible error so the user understands why the reply was
+			// truncated instead of silently dropping the run.
+			const e = event as ExceedMaxItersEvent;
+			setError(new Error(t('chat.error.exceedMaxIters', { name: e.name })));
+		} else if (event.type === EventType.REPLY_END) {
 				if (currentReplyRef.current) {
 					appendEvent(currentReplyRef.current, event);
 				}
@@ -231,7 +241,7 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[scheduleUpdate, audioManager, clearInterruptTimer, t],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -481,6 +491,7 @@ export function useMessages(
 		loading,
 		phase,
 		error,
+		clearError: () => setError(null),
 		send,
 		onUserConfirm,
 		onSubagentConfirm,
