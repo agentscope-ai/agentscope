@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Git status parser test case — pure functions, no git binary needed.
 
 ``porcelain=v2`` is a stable documented format, but three of its corners
@@ -9,7 +10,7 @@ both the staged and the unstaged side.
 """
 from unittest import TestCase
 
-from agentscope.app._service import parse_porcelain_v2, parse_shortstat
+from agentscope.app._service import WorkspaceService
 
 # A plausible blob/mode run; the parser only reads the XY field, but
 # using realistic records keeps the fixtures honest.
@@ -26,7 +27,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_clean_tree_with_upstream(self) -> None:
         """A clean tree in sync reports zeroes, not nulls."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records(
                 "# branch.oid abc123def456",
                 "# branch.head main",
@@ -49,7 +50,7 @@ class ParsePorcelainV2Test(TestCase):
         upstream to compare against versus level with one — so the
         absent line must not collapse into a count.
         """
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records("# branch.oid abc123", "# branch.head feature/x"),
         )
 
@@ -59,7 +60,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_ahead_and_behind_are_read_separately(self) -> None:
         """``+2 -3`` is two counts, not a single signed number."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records(
                 "# branch.oid abc123",
                 "# branch.head main",
@@ -72,7 +73,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_detached_head_has_no_branch(self) -> None:
         """A detached HEAD reports its commit but no branch name."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records("# branch.oid deadbeef", "# branch.head (detached)"),
         )
 
@@ -81,7 +82,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_unborn_branch_has_no_head(self) -> None:
         """A repository with no commits names a branch but no commit."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records("# branch.oid (initial)", "# branch.head main"),
         )
 
@@ -90,14 +91,18 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_worktree_change_counts_as_unstaged_only(self) -> None:
         """``.M`` is modified in the worktree but not in the index."""
-        status = parse_porcelain_v2(_records(f"1 .M {_TRAILER} a.py"))
+        status = WorkspaceService._parse_porcelain_v2(
+            _records(f"1 .M {_TRAILER} a.py"),
+        )
 
         self.assertEqual(status.staged, 0)
         self.assertEqual(status.unstaged, 1)
 
     def test_index_change_counts_as_staged_only(self) -> None:
         """``M.`` is staged with a clean worktree."""
-        status = parse_porcelain_v2(_records(f"1 M. {_TRAILER} a.py"))
+        status = WorkspaceService._parse_porcelain_v2(
+            _records(f"1 M. {_TRAILER} a.py"),
+        )
 
         self.assertEqual(status.staged, 1)
         self.assertEqual(status.unstaged, 0)
@@ -108,7 +113,9 @@ class ParsePorcelainV2Test(TestCase):
         The two counts describe the same file from different angles, so
         a caller must never add them together.
         """
-        status = parse_porcelain_v2(_records(f"1 MM {_TRAILER} a.py"))
+        status = WorkspaceService._parse_porcelain_v2(
+            _records(f"1 MM {_TRAILER} a.py"),
+        )
 
         self.assertEqual(status.staged, 1)
         self.assertEqual(status.unstaged, 1)
@@ -121,7 +128,7 @@ class ParsePorcelainV2Test(TestCase):
         as an untracked record and inflates the count, which is why the
         assertion below is on ``untracked`` rather than on the rename.
         """
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records(
                 f"2 R. {_TRAILER} R100 new.py",
                 "? old.py",
@@ -135,7 +142,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_unmerged_counts_as_conflicted_only(self) -> None:
         """``u UU``'s XY is a conflict pair, not a staged/unstaged one."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records("u UU N... 100644 100644 100644 100644 a b c x.py"),
         )
 
@@ -145,7 +152,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_untracked_entries_are_counted(self) -> None:
         """Untracked files and collapsed directories both count once."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records("? notes.md", "? scratch/"),
         )
 
@@ -154,7 +161,7 @@ class ParsePorcelainV2Test(TestCase):
 
     def test_paths_with_spaces_and_newlines_survive(self) -> None:
         """``-z`` is what makes an awkward filename safe to parse."""
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records(
                 f"1 .M {_TRAILER} my docs/a b.py",
                 "? line\nbreak.txt",
@@ -170,7 +177,7 @@ class ParsePorcelainV2Test(TestCase):
         Reporting a status that omits one odd entry beats reporting none
         at all if git grows a record type.
         """
-        status = parse_porcelain_v2(
+        status = WorkspaceService._parse_porcelain_v2(
             _records(
                 "! ignored.txt",
                 "x whatever",
@@ -184,13 +191,13 @@ class ParsePorcelainV2Test(TestCase):
         """A cut-off final record is dropped rather than crashing."""
         truncated = _records(f"1 .M {_TRAILER} a.py") + b"1 M"
 
-        status = parse_porcelain_v2(truncated)
+        status = WorkspaceService._parse_porcelain_v2(truncated)
 
         self.assertEqual(status.unstaged, 1)
 
     def test_empty_output(self) -> None:
         """No output at all yields a blank, valid status."""
-        status = parse_porcelain_v2(b"")
+        status = WorkspaceService._parse_porcelain_v2(b"")
 
         self.assertIsNone(status.branch)
         self.assertEqual(status.staged, 0)
@@ -203,33 +210,33 @@ class ParseShortstatTest(TestCase):
         """The usual case with both clauses present."""
         line = b" 20 files changed, 621 insertions(+), 182 deletions(-)\n"
 
-        self.assertEqual(parse_shortstat(line), (621, 182))
+        self.assertEqual(WorkspaceService._parse_shortstat(line), (621, 182))
 
     def test_insertions_only(self) -> None:
         """Git omits the deletions clause when nothing was removed."""
         line = b" 1 file changed, 3 insertions(+)\n"
 
-        self.assertEqual(parse_shortstat(line), (3, 0))
+        self.assertEqual(WorkspaceService._parse_shortstat(line), (3, 0))
 
     def test_deletions_only(self) -> None:
         """And omits insertions likewise."""
         line = b" 1 file changed, 4 deletions(-)\n"
 
-        self.assertEqual(parse_shortstat(line), (0, 4))
+        self.assertEqual(WorkspaceService._parse_shortstat(line), (0, 4))
 
     def test_singular_wording(self) -> None:
         """One line reads ``insertion(+)``, without the plural s."""
         line = b" 1 file changed, 1 insertion(+), 1 deletion(-)\n"
 
-        self.assertEqual(parse_shortstat(line), (1, 1))
+        self.assertEqual(WorkspaceService._parse_shortstat(line), (1, 1))
 
     def test_clean_tree_is_empty_output(self) -> None:
         """Nothing changed means no line at all, not a line of zeroes."""
-        self.assertEqual(parse_shortstat(b""), (0, 0))
+        self.assertEqual(WorkspaceService._parse_shortstat(b""), (0, 0))
 
     def test_unrecognised_output(self) -> None:
         """Anything unparseable reads as no change rather than raising."""
         self.assertEqual(
-            parse_shortstat(b"fatal: bad revision 'HEAD'"),
+            WorkspaceService._parse_shortstat(b"fatal: bad revision 'HEAD'"),
             (0, 0),
         )

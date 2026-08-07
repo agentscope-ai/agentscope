@@ -9,13 +9,6 @@ from ._access import (
 from ._channel import ChannelService
 from ._chat import ChatService
 from ._embedding import get_embedding_model
-from ._git_status import (
-    GIT_SHORTSTAT_ARGV,
-    GIT_STATUS_ARGV,
-    GitStatus,
-    parse_porcelain_v2,
-    parse_shortstat,
-)
 from ._index_sweeper import IndexSweeper
 from ._index_task_consumer import IndexTaskConsumer
 from ._index_worker import IndexWorker
@@ -27,10 +20,9 @@ from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ._toolkit import get_toolkit
+from ._workspace import GitStatus, WorkspaceService, WorkspaceStatus
 
 __all__ = [
-    "GIT_SHORTSTAT_ARGV",
-    "GIT_STATUS_ARGV",
     "AgentView",
     "ChannelService",
     "ChatService",
@@ -47,10 +39,10 @@ __all__ = [
     "SessionStatus",
     "SessionProjection",
     "SubagentHitlProjector",
+    "WorkspaceService",
+    "WorkspaceStatus",
     "get_embedding_model",
     "get_model",
-    "parse_porcelain_v2",
-    "parse_shortstat",
     "get_tts_model",
     "get_toolkit",
     "render_mcp",

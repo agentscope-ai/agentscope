@@ -186,35 +186,6 @@ async def _ensure_knowledge_bases_exist(
         )
 
 
-def _trim_for_listing(session: SessionRecord) -> SessionRecord:
-    """Drop the parts of ``state`` a session list has no use for.
-
-    ``context`` is the conversation the model sees, ``summary`` is its
-    compressed form, and ``tool_context`` caches the contents of every
-    file that has been read — megabytes each on a long session, none of
-    which a sidebar renders. ``permission_context`` and ``tasks_context``
-    stay: they are small and the UI seeds its panels from them.
-
-    Args:
-        session (`SessionRecord`):
-            The stored record. Not mutated.
-
-    Returns:
-        `SessionRecord`: A copy carrying only the light state.
-    """
-    return session.model_copy(
-        update={
-            "state": session.state.model_copy(
-                update={
-                    "context": [],
-                    "summary": "",
-                    "tool_context": ToolContext(),
-                },
-            ),
-        },
-    )
-
-
 @session_router.get(
     "/",
     response_model=ListSessionsResponse,
@@ -290,7 +261,21 @@ async def list_sessions(
         )
         views.append(
             SessionView(
-                session=_trim_for_listing(session),
+                # ``context`` is the conversation the model sees,
+                # ``summary`` its compressed form, and ``tool_context``
+                # caches every file read — megabytes a session, none of
+                # which a sidebar renders.
+                session=session.model_copy(
+                    update={
+                        "state": session.state.model_copy(
+                            update={
+                                "context": [],
+                                "summary": "",
+                                "tool_context": ToolContext(),
+                            },
+                        ),
+                    },
+                ),
                 is_running=is_running,
                 status=session_status,
                 team=team_detail,

@@ -18,6 +18,7 @@ from ._service import (
     KnowledgeBaseService,
     ResourceAccessService,
     SessionService,
+    WorkspaceService,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .hub import MCPHubBase, SkillHubBase
@@ -117,6 +118,18 @@ async def get_session_service(request: Request) -> SessionService:
         ``app.state``.
     """
     return request.app.state.session_service
+
+
+async def get_workspace_service(request: Request) -> WorkspaceService:
+    """Return the application-wide workspace service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `WorkspaceService`: The instance stored in ``app.state``.
+    """
+    return request.app.state.workspace_service
 
 
 async def get_chat_run_registry(request: Request) -> ChatRunRegistry:

@@ -63,12 +63,7 @@ export const sessionApi = {
 		body: UpdateSessionRequest,
 		options?: { silent?: boolean },
 	) =>
-		client.patch<SessionRecord>(
-			`/sessions/${sessionId}`,
-			body,
-			{ agent_id: agentId },
-			options,
-		),
+		client.patch<SessionRecord>(`/sessions/${sessionId}`, body, { agent_id: agentId }, options),
 
 	delete: (sessionId: string, agentId: string) =>
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),

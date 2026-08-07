@@ -328,11 +328,7 @@ export interface TeamDetailResponse {
  * its run lease; the `awaiting_*` values mean nobody is running it but
  * its stored context is parked on a pending tool call.
  */
-export type SessionStatus =
-	| 'running'
-	| 'idle'
-	| 'awaiting_permission'
-	| 'awaiting_external_result';
+export type SessionStatus = 'running' | 'idle' | 'awaiting_permission' | 'awaiting_external_result';
 
 /**
  * Per-session bundle returned by `GET /sessions/?agent_id=...`.

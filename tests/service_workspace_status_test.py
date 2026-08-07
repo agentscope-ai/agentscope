@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._router._workspace import get_workspace_status
+from agentscope.app._service import WorkspaceService
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -151,8 +152,11 @@ class WorkspaceStatusTest(IsolatedAsyncioTestCase):
             agent_id="a",
             session_id="s",
             user_id="u",
-            storage=_FakeStorage(_make_session(cwd)),
-            workspace_manager=_FakeWorkspaceManager(workspace),
+            workspace_service=WorkspaceService(
+                _FakeStorage(_make_session(cwd)),
+                _FakeWorkspaceManager(workspace),
+                "secret",
+            ),
         )
 
     async def test_reports_branch_and_line_counts(self) -> None:
@@ -291,9 +295,10 @@ class WorkspaceStatusTest(IsolatedAsyncioTestCase):
                 agent_id="a",
                 session_id="does-not-exist",
                 user_id="u",
-                storage=_FakeStorage(_make_session()),
-                workspace_manager=_FakeWorkspaceManager(
-                    _FakeWorkspace(_FakeBackend()),
+                workspace_service=WorkspaceService(
+                    _FakeStorage(_make_session()),
+                    _FakeWorkspaceManager(_FakeWorkspace(_FakeBackend())),
+                    "secret",
                 ),
             )
 
