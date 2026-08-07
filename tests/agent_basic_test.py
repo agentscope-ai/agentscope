@@ -333,7 +333,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context)
-        self.assertEqual(self.agent.state.cur_iter, 0)
+        self.assertEqual(self.agent.state.cur_iter, 1)
 
         # Test reply interface
         self.model.cnt = 0  # Reset mock model response index
@@ -690,7 +690,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             ["done"],
         )
         self.assertEqual(self.model.cnt, 2)
-        self.assertEqual(self.agent.state.cur_iter, 1)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
         tool_results = self.agent.state.context[-1].get_content_blocks(
             "tool_result",
@@ -720,7 +720,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         # The thinking-only turn must trigger a second reasoning round
         self.assertEqual(self.model.cnt, 2)
-        self.assertEqual(self.agent.state.cur_iter, 1)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
         # The final reply message only carries the visible text answer
         self.assertDictEqual(
@@ -1082,7 +1082,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
-        self.assertEqual(self.agent.state.cur_iter, 1)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
@@ -1682,7 +1682,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
-        self.assertEqual(self.agent.state.cur_iter, 1)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

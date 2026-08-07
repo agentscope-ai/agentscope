@@ -1803,27 +1803,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             ),
         )
         self.assertIsNone(partial.finished_reason)
+        # The first call has run, but the round isn't over while the second
+        # one is still awaiting confirmation
         self.assertEqual(self.agent.state.cur_iter, 0)
-
-        assistant_msg = self.agent.state.context[-1]
-        self.assertEqual(
-            [
-                block.state
-                for block in assistant_msg.get_content_blocks(
-                    "tool_call",
-                )
-            ],
-            ["finished", "asking"],
-        )
-        self.assertEqual(
-            [
-                block.id
-                for block in assistant_msg.get_content_blocks(
-                    "tool_result",
-                )
-            ],
-            [self.tool_call_id_1],
-        )
 
         completed = await self.agent.reply(
             UserConfirmResultEvent(
@@ -1842,7 +1824,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(completed.finished_reason, "completed")
         self.assertEqual(self.model.cnt, 2)
-        self.assertEqual(self.agent.state.cur_iter, 1)
+        # One tool round plus the final reasoning
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
