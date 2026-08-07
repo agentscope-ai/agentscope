@@ -578,11 +578,16 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
     async def test_tampered_token_raises_401(self) -> None:
         """An edited signature must not pass."""
         token, _ = self._service.sign_download_token("u", "notes.txt")
+        # Edit the signature's first character, not its last: a 32-byte
+        # digest ends on a base64 char carrying only 4 significant bits,
+        # so editing that one can decode back to the same digest.
+        expiry, user, signature = token.split(".")
+        tampered = ("A" if signature[0] != "A" else "B") + signature[1:]
         with self.assertRaises(HTTPException) as ctx:
             await self._read(
                 path="notes.txt",
                 download=True,
-                token=token[:-1] + ("A" if token[-1] != "A" else "B"),
+                token=f"{expiry}.{user}.{tampered}",
                 x_user_id=None,
             )
         self.assertEqual(

@@ -12,6 +12,7 @@ that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
 import asyncio
+import inspect
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
@@ -137,6 +138,9 @@ class ChatService:
              optional):
                 Async factory invoked at every chat turn to produce
                 user/session-specific middlewares to attach to the agent.
+                Called as ``(user_id, agent_id, session_id, workspace)``,
+                falling back to the legacy three-argument call when the
+                factory does not accept ``workspace``.
             extra_agent_tools (`AgentToolFactory | None`, optional):
                 Async factory invoked at every chat turn to produce
                 user/session-specific tools to register in the toolkit.
@@ -169,6 +173,20 @@ optional):
         self._access = resource_access_service
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
+        # Probed once (the service is built once per lifespan) so legacy
+        # three-argument factories keep working without the per-turn cost.
+        self._middlewares_take_workspace = False
+        if extra_agent_middlewares is not None:
+            try:
+                inspect.signature(extra_agent_middlewares).bind(
+                    "",
+                    "",
+                    "",
+                    None,
+                )
+                self._middlewares_take_workspace = True
+            except (TypeError, ValueError):
+                pass
         self._extra_agent_tools = extra_agent_tools
         self._channel_dispatcher = channel_dispatcher
         self._sub_agent_templates = custom_subagent_templates
@@ -575,12 +593,11 @@ optional):
                 ),
             ]
             if self._extra_agent_middlewares is not None:
+                factory_args: tuple = (user_id, agent_id, session_id)
+                if self._middlewares_take_workspace:
+                    factory_args += (workspace,)
                 middlewares.extend(
-                    await self._extra_agent_middlewares(
-                        user_id,
-                        agent_id,
-                        session_id,
-                    ),
+                    await self._extra_agent_middlewares(*factory_args),
                 )
 
             # ----------------------------------------------------------------

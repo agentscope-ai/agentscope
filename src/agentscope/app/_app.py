@@ -197,14 +197,21 @@ def create_app(
         extra_middlewares (`list[Middleware] | None`, optional):
             Additional ASGI middlewares to add to the application.
         extra_agent_middlewares (`AgentMiddlewareFactory | None`, optional):
-            An async factory ``(user_id, agent_id, session_id) -> awaitable
-            of list[MiddlewareBase]`` that produces extra
+            An async factory ``(user_id, agent_id, session_id, workspace) ->
+            awaitable of list[MiddlewareBase]`` that produces extra
             :class:`~agentscope.middleware.MiddlewareBase` instances to
             attach to the agent on each invocation.  Called once per agent
             assembly (i.e. per chat turn / scheduled trigger), so it can
             return user/session-specific middleware (auth, audit logging,
-            tenant isolation, etc.).  The returned middlewares are appended
-            to the framework-supplied ones (e.g. ``ToolOffloadMiddleware``).
+            tenant isolation, etc.).  ``workspace`` is the session's
+            resolved :class:`~agentscope.workspace.WorkspaceBase`, exposing
+            ``workdir`` and ``get_backend()`` for filesystem-backed
+            middleware such as
+            :class:`~agentscope.middleware.AgenticMemoryMiddleware`.
+            Factories written against the older three-argument signature
+            keep working — the fourth argument is only passed to factories
+            that accept it.  The returned middlewares are appended to the
+            framework-supplied ones (e.g. ``ToolOffloadMiddleware``).
         extra_agent_tools (`AgentToolFactory | None`, optional):
             An async factory ``(user_id, agent_id, session_id) -> awaitable
             of list[ToolBase]`` that produces extra
