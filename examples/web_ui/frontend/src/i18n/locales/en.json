@@ -741,5 +741,16 @@
 	"agent-menu": {
 		"settings": "Settings",
 		"delete": "Delete agent"
+	},
+	"workdir": {
+		"title": "Working directory",
+		"description": "Pick the agent's working directory.",
+		"root": "Workspace root",
+		"parent": "Up one level",
+		"errorTitle": "Could not list this folder",
+		"pathPlaceholder": "Type or paste a path",
+		"empty": "This folder is empty",
+		"pressEnter": "Press Enter to check this path first",
+		"gitTooltip": "{{staged}} staged · {{unstaged}} modified · {{untracked}} untracked\nLine counts exclude untracked files"
 	}
 }

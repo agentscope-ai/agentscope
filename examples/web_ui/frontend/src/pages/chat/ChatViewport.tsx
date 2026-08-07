@@ -54,6 +54,7 @@ import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
+import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
 
 interface ChatViewportProps {
@@ -223,11 +224,19 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
-		useMessages(agentId, sessionId, {
-			onTeamUpdated: handleTeamUpdated,
-			onStateUpdated: handleStateUpdated,
-		});
+	const {
+		msgs,
+		loading: messagesLoading,
+		phase,
+		send,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl,
+		interrupt,
+	} = useMessages(agentId, sessionId, {
+		onTeamUpdated: handleTeamUpdated,
+		onStateUpdated: handleStateUpdated,
+	});
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -322,6 +331,23 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// the temporal dead zone.
 	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 
+	const { status: workspaceStatus, refetch: refetchWorkspaceStatus } = useWorkspaceStatus(
+		agentId,
+		sessionId,
+		view?.session.config.cwd ?? null,
+	);
+
+	// A finished reply is the one moment the agent may have changed the
+	// working tree, and it is why nothing polls for git status. Watching
+	// `phase` rather than the REPLY_END event also covers the interrupt
+	// timeout, which reaches idle without one.
+	const prevPhaseRef = useRef(phase);
+	useEffect(() => {
+		const wasRunning = prevPhaseRef.current !== 'idle';
+		prevPhaseRef.current = phase;
+		if (wasRunning && phase === 'idle') void refetchWorkspaceStatus();
+	}, [phase, refetchWorkspaceStatus]);
+
 	// Build the panel descriptors with live data. Rebuilt on every
 	// data change so the dock always renders the latest state — the
 	// dock itself stays free of any data dependency.
@@ -412,9 +438,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					</span>
 				),
 				icon: <UsersRound className="size-4" />,
-				content: (
-					<TeamPanel team={view?.team ?? null} currentSessionId={sessionId} />
-				),
+				content: <TeamPanel team={view?.team ?? null} currentSessionId={sessionId} />,
 			},
 		}),
 		[
@@ -440,7 +464,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			view,
 		],
 	);
-
 
 	// ChatViewport keeps its own `useSessions(agentId)` instance (the
 	// outer page has a separate one). Its built-in fetch only fires on
@@ -633,6 +656,29 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 *
 	 * @param mode - New permission mode (e.g. `default`, `explore`).
 	 */
+	/**
+	 * Persist a new working directory.
+	 *
+	 * Nothing local mirrors it — the value is read straight off the
+	 * session view, which `patchConfig` refetches on success.
+	 *
+	 * @param next - Directory relative to the workspace root, or `null`
+	 *   for the root itself.
+	 */
+	const handleCwdChange = async (next: string | null) => {
+		// Bypasses `patchConfig`: the dialog shows the failure inline and
+		// stays open on it, so the toast would be a duplicate and the
+		// swallowed rejection would let the dialog close as if it worked.
+		if (!sessionId || !agentId) return;
+		setConfigPending(true);
+		try {
+			await sessionApi.update(sessionId, agentId, { cwd: next }, { silent: true });
+			await refetchSessions();
+		} finally {
+			setConfigPending(false);
+		}
+	};
+
 	const handlePermissionModeChange = async (mode: string) => {
 		await patchConfig({ permission_mode: mode as PermissionMode }, () =>
 			setSelectedPermissionMode(mode),
@@ -749,11 +795,25 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
+									loading={messagesLoading}
+									agentId={agentId}
+									sessionId={sessionId}
+									cwd={view?.session.config.cwd ?? null}
+									onCwdChange={handleCwdChange}
+									git={workspaceStatus?.git ?? null}
+									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
+									// cwd={
+									// 	{cwd: view?.session.config.cwd, git: {
+									// 		branch: 'main',
+									// 		deletion: 0,
+									// 		addition: 0,
+									// 	}}
+									// }
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard

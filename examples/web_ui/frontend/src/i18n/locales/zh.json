@@ -741,5 +741,16 @@
 	"agent-menu": {
 		"settings": "设置",
 		"delete": "删除智能体"
+	},
+	"workdir": {
+		"title": "工作目录",
+		"description": "选择智能体的工作目录。",
+		"root": "工作区根目录",
+		"parent": "上一级",
+		"errorTitle": "无法列出该文件夹",
+		"pathPlaceholder": "输入或粘贴路径",
+		"empty": "此文件夹为空",
+		"pressEnter": "先按回车校验该路径",
+		"gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
 	}
 }

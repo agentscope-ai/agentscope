@@ -13,7 +13,7 @@ import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
 
-import { sessionApi } from '@/api';
+import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
 
@@ -102,7 +102,9 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  *   skip.
  * @param sessionId - The session to subscribe. ``null`` to skip.
  * @returns Object with ``msgs``, ``loading``, ``phase``, ``error``,
- *   ``send``, ``onUserConfirm``, and ``abort``.
+ *   ``send``, ``onUserConfirm``, and ``abort``. ``loading`` stays true
+ *   until the history for the *current* ``(agentId, sessionId)`` has
+ *   landed, so ``msgs`` must not be rendered while it is set.
  */
 export function useMessages(
 	agentId: string | null,
@@ -125,7 +127,12 @@ export function useMessages(
 	},
 ) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
-	const [loading, setLoading] = useState(false);
+	// The (agent, session) pair `msgs` actually belongs to. Loading is
+	// derived from it rather than set inside the fetch effect: an effect
+	// runs *after* the render that changed `sessionId`, so a flag it owns
+	// is still `false` for one frame — long enough to paint the empty
+	// state over a session that does have messages.
+	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
@@ -252,35 +259,50 @@ export function useMessages(
 		let cancelled = false;
 
 		(async () => {
-			// 1. Fetch persisted history
-			setLoading(true);
-			try {
-				const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
-				if (cancelled) return;
-				msgsRef.current = messages;
-				// If a reply is in flight (running on a worker) OR the
-				// tail msg is parked on a pending tool_call (awaiting
-				// user confirmation / external execution), initialise the
-				// phase to ``streaming`` so the interrupt button is
-				// available immediately — otherwise a fresh page load
-				// while parked leaves the UI stuck on ``idle`` with no
-				// way to abort.
-				const tail = messages[messages.length - 1];
-				if (is_running || hasPendingToolCall(tail)) {
-					setPhase('streaming');
-					if (hasPendingToolCall(tail)) {
-						// Prime the ref so continuation events (which
-						// arrive without a fresh REPLY_START) apply to
-						// the right msg.
-						currentReplyRef.current = tail ?? null;
+			// 1. Fetch persisted history — unless this tab just created the
+			// session, in which case there is provably none.
+			if (takeFreshlyCreated(sessionId)) {
+				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
+			} else {
+				try {
+					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+					if (cancelled) return;
+					msgsRef.current = messages;
+					// If a reply is in flight (running on a worker) OR the
+					// tail msg is parked on a pending tool_call (awaiting
+					// user confirmation / external execution), initialise the
+					// phase to ``streaming`` so the interrupt button is
+					// available immediately — otherwise a fresh page load
+					// while parked leaves the UI stuck on ``idle`` with no
+					// way to abort.
+					const tail = messages[messages.length - 1];
+					if (is_running || hasPendingToolCall(tail)) {
+						setPhase('streaming');
+						if (hasPendingToolCall(tail)) {
+							// Prime the ref so continuation events (which
+							// arrive without a fresh REPLY_START) apply to
+							// the right msg.
+							currentReplyRef.current = tail ?? null;
+						}
 					}
+					// Published synchronously, not through `scheduleUpdate`:
+					// its requestAnimationFrame batching exists for
+					// high-frequency streaming deltas, and deferring here
+					// would let `loadedKey` below clear `loading` a frame
+					// before the messages land — painting the empty-session
+					// greeting over a conversation that does have history.
+					// Both setters now land in the same React batch.
+					setMsgs([...msgsRef.current]);
+				} catch (e) {
+					if (!cancelled) setError(e as Error);
+					return;
+				} finally {
+					// Marks the load done whether it succeeded or threw —
+					// an error surfaces through `error`, and leaving
+					// `loading` stuck on would hide it behind a spinner
+					// forever.
+					if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
 				}
-				scheduleUpdate();
-			} catch (e) {
-				if (!cancelled) setError(e as Error);
-				return;
-			} finally {
-				if (!cancelled) setLoading(false);
 			}
 
 			// 2. Open SSE long connection for live events
@@ -475,6 +497,14 @@ export function useMessages(
 		},
 		[agentId, sessionId],
 	);
+
+	// True from the very first render after `sessionId` changes, because
+	// it compares props against what was fetched rather than tracking a
+	// flag an effect has yet to flip. `msgs` is still the previous
+	// session's until the effect clears it, so consumers must render the
+	// loading state in preference to `msgs`.
+	const loading =
+		agentId !== null && sessionId !== null && loadedKey !== `${agentId}:${sessionId}`;
 
 	return {
 		msgs,
