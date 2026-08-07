@@ -36,7 +36,7 @@ class ELLMCredential(CredentialBase):
         title="ELLM",
     )
 
-    type: Literal["ellm_credential"] = "ellm_credential"
+    type: Literal["bocom_ellm_credential"] = "bocom_ellm_credential"
     """凭证类型标识（唯一，Pydantic discriminator 使用）。"""
 
     api_key: SecretStr = Field(
@@ -80,7 +80,7 @@ class ELLMCredential(CredentialBase):
         ),
     )
 
-    apikey_expires_at: str | None = Field(
+    apikey_expires_at: float | None = Field(
         default=None,
         description="API key 过期时间（业务字段，前端可传空，原样存储）。",
     )
@@ -91,17 +91,17 @@ class ELLMCredential(CredentialBase):
     )
     """绑定的模型名（必填，候选见 ``bocomadp/credential/_models/*.yaml``）。"""
 
-    @model_validator(mode="after")
-    def _validate_model(self) -> Self:
-        """校验 model 必须在 _models/ 候选列表中。"""
-        candidates = {
-            card.name for card in self.get_chat_model_class().list_models()
-        }
-        if self.model not in candidates:
-            raise ValueError(
-                f"model {self.model!r} 不在候选列表中: {sorted(candidates)}",
-            )
-        return self
+    # @model_validator(mode="after")
+    # def _validate_model(self) -> Self:
+    #     """校验 model 必须在 _models/ 候选列表中。"""
+    #     candidates = {
+    #         card.name for card in self.get_chat_model_class().list_models()
+    #     }
+    #     if self.model not in candidates:
+    #         raise ValueError(
+    #             f"model {self.model!r} 不在候选列表中: {sorted(candidates)}",
+    #         )
+    #     return self
 
     @classmethod
     def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -122,4 +122,4 @@ class ELLMCredential(CredentialBase):
         子类化使 :meth:`list_models` 读取本包的 ``_models/*.yaml``
         候选卡（而不是官方 OpenAI 的候选）。
         """
-        return ELLMChatModel
+        return EllmChatModel

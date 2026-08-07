@@ -121,26 +121,26 @@ async def patch_ellm_credential(
     """部分修改 ELLM 凭证：只覆盖前端传入的字段，其余保持原值。
 
     - ``resolve_credential`` 校验归属/共享，不可见 → 404；
-    - 非 ``ellm_credential`` 类型 → 400；
+    - 非 ``bocom_ellm_credential`` 类型 → 400；
     - 合并后整体重新校验（``model`` 必须仍在候选等），非法 → 422；
     - ``id``/``type`` 永远保持原值，不可被覆盖。
     """
     record = await access.resolve_credential(user_id, credential_id)
 
     existing = dict(record.data or {})
-    if existing.get("type") != "ellm_credential":
+    if existing.get("type") != "bocom_ellm_credential":
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Credential {credential_id!r} is type "
-                f"{existing.get('type')!r}, not 'ellm_credential'."
+                f"{existing.get('type')!r}, not 'bocom_ellm_credential'."
             ),
         )
 
     # 只覆盖前端传入的字段；id/type 强制保持原值。
     merged = {**existing, **body.data}
     merged["id"] = existing.get("id") or credential_id
-    merged["type"] = "ellm_credential"
+    merged["type"] = "bocom_ellm_credential"
 
     # 合并后整体校验（model 候选、必填字段等），非法 → 422。
     credential = CredentialFactory.from_dict(merged)
