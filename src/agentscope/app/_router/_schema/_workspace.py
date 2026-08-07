@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 
 from ....mcp import MCPClient
+from ..._service import GitStatus
 
 
 class AddSkillRequest(BaseModel):
@@ -67,6 +68,52 @@ class DirectoryEntry(BaseModel):
     updated_at: float | None = Field(
         default=None,
         description="Last modification time as a Unix timestamp.",
+    )
+
+
+class DirectoryListing(BaseModel):
+    """One directory level, plus the path it actually resolved to."""
+
+    path: str = Field(
+        description=(
+            "Absolute path of the directory that was listed. Echoing "
+            "it back is what lets a caller that passed a relative path "
+            "(or none at all) show the user where they really are — "
+            "the workspace root is backend-dependent and otherwise "
+            "unknowable client-side."
+        ),
+    )
+    entries: list[DirectoryEntry] = Field(
+        description="The directory's immediate children, unsorted.",
+    )
+
+
+class WorkspaceStatus(BaseModel):
+    """Where a session is pointed, and the git state of that place."""
+
+    workdir: str = Field(
+        description=(
+            "Absolute path of the workspace root. Backend-dependent — a "
+            "host directory locally, a fixed path inside the sandbox "
+            "otherwise — so the client cannot derive it."
+        ),
+    )
+    cwd: str = Field(
+        description=(
+            "Absolute path the session is focused on, resolved from "
+            ":attr:`SessionConfig.cwd`. Equals :attr:`workdir` when that "
+            "is unset."
+        ),
+    )
+    git: GitStatus | None = Field(
+        default=None,
+        description=(
+            "Git state of :attr:`cwd`, or null when there is none to "
+            "report — not a repository, git unavailable, the command "
+            "timed out, or the backend could not run it. The caller "
+            "shows no branch either way, so the reasons are logged "
+            "rather than returned."
+        ),
     )
 
 

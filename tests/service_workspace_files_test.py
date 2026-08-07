@@ -309,7 +309,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
 
     async def test_list_root(self) -> None:
         """The workspace root lists its seeded files and directories."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="",
@@ -317,7 +317,8 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             storage=self._storage,
             workspace_manager=self._wm,
         )
-        by_name = {e.name: e for e in entries}
+        self.assertEqual(listing.path, "/workspace")
+        by_name = {e.name: e for e in listing.entries}
         self.assertEqual(sorted(by_name), ["notes.txt", "subdir"])
         self.assertFalse(by_name["notes.txt"].is_dir)
         self.assertEqual(by_name["notes.txt"].size_bytes, len(b"hello world"))
@@ -330,7 +331,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
 
     async def test_relative_path_resolves_against_workdir(self) -> None:
         """A relative path is still convenient, and still works."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="subdir",
@@ -338,11 +339,11 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             storage=self._storage,
             workspace_manager=self._wm,
         )
-        self.assertEqual([e.name for e in entries], ["report.md"])
+        self.assertEqual([e.name for e in listing.entries], ["report.md"])
 
     async def test_absolute_path_outside_workspace_is_allowed(self) -> None:
         """Browsing is not confined to the workspace root."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="/elsewhere",
@@ -350,11 +351,11 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             storage=self._storage,
             workspace_manager=self._wm,
         )
-        self.assertEqual([e.name for e in entries], ["outside.txt"])
+        self.assertEqual([e.name for e in listing.entries], ["outside.txt"])
 
     async def test_parent_traversal_is_allowed(self) -> None:
         """``..`` is an ordinary path component now, not an attack."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="../elsewhere",
@@ -362,7 +363,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             storage=self._storage,
             workspace_manager=self._wm,
         )
-        self.assertEqual([e.name for e in entries], ["outside.txt"])
+        self.assertEqual([e.name for e in listing.entries], ["outside.txt"])
 
     async def test_missing_session_raises_404(self) -> None:
         """An unknown session id must return a 404 HTTP error."""

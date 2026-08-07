@@ -21,9 +21,11 @@ from ._workspace import (
     AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
+    DirectoryListing,
     DownloadTokenResponse,
     MCPClientStatus,
     ToolInfo,
+    WorkspaceStatus,
 )
 from ._embedding_model import (
     ListEmbeddingModelsResponse,
@@ -99,9 +101,11 @@ __all__ = [
     "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
     "DirectoryEntry",
+    "DirectoryListing",
     "DownloadTokenResponse",
     "MCPClientStatus",
     "ToolInfo",
+    "WorkspaceStatus",
     # Agent
     "AgentSchemaResponse",
     "AgentSchemaV2Response",

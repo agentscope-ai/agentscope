@@ -25,6 +25,13 @@ from ..deps import (
     get_workspace_manager,
 )
 from ..hub import SkillHubBase
+from .._service import (
+    GIT_SHORTSTAT_ARGV,
+    GIT_STATUS_ARGV,
+    GitStatus,
+    parse_porcelain_v2,
+    parse_shortstat,
+)
 from .._service._download_token import (
     sign_download_token,
     verify_download_token,
@@ -37,9 +44,10 @@ from .._service._skill_upload import (
     _validate_manifest,
 )
 from ..workspace_manager import WorkspaceManagerBase
-from ..storage import MCPRecord, StorageBase
+from ..storage import MCPRecord, SessionRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
+from ...tool import BackendBase
 from ...workspace import WorkspaceBase
 from ._schema import (
     AddFromLibraryRequest,
@@ -47,13 +55,64 @@ from ._schema import (
     AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
+    DirectoryListing,
     DownloadTokenResponse,
     MCPClientStatus,
     ToolInfo,
+    WorkspaceStatus,
 )
+from ..._logging import logger
 from ..._utils._common import _describe_exception
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
+
+# Long enough for a cold index on a large repository, short enough that
+# a wedged sandbox does not hold the request open.
+_GIT_TIMEOUT_SECS = 5.0
+
+
+async def _resolve_session_and_workspace(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    storage: StorageBase,
+    workspace_manager: WorkspaceManagerBase,
+) -> tuple[SessionRecord, WorkspaceBase]:
+    """Return the session record and the workspace backing it.
+
+    Args:
+        user_id (`str`):
+            The authenticated user ID.
+        agent_id (`str`):
+            The agent owning the session.
+        session_id (`str`):
+            The session whose workspace is wanted.
+        storage (`StorageBase`):
+            The storage used to look the session record up.
+        workspace_manager (`WorkspaceManagerBase`):
+            The manager that opens or reattaches the workspace.
+
+    Returns:
+        `tuple[SessionRecord, WorkspaceBase]`:
+            The record and its workspace.
+
+    Raises:
+        `HTTPException`:
+            ``404`` when the session does not exist.
+    """
+    session_record = await storage.get_session(user_id, agent_id, session_id)
+    if session_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id!r} not found.",
+        )
+    workspace = await workspace_manager.get_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        session_record.config.workspace_id,
+    )
+    return session_record, workspace
 
 
 async def _resolve_workspace(
@@ -85,18 +144,14 @@ async def _resolve_workspace(
         `HTTPException`:
             ``404`` when the session does not exist.
     """
-    session_record = await storage.get_session(user_id, agent_id, session_id)
-    if session_record is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id!r} not found.",
-        )
-    return await workspace_manager.get_workspace(
+    _, workspace = await _resolve_session_and_workspace(
         user_id,
         agent_id,
         session_id,
-        session_record.config.workspace_id,
+        storage,
+        workspace_manager,
     )
+    return workspace
 
 
 # ---------------------------------------------------------------------------
@@ -477,12 +532,15 @@ async def list_workspace_directory(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-) -> list[DirectoryEntry]:
+) -> DirectoryListing:
     """List one directory level, reachable from a session's workspace.
 
     Paths are not confined to the workspace root: for a sandboxed
     backend the reachable filesystem is the sandbox, and for a local
     one the caller is already trusted with the host.
+
+    The resolved absolute path comes back alongside the entries, so a
+    caller browsing with relative paths can still show where it is.
     """
     workspace = await _resolve_workspace(
         user_id,
@@ -508,15 +566,128 @@ async def list_workspace_directory(
 
     # One call for the whole directory: asking per entry would be one
     # round trip each on a sandboxed backend, times three attributes.
-    return [
-        DirectoryEntry(
-            name=entry.name,
-            is_dir=entry.is_dir,
-            size_bytes=entry.size_bytes,
-            updated_at=entry.mtime,
+    return DirectoryListing(
+        path=target,
+        entries=[
+            DirectoryEntry(
+                name=entry.name,
+                is_dir=entry.is_dir,
+                size_bytes=entry.size_bytes,
+                updated_at=entry.mtime,
+            )
+            for entry in await backend.scandir(target)
+        ],
+    )
+
+
+async def _read_git_status(
+    backend: BackendBase,
+    cwd: str,
+) -> GitStatus | None:
+    """Run git in ``cwd`` and summarise it, or return ``None``.
+
+    Two argv invocations rather than one shell line: ``exec_shell`` runs
+    argv directly, so chaining would mean wrapping in ``/bin/sh``, which
+    a Windows :class:`LocalBackend` does not have. Keeping them apart
+    also means a failing ``diff`` still leaves the branch on screen.
+
+    Args:
+        backend (`BackendBase`):
+            The workspace's backend; the only way to reach a sandbox.
+        cwd (`str`):
+            Absolute directory to inspect.
+
+    Returns:
+        `GitStatus | None`:
+            The summary, or ``None`` when git had nothing to say.
+    """
+    try:
+        status_result = await backend.exec_shell(
+            list(GIT_STATUS_ARGV),
+            cwd=cwd,
+            timeout=_GIT_TIMEOUT_SECS,
         )
-        for entry in await backend.scandir(target)
-    ]
+    except Exception as exc:  # pylint: disable=broad-except
+        # Docker and K8s surface transport failures as exceptions; the
+        # other backends fold everything into a non-zero ExecResult.
+        logger.debug("git status failed in %s: %s", cwd, exc)
+        return None
+
+    if not status_result.ok():
+        # 128 not a repository, 127 no git binary or bad cwd, -1 timeout.
+        # None of them are distinguishable enough to explain to a user.
+        logger.debug(
+            "git status exited %d in %s",
+            status_result.exit_code,
+            cwd,
+        )
+        return None
+
+    summary = parse_porcelain_v2(status_result.stdout)
+    if summary.branch is None and summary.head is None:
+        # Real git always names one or the other — a detached HEAD has a
+        # commit, an unborn branch has a name. Neither means the output
+        # was not what we asked for, and a badge would say nothing.
+        logger.debug("git status gave no branch in %s", cwd)
+        return None
+
+    try:
+        diff_result = await backend.exec_shell(
+            list(GIT_SHORTSTAT_ARGV),
+            cwd=cwd,
+            timeout=_GIT_TIMEOUT_SECS,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("git diff failed in %s: %s", cwd, exc)
+        return summary
+
+    if not diff_result.ok():
+        # Expected on a repository with no commits, where HEAD is unborn.
+        return summary
+
+    insertions, deletions = parse_shortstat(diff_result.stdout)
+    return summary.model_copy(
+        update={"insertions": insertions, "deletions": deletions},
+    )
+
+
+@workspace_router.get("/status")
+async def get_workspace_status(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+) -> WorkspaceStatus:
+    """Report where a session is pointed, and the git state of that place.
+
+    The directory comes from the session's own ``cwd`` rather than a
+    query parameter: it is the session's anchor, and resolving a
+    relative one needs the workspace root the client cannot see.
+
+    Git is best-effort. A directory that is not a repository is the
+    normal case, not an error, and the sandboxed backends differ in how
+    they report a missing binary or an unreachable container — so every
+    failure collapses to ``git: null`` and the rest of the response is
+    still served.
+    """
+    session_record, workspace = await _resolve_session_and_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+    )
+    backend = workspace.get_backend()
+    cwd = backend.abspath(
+        session_record.config.cwd or "",
+        cwd=workspace.workdir,
+    )
+    return WorkspaceStatus(
+        workdir=workspace.workdir,
+        cwd=cwd,
+        git=await _read_git_status(backend, cwd),
+    )
 
 
 @workspace_router.post("/files/download-token")
