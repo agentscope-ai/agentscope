@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { workspaceApi } from '@/api';
 import type { WorkspaceStatus } from '@/api';
@@ -24,22 +24,31 @@ export function useWorkspaceStatus(
 ) {
 	const [status, setStatus] = useState<WorkspaceStatus | null>(null);
 	const [loading, setLoading] = useState(false);
+	// Bumped by every call, so only the newest one may write. Two git
+	// subprocesses per request means a slow workspace can answer after
+	// the user has already moved on, and nothing here polls — a stale
+	// branch would stay on screen until the next reply ends.
+	const reqId = useRef(0);
 
 	const refetch = useCallback(async () => {
+		const id = ++reqId.current;
 		if (!agentId || !sessionId) {
 			setStatus(null);
 			return;
 		}
 		setLoading(true);
 		try {
-			setStatus(await workspaceApi.status(agentId, sessionId));
+			const next = await workspaceApi.status(agentId, sessionId);
+			if (id === reqId.current) setStatus(next);
 		} catch {
 			// A workspace that cannot be reached is reported the same way
 			// as one without a repository: no badge. `silent` on the call
 			// already suppressed the toast.
-			setStatus(null);
+			if (id === reqId.current) setStatus(null);
 		} finally {
-			setLoading(false);
+			// Guarded too: an overtaken request must not clear the
+			// spinner while its replacement is still in flight.
+			if (id === reqId.current) setLoading(false);
 		}
 		// `cwd` is not read here — it is a dependency so that moving the
 		// session re-runs this.

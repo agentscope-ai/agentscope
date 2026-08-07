@@ -10,7 +10,7 @@ import {
 	Loader2,
 	CornerDownLeft,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '../ui/input-group';
 import type { DirectoryEntry } from '@/api';
@@ -116,9 +116,15 @@ export function WorkingDirectoryDialog({
 	// list — one home for both, so nothing is reported twice.
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
+	// Bumped by every browse, so an overtaken listing cannot land.
+	const reqId = useRef(0);
 
 	const load = useCallback(
 		async (target: string) => {
+			// Only the newest browse may write: a slow parent directory
+			// answering after a fast child would silently bounce the user
+			// back up a level.
+			const id = ++reqId.current;
 			if (!agentId || !sessionId) {
 				setLoading(false);
 				return;
@@ -127,6 +133,7 @@ export function WorkingDirectoryDialog({
 			setError(null);
 			try {
 				const listing = await workspaceApi.directories(agentId, sessionId, target);
+				if (id !== reqId.current) return;
 				// Files are listed but not selectable — a directory with its
 				// files hidden is hard to recognise, and "empty" would be a
 				// lie for a folder that is merely all files. Order is the
@@ -138,6 +145,7 @@ export function WorkingDirectoryDialog({
 				setPath(listing.path);
 				setListedPath(listing.path);
 			} catch (e) {
+				if (id !== reqId.current) return;
 				// `path` is left alone — it is what the user asked for, and
 				// blanking it would erase what they typed. `listedPath`
 				// staying null is what disables Confirm.
@@ -149,7 +157,7 @@ export function WorkingDirectoryDialog({
 				// you.
 				setError(formatApiErrorForAlert(e));
 			} finally {
-				setLoading(false);
+				if (id === reqId.current) setLoading(false);
 			}
 		},
 		[agentId, sessionId],
