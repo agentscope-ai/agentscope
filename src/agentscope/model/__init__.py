@@ -8,9 +8,10 @@ from ._model_usage import ChatUsage
 from ._anthropic import AnthropicChatModel
 from ._dashscope import DashScopeChatModel
 from ._deepseek import DeepSeekChatModel
+from ._ellm import EllmChatModel
 from ._gemini import GeminiChatModel
-from ._ollama import OllamaChatModel
 from ._openai_chat import OpenAIChatModel
+from ._ollama import OllamaChatModel
 from ._xai import XAIChatModel
 from ._moonshot import MoonshotChatModel
 from ._openai_response import OpenAIResponseModel
@@ -25,6 +26,7 @@ __all__ = [
     "AnthropicChatModel",
     "DashScopeChatModel",
     "DeepSeekChatModel",
+    "EllmChatModel",
     "GeminiChatModel",
     "OllamaChatModel",
     "OpenAIChatModel",
