@@ -72,6 +72,13 @@ class ELLMCredential(CredentialBase):
         description="API key 地址（业务字段，前端传入，原样存储）。",
     )
     """API key 地址。"""
+    inject_think_tag: bool = Field(
+        default=False,
+        description=(
+            "Whether to inject a ``<think>`` tag in front of the first "
+            "non-empty text delta of streaming responses."
+        ),
+    )
 
     apikey_expires_at: str | None = Field(
         default=None,
