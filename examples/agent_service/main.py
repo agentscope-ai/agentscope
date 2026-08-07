@@ -36,12 +36,14 @@ import uvicorn
 from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
-from agentscope.app import create_app
+from agentscope._logging import setup_logger
+from agentscope.app import create_app, SubAgentTemplate
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus, RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import AsyncSQLAlchemyStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
@@ -75,6 +77,35 @@ from bocomadp.tools import ToolRegistry, build_enterprise_tools
 
 # K8s 沙箱工作区（纯配置驱动，零框架侵入）
 from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
+
+# 在 agentscope 子模块被 import 之前完成 setup_logger，
+# 以便它们使用的 ``as`` logger 自动拥有文件 handler。
+_LOG_DIR = os.getenv("AGENTSCOPE_LOG_DIR", "/app/logs")
+_LOG_FILE = os.path.join(_LOG_DIR, "events.log")
+os.makedirs(_LOG_DIR, exist_ok=True)
+setup_logger("INFO", filepath=_LOG_FILE)
+
+# 把 uvicorn 的 HTTP 访问日志（``uvicorn.access``）也并入同一个文件，
+# 便于在一个文件中对照"客户端请求 → 后端处理 → 模型调用 → 工具调用"时间线。
+_access_logger = logging.getLogger("uvicorn.access")
+_access_file_handler = logging.FileHandler(_LOG_FILE)
+_access_file_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s - %(message)s",
+    ),
+)
+_access_logger.addHandler(_access_file_handler)
+
+default_mcps = [
+    MCPClient(
+        name="browser-use",
+        mcp_config=StdioMCPConfig(
+            command="npx",
+            args=["@playwright/mcp@latest"],
+        ),
+        is_stateful=True,
+    ),
+]
 
 # ---------------------------------------------------------------------------
 # 1. 配置加载 + 日志初始化
