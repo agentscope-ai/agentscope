@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""``PATCH /sessions/{id}`` test case — write isolation and cwd validation.
+"""``PATCH /sessions/{id}`` test case — write isolation and cwd storage.
 
 The endpoint has to keep two writers apart. Configuration is written by
 this handler; ``AgentState`` is written by the chat run's ``_persist()``,
@@ -24,7 +24,9 @@ from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 from agentscope.app.storage import AgentData, AgentRecord, RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
+from agentscope.message import UserMsg
 from agentscope.state import Task
+from agentscope.state._state import ReadCacheEntry
 
 HEADERS = {"X-User-ID": "alice"}
 
@@ -112,6 +114,20 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
                 id="1",
             ),
         ]
+        # The heavy fields, so trimming them is observable rather than
+        # vacuously true against a freshly created session.
+        record.state.context = [
+            UserMsg(name="alice", content="a long conversation"),
+        ]
+        record.state.summary = "a compressed history"
+        record.state.tool_context.read_file_cache = [
+            ReadCacheEntry(
+                lines=["file contents"],
+                updated_at=0.0,
+                bytes=13,
+                file_path="/w/a.py",
+            ),
+        ]
         await storage.update_session_state(
             user_id="alice",
             agent_id=self.agent_id,
@@ -188,10 +204,60 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_listing_strips_the_bulk_of_state(self) -> None:
+        """The list ships panel seeds, never the conversation.
+
+        ``context`` and ``tool_context`` hold the model's transcript and
+        the contents of every file it has read, so returning them would
+        make listing twenty sessions cost twenty transcripts to render a
+        sidebar that shows a name and a date.
+        """
+        listed = self.client.get(
+            "/sessions/",
+            headers=HEADERS,
+            params={"agent_id": self.agent_id},
+        ).json()["sessions"][0]
+
+        state = listed["session"]["state"]
+        self.assertEqual(state["context"], [])
+        self.assertEqual(state["summary"], "")
+        self.assertEqual(state["tool_context"]["read_file_cache"], [])
+        # The two the UI actually seeds from must survive the trim.
+        self.assertEqual(
+            [task["subject"] for task in state["tasks_context"]["tasks"]],
+            ["written by the run"],
+        )
+        self.assertIn("mode", state["permission_context"])
+
+    def _listed(self) -> Any:
+        """Fetch the seeded session's entry from the list endpoint."""
+        return self.client.get(
+            "/sessions/",
+            headers=HEADERS,
+            params={"agent_id": self.agent_id},
+        ).json()["sessions"][0]
+
+    def test_idle_session_reports_idle(self) -> None:
+        """A session nobody is running reports ``idle``."""
+        listed = self._listed()
+
+        self.assertEqual(listed["status"], "idle")
+        self.assertFalse(listed["is_running"])
+
+    async def test_running_session_reports_running(self) -> None:
+        """Holding the run lease is what makes a session ``running``."""
+        lock_key = MessageBusKeys.session_lock(self.session_id)
+        async with self.bus.acquire_lock(lock_key, ttl_secs=30):
+            listed = self._listed()
+
+        self.assertEqual(listed["status"], "running")
+        self.assertTrue(listed["is_running"])
+
     def test_cwd_round_trips(self) -> None:
         """A relative cwd is stored and read back verbatim."""
         self.assertEqual(
-            self._patch({"cwd": "src/agentscope"}).status_code, 200
+            self._patch({"cwd": "src/agentscope"}).status_code,
+            200,
         )
 
         listed = self.client.get(
@@ -223,13 +289,16 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         ).json()
         self.assertIsNone(listed["sessions"][0]["session"]["config"]["cwd"])
 
-    def test_cwd_outside_the_workspace_root_is_rejected(self) -> None:
-        """Absolute paths and ``..`` escapes both fail with 400."""
-        for escape in ("/etc", "..", "../elsewhere", "a/../../elsewhere"):
-            with self.subTest(cwd=escape):
-                response = self._patch({"cwd": escape})
-                self.assertEqual(response.status_code, 400)
+    def test_cwd_is_not_confined_to_the_workspace_root(self) -> None:
+        """Absolute paths and ``..`` are ordinary values, not attacks.
 
-    def test_cwd_normalising_back_inside_is_accepted(self) -> None:
-        """``a/../b`` stays inside the root, so it is allowed through."""
-        self.assertEqual(self._patch({"cwd": "a/../b"}).status_code, 200)
+        ``cwd`` only names a place to look — it never changes where a
+        tool executes — and the directory listing it feeds is itself
+        unconfined. Rejecting these would stop a user from pointing the
+        UI at a checkout that lives outside the workspace.
+        """
+        for outside in ("/etc", "..", "../elsewhere", "a/../../elsewhere"):
+            with self.subTest(cwd=outside):
+                response = self._patch({"cwd": outside})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["config"]["cwd"], outside)

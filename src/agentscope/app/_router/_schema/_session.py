@@ -142,9 +142,9 @@ class UpdateSessionRequest(BaseModel):
     cwd: str | None = Field(
         default=None,
         description=(
-            "New working directory, relative to the workspace root and "
-            "constrained to stay inside it. Pass null to reset to the "
-            "root; omit to leave unchanged."
+            "New working directory — absolute, or relative to the "
+            "workspace root, and not confined to it. Pass null to "
+            "reset to the root; omit to leave unchanged."
         ),
     )
 
@@ -167,13 +167,32 @@ class SessionView(BaseModel):
 
     session: SessionRecord = Field(
         description=(
-            "The persisted session record. Includes ``state`` "
-            "(``permission_context`` / ``tool_context`` / "
-            "``tasks_context``) inline."
+            "The persisted session record, with the bulk of ``state`` "
+            "stripped: ``context`` and ``summary`` are cleared and "
+            "``tool_context`` is reset. Those hold the conversation the "
+            "model sees and the contents of every file it has read, so "
+            "listing twenty sessions would otherwise ship twenty "
+            "transcripts to render a sidebar. ``permission_context`` "
+            "and ``tasks_context`` survive — they are small, and the UI "
+            "seeds its panels from them. Read a session's messages via "
+            "``GET /sessions/{id}/messages``."
         ),
     )
     is_running: bool = Field(
-        description="Whether a chat run is currently active on this session.",
+        description=(
+            "**Deprecated** — use :attr:`status`. True only while a "
+            "worker holds the run lease, which a session parked on a "
+            "confirmation prompt does not: this reads ``False`` for a "
+            "session that is visibly waiting on the user."
+        ),
+    )
+    status: SessionStatus = Field(
+        description=(
+            "The session's unified status: ``running``, ``idle``, "
+            "``awaiting_permission`` or ``awaiting_external_result``. "
+            "Exactly one applies at any moment, so a single indicator "
+            "renders it without reconciling flags."
+        ),
     )
     team: TeamDetailResponse | None = Field(
         default=None,

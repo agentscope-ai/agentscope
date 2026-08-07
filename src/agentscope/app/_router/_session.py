@@ -2,8 +2,6 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
-import ntpath
-import posixpath
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -38,6 +36,7 @@ from .._service import (
     ResourceAccessService,
     ChatService,
     SessionService,
+    SessionStatus,
     SessionProjection,
     SubagentHitlProjector,
 )
@@ -51,6 +50,7 @@ from ..storage import (
     TeamRecord,
 )
 from ...message import ToolCallState
+from ...state import ToolContext
 from ..storage._utils import _ensure_team_members
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
@@ -186,45 +186,33 @@ async def _ensure_knowledge_bases_exist(
         )
 
 
-def _validate_session_cwd(cwd: str) -> None:
-    """Reject a ``cwd`` that is absolute or escapes the workspace root.
+def _trim_for_listing(session: SessionRecord) -> SessionRecord:
+    """Drop the parts of ``state`` a session list has no use for.
 
-    :attr:`SessionConfig.cwd` is stored relative to the workspace root
-    so that validating it costs nothing — an absolute path would have
-    to be checked against ``workspace.workdir``, and resolving the
-    workspace here would provision a sandbox as a side effect of a
-    configuration change.
-
-    Containment is what makes the value safe to hand to
-    ``BackendBase.abspath(cwd, cwd=workdir)`` later: the workspace root
-    is the only directory registered in
-    :attr:`PermissionContext.working_directories`, so a ``cwd`` outside
-    it would widen the permission surface through a UI text field.
+    ``context`` is the conversation the model sees, ``summary`` is its
+    compressed form, and ``tool_context`` caches the contents of every
+    file that has been read — megabytes each on a long session, none of
+    which a sidebar renders. ``permission_context`` and ``tasks_context``
+    stay: they are small and the UI seeds its panels from them.
 
     Args:
-        cwd (`str`):
-            The requested working directory, relative to the workspace
-            root. The empty string means the root itself.
+        session (`SessionRecord`):
+            The stored record. Not mutated.
 
-    Raises:
-        `HTTPException`: 400 if the path is absolute or normalises to
-            somewhere outside the workspace root.
+    Returns:
+        `SessionRecord`: A copy carrying only the light state.
     """
-    if posixpath.isabs(cwd) or ntpath.isabs(cwd):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "cwd must be relative to the workspace root, not an "
-                "absolute path."
+    return session.model_copy(
+        update={
+            "state": session.state.model_copy(
+                update={
+                    "context": [],
+                    "summary": "",
+                    "tool_context": ToolContext(),
+                },
             ),
-        )
-
-    normalised = posixpath.normpath(cwd.replace("\\", "/"))
-    if normalised == ".." or normalised.startswith("../"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="cwd must stay inside the workspace root.",
-        )
+        },
+    )
 
 
 @session_router.get(
@@ -242,11 +230,15 @@ async def list_sessions(
     """Return all sessions for an agent as enriched
     :class:`SessionView` entries.
 
-    Each entry bundles three things the chat UI needs to render
-    without follow-up requests: the session record (incl.
-    ``state``), whether a chat run is currently active, and — when
+    Each entry bundles what the chat UI needs to render without
+    follow-up requests: the session record, its status, and — when
     the session participates in a team — the resolved team detail
     (leader agent + member agents with their session ids).
+
+    The record arrives trimmed: ``state.context``, ``state.summary``
+    and ``state.tool_context`` are cleared, since they hold the model's
+    conversation and every file it has read. Fetch a session's messages
+    from ``GET /sessions/{id}/messages`` instead.
 
     Args:
         agent_id (`str`):
@@ -287,12 +279,20 @@ async def list_sessions(
                     user_id,
                     team_record,
                 )
+        is_running = await message_bus.is_locked(
+            MessageBusKeys.session_lock(session.id),
+        )
+        # Derived before the trim below, which drops the context it reads.
+        session_status = (
+            SessionStatus.RUNNING
+            if is_running
+            else SessionService.derive_parked_status(session.state.context)
+        )
         views.append(
             SessionView(
-                session=session,
-                is_running=await message_bus.is_locked(
-                    MessageBusKeys.session_lock(session.id),
-                ),
+                session=_trim_for_listing(session),
+                is_running=is_running,
+                status=session_status,
                 team=team_detail,
             ),
         )
@@ -498,8 +498,7 @@ async def update_session(
     Raises:
         `HTTPException`: 404 if the session does not exist, or if the
             referenced credential / KB is not visible to the caller;
-            409 if a chat run is currently active on the session; 400
-            if ``cwd`` escapes the workspace root.
+            409 if a chat run is currently active on the session.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -531,9 +530,6 @@ async def update_session(
         user_id,
         body.knowledge_config,
     )
-
-    if body.cwd is not None:
-        _validate_session_cwd(body.cwd)
 
     # ``None`` leaves the stored state untouched (see
     # ``StorageBase.upsert_session``). ``permission_mode`` is the only

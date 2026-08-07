@@ -199,10 +199,10 @@ class SessionService:
         if session is None:
             return None
 
-        return self._derive_parked_status(session.state.context)
+        return self.derive_parked_status(session.state.context)
 
     @staticmethod
-    def _derive_parked_status(context: list) -> SessionStatus:
+    def derive_parked_status(context: list) -> SessionStatus:
         """Derive the parked :class:`SessionStatus` from a persisted
         ``AgentState.context``.
 
