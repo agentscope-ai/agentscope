@@ -11,11 +11,13 @@ from ._qdrant import QdrantStore
 from ._mongodb import MongoDBStore
 from ._milvus_lite import MilvusLiteStore
 from ._elasticsearch import ElasticsearchStore
+from ._redis import RedisStore
 
 __all__ = [
     "DocumentSummary",
     "ElasticsearchStore",
     "MilvusLiteStore",
+    "RedisStore",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",
