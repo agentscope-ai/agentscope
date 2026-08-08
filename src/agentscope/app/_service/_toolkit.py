@@ -6,6 +6,7 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
+
 from typing import Any, Literal, TYPE_CHECKING
 
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -13,6 +14,7 @@ from ..message_bus import MessageBus
 from .._tool import (
     AgentCreate,
     AgentInvite,
+    AgentKick,
     TeamCreate,
     TeamDelete,
     TeamSay,
@@ -75,7 +77,7 @@ async def get_toolkit(
        ``source='user'``. A session that is a worker in some team
        gets only ``TeamSay``. A session that is not in any team OR
        that is its team's leader gets the full leader-side toolset
-       (``TeamCreate / AgentCreate / TeamSay / TeamDelete``, plus
+       (``TeamCreate / AgentCreate / AgentKick / TeamSay / TeamDelete``, plus
        ``AgentInvite`` when the user has at least one invitable agent).
     6. Caller-supplied extras (``extra_factory``)
     7. Channel platform tools — only for a session that originated from
@@ -211,6 +213,7 @@ time or interval"
                 sub_agent_templates=sub_agent_templates or {},
             ),
             TeamSay(**team_tool_kwargs, role="leader"),
+            AgentKick(**team_tool_kwargs),
             TeamDelete(**team_tool_kwargs),
         ]
         # Conditionally attach AgentInvite. Skipping construction when

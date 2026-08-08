@@ -7,15 +7,15 @@ Task series, …) in two ways:
 1. **Construction depends on app-level resources** — they bind a
    :class:`StorageBase` + :class:`MessageBus` reference plus the
    request-scoped ``user_id`` / ``session_id`` / ``agent_id`` at agent
-   assembly time, and call storage / bus directly in their
-   ``__call__`` — except ``TeamDelete``, which delegates to
-   :class:`SessionService` for cascade deletion.
+   assembly time. Most call storage / bus directly in ``__call__``;
+   ``AgentKick`` and ``TeamDelete`` delegate lifecycle cleanup to
+   :class:`SessionService`.
 2. **Visibility depends on the session's team role, not the agent's
    source field** — a session that is not in any team OR that is its
    team's leader gets the full leader-side toolset (``TeamCreate /
-   AgentCreate / TeamSay / TeamDelete``, plus ``AgentInvite`` when the
-   user has any invitable agents). A session that is a worker in some
-   team gets only ``TeamSay``. This session-level distinction is what
+   AgentCreate / AgentKick / TeamSay / TeamDelete``, plus ``AgentInvite``
+   when the user has any invitable agents). A session that is a worker
+   in some team gets only ``TeamSay``. This session-level distinction
    lets a borrowed ("invited") agent's session see worker-only tools
    even though the underlying ``AgentRecord`` still has
    ``source='user'``. Each tool re-reads the current session + team
@@ -30,8 +30,10 @@ Task series, …) in two ways:
 Selection of the right subset happens inline in :func:`get_toolkit`;
 there is no separate "team tool factory" helper.
 """
+
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._agent_invite import AgentInvite
+from ._agent_kick import AgentKick
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
 from ._team_say import TeamSay
@@ -39,6 +41,7 @@ from ._team_say import TeamSay
 __all__ = [
     "AgentCreate",
     "AgentInvite",
+    "AgentKick",
     "DEFAULT_SUB_AGENT_TEMPLATE",
     "TeamCreate",
     "TeamDelete",

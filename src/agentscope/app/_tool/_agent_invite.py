@@ -14,6 +14,7 @@ When the team is dissolved or the leader is deleted, only the borrowed
 session is cleaned up — the underlying :class:`AgentRecord` survives
 so the user can still use the agent stand-alone.
 """
+
 from __future__ import annotations
 
 import copy
@@ -22,8 +23,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import Field
 
-from ._constants import HANDLE_LEN
 from ._team_tool_base import _TeamToolBase
+from ._team_routing import _display_handle, _invited_display_name
 from ..message_bus import MessageBusKeys
 from .._bus_ops import enqueue_run_trigger
 from ..storage import SessionConfig, TeamMember
@@ -37,28 +38,6 @@ if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import AgentRecord, StorageBase
     from ..workspace_manager import WorkspaceManagerBase
-
-
-def _display_handle(agent_id: str) -> str:
-    """Return the derived routing handle for ``agent_id``.
-
-    Kept as a tiny helper (rather than inlining ``agent_id[:HANDLE_LEN]``
-    at every call site) so a future change to how a handle is derived
-    (widening the prefix, hashing, etc.) has exactly one place to touch.
-    The length itself lives in :mod:`_constants` so ``TeamSay``'s
-    parser agrees byte-for-byte with what this producer emits.
-    """
-    return agent_id[:HANDLE_LEN]
-
-
-def _display_name(agent_name: str, agent_id: str) -> str:
-    """Format the leader-facing display / routing string.
-
-    Example: ``"Monday@9f3c1a20"``. Used by both :class:`AgentInvite`
-    (as the ``target`` enum values) and :func:`TeamSay` (as the
-    directory keys for invited members).
-    """
-    return f"{agent_name}@{_display_handle(agent_id)}"
 
 
 class _AgentInviteParams(ParamsBase):
@@ -205,10 +184,10 @@ class AgentInvite(_TeamToolBase):
 
         # Build enum + a human-readable per-target rundown for the LLM.
         enum_values = [
-            _display_name(a.data.name, a.id) for a in invitable_pool
+            _invited_display_name(a.data.name, a.id) for a in invitable_pool
         ]
         target_lines = [
-            f"- ``{_display_name(a.data.name, a.id)!r}`` — "
+            f"- ``{_invited_display_name(a.data.name, a.id)!r}`` — "
             f"{a.data.invite_config.invite_description}"
             for a in invitable_pool
         ]
@@ -401,7 +380,7 @@ class AgentInvite(_TeamToolBase):
                 # stays with its own session.
             )
 
-            invited_display = _display_name(
+            invited_display = _invited_display_name(
                 invited.data.name,
                 invited.id,
             )
@@ -538,14 +517,14 @@ def _resolve_target(
         return handle_matches[0], None
     if len(handle_matches) > 1:
         colliding = sorted(
-            _display_name(r.data.name, r.id) for r in handle_matches
+            _invited_display_name(r.data.name, r.id) for r in handle_matches
         )
         return None, (
             f"AgentInvite: handle {handle!r} matches multiple invitable "
             f"agents: {colliding}. Retry with the exact display string."
         )
     available = sorted(
-        _display_name(a.data.name, a.id) for a in pool_by_id.values()
+        _invited_display_name(a.data.name, a.id) for a in pool_by_id.values()
     )
     return None, (
         f"AgentInvite: no invitable agent matches target {target!r}. "
