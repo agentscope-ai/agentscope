@@ -386,6 +386,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             _make_event(
                 "response.reasoning_summary_text.delta",
                 delta="Thinking",
+                item_id="rs_123",
                 response=MagicMock(id="resp-2"),
             ),
             _make_event(
@@ -536,6 +537,64 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_multiple_reasoning_items(
+        self,
+    ) -> None:
+        """Stream with multiple reasoning items preserves each item's id."""
+        reasoning_item_1 = MagicMock()
+        reasoning_item_1.type = "reasoning"
+        reasoning_item_1.id = "rs_first"
+
+        reasoning_item_2 = MagicMock()
+        reasoning_item_2.type = "reasoning"
+        reasoning_item_2.id = "rs_second"
+
+        fc_item = MagicMock()
+        fc_item.type = "function_call"
+        fc_item.id = "fc_1"
+        fc_item.call_id = "call-1"
+        fc_item.name = "search"
+
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-multi"
+        completed_resp.output = [reasoning_item_1, reasoning_item_2]
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 10
+        completed_resp.usage.output_tokens = 5
+        completed_resp.usage.input_tokens_details = None
+
+        events = [
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="First thought",
+                item_id="rs_first",
+                response=MagicMock(id="resp-multi"),
+            ),
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="Second thought",
+                item_id="rs_second",
+            ),
+            _make_event("response.completed", response=completed_resp),
+        ]
+        mock_create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        self.mock_client.responses.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        # Final accumulated response should have two separate
+        # ThinkingBlocks, each with its own reasoning_item_id.
+        final = responses[-1]
+        thinking_blocks = [
+            b for b in final.content if hasattr(b, "reasoning_item_id")
+        ]
+        self.assertEqual(len(thinking_blocks), 2)
+        ids = {b.reasoning_item_id for b in thinking_blocks}
+        self.assertEqual(ids, {"rs_first", "rs_second"})
 
     async def test_stream_function_call(
         self,

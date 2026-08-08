@@ -277,9 +277,18 @@ class OpenAIResponseModel(ChatModelBase):
                 # As of 2026-05, o1 and o4-mini do not stream reasoning
                 # summary deltas. This handler exists for forward
                 # compatibility with models that do expose it.
+                # Use the event's item_id as block_id so that multiple
+                # reasoning items each get their own ThinkingBlock,
+                # matching the non-streaming path behavior.
+                item_id = getattr(event, "item_id", None)
+                block_id = (
+                    item_id
+                    if isinstance(item_id, str) and item_id
+                    else thinking_id
+                )
                 delta_res.append_thinking(
                     event.delta,
-                    block_id=thinking_id,
+                    block_id=block_id,
                 )
 
             elif event_type == "response.output_text.delta":
@@ -340,7 +349,7 @@ class OpenAIResponseModel(ChatModelBase):
                         if reasoning_item_id:
                             delta_res.append_thinking(
                                 thinking="",
-                                block_id=thinking_id,
+                                block_id=reasoning_item_id,
                                 reasoning_item_id=reasoning_item_id,
                             )
 
