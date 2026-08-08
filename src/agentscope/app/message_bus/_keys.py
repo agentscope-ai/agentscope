@@ -16,8 +16,12 @@ Add new business keys here as needed. As legacy keys are migrated off
 from typing import Final
 
 
-class MessageBusKeys:
-    """Application-layer key conventions for the message bus."""
+class MessageBusKeys:  # pylint: disable=too-many-public-methods
+    """Application-layer key conventions for the message bus.
+
+    A flat registry of key/namespace builders — it grows one method per
+    business key, so the public-method count is expected to be high.
+    """
 
     # ------------------------------------------------------------------
     # Run-trigger queue — the discriminator carried by each entry on the
@@ -37,6 +41,14 @@ class MessageBusKeys:
     with the carried ``input`` event and — unlike ``wake`` — must *not*
     drop the entry while the session is running; it re-queues until the
     parked run releases its lock."""
+
+    WAKEUP_KIND_MESSAGE: Final = "message"
+    """Trigger kind: start a new turn from a genuine user ``Msg`` (e.g. an
+    inbound channel message). The dispatcher spawns the run with the
+    carried message as ``input_msg`` so it is persisted and reasoned over
+    as a real user turn. Like ``resume`` (and unlike ``wake``) it carries
+    input, so it is re-queued rather than dropped while the session is
+    running."""
 
     # ------------------------------------------------------------------
     # Cross-session UI projection — a generic per-session Redis-hash
@@ -238,3 +250,65 @@ class MessageBusKeys:
         subscriber happens to be offline.
         """
         return cls._INDEX_TASKS_SIGNAL
+
+    # ------------------------------------------------------------------
+    # Channel output forwarding — a durable queue of "a channel session
+    # is producing output" signals. Each node running channel adapters
+    # drains it; the node that pops a signal (and hosts that channel)
+    # subscribes to the session's event stream and forwards the reply
+    # back to the platform chat. Queue + atomic pop → exactly one node
+    # forwards, even though every node runs the adapter.
+    # ------------------------------------------------------------------
+
+    _CHANNEL_OUTBOUND_QUEUE = "agentscope:channel:outbound"
+    _CHANNEL_OUTBOUND_SIGNAL = "agentscope:channel:outbound:wake"
+    _CHANNEL_LIFECYCLE = "agentscope:channel:lifecycle"
+    _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
+    _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
+    _CHANNEL_FORWARD = "agentscope:channel:forward:{sid}"
+    _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
+
+    @classmethod
+    def channel_outbound_queue(cls) -> str:
+        """Durable queue of channel output-forward signals."""
+        return cls._CHANNEL_OUTBOUND_QUEUE
+
+    @classmethod
+    def channel_outbound_signal(cls) -> str:
+        """Pub/sub nudge for channel output-forward consumers."""
+        return cls._CHANNEL_OUTBOUND_SIGNAL
+
+    @classmethod
+    def channel_lifecycle(cls) -> str:
+        """Pub/sub channel that nudges every node to reconcile its
+        running channel instances against storage."""
+        return cls._CHANNEL_LIFECYCLE
+
+    @classmethod
+    def channel_liveness(cls, channel_id: str) -> str:
+        """Per-channel per-node status heartbeat namespace."""
+        return cls._CHANNEL_LIVENESS.format(cid=channel_id)
+
+    @classmethod
+    def channel_media_buffer(
+        cls,
+        channel_id: str,
+        chat_id: str,
+        user_id: str,
+    ) -> str:
+        """Queue key buffering media until the next text message."""
+        return cls._CHANNEL_MEDIA.format(
+            cid=channel_id,
+            chat=chat_id,
+            uid=user_id,
+        )
+
+    @classmethod
+    def channel_forward_lease(cls, session_id: str) -> str:
+        """Per-run lock so exactly one node forwards a reply."""
+        return cls._CHANNEL_FORWARD.format(sid=session_id)
+
+    @classmethod
+    def channel_seen_chats(cls, channel_id: str) -> str:
+        """Registry namespace of chat_ids the bot has been messaged in."""
+        return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)

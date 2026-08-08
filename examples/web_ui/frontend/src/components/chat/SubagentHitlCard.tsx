@@ -29,7 +29,7 @@ export function SubagentHitlCard({
 		toolCall: ToolCallBlock,
 		confirm: boolean,
 		rules?: ToolCallBlock['suggested_rules'],
-	) => void;
+	) => Promise<void>;
 }) {
 	const { t } = useTranslation();
 	const toolCalls = entry.event.tool_calls ?? [];
@@ -47,9 +47,7 @@ export function SubagentHitlCard({
 					<ConfirmCard
 						key={toolCall.id}
 						toolCall={toolCall}
-						onUserConfirm={async (confirm, rules) =>
-							onConfirm(toolCall, confirm, rules)
-						}
+						onUserConfirm={(confirm, rules) => onConfirm(toolCall, confirm, rules)}
 					/>
 				))}
 			</div>

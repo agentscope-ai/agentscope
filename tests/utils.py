@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.credential import CredentialBase
+from agentscope.formatter import FormatterBase, OpenAIChatFormatter
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase, ChatResponse, StructuredResponse
 from agentscope.workspace import WorkspaceBase
@@ -60,6 +61,7 @@ class MockModel(ChatModelBase):
         context_size: int = 1000,
         mock_chat_responses: list | None = None,
         mock_structured_response: Any = None,
+        formatter: FormatterBase | None = None,
     ) -> None:
         """Initialize the mock model."""
         super().__init__(
@@ -69,6 +71,9 @@ class MockModel(ChatModelBase):
             parameters=MockModel.Parameters(),
             context_size=context_size,
         )
+        # Mirror real models, which each expose a formatter; the agent reads
+        # ``formatter.supported_input_media_types`` on every incoming message.
+        self.formatter = formatter or OpenAIChatFormatter()
         self.mock_chat_responses = mock_chat_responses or []
         self.mock_structured_response = mock_structured_response
         self.cnt = 0

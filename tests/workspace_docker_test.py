@@ -17,10 +17,10 @@ Two practical differences vs. the local tests:
    compose paths against ``self.temp_dir.name``, which is bind-mounted
    to ``CONTAINER_WORKDIR`` inside the container.
 
-2. ``DataBlock`` URLs persisted by DockerWorkspace use the container
-   path (``file:///workspace/data/<hash>.png``).  We assert the URL
-   string against the container path and verify the file's *bytes* via
-   the corresponding host-side path.
+2. ``DataBlock`` URLs persisted by DockerWorkspace are portable
+   ``workspace:///data/<hash>.png`` references.  We assert the URL
+   string and verify the file's *bytes* via the corresponding
+   host-side path.
 
 The whole module is skipped when no Docker daemon is reachable.
 """
@@ -243,9 +243,9 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
 
         Verifies:
         1. The decoded payload lands on disk under ``<workdir>/data/``
-           (container-side ``/workspace/data/``).
+           (container-side ``/workspace/data/``, host-mirrored).
         2. The offloaded JSONL line carries a ``URLSource`` whose URL is
-           the *container* path (``file:///workspace/data/<hash>.<ext>``).
+           the portable ``workspace:///data/<hash>.<ext>`` reference.
         3. Decoded bytes match the original.
         """
         session_id = "test_session_datablock"
@@ -277,15 +277,15 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
             content = await f.read()
         loaded_msg = Msg.model_validate_json(content.strip())
 
-        # The DataBlock's source should now be URLSource pointing to a
-        # container-side file://...
+        # The DataBlock's source should now be a URLSource with a
+        # portable workspace:// reference.
         self.assertEqual(len(loaded_msg.content), 2)
         data_url = str(loaded_msg.content[1].source.url)
-        self.assertTrue(data_url.startswith("file:///workspace/data/"))
+        self.assertTrue(data_url.startswith("workspace:///data/"))
 
-        # Verify the bytes via the host-side mirror.
-        container_path = urlparse(data_url).path  # /workspace/data/<hash>.png
-        rel = os.path.relpath(container_path, "/workspace")
+        # Verify the bytes via the host-side mirror. The workspace-
+        # relative URL path (``/data/<hash>.png``) maps onto the mirror.
+        rel = urlparse(data_url).path.lstrip("/")
         host_data_path = os.path.join(self.temp_dir.name, rel)
         self.assertTrue(os.path.exists(host_data_path))
         async with aiofiles.open(host_data_path, "rb") as f:
@@ -302,7 +302,7 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
         """Two identical DataBlocks share a single persisted file.
 
         Verifies:
-        1. Both ``_offload_data_block`` calls return DataBlocks pointing
+        1. Both ``offload_data_block`` calls return DataBlocks pointing
            at the same URL.
         2. Only one file ends up in ``<workdir>/data/``.
         """
@@ -316,8 +316,8 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
             name="file2",
         )
 
-        result1 = await self.workspace._offload_data_block(block1)
-        result2 = await self.workspace._offload_data_block(block2)
+        result1 = await self.workspace.offload_data_block(block1)
+        result2 = await self.workspace.offload_data_block(block2)
         self.assertEqual(str(result1.source.url), str(result2.source.url))
 
         # Check the host-mirror data dir has exactly one file.
@@ -334,7 +334,7 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
         """A DataBlock that already has a URLSource is returned unchanged.
 
         Verifies:
-        1. ``_offload_data_block`` is a no-op for URL-sourced blocks.
+        1. ``offload_data_block`` is a no-op for URL-sourced blocks.
         2. No file lands in ``<workdir>/data/``.
         """
         from pydantic import AnyUrl
@@ -347,7 +347,7 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
             name="remote_image",
         )
 
-        result = await self.workspace._offload_data_block(block)
+        result = await self.workspace.offload_data_block(block)
         self.assertDictEqual(result.model_dump(), block.model_dump())
 
         host_data_dir = os.path.join(self.temp_dir.name, "data")
@@ -430,7 +430,7 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
             content = await f.read()
 
         self.assertTrue(content.startswith("File created successfully: "))
-        self.assertIn("<data url='file:///workspace/data/", content)
+        self.assertIn("<data url='workspace:///data/", content)
         self.assertIn("name='output.txt'", content)
         self.assertIn("media_type='text/plain'", content)
         self.assertTrue(content.endswith("/>"))
@@ -438,8 +438,7 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
         # The data file is reachable via the host mirror.
         match = re.search(r"url='([^']+)'", content)
         self.assertIsNotNone(match)
-        container_path = urlparse(match.group(1)).path
-        rel = os.path.relpath(container_path, "/workspace")
+        rel = urlparse(match.group(1)).path.lstrip("/")
         host_data_path = os.path.join(self.temp_dir.name, rel)
         self.assertTrue(os.path.exists(host_data_path))
 
@@ -796,7 +795,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
                 session_id,
                 [UserMsg(name="user", content="hi")],
             )
-            await ws._offload_data_block(
+            await ws.offload_data_block(
                 DataBlock(
                     source=Base64Source(
                         data=base64.b64encode(b"x").decode(),

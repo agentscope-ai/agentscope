@@ -1,5 +1,13 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { Paperclip, Send, Loader2, Square, type LucideIcon, XIcon, FileText } from 'lucide-react';
+import {
+	Paperclip,
+	Loader2,
+	Square,
+	type LucideIcon,
+	XIcon,
+	FileText,
+	ArrowUp,
+} from 'lucide-react';
 import mime from 'mime';
 import React, {
 	useState,
@@ -76,6 +84,18 @@ interface TextInputProps {
 	 */
 	phase?: ReplyPhase;
 	onInterrupt?: () => void;
+	/**
+	 * Content rendered directly above the input pill, inside the outer
+	 * wrapper that {@link className} styles (e.g. the working directory
+	 * and git status).
+	 *
+	 * The pill keeps all four of its corners, so the two only read as one
+	 * surface if the caller gives that wrapper a background and a radius
+	 * concentric with the pill's — outer radius = 28px + the wrapper's
+	 * padding. Anything less and the pill's top corners cut into the
+	 * header's edges.
+	 */
+	headerSlot?: React.ReactNode;
 }
 
 export interface TextInputRef {
@@ -119,6 +139,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			fileProcessor,
 			phase = 'idle',
 			onInterrupt,
+			headerSlot,
 		},
 		ref,
 	) => {
@@ -252,7 +273,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				};
 			}
 			return {
-				icon: Send,
+				icon: ArrowUp,
 				tooltip: t('textInput.send'),
 				disabled: disabled || !value.trim() || hasProcessing,
 				onClick: handleSend,
@@ -304,6 +325,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 		return (
 			<div className={cn('flex flex-col', className)}>
+				{headerSlot}
 				<div
 					id="tour-chat-input"
 					className="flex w-full flex-col rounded-[28px] border bg-background px-2"

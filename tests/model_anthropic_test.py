@@ -255,6 +255,164 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
         )
 
 
+class TestAnthropicEffort(IsolatedAsyncioTestCase):
+    """Tests for the ``reasoning_effort`` parameter."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+        self.mock_create = AsyncMock(return_value=_mock_completion(text="hi"))
+        self.mock_client.messages.create = self.mock_create
+
+    async def test_effort_omitted_by_default(self) -> None:
+        """No output_config is sent when reasoning_effort is unset."""
+        await self.model([])
+
+        self.assertNotIn("output_config", self.mock_create.call_args.kwargs)
+
+    async def test_effort_nested_in_output_config(self) -> None:
+        """Effort travels inside output_config, not as a top-level field."""
+        self.model.parameters.reasoning_effort = "medium"
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["output_config"], {"effort": "medium"})
+        self.assertNotIn("effort", kwargs)
+
+    async def test_effort_coexists_with_thinking(self) -> None:
+        """Effort and extended thinking are independent controls."""
+        self.model.parameters.reasoning_effort = "max"
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 1024
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["output_config"], {"effort": "max"})
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 1024},
+        )
+
+    async def test_caller_output_config_wins(self) -> None:
+        """An explicit output_config kwarg is not overwritten."""
+        self.model.parameters.reasoning_effort = "low"
+
+        await self.model([], output_config={"effort": "high"})
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs["output_config"],
+            {"effort": "high"},
+        )
+
+
+class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
+    """Tests for adaptive vs budget-based thinking configuration."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+        self.mock_create = AsyncMock(return_value=_mock_completion(text="hi"))
+        self.mock_client.messages.create = self.mock_create
+
+    def _thinking(self) -> Any:
+        return self.mock_create.call_args.kwargs.get("thinking")
+
+    async def test_no_thinking_by_default(self) -> None:
+        """Neither control set means no thinking config is sent."""
+        await self.model([])
+
+        self.assertIsNone(self._thinking())
+
+    async def test_adaptive_carries_no_budget(self) -> None:
+        """Adaptive mode must not send budget_tokens, which it rejects."""
+        self.model.parameters.thinking_mode = "adaptive"
+        self.model.parameters.thinking_budget = 4096
+
+        await self.model([])
+
+        self.assertEqual(self._thinking(), {"type": "adaptive"})
+
+    async def test_adaptive_with_display(self) -> None:
+        """Display is what makes thinking text visible on newer models."""
+        self.model.parameters.thinking_mode = "adaptive"
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self._thinking(),
+            {"type": "adaptive", "display": "summarized"},
+        )
+
+    async def test_disabled_drops_display(self) -> None:
+        """Display is invalid alongside type: disabled."""
+        self.model.parameters.thinking_mode = "disabled"
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(self._thinking(), {"type": "disabled"})
+
+    async def test_legacy_toggle_still_means_budget_mode(self) -> None:
+        """thinking_enable keeps its old meaning when mode is unset."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 2048
+
+        await self.model([])
+
+        self.assertEqual(
+            self._thinking(),
+            {"type": "enabled", "budget_tokens": 2048},
+        )
+
+    async def test_mode_overrides_legacy_toggle(self) -> None:
+        """An explicit mode wins over the legacy boolean."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_mode = "adaptive"
+
+        await self.model([])
+
+        self.assertEqual(self._thinking(), {"type": "adaptive"})
+
+    async def test_budget_mode_expands_max_tokens(self) -> None:
+        """max_tokens must stay strictly above budget_tokens."""
+        self.model.parameters.thinking_mode = "enabled"
+        self.model.parameters.thinking_budget = 8192
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["thinking"]["budget_tokens"], 8192)
+        self.assertGreater(kwargs["max_tokens"], 8192)
+
+    def test_resolved_mode_drives_tool_choice_downgrade(self) -> None:
+        """Only budget mode forbids forced tool use, so only it downgrades.
+
+        ``_call_api_with_structured_output`` keys the downgrade off this
+        resolution — adaptive must not trip it.
+        """
+        cases = [
+            ({}, None),
+            ({"thinking_enable": True}, "enabled"),
+            ({"thinking_mode": "enabled"}, "enabled"),
+            ({"thinking_mode": "adaptive"}, None),
+            ({"thinking_mode": "disabled"}, None),
+            ({"thinking_enable": True, "thinking_mode": "adaptive"}, None),
+        ]
+        for params, expected in cases:
+            with self.subTest(params=params):
+                model = _make_model()
+                for key, val in params.items():
+                    setattr(model.parameters, key, val)
+                resolved = model._thinking_mode()
+                downgrades = resolved == "enabled"
+                self.assertEqual(downgrades, expected == "enabled")
+
+
 # ---------------------------------------------------------------------------
 # Streaming tests
 # ---------------------------------------------------------------------------

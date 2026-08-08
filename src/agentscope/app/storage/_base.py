@@ -8,14 +8,17 @@ from typing import Any, Self
 
 from ._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
+    MCPRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
+    SkillRecord,
     TeamRecord,
 )
 from ...credential import CredentialBase
@@ -110,6 +113,193 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
+        """Create or update an installed-MCP record.
+
+        The record's ``client.name`` is unique per user — the workspace
+        relation is derived by joining on it — so writing a name another
+        record already holds is an error rather than an overwrite.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            mcp_record (`MCPRecord`):
+                The record to write. Its ``id`` decides create vs update.
+
+        Returns:
+            `str`:
+                The MCP record id.
+
+        Raises:
+            `ValueError`:
+                When another record of this user already uses the name.
+        """
+
+    @abstractmethod
+    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
+        """List every MCP a user has installed, enabled or not.
+
+        Args:
+            user_id (`str`):
+                The user id.
+
+        Returns:
+            `list[MCPRecord]`:
+                All installed-MCP records for the user.
+        """
+
+    @abstractmethod
+    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
+        """Fetch a single installed-MCP record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            mcp_id (`str`):
+                The record id.
+
+        Returns:
+            `MCPRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def get_mcp_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> MCPRecord | None:
+        """Fetch an installed-MCP record by its MCP name.
+
+        This is the lookup the workspace relation is derived through —
+        a workspace holds names, not record ids.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            name (`str`):
+                The MCP name, i.e. ``record.client.name``.
+
+        Returns:
+            `MCPRecord | None`:
+                The record, or ``None`` if the user has no MCP so named.
+        """
+
+    @abstractmethod
+    async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
+        """Delete an installed-MCP record.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            mcp_id (`str`):
+                The record id.
+
+        Returns:
+            `bool`:
+                True if deleted, False if not found.
+        """
+
+    @abstractmethod
+    async def upsert_skill(
+        self,
+        user_id: str,
+        skill_record: SkillRecord,
+    ) -> str:
+        """Create or update an installed-skill record.
+
+        The record's ``name`` is unique per user, for the same reason
+        MCP names are: a workspace refers to a skill by name.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            skill_record (`SkillRecord`):
+                The record to write. Its ``id`` decides create vs update.
+
+        Returns:
+            `str`:
+                The skill record id.
+
+        Raises:
+            `ValueError`:
+                When another record of this user already uses the name.
+        """
+
+    @abstractmethod
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
+        """List every skill a user has installed, enabled or not.
+
+        Named apart from the workspace's ``list_skills`` because these
+        are library records, not skills present in any workspace.
+
+        Args:
+            user_id (`str`):
+                The user id.
+
+        Returns:
+            `list[SkillRecord]`:
+                All installed-skill records for the user.
+        """
+
+    @abstractmethod
+    async def get_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> SkillRecord | None:
+        """Fetch a single installed-skill record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            skill_id (`str`):
+                The record id.
+
+        Returns:
+            `SkillRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> SkillRecord | None:
+        """Fetch an installed-skill record by its skill name.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            name (`str`):
+                The skill name.
+
+        Returns:
+            `SkillRecord | None`:
+                The record, or ``None`` if the user has none so named.
+        """
+
+    @abstractmethod
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete an installed-skill record.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            skill_id (`str`):
+                The record id.
+
+        Returns:
+            `bool`:
+                True if deleted, False if not found.
+        """
+
+    @abstractmethod
     async def upsert_agent(
         self,
         user_id: str,
@@ -182,6 +372,8 @@ class StorageBase(ABC):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -321,6 +513,23 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions derived from a given channel.
+
+        Args:
+            user_id (`str`): The owner user id.
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `list[SessionRecord]`: Sessions the channel spawned, ordered
+            by creation time (newest first).
+        """
+
+    @abstractmethod
     async def upsert_schedule(
         self,
         user_id: str,
@@ -392,6 +601,125 @@ class StorageBase(ABC):
         Returns:
             `list[ScheduleRecord]`: All schedule records in the store.
         """
+
+    # ------------------------------------------------------------------
+    # Channel persistence
+    #
+    # Optional capability: channels require the distributed message bus
+    # (locks / pub-sub / queues), so only bus-backed stores (Redis)
+    # implement these. Other backends inherit the NotImplementedError
+    # default.
+    # ------------------------------------------------------------------
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and refresh its indexes.
+
+        ``record.id`` is a globally unique UUID, so the record lives at a
+        single global key; ``record.user_id`` drives the per-user index
+        and ``platform_bot_id`` (extracted from credentials by the
+        caller) drives the uniqueness index.
+
+        Args:
+            record (`ChannelRecord`): The channel record to store.
+            platform_bot_id (`str`): The platform-side bot identifier,
+                used to maintain the dedup index.
+
+        Returns:
+            `str`: The id of the stored record.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def get_channel(
+        self,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a channel record by its global id.
+
+        This is the primary lookup, used both by the management API and
+        by the channel runtime (which only has a channel_id in hand).
+
+        Args:
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `ChannelRecord | None`: The record, or ``None`` if not found.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def list_channels(
+        self,
+        user_id: str,
+    ) -> list[ChannelRecord]:
+        """Return all channel records owned by the given user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[ChannelRecord]`: All channel records for the user.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Return every channel record across all users.
+
+        Used on startup / reconcile to restore channel instances.
+
+        Returns:
+            `list[ChannelRecord]`: All channel records in the store.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record and remove it from all indexes.
+
+        Args:
+            channel_id (`str`): The id of the channel to delete.
+            platform_bot_id (`str`): The bot identifier (re-extracted
+                from credentials by the caller) so the dedup index entry
+                can be removed.
+
+        Returns:
+            `bool`: ``True`` if deleted, ``False`` if not found.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel id currently bound to a platform bot, if any.
+
+        Used for uniqueness validation — no two channels may share the
+        same platform_bot_id.
+
+        Args:
+            platform_bot_id (`str`): The platform-side bot identifier.
+
+        Returns:
+            `str | None`: The bound channel id, or ``None``.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
 
     # ------------------------------------------------------------------
     # Message persistence

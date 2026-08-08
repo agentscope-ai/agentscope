@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The builtin tools in agentscope."""
 
-from ._backend import BackendBase, ExecResult, LocalBackend
+from ._backend import BackendBase, DirEntry, ExecResult, LocalBackend
 from ._bash import Bash
 from ._edit import Edit
 from ._glob import Glob
@@ -23,6 +23,7 @@ __all__ = [
     "Read",
     "Write",
     "BackendBase",
+    "DirEntry",
     "LocalBackend",
     "ExecResult",
 ]

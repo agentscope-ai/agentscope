@@ -368,6 +368,32 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if some process holds the lock right now.
         """
 
+    @abstractmethod
+    async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
+        """Claim ``key`` without blocking (non-blocking mutex).
+
+        Unlike :meth:`acquire_lock` (which waits until free), this
+        returns immediately: ``True`` if acquired, ``False`` if already
+        held. Release with :meth:`unlock`. Used to make an at-least-once
+        queue drain effectively once — the node that wins the claim for
+        a key does the work; the others skip.
+
+        Args:
+            key (`str`):
+                Lock identifier.
+            ttl_secs (`int`, defaults to ``600``):
+                Lease duration; the claim expires automatically so a
+                crashed holder cannot block the key forever.
+
+        Returns:
+            `bool`:
+                ``True`` if the lock was acquired.
+        """
+
+    @abstractmethod
+    async def unlock(self, key: str) -> None:
+        """Release a lock claimed via :meth:`try_lock` (best-effort)."""
+
     # ------------------------------------------------------------------
     # Mode F — registry map (hash-keyed namespace)
     # ------------------------------------------------------------------
@@ -442,6 +468,26 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         Returns:
             `dict[str, str]`:
                 All entries. Empty dict when the namespace is absent.
+        """
+
+    @abstractmethod
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return the value of a single ``field`` in the registry at
+        ``namespace``, or ``None`` if absent.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to retrieve.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` if missing.
         """
 
     @abstractmethod
