@@ -3,12 +3,20 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import os
+import tempfile
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 from agentscope.formatter import (
     OpenAIChatFormatter,
     OpenAIMultiAgentFormatter,
+)
+from agentscope.formatter._formatter_base import (
+    FormatterBase,
+    _UNSUPPORTED_MEDIA_TEMP_FILES,
+    _cleanup_unsupported_media_temp_files,
 )
 from agentscope.message import (
     UserMsg,
@@ -770,3 +778,136 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class _TextOnlyFormatter(FormatterBase):
+    """A formatter that accepts only ``text/plain``; everything else goes
+    through ``convert_tool_result_to_string``'s unsupported-media path."""
+
+    async def format(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> list[dict]:  # pragma: no cover
+        return []
+
+
+class FormatterBaseUnsupportedMediaTest(IsolatedAsyncioTestCase):
+    """Unsupported-media Base64Source storage regressions (issue #2173)."""
+
+    def setUp(self) -> None:
+        """Seed a text-only formatter, two base64 fixtures, and the
+        ``tmpdir`` snapshot used to detect temp-file leaks."""
+        self._fmt = _TextOnlyFormatter(input_types=["text/plain"])
+        self._png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfakehdr"
+        self._png_b64 = base64.b64encode(self._png_bytes).decode("ascii")
+        self._mp3_bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00fake mp3 payload"
+        self._mp3_b64 = base64.b64encode(self._mp3_bytes).decode("ascii")
+        tmpdir = tempfile.gettempdir()
+        self._snapshot_before = {
+            p for p in os.listdir(tmpdir) if p.startswith("as-unsup-")
+        }
+
+    def tearDown(self) -> None:
+        """Run the atexit hook so no temp files leak between tests."""
+        _cleanup_unsupported_media_temp_files()
+
+    def test_same_base64_yields_deterministic_path(self) -> None:
+        """Identical ``Base64Source`` bytes must produce identical output."""
+        blocks = [
+            DataBlock(
+                source=Base64Source(
+                    data=self._png_b64,
+                    media_type="image/png",
+                ),
+            ),
+        ]
+        first, _ = self._fmt.convert_tool_result_to_string(blocks)
+        second, _ = self._fmt.convert_tool_result_to_string(blocks)
+        self.assertEqual(first, second)
+        self.assertIn("saved locally at:", first)
+
+    def test_written_file_contains_decoded_bytes(self) -> None:
+        """The registered temp file must store the decoded bytes."""
+        blocks = [
+            DataBlock(
+                source=Base64Source(
+                    data=self._mp3_b64,
+                    media_type="audio/mpeg",
+                ),
+            ),
+        ]
+        text, _ = self._fmt.convert_tool_result_to_string(blocks)
+        prefix = "saved locally at: "
+        start = text.index(prefix) + len(prefix)
+        end = text.index(".</system-reminder>", start)
+        path = text[start:end]
+        self.assertTrue(os.path.isfile(path))
+        with open(path, "rb") as handle:
+            payload = handle.read()
+        self.assertEqual(payload, self._mp3_bytes)
+
+    def test_distinct_contents_yield_distinct_paths(self) -> None:
+        """Different payloads must register two different stable paths."""
+        registered_before = set(_UNSUPPORTED_MEDIA_TEMP_FILES)
+        blocks_a = [
+            DataBlock(
+                source=Base64Source(
+                    data=self._png_b64,
+                    media_type="image/png",
+                ),
+            ),
+        ]
+        blocks_b = [
+            DataBlock(
+                source=Base64Source(
+                    data=self._mp3_b64,
+                    media_type="audio/mpeg",
+                ),
+            ),
+        ]
+        text_a, _ = self._fmt.convert_tool_result_to_string(blocks_a)
+        text_b, _ = self._fmt.convert_tool_result_to_string(blocks_b)
+        self.assertNotEqual(text_a, text_b)
+        new_files = _UNSUPPORTED_MEDIA_TEMP_FILES - registered_before
+        self.assertEqual(len(new_files), 2)
+        for path in new_files:
+            self.assertTrue(os.path.basename(path).startswith("as-unsup-"))
+
+    def test_atexit_cleanup_removes_registered_files(self) -> None:
+        """The cleanup hook must delete every registered temp path."""
+        blocks = [
+            DataBlock(
+                source=Base64Source(
+                    data=self._png_b64,
+                    media_type="image/png",
+                ),
+            ),
+        ]
+        text, _ = self._fmt.convert_tool_result_to_string(blocks)
+        prefix = "saved locally at: "
+        start = text.index(prefix) + len(prefix)
+        end = text.index(".</system-reminder>", start)
+        path = text[start:end]
+        self.assertIn(path, _UNSUPPORTED_MEDIA_TEMP_FILES)
+        _cleanup_unsupported_media_temp_files()
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(len(_UNSUPPORTED_MEDIA_TEMP_FILES), 0)
+
+    def test_no_leaked_temp_file_per_call(self) -> None:
+        """Five consecutive runs must leave only one temp payload file."""
+        blocks = [
+            DataBlock(
+                source=Base64Source(
+                    data=self._png_b64,
+                    media_type="image/png",
+                ),
+            ),
+        ]
+        for _ in range(5):
+            self._fmt.convert_tool_result_to_string(blocks)
+        tmpdir = tempfile.gettempdir()
+        created = {
+            p for p in os.listdir(tmpdir) if p.startswith("as-unsup-")
+        } - self._snapshot_before
+        self.assertEqual(len(created), 1)
