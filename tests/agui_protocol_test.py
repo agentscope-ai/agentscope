@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from agentscope.app.middleware import AGUIProtocolMiddleware
 from agentscope.event import (
     ConfirmResult,
+    CustomEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -642,6 +643,22 @@ class AGUIProtocolPermissionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["type"], "CUSTOM")
         self.assertEqual(result["name"], "external_execution_result")
+
+    async def test_custom_event_preserves_name_and_value(self) -> None:
+        """Generic CustomEvent fields pass through to AG-UI unchanged."""
+        event = CustomEvent(
+            name="context_compression",
+            value={"reply_id": "reply_1", "status": "started"},
+        )
+
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "context_compression")
+        self.assertEqual(
+            result["value"],
+            {"reply_id": "reply_1", "status": "started"},
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
