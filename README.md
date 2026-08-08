@@ -73,7 +73,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
-- **[2026-08] `INTE`:** Feishu (Lark) and Discord channels supported. [Feishu](https://docs.agentscope.io/latest/en/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/en/deploy/channel/discord)
+- **[2026-08] `INTE`:** Feishu (Lark), Discord, and Telegram channels supported. [Feishu](https://docs.agentscope.io/latest/en/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/en/deploy/channel/discord) | [Telegram](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service#telegram-channel)
 - **[2026-08] `FEAT`:** Channels supported — connect agents to IM platforms in agent service. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/channel/overview)
 - **[2026-08] `INTE`:** GitHub MCP Registry and ClawHub supported as built-in hubs. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
 - **[2026-08] `FEAT`:** MCP & Skill Hub supported — browse a hub, install into your library, add to a workspace. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
@@ -197,7 +197,7 @@ AgentScope ships a batteries-included **agent service** — a FastAPI backend wi
 |---|---|
 | [**Serving**](https://docs.agentscope.io/latest/en/deploy/agent-service) | Multi-tenancy, multi-session isolation, FastAPI backend, pre-built Web UI |
 | [**Agent Team**](https://docs.agentscope.io/latest/en/deploy/agent-team) | Leader–worker orchestration, built-in team tools, task planning |
-| [**Channels**](https://docs.agentscope.io/latest/en/deploy/channel/overview) | Connect agents to IM platforms — Feishu (Lark), Discord, custom channels, message routing |
+| [**Channels**](https://docs.agentscope.io/latest/en/deploy/channel/overview) | Connect agents to IM platforms — Feishu (Lark), Discord, Telegram, custom channels, message routing |
 | [**RAG Service**](https://docs.agentscope.io/latest/en/deploy/rag) | Blob storage, index worker, multi-tenant retrieval |
 | [**MCP & Skill Hub**](https://docs.agentscope.io/latest/en/deploy/hub/overview) | Browse hubs (GitHub MCP Registry, ClawHub), install into your library, add to a workspace |
 | [**Resource Sharing**](https://docs.agentscope.io/latest/en/deploy/sharing) | Group- and org-level management for sharing models, MCP servers, skills, and workspaces |
