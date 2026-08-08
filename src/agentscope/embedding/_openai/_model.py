@@ -113,11 +113,12 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             api_key=credential.api_key.get_secret_value(),
             **client_kwargs,
         )
-        self.pass_dimensions = (
-            parameters.pass_dimensions
-            if parameters is not None
-            else pass_dimensions
-        )
+        self.pass_dimensions = pass_dimensions
+        if (
+            parameters is not None
+            and "pass_dimensions" in parameters.model_fields_set
+        ):
+            self.pass_dimensions = parameters.pass_dimensions
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
     @classmethod

@@ -167,6 +167,65 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         )
 
     @patch("openai.AsyncClient")
+    async def test_constructor_flag_survives_default_parameters(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Default ``Parameters`` should not override constructor flag."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 2),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="Qwen3-Embedding-0.6B",
+            dimensions=1024,
+            parameters=OpenAIEmbeddingModel.Parameters(),
+            pass_dimensions=False,
+        )
+        result = await model(["hello"])
+
+        self.assertEqual(result["embeddings"], [[0.1, 0.2]])
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello"],
+            model="Qwen3-Embedding-0.6B",
+            encoding_format="float",
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_explicit_parameter_overrides_constructor_flag(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Explicit ``parameters.pass_dimensions`` still wins."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 2),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="text-embedding-3-small",
+            dimensions=1024,
+            parameters=OpenAIEmbeddingModel.Parameters(
+                pass_dimensions=True,
+            ),
+            pass_dimensions=False,
+        )
+        result = await model(["hello"])
+
+        self.assertEqual(result["embeddings"], [[0.1, 0.2]])
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello"],
+            model="text-embedding-3-small",
+            encoding_format="float",
+            dimensions=1024,
+        )
+
+    @patch("openai.AsyncClient")
     async def test_multi_batch(self, mock_client_cls: Any) -> None:
         """Inputs exceeding batch_size are split and merged."""
         mock_client = MagicMock()

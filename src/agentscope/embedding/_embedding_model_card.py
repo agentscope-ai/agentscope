@@ -157,17 +157,18 @@ class EmbeddingModelCard(BaseModel):
                         and isinstance(property_schema, dict)
                         and isinstance(property_schema.get("anyOf"), list)
                     ):
-                        non_null_schema = next(
-                            (
-                                item
-                                for item in property_schema["anyOf"]
-                                if item.get("type") != "null"
-                            ),
-                            None,
+                        non_null_schemas = [
+                            item
+                            for item in property_schema["anyOf"]
+                            if item.get("type") != "null"
+                        ]
+                        has_null_schema = any(
+                            item.get("type") == "null"
+                            for item in property_schema["anyOf"]
                         )
-                        if non_null_schema is not None:
+                        if has_null_schema and len(non_null_schemas) == 1:
                             properties[param_name] = {
-                                **non_null_schema,
+                                **non_null_schemas[0],
                                 **{
                                     key: value
                                     for key, value in property_schema.items()
