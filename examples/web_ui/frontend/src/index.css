@@ -2,6 +2,7 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
 @source '../node_modules/streamdown/dist/*.js';
 @source '../node_modules/@streamdown/*/dist/*.js';
 
@@ -14,26 +15,31 @@ body,
 	width: 100%;
 }
 
+svg.lucide {
+	stroke-width: 1.7;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
-	--text: #6b6375;
-	--text-h: #08060d;
-	--bg: #fff;
+	/* --text: #6b6375; */
+	/* --text-h: #08060d; */
+	/* --bg: #fff; */
+	--text: #6b6f76;
+	--text-h: #18191c;
+	--bg: #f4f5f6;
 	--border: oklch(0.922 0 0);
+	/* --border: rgba(24, 25, 28, 0.06); */
 	--code-bg: #f4f3ec;
-	--accent: oklch(0.97 0 0);
+	/* --accent: oklch(0.97 0 0); */
+	--accent: rgba(24, 25, 28, 0.05);
 	--accent-bg: rgba(170, 59, 255, 0.1);
 	--accent-border: rgba(170, 59, 255, 0.5);
 	--social-bg: rgba(244, 243, 236, 0.5);
 	--shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
-	--sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-	--heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-	--mono: ui-monospace, Consolas, monospace;
-
 	/*font: 18px/145% var(--sans);*/
-	letter-spacing: 0.18px;
+	/* letter-spacing: 0.18px; */
 	color-scheme: light dark;
 	color: var(--text);
 	background: var(--bg);
@@ -46,9 +52,10 @@ body,
 		font-size: 16px;
 	}
 
-	--background: oklch(1 0 0);
+	/* --foreground: oklch(0.145 0 0); */
 
-	--foreground: oklch(0.145 0 0);
+	--background: oklch(1 0 0);
+	--foreground: #18191c;
 
 	--card: oklch(1 0 0);
 
@@ -58,25 +65,31 @@ body,
 
 	--popover-foreground: oklch(0.145 0 0);
 
-	--primary: oklch(0.205 0 0);
+	/* --primary: oklch(0.205 0 0); */
+	--primary: #18191c;
 
 	--primary-foreground: oklch(0.985 0 0);
 
-	--secondary: oklch(0.97 0 0);
+	/* --secondary: oklch(0.97 0 0); */
+	--secondary: #f7f8f9;
 
 	--secondary-foreground: oklch(0.205 0 0);
 
-	--muted: oklch(0.97 0 0);
+	/* --muted: oklch(0.97 0 0); */
+	--muted: #f7f8f9;
 
-	--muted-foreground: oklch(0.556 0 0);
+	/* --muted-foreground: oklch(0.556 0 0); */
+	--muted-foreground: #6b6f76;
 
 	--accent-foreground: oklch(0.205 0 0);
 
 	--destructive: oklch(0.577 0.245 27.325);
 
 	--input: oklch(0.922 0 0);
+	/* --input: rgba(24, 25, 28, 0.06); */
 
-	--ring: oklch(0.708 0 0);
+	/* --ring: oklch(0.708 0 0); */
+	--ring: rgba(24, 25, 28, 0.22);
 
 	--chart-1: oklch(0.87 0 0);
 
@@ -88,9 +101,11 @@ body,
 
 	--chart-5: oklch(0.269 0 0);
 
-	--radius: 0.625rem;
+	/* --radius: 0.625rem; */
+	--radius: 1rem;
 
-	--sidebar: oklch(0.985 0 0);
+	/* --sidebar: oklch(0.985 0 0); */
+	--sidebar: rgba(255, 255, 255, 0.62);
 
 	--sidebar-foreground: oklch(0.145 0 0);
 
@@ -98,11 +113,13 @@ body,
 
 	--sidebar-primary-foreground: oklch(0.985 0 0);
 
-	--sidebar-accent: oklch(0.97 0 0);
+	/* --sidebar-accent: oklch(0.97 0 0); */
+	--sidebar-accent: rgba(24, 25, 28, 0.055);
 
 	--sidebar-accent-foreground: oklch(0.205 0 0);
 
-	--sidebar-border: oklch(0.922 0 0);
+	/* --sidebar-border: oklch(0.922 0 0); */
+	--sidebar-border: transparent;
 
 	--sidebar-ring: oklch(0.708 0 0);
 }
@@ -129,6 +146,16 @@ body,
 @theme inline {
 	--font-heading: var(--font-sans);
 	--font-sans: 'Geist Variable', sans-serif;
+	--font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+	--color-canvas: var(--bg); /* → bg-canvas (app base; panels float on it) */
+	/* Menu-item inset, tied to the corner radius: a rounder item eats more
+	   horizontal room at the text's edge, so the padding has to grow with it. */
+	--spacing-menu-item: calc(var(--radius) * 0.625);
+	--color-text-secondary: #41454b; /* → text-text-secondary */
+	--color-text-tertiary: #a7abb2; /* → text-text-tertiary */
+	--color-text-data: #8e939a; /* → text-text-data */
+	--color-surface-muted: #f1f2f4; /* → bg-surface-muted (inline badges) */
+	--color-row-hover: rgba(24, 25, 28, 0.02); /* → hover:bg-row-hover */
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -167,6 +194,8 @@ body,
 	--radius-2xl: calc(var(--radius) * 1.8);
 	--radius-3xl: calc(var(--radius) * 2.2);
 	--radius-4xl: calc(var(--radius) * 2.6);
+	--shadow-panel: 0 1px 2px rgba(24, 25, 28, 0.05), 0 18px 40px -30px rgba(24, 25, 28, 0.28);
+	--shadow-tab: 0 1px 2px rgba(24, 25, 28, 0.07); /* → shadow-tab (active tab) */
 }
 
 .dark {
@@ -208,7 +237,7 @@ body,
 		@apply border-border outline-ring/50;
 	}
 	body {
-		@apply bg-background text-foreground;
+		@apply bg-canvas text-foreground;
 	}
 	html {
 		@apply font-sans;

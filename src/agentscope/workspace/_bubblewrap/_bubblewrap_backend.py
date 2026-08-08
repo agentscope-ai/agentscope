@@ -14,7 +14,7 @@ import os
 import posixpath
 import signal
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, AsyncIterator
 
 from ...tool import BackendBase, ExecResult
 from ._constants import SANDBOX_CACHE_DIR, SANDBOX_TMPDIR, SANDBOX_WORKDIR
@@ -282,6 +282,22 @@ class BubblewrapBackend(BackendBase):
 
     async def write_file(self, path: str, data: bytes) -> None:
         """Write raw bytes, refusing every symbolic-link final component."""
+        await self._write_via_cat(path, data)
+
+    async def write_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Stream bytes into ``path``, chunk by chunk through ``cat``."""
+        await self._write_via_cat(path, stream)
+
+    async def _write_via_cat(
+        self,
+        path: str,
+        data: bytes | AsyncIterator[bytes],
+    ) -> None:
+        """Pipe ``data`` into ``path`` via ``cat``, refusing symlinks."""
         sandbox_path = self._sandbox_path_for(path)
         result = await self._exec_with_input(
             [
@@ -310,7 +326,7 @@ class BubblewrapBackend(BackendBase):
             )
         if not result.ok():
             raise RuntimeError(
-                "Bubblewrap write_file failed "
+                "Bubblewrap write failed "
                 f"(exit {result.exit_code}): "
                 f"{result.stderr.decode(errors='replace')}",
             )
@@ -318,12 +334,18 @@ class BubblewrapBackend(BackendBase):
     async def _exec_with_input(
         self,
         command: list[str],
-        data: bytes,
+        data: bytes | AsyncIterator[bytes],
         *,
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Run a sandbox command with ``data`` piped to stdin."""
+        """Run a sandbox command with ``data`` piped to stdin.
+
+        An async iterator is fed chunk by chunk, so a large payload
+        never materializes. Safe only because the commands run this way
+        write nothing to stdout — otherwise a full pipe would deadlock
+        against the writer.
+        """
         try:
             process = await self.start_process(
                 command,
@@ -340,10 +362,11 @@ class BubblewrapBackend(BackendBase):
             )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(data),
-                timeout=timeout,
-            )
+            if isinstance(data, bytes):
+                comm = process.communicate(data)
+            else:
+                comm = self._feed_then_communicate(process, data)
+            stdout, stderr = await asyncio.wait_for(comm, timeout=timeout)
         except asyncio.TimeoutError:
             await self._terminate_process_tree(process, grace=1.0)
             return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
@@ -358,6 +381,19 @@ class BubblewrapBackend(BackendBase):
             stdout=stdout,
             stderr=stderr,
         )
+
+    @staticmethod
+    async def _feed_then_communicate(
+        process: asyncio.subprocess.Process,
+        stream: AsyncIterator[bytes],
+    ) -> tuple[bytes, bytes]:
+        """Write ``stream`` to stdin, then drain the process."""
+        assert process.stdin is not None
+        async for chunk in stream:
+            process.stdin.write(chunk)
+            await process.stdin.drain()
+        process.stdin.close()
+        return await process.communicate()
 
     def _bwrap_argv(
         self,

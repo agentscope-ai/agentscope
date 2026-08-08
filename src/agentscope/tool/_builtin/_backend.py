@@ -42,9 +42,18 @@ import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any
+from typing import Any, AsyncIterator
 
 import aiofiles
+
+# Chunk size for streamed reads. Large enough that a big file does not
+# turn into thousands of awaits, small enough to stay off the heap.
+DEFAULT_READ_CHUNK_SIZE = 1024 * 1024
+
+# One NUL-terminated record per entry, for the shell-based ``scandir``
+# and ``stat``. The name goes last because it is the only field that
+# may itself contain a tab, so a bounded split keeps it whole.
+_FIND_ENTRY_FORMAT = "%Y\\t%s\\t%T@\\t%f\\0"
 
 # ── data class ─────────────────────────────────────────────────────────
 
@@ -72,6 +81,31 @@ class ExecResult:
                 ``True`` iff the command exited with code ``0``.
         """
         return self.exit_code == 0
+
+
+@dataclass(frozen=True, slots=True)
+class DirEntry:
+    """One entry from :meth:`BackendBase.scandir`.
+
+    Mirrors :class:`os.DirEntry`: the metadata comes from the same
+    directory read as the name, so a listing costs one round trip
+    instead of one per entry plus one per attribute.
+
+    Attributes:
+        name: The entry's base name, without any leading directory.
+        is_dir: Whether the entry is a directory, following symlinks.
+        size_bytes: Size in bytes of a file. Always ``None`` for a
+            directory — its on-disk size says nothing a caller wants —
+            and ``None`` when it could not be determined (a broken
+            symlink, a vanished entry).
+        mtime: Modification time as a POSIX timestamp, or ``None``
+            for the same reasons.
+    """
+
+    name: str
+    is_dir: bool
+    size_bytes: int | None = None
+    mtime: float | None = None
 
 
 # ── helpers ────────────────────────────────────────────────────────────
@@ -308,6 +342,56 @@ class BackendBase(ABC):
                 The raw bytes to write.
         """
 
+    async def write_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write a byte stream to ``path``, creating parent directories.
+
+        The default buffers the whole stream and delegates to
+        :meth:`write_file`, so peak memory is the payload size; only
+        backends that override this (``LocalBackend``,
+        ``BubblewrapBackend``, ``K8sBackend``) are constant-memory.
+        Callers handling untrusted input must cap the payload
+        regardless.
+
+        Args:
+            path (`str`):
+                Destination path inside the backend's environment.
+            stream (`AsyncIterator[bytes]`):
+                The chunks to write, in order.
+        """
+        chunks = [chunk async for chunk in stream]
+        await self.write_file(path, b"".join(chunks))
+
+    async def read_stream(
+        self,
+        path: str,
+        chunk_size: int = DEFAULT_READ_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read ``path`` as a byte stream.
+
+        The default reads the whole file through :meth:`read_file` and
+        re-slices it, so peak memory is the file size; only backends
+        that override this (``LocalBackend``) are constant-memory.
+        Overriding requires incremental access to ``exec_shell``
+        stdout, which the remote backends do not expose today.
+
+        Args:
+            path (`str`):
+                Path to the file inside the backend's environment.
+            chunk_size (`int`, defaults to 1 MiB):
+                The size of each yielded chunk.
+
+        Yields:
+            `bytes`:
+                Successive chunks of the file, in order.
+        """
+        data = await self.read_file(path)
+        for start in range(0, len(data), chunk_size):
+            yield data[start : start + chunk_size]
+
     # ── derived filesystem ops (shell-based defaults) ──────────────
 
     async def getcwd(self) -> str:
@@ -445,6 +529,133 @@ class BackendBase(ABC):
             for part in result.stdout.split(b"\0")
             if part
         ]
+
+    async def scandir(self, path: str) -> list[DirEntry]:
+        """List one directory level with each entry's metadata.
+
+        The type, size and mtime come back from the same ``find`` run
+        as the names, so listing a directory of N entries costs one
+        round trip rather than 1 + 3N. Prefer this over
+        :meth:`list_dir` plus per-entry calls whenever the metadata is
+        wanted; ``find -printf`` is a GNU extension, so backends on
+        non-GNU userlands should override it.
+
+        ``%Y`` follows symlinks, matching what :meth:`is_dir` reports;
+        the size and mtime describe the link itself, which only
+        differs for the link's own few bytes.
+
+        Args:
+            path (`str`):
+                Directory to list inside the backend's environment.
+
+        Returns:
+            `list[DirEntry]`:
+                The immediate children, or an empty list if ``path``
+                does not exist or cannot be listed.
+        """
+        return await self._find_entries(
+            [
+                "find",
+                path,
+                "-mindepth",
+                "1",
+                "-maxdepth",
+                "1",
+                "-printf",
+                _FIND_ENTRY_FORMAT,
+            ],
+        )
+
+    async def stat(self, path: str) -> DirEntry | None:
+        """Return one path's type, size and mtime in a single call.
+
+        The single-path counterpart of :meth:`scandir`, the way
+        :func:`os.stat` sits beside :func:`os.scandir`. Prefer it over
+        asking :meth:`file_exists`, :meth:`is_dir` and
+        :meth:`stat_mtime` in turn, which is three round trips for what
+        one command answers.
+
+        Args:
+            path (`str`):
+                Path to stat inside the backend's environment.
+
+        Returns:
+            `DirEntry | None`:
+                The entry, or ``None`` if ``path`` does not exist.
+                ``name`` is the base name, as :meth:`scandir` reports
+                it.
+        """
+        entries = await self._find_entries(
+            ["find", path, "-maxdepth", "0", "-printf", _FIND_ENTRY_FORMAT],
+            skip_unresolvable=True,
+        )
+        return entries[0] if entries else None
+
+    async def _find_entries(
+        self,
+        command: list[str],
+        *,
+        skip_unresolvable: bool = False,
+    ) -> list[DirEntry]:
+        """Parse the records a ``_FIND_ENTRY_FORMAT`` run prints.
+
+        Args:
+            command (`list[str]`):
+                The ``find`` argv, already carrying the format.
+            skip_unresolvable (`bool`, defaults to ``False``):
+                Drop entries whose target could not be followed — a
+                dangling symlink, most often. :meth:`stat` wants this
+                (``os.stat`` follows the link and fails, and a caller
+                about to read the file must not be told it is there);
+                :meth:`scandir` does not, since ``os.scandir`` lists a
+                broken link like any other name.
+
+        Returns:
+            `list[DirEntry]`:
+                One entry per record, or an empty list when ``find``
+                failed (a missing path, most often).
+        """
+        result = await self.exec_shell(command)
+        if not result.ok():
+            return []
+
+        entries: list[DirEntry] = []
+        for record in result.stdout.split(b"\0"):
+            if not record:
+                continue
+            fields = record.decode("utf-8", errors="surrogateescape").split(
+                "\t",
+                3,
+            )
+            if len(fields) != 4:
+                continue
+            kind, raw_size, raw_mtime, name = fields
+            try:
+                size: int | None = int(raw_size)
+            except ValueError:
+                size = None
+            try:
+                mtime: float | None = float(raw_mtime)
+            except ValueError:
+                mtime = None
+            # ``%Y`` reports N/L/? when it cannot follow the link. The
+            # size and mtime it still prints describe the link itself,
+            # which would read as a real 21-byte file; ``os.scandir``
+            # reports nothing there, so neither does this.
+            if kind in ("N", "L", "?"):
+                if skip_unresolvable:
+                    continue
+                size, mtime = None, None
+            is_dir = kind == "d"
+            entries.append(
+                DirEntry(
+                    name=name,
+                    is_dir=is_dir,
+                    size_bytes=None if is_dir else size,
+                    mtime=mtime,
+                ),
+            )
+        return entries
 
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of ``path``, or ``None``.
@@ -634,6 +845,47 @@ class LocalBackend(BackendBase):
         async with aiofiles.open(path, mode="wb") as f:
             await f.write(data)
 
+    async def write_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write a byte stream to a local file, chunk by chunk.
+
+        Args:
+            path (`str`):
+                Destination path on the local filesystem.
+            stream (`AsyncIterator[bytes]`):
+                The chunks to write, in order.
+        """
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        async with aiofiles.open(path, mode="wb") as f:
+            async for chunk in stream:
+                await f.write(chunk)
+
+    async def read_stream(
+        self,
+        path: str,
+        chunk_size: int = DEFAULT_READ_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read a local file chunk by chunk, never holding it whole.
+
+        Args:
+            path (`str`):
+                Path to the local file.
+            chunk_size (`int`, defaults to 1 MiB):
+                The size of each yielded chunk.
+
+        Yields:
+            `bytes`:
+                Successive chunks of the file, in order.
+        """
+        async with aiofiles.open(path, mode="rb") as f:
+            while chunk := await f.read(chunk_size):
+                yield chunk
+
     async def getcwd(self) -> str:
         """Return the host process's current working directory.
 
@@ -712,6 +964,71 @@ class LocalBackend(BackendBase):
                     results.append(os.path.join(root, f))
             return results
         return os.listdir(path)
+
+    async def scandir(self, path: str) -> list[DirEntry]:
+        """List a local directory with each entry's metadata.
+
+        ``os.scandir`` carries the type in the directory record itself,
+        so this is cheaper than ``os.listdir`` followed by a ``stat``
+        per entry — the same reason the base class batches its ``find``.
+
+        Args:
+            path (`str`):
+                Directory to list.
+
+        Returns:
+            `list[DirEntry]`:
+                The immediate children, or an empty list if ``path``
+                does not exist or cannot be listed.
+        """
+        entries: list[DirEntry] = []
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    # A symlink can break, or the entry can vanish,
+                    # between the listing and the stat.
+                    try:
+                        is_dir = entry.is_dir()
+                        stat = entry.stat()
+                        size, mtime = stat.st_size, stat.st_mtime
+                    except OSError:
+                        is_dir, size, mtime = False, None, None
+                    entries.append(
+                        DirEntry(
+                            name=entry.name,
+                            is_dir=is_dir,
+                            size_bytes=None if is_dir else size,
+                            mtime=mtime,
+                        ),
+                    )
+        except OSError:
+            return []
+        return entries
+
+    async def stat(self, path: str) -> DirEntry | None:
+        """Return one local path's type, size and mtime.
+
+        Args:
+            path (`str`):
+                Path to stat.
+
+        Returns:
+            `DirEntry | None`:
+                The entry, or ``None`` if ``path`` does not exist or
+                cannot be stat'd.
+        """
+        try:
+            # Follows symlinks, as ``os.DirEntry.stat`` does by default.
+            info = os.stat(path)
+        except OSError:
+            return None
+        is_dir = os.path.isdir(path)
+        return DirEntry(
+            name=os.path.basename(path),
+            is_dir=is_dir,
+            size_bytes=None if is_dir else info.st_size,
+            mtime=info.st_mtime,
+        )
 
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of a local file.

@@ -32,7 +32,6 @@ import {
 	SidebarContent,
 	SidebarFooter,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
 	SidebarHeader,
@@ -65,12 +64,14 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 	}
 
 	return (
-		<div className="flex flex-col gap-y-6 p-6 overflow-y-auto h-full">
+		<div className="flex h-full flex-col">
 			{/* Header */}
-			<div className="flex items-start justify-between gap-x-4">
+			<div className="shrink-0 flex items-start justify-between gap-x-4 p-[18px_18px_16px]">
 				<div className="flex flex-col gap-y-1 min-w-0">
 					<div className="flex items-center gap-x-2">
-						<h2 className="text-lg font-semibold truncate">{knowledgeBase.name}</h2>
+						<span className="truncate text-lg font-medium tracking-[-0.015em] text-foreground">
+							{knowledgeBase.name}
+						</span>
 						{!knowledgeBase.editable && (
 							<Badge variant="secondary" title={t('common.readOnlyTooltip')}>
 								{t('common.readOnly')}
@@ -78,7 +79,7 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 						)}
 					</div>
 					{knowledgeBase.description ? (
-						<p className="text-sm text-muted-foreground">{knowledgeBase.description}</p>
+						<p className="text-sm text-text-data">{knowledgeBase.description}</p>
 					) : null}
 				</div>
 				<div className="flex items-center gap-x-2 shrink-0">
@@ -89,10 +90,12 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 				</div>
 			</div>
 
-			<Separator />
+			<Separator className="shrink-0" />
 
 			{/* Documents */}
-			<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
+				<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+			</div>
 		</div>
 	);
 }
@@ -132,24 +135,27 @@ export const KnowledgePage = () => {
 	};
 
 	return (
-		<div className="flex size-full">
-			<Sidebar collapsible="none" className="border-r">
-				<SidebarHeader className={'flex flex-col mt-5 gap-y-1'}>
-					<div className="text-lg font-semibold">{t('common.knowledge')}</div>
-					<div className="text-muted-foreground text-xs">{t('knowledge.subtitle')}</div>
+		<div className="flex size-full p-2 gap-2">
+			<Sidebar collapsible="none" className="rounded-[22px]">
+				<SidebarHeader className={'flex flex-col p-[20px_18px_14px] gap-y-1'}>
+					<div className="text-xl font-medium tracking-[-0.02em] text-foreground">
+						{t('common.knowledge')}
+					</div>
+					<div className="text-text-tertiary text-xs">{t('knowledge.subtitle')}</div>
 				</SidebarHeader>
-				<SidebarContent className="my-5">
-					<SidebarGroup>
-						<SidebarGroupLabel>{t('knowledge.list.label')}</SidebarGroupLabel>
-						<SidebarGroupAction>
+				<SidebarContent>
+					<SidebarGroup className="mt-6 px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('knowledge.list.label')}
 							<Button
+								variant="ghost"
 								size="icon-xs"
-								variant="default"
 								onClick={() => setCreateDialogOpen(true)}
+								title={t('knowledge.list.createButton')}
 							>
-								<Plus />
+								<Plus className="size-3.5" />
 							</Button>
-						</SidebarGroupAction>
+						</SidebarGroupLabel>
 						<SidebarGroupContent>
 							{knowledgeBases.length === 0 ? (
 								<Empty className="border-none py-4 min-h-50">
@@ -185,7 +191,9 @@ export const KnowledgePage = () => {
 														navigate(`/knowledge/${kb.id}`);
 													}}
 												>
-													<span className="truncate">{kb.name}</span>
+													<span className="min-w-0 flex-1 truncate">
+														{kb.name}
+													</span>
 													{!kb.editable && (
 														<Badge
 															variant="secondary"
@@ -237,7 +245,7 @@ export const KnowledgePage = () => {
 				</SidebarContent>
 				<SidebarFooter />
 			</Sidebar>
-			<main className="flex-1 min-h-0 overflow-hidden">
+			<main className="flex-1 min-h-0 overflow-hidden rounded-[22px] bg-card shadow-panel">
 				<DetailPanel knowledgeBase={selectedKb} onTest={() => setTestOpen(true)} />
 			</main>
 			<CreateKnowledgeBaseDialog

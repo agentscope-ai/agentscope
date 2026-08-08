@@ -49,45 +49,39 @@
             alt="license"
         />
     </a>
+    <a href="https://deepwiki.com/agentscope-ai/agentscope">
+        <img
+            src="https://img.shields.io/badge/DeepWiki-Ask_Devin-navy.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)"
+            alt="Ask DeepWiki"
+        />
+    </a>
 </p>
 
 <p align="center">
 <img src="https://trendshift.io/api/badge/repositories/20310" alt="agentscope-ai%2Fagentscope | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
 </p>
 
-## 什么是 AgentScope 2.0？
+## What's AgentScope 2.0？
 
 AgentScope 2.0 是一款面向生产、易于使用的智能体框架，提供与不断进化的模型能力相匹配的核心抽象。
 
-- [**事件系统** →](https://docs.agentscope.io/latest/zh/building-blocks/message-and-event) 统一的事件总线，服务于前端智能体应用与 human-in-the-loop 协作。
-- [**权限系统** →](https://docs.agentscope.io/latest/zh/building-blocks/permission-system) 对工具和资源进行细粒度、可配置的控制。
-- [**多租户与多会话服务** →](https://docs.agentscope.io/latest/zh/deploy/agent-service) 提供生产级服务，在租户与会话之间实现隔离。
-- [**工作区 / 沙箱支持** →](https://docs.agentscope.io/latest/zh/building-blocks/workspace) 在隔离环境中运行工具和代码，内置支持本地文件系统、Docker、E2B、OpenSandbox 和 Daytona 后端。
-- [**可扩展中间件系统** →](https://docs.agentscope.io/latest/zh/building-blocks/middleware) 可组合的钩子系统，用于自定义和扩展智能体的推理-行动循环。
-
-我们为日益自主的大语言模型而设计。
-我们的方法是充分发挥模型的推理与工具调用能力，
-而不是用严格的提示词和固化的编排方式来束缚它们。
-
-## 为什么选择 AgentScope？
-
-- **简单**：通过内置的 ReAct 智能体、工具、技能、人机协作干预、记忆、计划、实时语音、评估和模型微调，5 分钟即可开始构建你的智能体
-- **可扩展**：丰富的生态系统集成，覆盖工具、记忆和可观测性；内置 MCP 和 A2A 支持；通过消息中心（MsgHub）实现灵活的多智能体编排和工作流
-- **生产就绪**：支持本地部署、云端 Serverless 部署或 K8s 集群部署，并内置 OTel 支持
+AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
+而非用严格的提示词和固化的编排方式来束缚它们。
 
 <img src="assets/images/agentscope.png" alt="agentscope" width="100%"/>
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
+- **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
+- **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
+- **[2026-08] `功能`:** 支持 MCP & Skill Hub —— 浏览 hub、安装到个人库、再添加到工作区。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
 - **[2026-07] `集成`:** 集成 Daytona 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `集成`:** 集成 K8s，OpenSandbox 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `集成`:** 集成 ReMe 长期记忆。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 - **[2026-06] `功能`:** 支持 Agentic Memory。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 - **[2026-06] `功能`:** 支持分布式 & 多租户 & 多会话 RAG 服务。 [文档](https://docs.agentscope.io/latest/en/deploy/agent-team)
 - **[2026-06] `功能`:** 支持多模态 RAG。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/rag) | [文档](https://docs.agentscope.io/latest/en/building-blocks/rag)
-- **[2026-06] `集成`:** 集成 Mem0 长期记忆。 [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory) | [Docs](https://docs.agentscope.io/latest/zh)
-- **[2026-06] `功能`:** 支持 Agent Team。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/agent-team)
-- **[2026-05] `发布`:** AgentScope 2.0 已发布！[文档](https://docs.agentscope.io/)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
@@ -100,22 +94,6 @@ AgentScope 2.0 是一款面向生产、易于使用的智能体框架，提供�
 |----------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | <img src="https://gw.alicdn.com/imgextra/i1/O1CN01hhD1mu1Dd3BWVUvxN_!!6000000000238-2-tps-400-400.png" width="100" height="100"> | <img src="./assets/images/dingtalk_qr_code.png" width="100" height="100"> |
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-## 📑 Table of Contents
-
-- [快速开始](#%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B)
-  - [安装](#%E5%AE%89%E8%A3%85)
-    - [从 PyPI 安装](#%E4%BB%8E-pypi-%E5%AE%89%E8%A3%85)
-    - [从源码安装](#%E4%BB%8E%E6%BA%90%E7%A0%81%E5%AE%89%E8%A3%85)
-- [Hello AgentScope！](#hello-agentscope)
-- [智能体服务](#%E6%99%BA%E8%83%BD%E4%BD%93%E6%9C%8D%E5%8A%A1)
-- [贡献](#%E8%B4%A1%E7%8C%AE)
-- [许可](#%E8%AE%B8%E5%8F%AF)
-- [论文](#%E8%AE%BA%E6%96%87)
-- [贡献者](#%E8%B4%A1%E7%8C%AE%E8%80%85)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## 快速开始
 
@@ -127,8 +105,6 @@ AgentScope 2.0 是一款面向生产、易于使用的智能体框架，提供�
 
 ```bash
 uv pip install agentscope
-# 或者
-# pip install agentscope
 ```
 
 #### 从源码安装
@@ -141,11 +117,23 @@ git clone -b main https://github.com/agentscope-ai/agentscope.git
 cd agentscope
 
 uv pip install -e .
-# 或者
-# pip install -e .
 ```
 
-## Hello AgentScope！
+## 智能体（Agent）
+
+SDK 层 —— 用一整套丰富的构建模块组合出你的智能体：
+
+| 构建模块 | 包含内容 |
+|---|---|
+| [**ReAct**](https://docs.agentscope.io/latest/zh/building-blocks/agent/overview) | 推理-行动循环，支持结构化输出、实时中断与恢复、以及批量（顺序 / 并发）工具执行 |
+| [**工具集**](https://docs.agentscope.io/latest/zh/building-blocks/tool/overview) | 智能体自主工具管理（囊括 Python 工具、MCP 与 Skill）；内置编码工具（Shell、文件编辑、搜索）与任务/规划工具开箱即用 |
+| [**模型**](https://docs.agentscope.io/latest/zh/building-blocks/model/overview) | LLM、Embedding、TTS，覆盖主流厂商（OpenAI、Anthropic、Gemini、DashScope、DeepSeek、Moonshot、xAI、Ollama） |
+| [**上下文**](https://docs.agentscope.io/latest/zh/building-blocks/context/overview) | 自动压缩、工具结果卸载、以及上下文注入（系统提示、RAG、记忆），均由内置中间件实现 |
+| [**事件系统**](https://docs.agentscope.io/latest/zh/building-blocks/message-and-event) | 统一事件总线，将推理、工具调用与多模态内容（文本、图像、音频）流式推送到前端 |
+| [**权限与 HITL**](https://docs.agentscope.io/latest/zh/building-blocks/permission-system/overview) | 对工具和资源的细粒度控制、确认、bypass 模式 |
+| [**中间件**](https://docs.agentscope.io/latest/zh/building-blocks/middleware) | 贯穿整个循环的可组合钩子 —— 回复、推理、行动、模型调用、权限检查、上下文压缩、系统提示 |
+| [**记忆**](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory) | Agentic Memory，可切换后端（ReMe、Mem0） |
+| [**工作空间 / 沙箱**](https://docs.agentscope.io/latest/zh/building-blocks/workspace/overview) | 隔离工具与代码执行 —— local、Docker、Apple Container、Bubblewrap、E2B、OpenSandbox、Daytona、K8s |
 
 使用 AgentScope 2.0，启动你的第一个智能体：
 
@@ -201,9 +189,22 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## 智能体服务
+## 智能体服务 —— 构建应用所需的一切
 
-一个基于 FastAPI 的可扩展**多租户**、**多会话**智能体服务，并在 `examples/web_ui` 中提供预构建的 Web UI
+AgentScope 提供开箱即用的**智能体服务** —— 一个基于 FastAPI 的后端，并在 `examples/web_ui` 中附带预构建的 Web UI，将你的智能体变成一个多租户、多会话的应用，并自带一整套丰富的能力：
+
+| 能力 | 包含内容 |
+|---|---|
+| [**服务**](https://docs.agentscope.io/latest/zh/deploy/agent-service) | 多租户、多会话隔离、FastAPI 后端、预构建 Web UI |
+| [**智能体团队**](https://docs.agentscope.io/latest/zh/deploy/agent-team) | Leader–Worker 编排、内置团队工具、任务规划 |
+| [**消息渠道**](https://docs.agentscope.io/latest/zh/deploy/channel/overview) | 将智能体接入 IM 平台 —— 飞书（Lark）、Discord、自定义渠道、消息路由 |
+| [**RAG 服务**](https://docs.agentscope.io/latest/zh/deploy/rag) | Blob 存储、索引 Worker、多租户检索 |
+| [**MCP & 技能 Hub**](https://docs.agentscope.io/latest/zh/deploy/hub/overview) | 浏览 Hub（GitHub MCP Registry、ClawHub）、安装到你的库、添加到工作空间 |
+| [**资源共享**](https://docs.agentscope.io/latest/zh/deploy/sharing) | 面向 group 与 org 的资源管理，共享模型、MCP 服务、技能与工作空间 |
+| [**持久化**](https://docs.agentscope.io/latest/zh/deploy/agent-service#storage-backend) | 智能体状态与会话的 SQL & NoSQL 持久化 |
+| [**调度**](https://docs.agentscope.io/latest/zh/deploy/agent-service) | 定时任务、智能体唤醒、后台任务卸载 |
+
+以上能力皆可组合，你只需少量胶水代码，就能在此服务之上搭建起自己的应用。
 
 <table>
   <tr>

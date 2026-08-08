@@ -138,7 +138,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             self.agent.state.reply_context.model_dump(),
             {
                 "reply_id": self.agent.state.reply_id,
-                "cur_iter": 2,
+                "cur_iter": 1,
                 "structured_schema": WeatherReport.model_json_schema(),
                 "structured_output": {"city": "Hangzhou", "temperature": 25.0},
             },

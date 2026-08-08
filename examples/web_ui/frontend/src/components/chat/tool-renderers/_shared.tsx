@@ -199,10 +199,18 @@ export function FramedFileBody({ filePath, children }: { filePath?: string; chil
  * Compact ``+N -M`` badge used in tool call headers for Edit / Write to show
  * how many lines were inserted and deleted.
  */
-export function DiffStats({ insertions, deletions }: { insertions: number; deletions: number }) {
+export function DiffStats({
+	insertions,
+	deletions,
+	className,
+}: {
+	insertions: number;
+	deletions: number;
+	className?: string;
+}) {
 	if (insertions === 0 && deletions === 0) return null;
 	return (
-		<div className="flex items-center gap-0.5">
+		<div className={cn('flex items-center gap-0.5', className)}>
 			<div className="flex items-center text-emerald-600 dark:text-emerald-400">
 				<Plus className="size-2.5 stroke-2" />
 				{formatNumber(insertions)}

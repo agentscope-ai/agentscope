@@ -1,6 +1,6 @@
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { ChevronRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getDisplayName, renderConfirmBody } from './tool-renderers';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,9 @@ import { cn } from '@/lib/utils';
 
 type SelectOption = 'yes' | 'yes_with_rule' | 'no';
 
+const OPTIONS_WITH_SUGGESTED_RULES: SelectOption[] = ['yes', 'yes_with_rule', 'no'];
+const OPTIONS_WITHOUT_SUGGESTED_RULES: SelectOption[] = ['yes', 'no'];
+
 export function ConfirmCard({
 	toolCall,
 	onUserConfirm,
@@ -20,19 +23,27 @@ export function ConfirmCard({
 }) {
 	const { t } = useTranslation();
 	const hasSuggestedRules = !!toolCall.suggested_rules?.length;
-	const options: SelectOption[] = hasSuggestedRules
-		? ['yes', 'yes_with_rule', 'no']
-		: ['yes', 'no'];
+	const options = hasSuggestedRules
+		? OPTIONS_WITH_SUGGESTED_RULES
+		: OPTIONS_WITHOUT_SUGGESTED_RULES;
 	const [selected, setSelected] = useState<SelectOption>('yes');
-	const [hasConfirmed, sethasConfirmed] = useState<boolean>(false);
+	const [hasConfirmed, setHasConfirmed] = useState<boolean>(false);
+	const submittingRef = useRef(false);
 
-	const handleConfirm = async (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => {
-		if (hasConfirmed) return;
-		sethasConfirmed(true);
-		onUserConfirm(confirm, rules).catch(() => {
-			sethasConfirmed(false);
-		});
-	};
+	const handleConfirm = useCallback(
+		async (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => {
+			if (submittingRef.current) return;
+			submittingRef.current = true;
+			setHasConfirmed(true);
+			try {
+				await onUserConfirm(confirm, rules);
+			} catch {
+				submittingRef.current = false;
+				setHasConfirmed(false);
+			}
+		},
+		[onUserConfirm],
+	);
 
 	useEffect(() => {
 		const handleKeyDown = async (e: KeyboardEvent) => {
@@ -59,13 +70,16 @@ export function ConfirmCard({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [onUserConfirm, selected, options]);
+	}, [handleConfirm, selected, options, toolCall.suggested_rules]);
 
 	return (
 		<div className="bg-muted ring ring-border rounded-[28px] w-full px-6 py-5 space-y-4 text-sm overflow-hidden">
 			<div className="flex flex-col gap-y-2 max-w-full">
 				<strong className="text-secondary-foreground">{getDisplayName(toolCall, t)}</strong>
-				<div className="px-4 py-2 bg-white rounded-sm max-w-full">
+				{/* Capped so a long tool input (raw JSON for MCP tools) cannot
+				    grow the card past the viewport — it floats above the
+				    composer and is out of flow, so nothing else clips it. */}
+				<div className="px-4 py-2 bg-white rounded-sm max-w-full max-h-[200px] overflow-y-auto">
 					{renderConfirmBody(toolCall, t)}
 				</div>
 			</div>

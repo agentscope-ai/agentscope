@@ -365,3 +365,25 @@ def _estimate_bytes(tokens: int) -> int:
     """Estimate the number of bytes with given tokens."""
 
     return int(tokens * 4)
+
+
+def _describe_exception(error: BaseException) -> str:
+    """Render an exception as something a person can act on.
+
+    Async transports run inside task groups, so what surfaces is often
+    an ``ExceptionGroup`` whose own message is ``"unhandled errors in a
+    TaskGroup (1 sub-exception)"`` — true, and of no use to anyone. The
+    real cause is a leaf, so leaves are what get reported.
+
+    Args:
+        error (`BaseException`):
+            The exception to describe.
+
+    Returns:
+        `str`:
+            The leaf causes, joined; the exception type when a leaf
+            carries no message of its own.
+    """
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(_describe_exception(sub) for sub in error.exceptions)
+    return str(error) or type(error).__name__

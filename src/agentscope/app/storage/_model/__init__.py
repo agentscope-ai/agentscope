@@ -2,6 +2,13 @@
 """Storage models for persisted resources."""
 
 from ._agent import AgentRecord, AgentData, InviteConfig
+from ._channel import (
+    ChannelBinding,
+    ChannelRecord,
+    RoutingConfig,
+    SessionScope,
+    SessionSettings,
+)
 from ._credential import CredentialRecord
 from ._knowledge_base import KnowledgeBaseData, KnowledgeBaseRecord
 from ._knowledge_document import (
@@ -9,6 +16,7 @@ from ._knowledge_document import (
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
 )
+from ._mcp import MCPRecord
 from ._schedule import ScheduleData, ScheduleRecord, ScheduleSource
 from ._session import (
     SessionRecord,
@@ -19,18 +27,25 @@ from ._session import (
     EmbeddingModelConfig,
     SessionSource,
 )
+from ._skill import SkillRecord
 from ._team import TeamRecord, TeamData, TeamMember
 from ._user import UserRecord
 
 __all__ = [
     "AgentData",
     "AgentRecord",
+    "ChannelBinding",
+    "ChannelRecord",
+    "RoutingConfig",
+    "SessionScope",
+    "SessionSettings",
     "CredentialRecord",
     "KnowledgeBaseData",
     "KnowledgeBaseRecord",
     "KnowledgeDocumentData",
     "KnowledgeDocumentRecord",
     "KnowledgeDocumentStatus",
+    "MCPRecord",
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
@@ -38,6 +53,7 @@ __all__ = [
     "SessionKnowledgeConfig",
     "SessionRecord",
     "SessionSource",
+    "SkillRecord",
     "ChatModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",

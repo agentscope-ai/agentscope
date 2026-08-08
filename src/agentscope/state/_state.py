@@ -337,3 +337,34 @@ class AgentState(BaseModel):
                 tc.state == ToolCallState.SUBMITTED and tc.id not in result_ids
             )
         ]
+
+    def get_unfinished_tool_calls(self, name: str) -> list[ToolCallBlock]:
+        """Get the current reply's tool calls with no matching tool result
+        yet, whatever their state. A reply accumulates into a single message,
+        so the calls of the finished reasoning-acting rounds are excluded
+        while the ones of the ongoing round are returned.
+
+        Args:
+            name (`str`):
+                Only messages authored by this agent name are inspected;
+                observed messages from other agents are ignored.
+
+        Returns:
+            `list[ToolCallBlock]`:
+                The unfinished tool call blocks, empty if none.
+        """
+        if not self.context:
+            return []
+        last_msg = self.context[-1]
+        if (
+            last_msg.role != "assistant"
+            or last_msg.name != name
+            or last_msg.id != self.reply_id
+        ):
+            return []
+        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+        return [
+            tc
+            for tc in last_msg.get_content_blocks("tool_call")
+            if tc.id not in result_ids
+        ]

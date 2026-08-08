@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         UserConfirmResultEvent,
         UserInterruptEvent,
     )
+    from agentscope.message import Msg
 
 
 # ── publish_session_event ──────────────────────────────────────────────
@@ -74,10 +75,15 @@ async def enqueue_run_trigger(
     session_id: str,
     agent_id: str,
     *,
-    kind: Literal["wake", "resume"] = MessageBusKeys.WAKEUP_KIND_WAKE,
+    kind: Literal[
+        "wake",
+        "resume",
+        "message",
+    ] = MessageBusKeys.WAKEUP_KIND_WAKE,
     inputs: UserConfirmResultEvent
     | ExternalExecutionResultEvent
     | UserInterruptEvent
+    | Msg
     | None = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
@@ -91,6 +97,10 @@ async def enqueue_run_trigger(
       an external execution result, or a user interrupt.  The dispatcher
       waits (with backoff) until the parked run releases its lock, then
       spawns with ``input_msg`` set to the deserialised event.
+    - ``message`` — start a new turn from a genuine user ``Msg`` (e.g. an
+      inbound channel message).  Like ``resume`` it carries input and is
+      re-queued rather than dropped while the session is running; the run
+      persists it and reasons over it as a real user turn.
 
     The payload is serialised to a plain dict before being pushed to the
     wakeup queue; the ``MessageBus`` transport layer never sees event
@@ -167,3 +177,49 @@ async def enqueue_index_task(
         },
     )
     await bus.publish(MessageBusKeys.index_tasks_signal(), {})
+
+
+# ── enqueue_channel_output ─────────────────────────────────────────────
+
+
+async def enqueue_channel_output(
+    bus: "MessageBus",
+    *,
+    session_id: str,
+    channel_id: str,
+    chat_id: str,
+    user_id: str,
+    agent_id: str,
+) -> None:
+    """Signal that a channel-bound session is producing output.
+
+    Pushes one signal onto the durable channel-outbound queue and nudges
+    the consumers. Whichever node hosts the channel drains it and
+    forwards the reply back to the platform chat. Called once at the
+    start of a channel-bound run, before the reply is produced.
+
+    Args:
+        bus (`MessageBus`):
+            The application message bus.
+        session_id (`str`):
+            The session about to produce output.
+        channel_id (`str`):
+            The owning channel (locates the adapter + presentation).
+        chat_id (`str`):
+            The platform chat to deliver the reply to.
+        user_id (`str`):
+            The owning user id.
+        agent_id (`str`):
+            The agent id that owns the session.
+    """
+    await bus.queue_push(
+        MessageBusKeys.channel_outbound_queue(),
+        {
+            "session_id": session_id,
+            "channel_id": channel_id,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "agent_id": agent_id,
+        },
+    )
+    await bus.publish(MessageBusKeys.channel_outbound_signal(), {})
