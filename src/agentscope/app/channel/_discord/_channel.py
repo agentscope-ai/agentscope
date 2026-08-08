@@ -344,15 +344,20 @@ class DiscordChannel(ChannelBase):
 
     async def list_bot_chats(self) -> list[dict]:
         """List every text channel the bot can see as ``{chat_id, name}``."""
+        if self._client is None:
+            return []
         results: list[dict] = []
-        for guild in self._client.guilds:
-            for channel in guild.text_channels:
-                results.append(
-                    {
-                        "chat_id": str(channel.id),
-                        "name": f"{guild.name}#{channel.name}",
-                    },
-                )
+        try:
+            for guild in self._client.guilds:
+                for channel in guild.text_channels:
+                    results.append(
+                        {
+                            "chat_id": str(channel.id),
+                            "name": f"{guild.name}#{channel.name}",
+                        },
+                    )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Discord chat listing failed")
         return results
 
     async def chat_kind(self, chat_id: str) -> ChatKind | None:
@@ -362,11 +367,11 @@ class DiscordChannel(ChannelBase):
         Args:
             chat_id (`str`): The Discord channel id as a string.
         """
-        import discord
-
         channel = await self._channel(chat_id)
         if channel is None:
             return None
+        import discord
+
         return (
             ChatKind.PRIVATE
             if isinstance(channel, discord.DMChannel)
@@ -396,17 +401,24 @@ class DiscordChannel(ChannelBase):
 
         Returns:
             `discord.abc.Messageable | None`:
-                The channel, or ``None`` if the id is malformed.
+                The channel, or ``None`` if the id is malformed, the client is
+                not ready, or the platform lookup fails.
         """
         try:
             cid = int(chat_id)
         except (TypeError, ValueError):
             return None
-        return self._client.get_channel(
-            cid,
-        ) or await self._client.fetch_channel(
-            cid,
-        )
+        if self._client is None:
+            return None
+        try:
+            return self._client.get_channel(
+                cid,
+            ) or await self._client.fetch_channel(
+                cid,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Discord channel lookup failed")
+            return None
 
     def _build_view(
         self,
