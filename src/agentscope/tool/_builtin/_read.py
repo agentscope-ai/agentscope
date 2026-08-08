@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
+
 import fnmatch
 from typing import Any, List
 
@@ -226,7 +227,15 @@ Usage:
             # Read file content via backend
             lines = None
             if _agent_state is not None:
-                cache = await _agent_state.tool_context.get_cache(file_path)
+                # Use the backend's own mtime so the cache stays valid for
+                # files that only exist inside a workspace sandbox (e.g.
+                # DockerWorkspace), where the host filesystem cannot stat
+                # the path. Falls back to None if the backend cannot stat.
+                mtime = await self._backend.stat_mtime(file_path)
+                cache = await _agent_state.tool_context.get_cache(
+                    file_path,
+                    mtime=mtime,
+                )
                 if cache is not None:
                     lines = cache.lines
 
@@ -244,6 +253,7 @@ Usage:
                     await _agent_state.tool_context.cache_file(
                         file_path=file_path,
                         lines=lines,
+                        mtime=mtime,
                     )
 
             # Apply offset and limit (offset is 1-based)
