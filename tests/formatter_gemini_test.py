@@ -747,6 +747,44 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_media_extra_params(self) -> None:
+        """DataBlock extra params are forwarded beside inline_data."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this video."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="video/mp4",
+                        ),
+                        video_metadata={"fps": 2},
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this video."},
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "video/mp4",
+                            },
+                            "video_metadata": {"fps": 2},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_tool_call_with_incomplete_input_does_not_crash(
         self,
     ) -> None:

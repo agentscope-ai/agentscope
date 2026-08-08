@@ -336,6 +336,47 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """Responses API forwards image detail at input_image top level."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                        custom_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Inspect this image.",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_url,
+                            "detail": "high",
+                            "custom_param": "value",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_dropped_without_reasoning_item_id(
         self,
     ) -> None:

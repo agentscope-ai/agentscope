@@ -286,7 +286,8 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
 
         Returns:
             `dict[str, Any] | None`:
-                The formatted data block, or None if the media type is not
+                The formatted data block with extra fields placed beside
+                ``type`` and ``source``, or None if the media type is not
                 supported.
         """
         source = block.source
@@ -311,31 +312,32 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             )
             return None
 
-        return self._format_image_source(source)
+        return self._format_image_source(source, block.model_extra)
 
     @staticmethod
     def _format_image_source(
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Format an image source into Anthropic API format.
+
+        Extra fields are merged into the image block itself, at the same level
+        as ``type`` and ``source`` (for example provider-specific cache
+        controls).
 
         Args:
             source (`URLSource | Base64Source`):
                 The image source to format.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific image parameters to merge into the image
+                block, at the same level as ``type`` and ``source``.
 
         Returns:
             `dict[str, Any]`:
                 The formatted image source.
         """
         if isinstance(source, Base64Source):
-            return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": source.media_type,
-                    "data": source.data,
-                },
-            }
+            data = source.data
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
@@ -343,29 +345,25 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 file_path = url.removeprefix("file://")
                 with open(file_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": source.media_type,
-                        "data": data,
-                    },
-                }
             else:
                 # Remote URL - download and convert to base64
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": source.media_type,
-                        "data": data,
-                    },
-                }
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")
+
+        result = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": source.media_type,
+                "data": data,
+            },
+        }
+        if extra:
+            result.update(extra)
+        return result
 
 
 class AnthropicChatFormatter(_AnthropicFormatterBase):

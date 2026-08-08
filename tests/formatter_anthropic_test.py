@@ -870,6 +870,49 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are forwarded to Anthropic image block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this screenshot:"),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                        cache_control={"type": "ephemeral"},
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Inspect this screenshot:",
+                        },
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_parallel_tool_results_merged(
         self,
     ) -> None:
