@@ -81,6 +81,22 @@ class _FakeStorage:
         self.updated_states.append(state)
 
 
+class _FakeAccess:
+    """Resource access service double returning the test agent."""
+
+    def __init__(self, storage: _FakeStorage) -> None:
+        """Keep a reference to the fake storage records."""
+        self._storage = storage
+
+    async def resolve_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> AgentRecord:
+        """Return the single test agent through the access-service seam."""
+        return await self._storage.get_agent(user_id, agent_id)
+
+
 class _FakeWorkspace:
     """Workspace object with just the workdir ChatService records."""
 
@@ -179,6 +195,7 @@ def _make_service(storage: _FakeStorage, bus: _FakeBus) -> ChatService:
         scheduler_manager=object(),
         background_task_manager=object(),
         message_bus=bus,
+        resource_access_service=_FakeAccess(storage),
         custom_agent_cls=_FakeAgent,
     )
 
@@ -210,7 +227,11 @@ class TestChatServiceWakeupRuns(IsolatedAsyncioTestCase):
 
         self.assertEqual(_FakeAgent.calls, [])
         self.assertEqual(bus.events, [])
-        self.assertEqual(storage.updated_states, [])
+        self.assertEqual(len(storage.updated_states), 1)
+        self.assertIn(
+            _FakeWorkspace.workdir,
+            storage.updated_states[0].permission_context.working_directories,
+        )
 
     async def test_wakeup_with_inbox_runs_agent_after_publishing_hints(
         self,

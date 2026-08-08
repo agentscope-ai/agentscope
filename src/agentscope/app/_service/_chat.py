@@ -515,24 +515,11 @@ class ChatService:
         # the resuming run's next reasoning step lets
         # :class:`InboxMiddleware` drain the queue naturally.
         # ----------------------------------------------------------------
-        if input_msg is None and agent.state.context:
-            last_msg = agent.state.context[-1]
-            if last_msg.role == "assistant" and last_msg.name == agent.name:
-                awaiting = [
-                    tc
-                    for tc in last_msg.get_content_blocks("tool_call")
-                    if tc.state
-                    in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-                ]
-                if awaiting:
-                    logger.info(
-                        "Skipping wake-up for session %s: agent is parked "
-                        "on %d awaiting tool call(s); inbox messages will "
-                        "be drained when the agent resumes.",
-                        session_id,
-                        len(awaiting),
-                    )
-                    return
+        if input_msg is None and self._is_parked_on_tool_call(
+            session_id,
+            agent,
+        ):
+            return
 
         # ----------------------------------------------------------------
         # 7. Run the agent inside the distributed session lock
@@ -562,26 +549,15 @@ class ChatService:
                             )
 
                     if input_msg is None:
-                        inbox_events = await inbox_middleware.drain(agent)
-                        if not inbox_events:
-                            logger.info(
-                                "Skipping wake-up for session %s: inbox is "
-                                "empty.",
-                                session_id,
-                            )
+                        should_run = await self._drain_wakeup_inbox(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            agent,
+                            inbox_middleware,
+                        )
+                        if not should_run:
                             return
-                        for event in inbox_events:
-                            await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                event.model_dump(mode="json"),
-                            )
-                            await self._project_event(
-                                user_id,
-                                session_record,
-                                agent_record,
-                                event,
-                            )
 
                     async for event in agent.reply_stream(inputs=input_msg):
                         # Apply to reply_msg FIRST (sync — never
@@ -718,6 +694,68 @@ class ChatService:
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+    async def _drain_wakeup_inbox(
+        self,
+        user_id: str,
+        session_record: SessionRecord,
+        agent_record: AgentRecord,
+        agent: Agent,
+        inbox_middleware: InboxMiddleware,
+    ) -> bool:
+        """Drain inbox events for wake-up runs.
+
+        Returns:
+            `True` if the agent should continue running, otherwise `False`.
+        """
+        inbox_events = await inbox_middleware.drain(agent)
+        if not inbox_events:
+            logger.info(
+                "Skipping wake-up for session %s: inbox is empty.",
+                session_record.id,
+            )
+            return False
+
+        for event in inbox_events:
+            await publish_session_event(
+                self._message_bus,
+                session_record.id,
+                event.model_dump(mode="json"),
+            )
+            await self._project_event(
+                user_id,
+                session_record,
+                agent_record,
+                event,
+            )
+        return True
+
+    @staticmethod
+    def _is_parked_on_tool_call(session_id: str, agent: Agent) -> bool:
+        """Return whether a wake-up should wait for a tool continuation."""
+        if not agent.state.context:
+            return False
+
+        last_msg = agent.state.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != agent.name:
+            return False
+
+        awaiting = [
+            tc
+            for tc in last_msg.get_content_blocks("tool_call")
+            if tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+        ]
+        if not awaiting:
+            return False
+
+        logger.info(
+            "Skipping wake-up for session %s: agent is parked on %d "
+            "awaiting tool call(s); inbox messages will be drained when "
+            "the agent resumes.",
+            session_id,
+            len(awaiting),
+        )
+        return True
 
     async def _project_event(
         self,
