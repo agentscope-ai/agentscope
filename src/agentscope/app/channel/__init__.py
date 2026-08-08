@@ -21,6 +21,7 @@ from ._gateway import ChannelGateway
 from ._registry import ChannelTypeRegistry, ChannelTypeSchema
 from ._discord import DiscordChannel
 from ._feishu import FeishuChannel
+from ._wecom import WeComChannel
 
 __all__ = [
     "ChannelBase",
@@ -36,4 +37,5 @@ __all__ = [
     "ChannelTypeSchema",
     "DiscordChannel",
     "FeishuChannel",
+    "WeComChannel",
 ]
