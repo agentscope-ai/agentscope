@@ -43,6 +43,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "Pillow",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
 ]

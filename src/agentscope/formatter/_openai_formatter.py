@@ -136,16 +136,23 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         """
         if isinstance(source, Base64Source):
             media_type = source.media_type
-            if media_type not in ["audio/wav", "audio/mp3"]:
+            _AUDIO_FORMAT_MAP = {
+                "audio/wav": "wav",
+                "audio/mp3": "mp3",
+                "audio/mpeg": "mp3",
+            }
+            fmt = _AUDIO_FORMAT_MAP.get(media_type)
+            if fmt is None:
                 raise TypeError(
                     f"Unsupported audio media type: {media_type}, "
-                    "only audio/wav and audio/mp3 are supported.",
+                    "only audio/wav, audio/mp3 and audio/mpeg"
+                    " are supported.",
                 )
             return {
                 "type": "input_audio",
                 "input_audio": {
                     "data": source.data,
-                    "format": media_type.split("/")[-1],
+                    "format": fmt,
                 },
             }
 
