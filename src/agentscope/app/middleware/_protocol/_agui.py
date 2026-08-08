@@ -18,6 +18,7 @@ from ....event import (
     ReplyStartEvent,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
+    StatusEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
@@ -108,6 +109,12 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             return AGUIRunErrorEvent(
                 message=(f"Agent '{event.name}' exceeded max iterations"),
                 code="exceed_max_iters",
+            )
+
+        if isinstance(event, StatusEvent):
+            return AGUICustomEvent(
+                name="status",
+                value=event.model_dump(exclude_none=True),
             )
 
         if isinstance(event, ModelCallStartEvent):
