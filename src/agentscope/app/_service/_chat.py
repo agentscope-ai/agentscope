@@ -579,8 +579,9 @@ optional):
             # (any process) wakes an idle session — no in-process retrigger
             # plumbing is needed here.
             # -----------------------------------------------------------------
+            inbox_middleware = InboxMiddleware(self._message_bus)
             middlewares: list = [
-                InboxMiddleware(self._message_bus),
+                inbox_middleware,
                 StateChangeMiddleware(
                     message_bus=self._message_bus,
                     session_id=session_id,
@@ -833,6 +834,17 @@ optional):
                                 msg,
                             )
 
+                    if input_msg is None:
+                        should_run = await self._drain_wakeup_inbox(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            agent,
+                            inbox_middleware,
+                        )
+                        if not should_run:
+                            return
+
                     async for event in agent.reply_stream(inputs=input_msg):
                         # Apply to reply_msg FIRST (sync — never
                         # interrupted), so an interrupt in the awaits below
@@ -989,6 +1001,41 @@ optional):
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+    async def _drain_wakeup_inbox(
+        self,
+        user_id: str,
+        session_record: SessionRecord,
+        agent_record: AgentRecord,
+        agent: Agent,
+        inbox_middleware: InboxMiddleware,
+    ) -> bool:
+        """Drain inbox events for wake-up runs.
+
+        Returns:
+            `True` if the agent should continue running, otherwise `False`.
+        """
+        inbox_events = await inbox_middleware.drain(agent)
+        if not inbox_events:
+            logger.info(
+                "Skipping wake-up for session %s: inbox is empty.",
+                session_record.id,
+            )
+            return False
+
+        for event in inbox_events:
+            await publish_session_event(
+                self._message_bus,
+                session_record.id,
+                event.model_dump(mode="json"),
+            )
+            await self._project_event(
+                user_id,
+                session_record,
+                agent_record,
+                event,
+            )
+        return True
 
     async def _project_event(
         self,
