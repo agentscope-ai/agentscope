@@ -100,11 +100,12 @@ DEFAULT_GLOB_HELPER_SCRIPT = "_glob_helper.py"
 #:
 #: ``agentscope`` goes in with ``--no-deps``, so anything it imports has
 #: to be named here — depending on another package to drag it along is
-#: what broke when ``mcp`` 2.0 swapped ``httpx`` for ``httpx2``. The
-#: bound on ``mcp`` mirrors ``pyproject.toml``, so the gateway speaks
-#: the same protocol version as the process driving it.
+#: what broke when ``mcp`` 2.0 swapped ``httpx`` for ``httpx2`` as its
+#: own transport dependency, hence the explicit ``httpx`` entry below.
+#: The version on ``mcp`` mirrors ``pyproject.toml``, so the gateway
+#: speaks the same protocol version as the process driving it.
 _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
-    "mcp<2.0.0",
+    "mcp>=2.0.0",
     "uvicorn",
     "fastapi",
     "httpx",
