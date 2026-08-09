@@ -89,25 +89,59 @@ Private messages are accepted directly. In groups, the default
 `only_at_reply=true` accepts a message only when it mentions the bot or
 replies to one of the bot's messages. To set `only_at_reply=false`, disable
 Privacy Mode for the bot with BotFather so Telegram delivers ordinary group
-messages to it.
+messages to it. A Telegram bot cannot initiate a private conversation: the
+user must start the bot first before its numeric chat ID can be used as an
+outbound target.
+
+Agent replies support Markdown headings, emphasis, strikethrough, links,
+quotes, lists, inline code, and fenced code blocks. Markdown tables are sent
+as preformatted text, raw HTML is escaped, and unsafe link protocols are not
+made clickable. Long formatted replies are split into independently valid
+messages within Telegram's 4096-character limit. If Telegram rejects the
+formatting for a message, the channel retries that message as plain text.
+
+Streaming differs by chat type. In a private chat, Telegram's ephemeral draft
+API shows the reply while it is generated, followed by a normal persistent
+message when generation finishes. In a group, the channel sends one preview
+message and edits it at most once per second, then reuses it for the first
+final chunk. A preview failure disables streaming only for that reply; final
+text, attachments, and any tool-approval buttons are still delivered in that
+order.
 
 Telegram Bot API downloads are limited to 20 MiB. Text, captions, photos,
 documents, audio, voice, video, animations, video notes, stickers, locations,
 venues, and contacts are accepted; albums are combined before delivery to the
-agent. The channel does not transcribe audio or parse video. Outbound photos
-are limited to 10 MiB and documents to 50 MiB.
+agent. Here, "accepted" means that the channel downloads and transports the
+attachment; whether its contents can be understood depends on the selected
+model and the agent's tools. Unsupported model inputs are saved in the session
+workspace, but documents are not automatically parsed by the channel. In
+particular, the channel does not transcribe audio or parse video.
+
+An attachment without text or a caption is buffered for up to five minutes and
+combined with the sender's next text message, matching the other AgentScope
+channels. Telegram voice messages cannot carry captions, so send a follow-up
+text instruction (for example, "transcribe this") after the voice message. The
+selected model or an agent tool must still support that audio format. Outbound
+photos are limited to 10 MiB and documents to 50 MiB.
 
 Tool approvals use inline Allow/Deny buttons. In a group, any member who can
 see a button can click it. The authoritative pending tool call remains in the
 AgentScope session; cached Telegram button data only carries lookup keys.
 Buttons from a previous service process expire safely after a restart.
 
+The Bot API has no endpoint that enumerates every chat a bot belongs to or
+every member of a group. Consequently, the agent tools expose `SendMessage`,
+`SendFile`, and `SendImage`, but not `ListChats` or `ListChatMembers`. Chat IDs
+observed from inbound messages are still recorded by AgentScope and remain
+available to the routing UI.
+
 Only one long-polling AgentScope instance may consume updates for a bot token.
 Running another poller for the same bot causes a Telegram `Conflict` and marks
-the channel as failed. Webhooks, message-edit streaming, rich text, bot command
+the channel as failed. Bot API 10.1 rich messages, webhooks, bot command
 handlers, chat/member listing, forum-topic routing, pairing/allowlists, and
-multi-node leader election are outside this initial implementation. Telegram
-commands such as `/help` are delivered to the agent as ordinary text.
+multi-node leader election are outside this implementation. Telegram commands
+such as `/help` are delivered to the agent as ordinary text; an addressed
+group command such as `/help@my_bot` is delivered as `/help`.
 
 The channel manually follows python-telegram-bot's asynchronous application
 lifecycle instead of calling `run_polling()`. This lets Agent Service retain

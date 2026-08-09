@@ -10,14 +10,8 @@ from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, patch
 
-from telegram import Chat, Message, MessageEntity, Update, User
-from telegram.error import (
-    BadRequest,
-    Conflict,
-    InvalidToken,
-    NetworkError,
-    RetryAfter,
-)
+import pytest
+from pydantic import ValidationError
 
 from agentscope.app.channel import TelegramChannel
 from agentscope.app.channel._base import ChannelEvent, ChatKind
@@ -27,6 +21,7 @@ from agentscope.app.channel._telegram._channel import (
     _MAX_DOWNLOAD_BYTES,
     _MAX_PHOTO_BYTES,
     _PermanentTelegramError,
+    _StreamPreview,
     _TelegramResult,
 )
 from agentscope.event import (
@@ -46,6 +41,24 @@ from agentscope.message import (
 )
 from agentscope.message._block import ToolResultState
 from agentscope.permission import PermissionBehavior
+
+try:
+    from telegram import Chat, Message, MessageEntity, Update, User
+    from telegram.error import (
+        BadRequest,
+        Conflict,
+        InvalidToken,
+        NetworkError,
+        RetryAfter,
+    )
+    import markdown_it
+except ImportError:
+    pytest.skip(
+        "Telegram channel tests require agentscope[channel]",
+        allow_module_level=True,
+    )
+else:
+    del markdown_it
 
 
 _BOT = User(id=123, first_name="Agent", is_bot=True, username="agent_bot")
@@ -138,7 +151,7 @@ class TelegramSchemaTest(TestCase):
     def test_public_schema_and_capabilities(self) -> None:
         credentials = TelegramChannel.Credentials(
             bot_id="123",
-            bot_token="secret",
+            bot_token="123:secret",
         )
         config = TelegramChannel.Config()
         schema = TelegramChannel.Credentials.model_json_schema()
@@ -157,18 +170,42 @@ class TelegramSchemaTest(TestCase):
         self.assertTrue(TelegramChannel.capabilities.image)
         self.assertTrue(TelegramChannel.capabilities.file)
         self.assertTrue(TelegramChannel.capabilities.interactive)
-        self.assertFalse(TelegramChannel.capabilities.markdown)
-        self.assertFalse(TelegramChannel.capabilities.streaming)
+        self.assertTrue(TelegramChannel.capabilities.markdown)
+        self.assertTrue(TelegramChannel.capabilities.streaming)
         self.assertEqual(
             TelegramChannel.capabilities.max_message_length,
             4096,
         )
 
+    def test_credentials_are_normalised_and_validated_without_leaks(
+        self,
+    ) -> None:
+        credentials = TelegramChannel.Credentials(
+            bot_id=" 123 ",
+            bot_token=" 123:abc_DEF-9 ",
+        )
+        self.assertEqual(credentials.bot_id, "123")
+        self.assertEqual(credentials.bot_token, "123:abc_DEF-9")
+
+        for values in (
+            {"bot_id": "bot", "bot_token": "123:valid"},
+            {"bot_id": "123", "bot_token": "missing-colon"},
+            {"bot_id": "123", "bot_token": "123:do-not-leak!"},
+        ):
+            with self.subTest(values=values):
+                with self.assertRaises(ValidationError) as caught:
+                    TelegramChannel.Credentials(**values)
+                self.assertNotIn(
+                    str(values["bot_token"]),
+                    str(caught.exception),
+                )
+
     def test_module_import_does_not_load_telegram(self) -> None:
         source = (
             "import sys; "
             "import agentscope.app.channel; "
-            "assert 'telegram' not in sys.modules"
+            "assert 'telegram' not in sys.modules; "
+            "assert 'markdown_it' not in sys.modules"
         )
         import subprocess
         import sys
@@ -216,7 +253,28 @@ class TelegramSchemaTest(TestCase):
         with patch("builtins.__import__", side_effect=blocked_import):
             with self.assertRaisesRegex(
                 ImportError,
-                "python-telegram-bot.*22.6",
+                "python-telegram-bot.*22.8",
+            ):
+                _channel()._build_application()
+
+    def test_missing_markdown_dependency_has_clear_error(self) -> None:
+        real_import = __import__
+
+        def blocked_import(
+            name: str,
+            globals_: Any = None,
+            locals_: Any = None,
+            fromlist: Any = (),
+            level: int = 0,
+        ) -> Any:
+            if name == "markdown_it":
+                raise ImportError("blocked for test")
+            return real_import(name, globals_, locals_, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=blocked_import):
+            with self.assertRaisesRegex(
+                ImportError,
+                "markdown-it-py.*4",
             ):
                 _channel()._build_application()
 
@@ -462,6 +520,27 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         event = await self.channel._normalise_messages([message])
         self.assertEqual(event.message, "describe this")
 
+    async def test_addressed_command_triggers_group_and_keeps_command(
+        self,
+    ) -> None:
+        command = "/help@agent_bot"
+        message = _message(
+            chat_type="group",
+            text=f"{command} topic",
+            entities=[
+                MessageEntity(
+                    type="bot_command",
+                    offset=0,
+                    length=len(command),
+                ),
+            ],
+        )
+
+        self.assertFalse(self.channel._gated_out(message))
+        event = await self.channel._normalise_messages([message])
+        assert event is not None
+        self.assertEqual(event.message, "/help topic")
+
     async def test_media_selection_covers_supported_types(self) -> None:
         def media(**kwargs: Any) -> SimpleNamespace:
             values = {
@@ -641,12 +720,16 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
 
 
 class TelegramOutboundTest(IsolatedAsyncioTestCase):
-    """Exercise non-streaming replies, limits, and approval callbacks."""
+    """Exercise streaming replies, limits, and approval callbacks."""
 
     async def asyncSetUp(self) -> None:
         self.channel = _channel()
         self.bot = SimpleNamespace(
-            send_message=AsyncMock(),
+            send_message=AsyncMock(
+                return_value=SimpleNamespace(message_id=99),
+            ),
+            send_message_draft=AsyncMock(return_value=True),
+            edit_message_text=AsyncMock(return_value=True),
             send_photo=AsyncMock(),
             send_document=AsyncMock(),
             get_chat=AsyncMock(),
@@ -660,6 +743,9 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         calls = self.bot.send_message.await_args_list
         self.assertEqual(len(calls[0].kwargs["text"]), 4096)
         self.assertEqual(calls[0].kwargs["chat_id"], -100)
+        self.assertTrue(
+            all("parse_mode" not in call.kwargs for call in calls),
+        )
 
     async def test_image_and_file_limits(self) -> None:
         image = await self.channel.send_image_to("1", b"image", "a.png")
@@ -681,7 +767,9 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         self.bot.send_photo.assert_awaited_once()
         self.bot.send_document.assert_awaited_once()
 
-    async def test_send_response_waits_for_reply_end(self) -> None:
+    async def test_private_response_uses_draft_then_persistent_message(
+        self,
+    ) -> None:
         items = [
             ReplyStartEvent(session_id="s", reply_id="r", name="agent"),
             TextBlockStartEvent(reply_id="r", block_id="t"),
@@ -692,12 +780,185 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         event = ChannelEvent(
             channel_id="telegram-1",
             channel_user_id="456",
-            chat_id="-100",
+            chat_id="456",
+            metadata={"chat_type": "private"},
         )
         await self.channel.send_response(event, _events(items))
+
+        self.bot.send_message_draft.assert_awaited_once()
+        draft = self.bot.send_message_draft.await_args.kwargs
+        self.assertEqual(draft["chat_id"], 456)
+        self.assertNotEqual(draft["draft_id"], 0)
+        self.assertEqual(draft["text"], "done")
+        self.assertEqual(draft["parse_mode"], "HTML")
+        self.bot.send_message.assert_awaited_once_with(
+            chat_id=456,
+            text="done",
+            parse_mode="HTML",
+        )
+        self.bot.edit_message_text.assert_not_awaited()
+
+    async def test_group_response_creates_and_edits_one_preview(self) -> None:
+        items = [
+            ReplyStartEvent(session_id="s", reply_id="r", name="agent"),
+            TextBlockStartEvent(reply_id="r", block_id="t"),
+            TextBlockDeltaEvent(reply_id="r", block_id="t", delta="a"),
+            TextBlockDeltaEvent(reply_id="r", block_id="t", delta="b"),
+            TextBlockEndEvent(reply_id="r", block_id="t"),
+            ReplyEndEvent(session_id="s", reply_id="r"),
+        ]
+        event = ChannelEvent(
+            channel_id="telegram-1",
+            channel_user_id="456",
+            chat_id="-100",
+            metadata={"chat_type": "supergroup"},
+        )
+        with patch(
+            "agentscope.app.channel._telegram._channel.time.monotonic",
+            side_effect=[1.0, 2.1, 2.2],
+        ):
+            await self.channel.send_response(event, _events(items))
+
         self.bot.send_message.assert_awaited_once_with(
             chat_id=-100,
+            text="a",
+            parse_mode="HTML",
+        )
+        self.bot.edit_message_text.assert_awaited_once_with(
+            chat_id=-100,
+            message_id=99,
+            text="ab",
+            parse_mode="HTML",
+        )
+        self.bot.send_message_draft.assert_not_awaited()
+
+    async def test_stream_updates_are_throttled(self) -> None:
+        preview = _StreamPreview(mode="draft", draft_id=7)
+        with patch(
+            "agentscope.app.channel._telegram._channel.time.monotonic",
+            side_effect=[1.0, 1.5, 2.1],
+        ):
+            await self.channel._update_stream_preview("456", preview, "a")
+            await self.channel._update_stream_preview("456", preview, "ab")
+            await self.channel._update_stream_preview("456", preview, "abc")
+
+        self.assertEqual(self.bot.send_message_draft.await_count, 2)
+        self.assertEqual(
+            [
+                call.kwargs["text"]
+                for call in self.bot.send_message_draft.await_args_list
+            ],
+            ["a", "abc"],
+        )
+
+    async def test_group_preview_does_not_jump_to_short_tail_chunk(
+        self,
+    ) -> None:
+        preview = _StreamPreview(mode="edit", draft_id=7)
+
+        await self.channel._update_stream_preview(
+            "-100",
+            preview,
+            "x" * 4097,
+        )
+
+        self.bot.send_message.assert_awaited_once_with(
+            chat_id=-100,
+            text="x" * 4096,
+            parse_mode="HTML",
+        )
+        self.assertEqual(preview.last_html, "x" * 4096)
+
+    async def test_preview_failure_does_not_block_final_reply(self) -> None:
+        self.bot.send_message_draft.side_effect = NetworkError("offline")
+        items = [
+            ReplyStartEvent(session_id="s", reply_id="r", name="agent"),
+            TextBlockStartEvent(reply_id="r", block_id="t"),
+            TextBlockDeltaEvent(reply_id="r", block_id="t", delta="done"),
+            TextBlockEndEvent(reply_id="r", block_id="t"),
+            ReplyEndEvent(session_id="s", reply_id="r"),
+        ]
+        event = ChannelEvent(
+            channel_id="telegram-1",
+            channel_user_id="456",
+            chat_id="456",
+            metadata={"chat_type": "private"},
+        )
+
+        await self.channel.send_response(event, _events(items))
+
+        self.bot.send_message_draft.assert_awaited_once()
+        self.bot.send_message.assert_awaited_once_with(
+            chat_id=456,
             text="done",
+            parse_mode="HTML",
+        )
+
+    async def test_preview_render_failure_uses_plain_final_reply(self) -> None:
+        items = [
+            ReplyStartEvent(session_id="s", reply_id="r", name="agent"),
+            TextBlockStartEvent(reply_id="r", block_id="t"),
+            TextBlockDeltaEvent(reply_id="r", block_id="t", delta="done"),
+            TextBlockEndEvent(reply_id="r", block_id="t"),
+            ReplyEndEvent(session_id="s", reply_id="r"),
+        ]
+        event = ChannelEvent(
+            channel_id="telegram-1",
+            channel_user_id="456",
+            chat_id="456",
+            metadata={"chat_type": "private"},
+        )
+
+        with patch.object(
+            self.channel,
+            "_formatted_chunks",
+            side_effect=ValueError("bad markdown"),
+        ):
+            await self.channel.send_response(event, _events(items))
+
+        self.bot.send_message_draft.assert_not_awaited()
+        self.bot.send_message.assert_awaited_once_with(
+            chat_id=456,
+            text="done",
+        )
+
+    async def test_bad_formatted_text_falls_back_to_plain_text(self) -> None:
+        self.bot.send_message.side_effect = [
+            BadRequest("can't parse entities"),
+            SimpleNamespace(message_id=100),
+        ]
+        chunk = self.channel._formatted_chunks("**bold**")[0]
+
+        result = await self.channel._send_formatted_chunk("456", chunk)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(self.bot.send_message.await_count, 2)
+        first, second = self.bot.send_message.await_args_list
+        self.assertEqual(first.kwargs["parse_mode"], "HTML")
+        self.assertEqual(first.kwargs["text"], "<b>bold</b>")
+        self.assertNotIn("parse_mode", second.kwargs)
+        self.assertEqual(second.kwargs["text"], "bold")
+
+    async def test_long_group_final_reuses_preview_and_sends_remainder(
+        self,
+    ) -> None:
+        text = f"**{'x' * 4097}**"
+        preview = _StreamPreview(
+            mode="edit",
+            draft_id=7,
+            message_id=99,
+        )
+
+        await self.channel._finish_streamed_text("-100", preview, text)
+
+        self.bot.edit_message_text.assert_awaited_once()
+        edit = self.bot.edit_message_text.await_args.kwargs
+        self.assertEqual(edit["message_id"], 99)
+        self.assertEqual(edit["parse_mode"], "HTML")
+        self.bot.send_message.assert_awaited_once()
+        self.assertEqual(
+            self.bot.send_message.await_args.kwargs["text"],
+            "<b>x</b>",
         )
 
     async def test_response_image_degrades_to_document(self) -> None:
@@ -714,6 +975,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             channel_id="telegram-1",
             channel_user_id="456",
             chat_id="1",
+            metadata={"chat_type": "private"},
         )
         await self.channel.send_response(
             event,
@@ -735,6 +997,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             channel_id="telegram-1",
             channel_user_id="456",
             chat_id="1",
+            metadata={"chat_type": "private"},
         )
         await self.channel.send_response(
             event,
@@ -743,6 +1006,67 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         self.bot.send_photo.assert_not_awaited()
         self.bot.send_document.assert_not_awaited()
         self.bot.send_message.assert_not_awaited()
+
+    async def test_text_and_attachments_finish_before_approval(self) -> None:
+        order: list[str] = []
+
+        def record_text(*args: Any) -> _TelegramResult:
+            del args
+            order.append("text")
+            return _TelegramResult(True)
+
+        def record_attachment(*args: Any) -> _TelegramResult:
+            del args
+            order.append("attachment")
+            return _TelegramResult(True)
+
+        def record_approval(*args: Any) -> None:
+            del args
+            order.append("approval")
+
+        image = DataBlock(
+            source=Base64Source(
+                data=base64.b64encode(b"image").decode("ascii"),
+                media_type="image/png",
+            ),
+            name="image.png",
+        )
+        self.channel._render = lambda *args, **kwargs: [
+            TextBlock(text="answer"),
+            image,
+        ]
+        self.channel._send_formatted_chunk = AsyncMock(
+            side_effect=record_text,
+        )
+        self.channel.send_image_to = AsyncMock(
+            side_effect=record_attachment,
+        )
+        self.channel._present_confirm = AsyncMock(
+            side_effect=record_approval,
+        )
+        confirmation = RequireUserConfirmEvent(
+            reply_id="reply-1",
+            tool_calls=[
+                ToolCallBlock(
+                    id="tool-1",
+                    name="SendImage",
+                    input='{"chat_id":"1","path":"image.png"}',
+                ),
+            ],
+        )
+        event = ChannelEvent(
+            channel_id="telegram-1",
+            channel_user_id="456",
+            chat_id="456",
+            metadata={"chat_type": "private"},
+        )
+
+        await self.channel.send_response(
+            event,
+            _events([confirmation]),
+        )
+
+        self.assertEqual(order, ["text", "attachment", "approval"])
 
     async def test_callback_allow_deny_and_expired_data(self) -> None:
         emitted: list[Any] = []

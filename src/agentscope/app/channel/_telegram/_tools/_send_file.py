@@ -26,7 +26,8 @@ class SendFile(_TelegramToolBase):
 
 Use this only for a chat other than the current conversation. ``path`` must
 refer to a file in the session workspace. Files are limited to 50 MiB, and
-sending requires user approval."""
+a private user must have started the bot before receiving one. Sending
+requires user approval."""
     input_schema: dict = _SendFileParams.model_json_schema()
 
     async def __call__(self, chat_id: str, path: str) -> ToolChunk:

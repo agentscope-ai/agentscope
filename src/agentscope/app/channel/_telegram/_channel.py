@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 import io
+import secrets
+import time
 from typing import (
     Any,
     AsyncIterator,
@@ -24,11 +26,19 @@ from typing import (
     TypeVar,
 )
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
-from ....message import Base64Source, DataBlock, Msg, TextBlock
+from ....message import (
+    Base64Source,
+    DataBlock,
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+)
 from .._base import (
     ChannelBase,
     ChannelCapability,
@@ -43,13 +53,15 @@ if TYPE_CHECKING:
     from telegram import Message, Update
     from telegram.ext import Application, CallbackContext
 
-    from .....tool import ToolBase
-    from .....workspace import WorkspaceBase
+    from ....tool import ToolBase
+    from ....workspace import WorkspaceBase
+    from ._markdown import _TelegramTextChunk
 
 
 _POLL_TIMEOUT_SECS = 30
 _POLL_READ_TIMEOUT_SECS = 40
 _ALBUM_SETTLE_SECS = 0.8
+_STREAM_MIN_INTERVAL_SECS = 1.0
 _MAX_CONNECT_ATTEMPTS = 2
 _MAX_API_ATTEMPTS = 3
 _MAX_RETRY_AFTER_SECS = 30.0
@@ -84,6 +96,18 @@ class _TelegramResult:
     error: str = ""
 
 
+@dataclass
+class _StreamPreview:
+    """Mutable state for one best-effort streamed reply preview."""
+
+    mode: str
+    draft_id: int
+    message_id: int | None = None
+    last_update: float | None = None
+    last_html: str = ""
+    disabled: bool = False
+
+
 class TelegramChannel(ChannelBase):
     """Telegram Bot API channel using a single long-polling consumer."""
 
@@ -96,6 +120,8 @@ class TelegramChannel(ChannelBase):
     class Credentials(BaseModel):
         """Telegram bot identity and secret token."""
 
+        model_config = ConfigDict(hide_input_in_errors=True)
+
         bot_id: str = Field(
             title="Bot ID",
             description="Numeric Telegram bot ID returned by getMe.",
@@ -106,6 +132,33 @@ class TelegramChannel(ChannelBase):
             repr=False,
             json_schema_extra={"format": "password"},
         )
+
+        @field_validator("bot_id")
+        @classmethod
+        def _validate_bot_id(cls, value: str) -> str:
+            value = value.strip()
+            if not value.isdigit() or int(value) <= 0:
+                raise ValueError("bot_id must be a positive numeric ID")
+            return value
+
+        @field_validator("bot_token")
+        @classmethod
+        def _validate_bot_token(cls, value: str) -> str:
+            value = value.strip()
+            prefix, separator, secret = value.partition(":")
+            if (
+                not separator
+                or not prefix.isdigit()
+                or int(prefix) <= 0
+                or not secret
+                or any(
+                    character not in "abcdefghijklmnopqrstuvwxyz"
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                    for character in secret
+                )
+            ):
+                raise ValueError("bot_token has an invalid Telegram format")
+            return value
 
     class Config(BaseModel):
         """Telegram platform behavior."""
@@ -131,11 +184,11 @@ class TelegramChannel(ChannelBase):
 
     capabilities = ChannelCapability(
         text=True,
-        markdown=False,
+        markdown=True,
         image=True,
         file=True,
         interactive=True,
-        streaming=False,
+        streaming=True,
         max_message_length=_MAX_TEXT_LENGTH,
     )
 
@@ -312,6 +365,7 @@ class TelegramChannel(ChannelBase):
     def _build_application(self) -> "Application":
         """Create the PTB application without importing PTB at module load."""
         try:
+            import markdown_it
             from telegram.ext import (
                 ApplicationBuilder,
                 CallbackQueryHandler,
@@ -321,9 +375,11 @@ class TelegramChannel(ChannelBase):
             from telegram.request import HTTPXRequest
         except ImportError as error:
             raise ImportError(
-                "TelegramChannel requires "
-                "'python-telegram-bot[callback-data]>=22.6,<23.0'.",
+                "TelegramChannel requires 'agentscope[channel]' or both "
+                "'python-telegram-bot[callback-data]>=22.8,<23.0' and "
+                "'markdown-it-py>=4,<5'.",
             ) from error
+        del markdown_it
 
         api_request = HTTPXRequest(
             connection_pool_size=16,
@@ -539,6 +595,12 @@ class TelegramChannel(ChannelBase):
                 and value.casefold() == f"@{username}".casefold()
             ):
                 return True
+            if (
+                entity_type == "bot_command"
+                and username
+                and value.casefold().endswith(f"@{username}".casefold())
+            ):
+                return True
             mentioned_user = getattr(entity, "user", None)
             if (
                 entity_type == "text_mention"
@@ -551,18 +613,26 @@ class TelegramChannel(ChannelBase):
     def _strip_bot_mention(self, message: "Message", text: str) -> str:
         username = str(getattr(self._bot_user, "username", "") or "")
         for entity, value in self._parsed_entities(message).items():
+            entity_type = str(entity.type)
             mentioned_user = getattr(entity, "user", None)
             is_bot = (
-                str(entity.type) == "mention"
+                entity_type == "mention"
                 and username
                 and value.casefold() == f"@{username}".casefold()
             ) or (
-                str(entity.type) == "text_mention"
+                entity_type == "text_mention"
                 and mentioned_user is not None
                 and str(mentioned_user.id) == self._bot_id
             )
             if is_bot:
                 text = text.replace(value, "")
+            elif (
+                entity_type == "bot_command"
+                and username
+                and value.casefold().endswith(f"@{username}".casefold())
+            ):
+                suffix_length = len(username) + 1
+                text = text.replace(value, value[:-suffix_length], 1)
         return text
 
     @staticmethod
@@ -720,14 +790,275 @@ class TelegramChannel(ChannelBase):
 
     # -- Outbound replies and approvals -------------------------------
 
+    async def _new_stream_preview(
+        self,
+        event: ChannelEvent,
+    ) -> _StreamPreview:
+        """Choose native private-chat drafts or editable messages."""
+        chat_type = str(event.metadata.get("chat_type", ""))
+        if not chat_type:
+            kind = self._chat_kind_cache.get(event.chat_id)
+            if kind is None:
+                kind = await self.chat_kind(event.chat_id)
+            chat_type = "private" if kind == ChatKind.PRIVATE else ""
+        return _StreamPreview(
+            mode="draft" if chat_type == "private" else "edit",
+            draft_id=secrets.randbelow(2**31 - 1) + 1,
+        )
+
+    def _has_streamable_content(self, reply: Msg) -> bool:
+        """Avoid previewing the base class' unfinished empty fallback."""
+        for block in reply.content:
+            if isinstance(block, TextBlock) and block.text:
+                return True
+            if (
+                isinstance(block, ThinkingBlock)
+                and self._config.show_thinking
+                and block.thinking
+            ):
+                return True
+            if (
+                isinstance(block, ToolCallBlock)
+                and self._config.show_tool_process
+            ):
+                return True
+            if (
+                isinstance(block, ToolResultBlock)
+                and self._config.show_tool_process
+                and isinstance(block.output, str)
+                and block.output
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _text_from_blocks(blocks: list[TextBlock | DataBlock]) -> str:
+        """Join text blocks while leaving attachments on their own path."""
+        return "".join(
+            block.text for block in blocks if isinstance(block, TextBlock)
+        )
+
+    @staticmethod
+    def _formatted_chunks(text: str) -> list["_TelegramTextChunk"]:
+        """Lazily render common Markdown to Telegram-safe HTML chunks."""
+        from ._markdown import _telegram_markdown_chunks
+
+        return _telegram_markdown_chunks(text, _MAX_TEXT_LENGTH)
+
+    async def _update_stream_preview(
+        self,
+        chat_id: str,
+        preview: _StreamPreview,
+        text: str,
+    ) -> None:
+        """Best-effort preview update that can never block final delivery."""
+        if preview.disabled or not text:
+            return
+        try:
+            chunks = self._formatted_chunks(text)
+            if not chunks:
+                return
+            # Keep the one editable group preview stable once the reply
+            # crosses Telegram's 4096-character boundary. Showing the last
+            # chunk would make a nearly full preview suddenly shrink to the
+            # short tail; final delivery sends the remaining chunks.
+            chunk = chunks[0]
+            now = time.monotonic()
+            if chunk.html == preview.last_html or (
+                preview.last_update is not None
+                and now - preview.last_update < _STREAM_MIN_INTERVAL_SECS
+            ):
+                return
+
+            bot = self._bot()
+            if bot is None:
+                preview.disabled = True
+                return
+            from telegram.error import BadRequest
+
+            if preview.mode == "draft":
+                try:
+                    await bot.send_message_draft(
+                        chat_id=self._target_chat_id(chat_id),
+                        draft_id=preview.draft_id,
+                        text=chunk.html,
+                        parse_mode="HTML",
+                    )
+                except BadRequest:
+                    await bot.send_message_draft(
+                        chat_id=self._target_chat_id(chat_id),
+                        draft_id=preview.draft_id,
+                        text=chunk.plain,
+                    )
+            elif preview.message_id is None:
+                try:
+                    message = await bot.send_message(
+                        chat_id=self._target_chat_id(chat_id),
+                        text=chunk.html,
+                        parse_mode="HTML",
+                    )
+                except BadRequest:
+                    message = await bot.send_message(
+                        chat_id=self._target_chat_id(chat_id),
+                        text=chunk.plain,
+                    )
+                preview.message_id = int(message.message_id)
+            else:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=self._target_chat_id(chat_id),
+                        message_id=preview.message_id,
+                        text=chunk.html,
+                        parse_mode="HTML",
+                    )
+                except BadRequest as error:
+                    if "message is not modified" not in str(error).casefold():
+                        await bot.edit_message_text(
+                            chat_id=self._target_chat_id(chat_id),
+                            message_id=preview.message_id,
+                            text=chunk.plain,
+                        )
+            preview.last_html = chunk.html
+            preview.last_update = now
+        except Exception as error:  # pylint: disable=broad-except
+            preview.disabled = True
+            logger.debug(
+                "Telegram channel '%s' disabled one streaming preview: %s",
+                self._channel_id,
+                self._safe_error(error),
+            )
+
+    async def _finish_streamed_text(
+        self,
+        chat_id: str,
+        preview: _StreamPreview,
+        text: str,
+    ) -> None:
+        """Persist all final chunks, reusing an editable group preview."""
+        try:
+            chunks = self._formatted_chunks(text)
+        except Exception as error:  # pylint: disable=broad-except
+            logger.warning(
+                "Telegram channel '%s' could not format its final reply; "
+                "sending plain text instead: %s",
+                self._channel_id,
+                self._safe_error(error),
+            )
+            result = await self.send_message_to(chat_id, text)
+            if not result.ok:
+                logger.warning(
+                    "Telegram channel '%s' failed to send its plain-text "
+                    "fallback: %s",
+                    self._channel_id,
+                    result.error,
+                )
+            return
+        if not chunks:
+            return
+        first_unsent = 0
+        if preview.mode == "edit" and preview.message_id is not None:
+            if len(chunks) == 1 and preview.last_html == chunks[0].html:
+                first_unsent = 1
+            else:
+                result = await self._edit_formatted_chunk(
+                    chat_id,
+                    preview.message_id,
+                    chunks[0],
+                )
+                if result.ok:
+                    first_unsent = 1
+                else:
+                    logger.warning(
+                        "Telegram channel '%s' could not finalise its "
+                        "preview: %s",
+                        self._channel_id,
+                        result.error,
+                    )
+        for chunk in chunks[first_unsent:]:
+            result = await self._send_formatted_chunk(chat_id, chunk)
+            if not result.ok:
+                logger.warning(
+                    "Telegram channel '%s' failed to send text: %s",
+                    self._channel_id,
+                    result.error,
+                )
+
+    async def _send_formatted_chunk(
+        self,
+        chat_id: str,
+        chunk: "_TelegramTextChunk",
+    ) -> _TelegramResult:
+        """Send HTML and retry once as plain text on formatting errors."""
+        bot = self._bot()
+        if bot is None:
+            return _TelegramResult(False, "Telegram channel is not connected")
+        from telegram.error import BadRequest
+
+        try:
+            try:
+                await self._retry_api(
+                    lambda: bot.send_message(
+                        chat_id=self._target_chat_id(chat_id),
+                        text=chunk.html,
+                        parse_mode="HTML",
+                    ),
+                )
+            except BadRequest:
+                await self._retry_api(
+                    lambda: bot.send_message(
+                        chat_id=self._target_chat_id(chat_id),
+                        text=chunk.plain,
+                    ),
+                )
+            return _TelegramResult(True)
+        except Exception as error:  # pylint: disable=broad-except
+            return _TelegramResult(False, self._safe_error(error))
+
+    async def _edit_formatted_chunk(
+        self,
+        chat_id: str,
+        message_id: int,
+        chunk: "_TelegramTextChunk",
+    ) -> _TelegramResult:
+        """Finalise an editable preview with formatted/plain fallback."""
+        bot = self._bot()
+        if bot is None:
+            return _TelegramResult(False, "Telegram channel is not connected")
+        from telegram.error import BadRequest
+
+        try:
+            try:
+                await self._retry_api(
+                    lambda: bot.edit_message_text(
+                        chat_id=self._target_chat_id(chat_id),
+                        message_id=message_id,
+                        text=chunk.html,
+                        parse_mode="HTML",
+                    ),
+                )
+            except BadRequest as error:
+                if "message is not modified" in str(error).casefold():
+                    return _TelegramResult(True)
+                await self._retry_api(
+                    lambda: bot.edit_message_text(
+                        chat_id=self._target_chat_id(chat_id),
+                        message_id=message_id,
+                        text=chunk.plain,
+                    ),
+                )
+            return _TelegramResult(True)
+        except Exception as error:  # pylint: disable=broad-except
+            return _TelegramResult(False, self._safe_error(error))
+
     async def send_response(
         self,
         event: ChannelEvent,
         events: AsyncIterator[dict],
     ) -> None:
-        """Collect a reply and deliver it without streaming edits."""
+        """Stream a formatted preview, then persist the complete reply."""
         reply: Msg | None = None
         confirm: RequireUserConfirmEvent | None = None
+        preview = await self._new_stream_preview(event)
         async for event_payload in events:
             evt = _EVENT_ADAPTER.validate_python(event_payload)
             if isinstance(evt, RequireUserConfirmEvent):
@@ -742,19 +1073,32 @@ class TelegramChannel(ChannelBase):
             if isinstance(evt, ReplyEndEvent):
                 break
 
-        for block in self._render(
+            if reply is not None and self._has_streamable_content(reply):
+                current_blocks = self._render(
+                    reply,
+                    show_thinking=self._config.show_thinking,
+                    show_tool_process=self._config.show_tool_process,
+                )
+                current_text = self._text_from_blocks(current_blocks)
+                await self._update_stream_preview(
+                    event.chat_id,
+                    preview,
+                    current_text,
+                )
+
+        blocks = self._render(
             reply,
             show_thinking=self._config.show_thinking,
             show_tool_process=self._config.show_tool_process,
-        ):
+        )
+        await self._finish_streamed_text(
+            event.chat_id,
+            preview,
+            self._text_from_blocks(blocks),
+        )
+
+        for block in blocks:
             if isinstance(block, TextBlock):
-                result = await self.send_message_to(event.chat_id, block.text)
-                if not result.ok:
-                    logger.warning(
-                        "Telegram channel '%s' failed to send text: %s",
-                        self._channel_id,
-                        result.error,
-                    )
                 continue
             if not isinstance(block.source, Base64Source):
                 continue

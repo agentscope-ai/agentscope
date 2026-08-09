@@ -34,7 +34,9 @@ from ._gateway import ChannelGateway
 from ._registry import ChannelTypeRegistry
 
 # Max seconds to wait for a channel-bound run's reply before giving up.
-RESPONSE_TIMEOUT_SECS = 60.0
+# Long streamed model replies commonly exceed one minute, and platform API
+# rate-limit retries can add another minute before final chunks are persisted.
+RESPONSE_TIMEOUT_SECS = 300.0
 # TTL (seconds) of a node's per-channel status heartbeat.
 LIVENESS_TTL_SECS = 30
 
@@ -298,7 +300,12 @@ class ChannelLifecycleDispatcher:
                     timeout=RESPONSE_TIMEOUT_SECS,
                 )
         except (asyncio.TimeoutError, TimeoutError):
-            pass  # leave whatever was delivered
+            logger.warning(
+                "Channel response forwarding timed out after %.0f seconds "
+                "for session '%s'; leaving whatever was delivered",
+                RESPONSE_TIMEOUT_SECS,
+                job["session_id"],
+            )
         except Exception:  # pylint: disable=broad-except
             logger.exception("channel send_response failed")
         finally:

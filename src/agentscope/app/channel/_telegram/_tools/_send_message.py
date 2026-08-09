@@ -22,7 +22,8 @@ class SendMessage(_TelegramToolBase):
 Use this only when the user asks you to notify a different chat. Replies to
 the current conversation are delivered automatically. Telegram cannot list
 all chats a bot belongs to, so ``chat_id`` must be supplied by the user or
-already known. Sending requires user approval."""
+already known. A private user must have started the bot before the bot can send
+to that user's numeric chat ID. Sending requires user approval."""
     input_schema: dict = _SendMessageParams.model_json_schema()
 
     async def __call__(self, chat_id: str, text: str) -> ToolChunk:

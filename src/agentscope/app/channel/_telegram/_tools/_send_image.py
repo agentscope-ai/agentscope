@@ -24,7 +24,8 @@ class SendImage(_TelegramToolBase):
     name: str = "SendImage"
     description: str = """Send a workspace image inline to a known Telegram
 chat other than the current conversation. Images are limited to 10 MiB; use
-SendFile for a larger image. Sending requires user approval."""
+SendFile for a larger image. A private user must have started the bot before
+receiving one. Sending requires user approval."""
     input_schema: dict = _SendImageParams.model_json_schema()
 
     async def __call__(self, chat_id: str, path: str) -> ToolChunk:
