@@ -426,6 +426,7 @@ class ChatService:
                 message_bus=self._message_bus,
                 user_id=user_id,
                 agent_id=agent_id,
+                timeout_secs=30.0,
             ),
         ]
         if self._extra_agent_middlewares is not None:

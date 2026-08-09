@@ -65,7 +65,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         agent_id (`str`):
             Agent record id (not the display name) — same purpose as
             ``user_id``.
-        timeout_secs (`float`, defaults to ``10.0``):
+        timeout_secs (`float`, defaults to ``30.0``):
             Maximum seconds to wait for a tool execution before
             offloading it to the background.
     """
@@ -76,7 +76,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         message_bus: MessageBus,
         user_id: str,
         agent_id: str,
-        timeout_secs: float = 10.0,
+        timeout_secs: float = 30.0,
     ) -> None:
         """Bind dependencies.
 
@@ -89,7 +89,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 User id of the current request.
             agent_id (`str`):
                 Agent record id (not the display name).
-            timeout_secs (`float`, defaults to ``10.0``):
+            timeout_secs (`float`, defaults to ``30.0``):
                 Tool execution timeout before offloading to background.
         """
         self._bg_manager = bg_manager
