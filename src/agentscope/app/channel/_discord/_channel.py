@@ -34,6 +34,9 @@ from .._base import (
 if TYPE_CHECKING:
     import discord
 
+    from .....tool import ToolBase
+    from .....workspace import WorkspaceBase
+
 # Discord's hard limit is 2000 characters per message.
 _MAX_LEN = 2000
 # Give up (and park in 'failed') after this many connects that never came up.
@@ -381,6 +384,177 @@ class DiscordChannel(ChannelBase):
         """
         channel = await self._channel(chat_id)
         return getattr(channel, "name", "") or "" if channel else ""
+
+    async def list_tools(
+        self,
+        workspace: "WorkspaceBase",
+    ) -> list["ToolBase"]:
+        """Expose the Discord send/discovery tools to the agent.
+
+        Args:
+            workspace (`WorkspaceBase`):
+                The calling session's workspace; the send-file tools read
+                their payload from its backend by absolute path.
+
+        Returns:
+            `list[ToolBase]`: The Discord agent tools.
+        """
+        from ._tools import (
+            ListChatMembers,
+            ListChats,
+            SendFile,
+            SendMessage,
+        )
+
+        backend = workspace.get_backend()
+        return [
+            ListChats(self, backend),
+            ListChatMembers(self, backend),
+            SendMessage(self, backend),
+            SendFile(self, backend),
+        ]
+
+    # -- Agent-tool operations (act on chats/users other than the current) --
+
+    async def list_chat_members(self, chat_id: str) -> list[dict]:
+        """List a channel's members as ``{user_id, name}`` dicts.
+
+        For a server channel this returns its cached members; for a DM
+        channel it returns the single recipient. Server member listing
+        requires the privileged ``GUILD_MEMBERS`` intent to be enabled for
+        the bot in the Discord developer portal — otherwise the server
+        member list is empty.
+
+        Args:
+            chat_id (`str`): The channel whose members to list.
+
+        Returns:
+            `list[dict]`: One ``{user_id, name}`` per member.
+        """
+        import discord
+
+        channel = await self._channel(chat_id)
+        if channel is None:
+            return []
+        if isinstance(channel, discord.DMChannel):
+            recipient = channel.recipient
+            if recipient is None:
+                return []
+            return [
+                {
+                    "user_id": str(recipient.id),
+                    "name": str(recipient),
+                },
+            ]
+        results: list[dict] = []
+        for member in getattr(channel, "members", []):
+            if member.bot:
+                continue
+            results.append(
+                {
+                    "user_id": str(member.id),
+                    "name": str(member),
+                },
+            )
+        return results
+
+    async def send_message_to(
+        self,
+        target_id: str,
+        target: str,
+        text: str,
+    ) -> tuple[bool, str]:
+        """Send a plain-text message to a channel or user.
+
+        Args:
+            target_id (`str`): The channel id (``target="channel"``) or
+                user id (``target="user"``).
+            target (`str`): ``"channel"`` or ``"user"``.
+            text (`str`): The message text.
+
+        Returns:
+            `tuple[bool, str]`: ``(True, "")`` on success, otherwise
+            ``(False, error)``.
+        """
+        try:
+            destination = await self._send_target(target_id, target)
+            if destination is None:
+                return False, "could not resolve the target"
+            for part in self._split_long_message(text):
+                if part:
+                    await destination.send(part)
+            return True, ""
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(
+                "Discord '%s' send_message_to failed",
+                self._channel_id,
+            )
+            return False, str(e)
+
+    async def send_file_to(
+        self,
+        target_id: str,
+        target: str,
+        data: bytes,
+        file_name: str,
+    ) -> tuple[bool, str]:
+        """Send a file attachment to a channel or user.
+
+        Args:
+            target_id (`str`): The channel id (``target="channel"``) or
+                user id (``target="user"``).
+            target (`str`): ``"channel"`` or ``"user"``.
+            data (`bytes`): The file bytes.
+            file_name (`str`): The file's display name.
+
+        Returns:
+            `tuple[bool, str]`: ``(True, "")`` on success, otherwise
+            ``(False, error)``.
+        """
+        import discord
+
+        try:
+            destination = await self._send_target(target_id, target)
+            if destination is None:
+                return False, "could not resolve the target"
+            await destination.send(
+                file=discord.File(
+                    io.BytesIO(data),
+                    filename=file_name or "attachment",
+                ),
+            )
+            return True, ""
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(
+                "Discord '%s' send_file_to failed",
+                self._channel_id,
+            )
+            return False, str(e)
+
+    async def _send_target(
+        self,
+        target_id: str,
+        target: str,
+    ) -> "discord.abc.Messageable | None":
+        """Resolve a send target: a channel id, or a user id to DM.
+
+        Args:
+            target_id (`str`): The channel or user id as a string.
+            target (`str`): ``"channel"`` or ``"user"``.
+
+        Returns:
+            `discord.abc.Messageable | None`: The send destination, or
+            ``None`` if the id is malformed / unresolvable.
+        """
+        try:
+            tid = int(target_id)
+        except (TypeError, ValueError):
+            return None
+        if target == "user":
+            user = self._client.get_user(tid)
+            return user or await self._client.fetch_user(tid)
+        channel = self._client.get_channel(tid)
+        return channel or await self._client.fetch_channel(tid)
 
     # -- Helpers --
 
