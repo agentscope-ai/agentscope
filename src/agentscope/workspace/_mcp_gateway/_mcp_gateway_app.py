@@ -1,31 +1,26 @@
 # -*- coding: utf-8 -*-
 """In-workspace MCP gateway — FastAPI router over agentscope MCPClients.
 
-Runs inside the workspace environment as a standalone script. Reads
-``--config`` — a JSON list of ``MCPClient.model_dump()`` dicts (same
-format as the workspace's ``.mcp`` file) — instantiates one client per
-entry, and exposes per-server HTTP endpoints. No auth: the gateway is
-only reachable via ``backend.exec_shell`` from inside the sandbox.
+Runs inside the workspace environment as a standalone script. It starts
+with an empty registry and never reads the workspace's ``.mcp`` file:
+the workspace is the authority on which MCPs exist, and registers them
+here on demand. Boot cost is therefore independent of how many agents
+or sessions the workspace has accumulated. No auth: the gateway is only
+reachable via ``backend.exec_shell`` from inside the sandbox.
 
 Endpoints::
 
     GET    /health
-    GET    /mcps                       # [{name, tools}, ...]
+    GET    /mcps                       # [MCPClient.model_dump(), ...]
     POST   /mcps                       # body: MCPClient.model_dump()
     DELETE /mcps/{name}
     GET    /mcps/{name}/tools
     POST   /mcps/{name}/tools/{tool}   # body: {arguments: {...}}
 
-All endpoints (except ``/health``) accept ``?agent_id=`` to isolate
-per-agent MCP sessions.
-
-Config supports both old flat-list and new per-agent dict formats::
-
-    # Old (flat list — auto-migrated under "_default")
-    [<MCPClient.model_dump()>, ...]
-
-    # New (per-agent dict)
-    {"agent-leader": [<MCPClient.model_dump()>, ...], ...}
+Every endpoint except ``/health`` takes ``?agent_id=&session_id=``.
+Upstream sessions are keyed by ``(agent_id, session_id, name)``, so two
+sessions running the same MCP get independent state (browser cookies,
+login state) and one closing its client never disturbs the other.
 
 The absolute import for ``agentscope.mcp`` avoids loading
 ``agentscope.workspace.__init__`` (which pulls in skill/tool trees the
@@ -34,7 +29,6 @@ gateway does not need).
 
 import argparse
 import asyncio
-import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -42,12 +36,14 @@ from fastapi.responses import PlainTextResponse
 
 from agentscope.mcp import MCPClient
 
+_Scope = tuple[str, str]
+
 
 class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[str, dict[str, MCPClient]] = {}
+        self.clients: dict[_Scope, dict[str, MCPClient]] = {}
         self.lock = asyncio.Lock()
 
 
@@ -66,84 +62,93 @@ def _build_app(state: _State) -> FastAPI:
     """Build the FastAPI app with all routes wired against ``state``."""
     app = FastAPI(title="agentscope-workspace-mcp-gateway")
 
+    def _lookup(scope: _Scope, name: str) -> MCPClient:
+        """Resolve one registered client or raise 404."""
+        client = state.clients.get(scope, {}).get(name)
+        if client is None:
+            raise HTTPException(
+                404,
+                f"{name!r} not found for agent={scope[0]!r} "
+                f"session={scope[1]!r}",
+            )
+        return client
+
     @app.get("/health")
     async def _health() -> PlainTextResponse:
         return PlainTextResponse("ok")
 
     @app.get("/mcps")
-    async def _list_mcps(agent_id: str) -> list[dict[str, Any]]:
-        # Return the client specs for the requested agent only.
+    async def _list_mcps(
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> list[dict[str, Any]]:
         return [
-            clients[agent_id].model_dump(mode="json")
-            for clients in state.clients.values()
-            if agent_id in clients
+            c.model_dump(mode="json")
+            for c in state.clients.get((agent_id, session_id), {}).values()
         ]
 
     @app.post("/mcps")
     async def _add_mcp(
-        agent_id: str,
         request: Request,
+        agent_id: str = "",
+        session_id: str = "",
     ) -> dict[str, Any]:
         body = await request.json()
         name = body.get("name", "")
         if not name:
             raise HTTPException(400, "name required")
+        scope = (agent_id, session_id)
         async with state.lock:
-            by_agent = state.clients.setdefault(name, {})
-            if agent_id in by_agent:
+            by_name = state.clients.setdefault(scope, {})
+            if name in by_name:
                 raise HTTPException(
                     409,
-                    f"{name!r} already exists for agent {agent_id!r}",
+                    f"{name!r} already exists for agent={agent_id!r} "
+                    f"session={session_id!r}",
                 )
             try:
-                client = await _build_client(body)
+                by_name[name] = await _build_client(body)
             except HTTPException:
                 raise
             except Exception as e:  # noqa: BLE001
                 raise HTTPException(500, f"connect failed: {e}") from e
-            by_agent[agent_id] = client
         return {"ok": True}
 
     @app.delete("/mcps/{name}")
-    async def _remove_mcp(agent_id: str, name: str) -> dict[str, Any]:
+    async def _remove_mcp(
+        name: str,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        scope = (agent_id, session_id)
         async with state.lock:
-            by_agent = state.clients.get(name, {})
-            client = by_agent.pop(agent_id, None)
-            if client is None:
-                raise HTTPException(
-                    404,
-                    f"{name!r} not found for agent {agent_id!r}",
-                )
+            client = _lookup(scope, name)
+            del state.clients[scope][name]
+            if not state.clients[scope]:
+                del state.clients[scope]
             if client.is_stateful and client.is_connected:
                 await client.close()
         return {"ok": True}
 
     @app.get("/mcps/{name}/tools")
-    async def _list_tools(agent_id: str, name: str) -> list[dict[str, Any]]:
-        by_agent = state.clients.get(name, {})
-        client = by_agent.get(agent_id)
-        if client is None:
-            raise HTTPException(
-                404,
-                f"{name!r} not found for agent {agent_id!r}",
-            )
+    async def _list_tools(
+        name: str,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> list[dict[str, Any]]:
+        client = _lookup((agent_id, session_id), name)
         raw = await client.list_raw_tools()
         return [t.model_dump(mode="json") for t in raw]
 
     @app.post("/mcps/{name}/tools/{tool}")
     async def _call_tool(
-        agent_id: str,
         name: str,
         tool: str,
         request: Request,
+        agent_id: str = "",
+        session_id: str = "",
     ) -> dict[str, Any]:
-        by_agent = state.clients.get(name, {})
-        client = by_agent.get(agent_id)
-        if client is None:
-            raise HTTPException(
-                404,
-                f"{name!r} not found for agent {agent_id!r}",
-            )
+        client = _lookup((agent_id, session_id), name)
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
@@ -158,67 +163,17 @@ def _build_app(state: _State) -> FastAPI:
     return app
 
 
-async def _connect_initial(
-    state: _State,
-    server_cfgs: list[dict[str, Any]] | dict[str, list[dict[str, Any]]],
-) -> None:
-    """Connect every server listed in the config file.
-
-    Supports both old and new config formats:
-
-    * Old: ``[config, ...]`` (flat list; migrated under ``"_default"``).
-    * New: ``{"agent_id": [config, ...], ...}`` (per-agent).
-    """
-    if isinstance(server_cfgs, list):
-        # Old flat-list format — auto-migrate
-        for cfg in server_cfgs:
-            client = await _build_client(cfg)
-            state.clients.setdefault(client.name, {})["_default"] = client
-            print(
-                f"[gateway] connected {client.name!r} (agent _default)",
-                flush=True,
-            )
-    else:
-        for agent_id, cfgs in server_cfgs.items():
-            for cfg in cfgs:
-                client = await _build_client(cfg)
-                state.clients.setdefault(client.name, {})[agent_id] = client
-                print(
-                    f"[gateway] connected {client.name!r} "
-                    f"(agent {agent_id})",
-                    flush=True,
-                )
-
-
-async def _run(config_path: str, port: int) -> None:
-    """Read config, connect upstreams, start uvicorn, clean up on exit."""
-    with open(config_path, encoding="utf-8") as f:
-        config = json.load(f)
-
+async def _run(port: int) -> None:
+    """Start uvicorn on an empty registry, clean up upstreams on exit."""
     state = _State()
-    # Support both new per-agent dict and old flat list format.
-    if isinstance(config, dict):
-        servers = config.get("servers", [])
-    else:
-        servers = config
-    if not isinstance(servers, (list, dict)):
-        raise ValueError(
-            f"config 'servers' must be a JSON list or per-agent dict, "
-            f"got {type(servers).__name__}",
-        )
-    await _connect_initial(state, servers or [])
-
     app = _build_app(state)
-    print(
-        f"[gateway] serving {len(state.clients)} MCPs on :{port}",
-        flush=True,
-    )
+    print(f"[gateway] serving on :{port}", flush=True)
 
     import uvicorn
 
     uvi_cfg = uvicorn.Config(
         app,
-        host="0.0.0.0",  # noqa: S104 — gateway listens inside container
+        host="127.0.0.1",
         port=port,
         log_level="info",
     )
@@ -226,8 +181,8 @@ async def _run(config_path: str, port: int) -> None:
     try:
         await server.serve()
     finally:
-        for by_agent in state.clients.values():
-            for client in by_agent.values():
+        for by_name in state.clients.values():
+            for client in by_name.values():
                 if client.is_stateful and client.is_connected:
                     await client.close()
 
@@ -237,10 +192,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="In-workspace MCP gateway (FastAPI)",
     )
-    parser.add_argument("--config", required=True)
+    # Accepted and ignored: the gateway no longer reads ``.mcp``.
+    # Kept so a workspace image shipping an older launch command
+    # still starts.
+    parser.add_argument("--config", default=None)
     parser.add_argument("--port", type=int, default=5600)
     args = parser.parse_args()
-    asyncio.run(_run(args.config, args.port))
+    asyncio.run(_run(args.port))
 
 
 if __name__ == "__main__":

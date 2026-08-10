@@ -98,6 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_service = SessionService(
             storage=storage,
             message_bus=message_bus,
+            workspace_manager=workspace_manager,
         )
 
         # ---------------- Knowledge-base wiring ----------------

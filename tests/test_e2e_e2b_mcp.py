@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""E2E test: per-agent MCP isolation via E2BWorkspace.
+# pylint: disable=protected-access
+"""E2E test: per-scope MCP isolation via E2BWorkspace.
 
 Requires: ``E2B_API_KEY`` environment variable.
 """
@@ -40,8 +41,8 @@ _SKIP_REASON = "E2B_API_KEY environment variable is not set"
 
 
 @unittest.skipUnless(_E2B_API_KEY, _SKIP_REASON)
-class TestE2BPerAgentMCP(unittest.IsolatedAsyncioTestCase):
-    """Per-agent MCP isolation tests for E2BWorkspace."""
+class TestE2BPerScopeMCP(unittest.IsolatedAsyncioTestCase):
+    """Per-``(agent_id, session_id)`` MCP isolation for E2BWorkspace."""
 
     @staticmethod
     def _make_mcp(name: str) -> MCPClient:
@@ -67,46 +68,59 @@ class TestE2BPerAgentMCP(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self._ws.close()
 
-    async def test_lazy_clone_from_default_mcps(self) -> None:
-        """First list_mcps clones from default_mcps for each agent."""
-        mcps_a = await self._ws.list_mcps("agent-A")
-        self.assertEqual(len(mcps_a), 1)
-        self.assertEqual(mcps_a[0].name, "default-fs")
+    async def test_lazy_instantiation_from_default_mcps(self) -> None:
+        """Each scope instantiates its own copy of ``default_mcps``."""
+        self.assertEqual(self._ws._mcp_instances, {})
 
-        mcps_a2 = await self._ws.list_mcps("agent-A")
-        self.assertEqual(len(mcps_a2), 1)
+        mcps_a = await self._ws.list_mcps("agent-A", "sess-1")
+        self.assertEqual([m.name for m in mcps_a], ["default-fs"])
 
-        mcps_b = await self._ws.list_mcps("agent-B")
-        self.assertEqual(len(mcps_b), 1)
-        self.assertEqual(mcps_b[0].name, "default-fs")
+        mcps_a2 = await self._ws.list_mcps("agent-A", "sess-1")
+        self.assertEqual([id(m) for m in mcps_a2], [id(m) for m in mcps_a])
 
-    async def test_add_remove_per_agent_isolation(self) -> None:
-        """add_mcp / remove_mcp scoped to agent_id."""
-        await self._ws.add_mcp("agent-A", self._make_mcp("extra"))
-        mcps_a = await self._ws.list_mcps("agent-A")
-        self.assertIn("extra", [m.name for m in mcps_a])
+        mcps_a_s2 = await self._ws.list_mcps("agent-A", "sess-2")
+        self.assertEqual([m.name for m in mcps_a_s2], ["default-fs"])
+        self.assertIsNot(mcps_a_s2[0], mcps_a[0])
 
-        mcps_b = await self._ws.list_mcps("agent-B")
-        self.assertNotIn("extra", [m.name for m in mcps_b])
+        mcps_b = await self._ws.list_mcps("agent-B", "sess-1")
+        self.assertEqual([m.name for m in mcps_b], ["default-fs"])
+        self.assertIsNot(mcps_b[0], mcps_a[0])
 
-        await self._ws.remove_mcp("agent-A", "extra")
-        mcps_a = await self._ws.list_mcps("agent-A")
-        self.assertNotIn("extra", [m.name for m in mcps_a])
+    async def test_add_remove_per_scope_isolation(self) -> None:
+        """``add_mcp`` / ``remove_mcp`` only touch the given scope."""
+        await self._ws.add_mcp(self._make_mcp("extra"), "agent-A", "sess-1")
+        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        self.assertIn("extra", [m.name for m in mcps])
 
-    async def test_duplicate_same_agent_raises(self) -> None:
-        """Duplicate MCP name within same agent raises ValueError."""
-        await self._ws.add_mcp("agent-A", self._make_mcp("dup-me"))
+        other_session = await self._ws.list_mcps("agent-A", "sess-2")
+        self.assertNotIn("extra", [m.name for m in other_session])
+
+        other_agent = await self._ws.list_mcps("agent-B", "sess-1")
+        self.assertNotIn("extra", [m.name for m in other_agent])
+
+        await self._ws.remove_mcp("extra", "agent-A", "sess-1")
+        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        self.assertNotIn("extra", [m.name for m in mcps])
+
+    async def test_duplicate_in_same_scope_raises(self) -> None:
+        """A duplicate MCP name within one scope raises ``ValueError``."""
+        await self._ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-1")
         with self.assertRaises(ValueError):
-            await self._ws.add_mcp("agent-A", self._make_mcp("dup-me"))
+            await self._ws.add_mcp(
+                self._make_mcp("dup-me"),
+                "agent-A",
+                "sess-1",
+            )
 
-    async def test_persistence_per_agent_format(self) -> None:
-        """.mcp file uses {agent_id: [configs]} format."""
-        await self._ws.add_mcp("agent-A", self._make_mcp("a-tool"))
-        await self._ws.add_mcp("agent-B", self._make_mcp("b-tool"))
+        # The same name in a different session is fine.
+        await self._ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-2")
 
-        mcps_a = await self._ws.list_mcps("agent-A")
-        mcps_b = await self._ws.list_mcps("agent-B")
-        names_a = [m.name for m in mcps_a]
-        names_b = [m.name for m in mcps_b]
-        self.assertIn("a-tool", names_a)
-        self.assertIn("b-tool", names_b)
+    async def test_purge_session_drops_the_scope(self) -> None:
+        """``purge_session`` forgets a scope; defaults come back."""
+        await self._ws.add_mcp(self._make_mcp("a-tool"), "agent-A", "sess-1")
+        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        self.assertIn("a-tool", [m.name for m in mcps])
+
+        await self._ws.purge_session("agent-A", "sess-1")
+        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        self.assertEqual([m.name for m in mcps], ["default-fs"])

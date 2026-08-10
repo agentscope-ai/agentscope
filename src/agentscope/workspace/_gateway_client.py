@@ -27,6 +27,7 @@ import base64
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode
 
 import mcp.types
 from pydantic import PrivateAttr
@@ -69,7 +70,7 @@ class GatewayMCPTool(ToolBase):
         mcp_name: str,
         tool: mcp.types.Tool,
         gateway: "GatewayClient",
-        agent_id: str = "",
+        scope_params: dict[str, str] | None = None,
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -88,12 +89,12 @@ class GatewayMCPTool(ToolBase):
             gateway (`GatewayClient`):
                 Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
-            agent_id (`str`, defaults to ``""``):
-                The agent this tool belongs to. Appended as a query
-                param on tool-call requests.
+            scope_params (`dict[str, str] | None`, optional):
+                ``agent_id`` / ``session_id`` query params selecting
+                the gateway-side session this tool runs against.
         """
         self.mcp_name = mcp_name
-        self._agent_id = agent_id
+        self._scope_params = scope_params or {}
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
@@ -141,8 +142,8 @@ class GatewayMCPTool(ToolBase):
         """
         status, body = await self._gateway.exec_request(
             "POST",
-            f"/mcps/{self.mcp_name}/tools/{self._tool.name}"
-            f"?agent_id={self._agent_id}",
+            f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            params=self._scope_params,
             body={"arguments": kwargs},
         )
         if status >= 400:
@@ -178,7 +179,7 @@ class GatewayMCPClient(MCPClient):
     """
 
     _gateway: "GatewayClient | None" = PrivateAttr(default=None)
-    _agent_id: str = PrivateAttr(default="")
+    _scope_params: dict[str, str] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
         """No-op — the parent builds local stdio/HTTP transport, which
@@ -193,6 +194,7 @@ class GatewayMCPClient(MCPClient):
         gateway: "GatewayClient",
         *,
         agent_id: str = "",
+        session_id: str = "",
         connected: bool = False,
     ) -> None:
         """Wire this client to a gateway facade.
@@ -207,17 +209,22 @@ class GatewayMCPClient(MCPClient):
                 Facade dispatching calls through
                 :meth:`GatewayClient.exec_request`.
             agent_id (`str`, defaults to ``""``):
-                The agent this MCP client belongs to. Appended as a
-                query param on every ``connect`` / ``close`` /
-                tool-call request so the gateway can isolate per-agent
-                state.
+                The agent this MCP client belongs to.
+            session_id (`str`, defaults to ``""``):
+                The session this MCP client belongs to. Together with
+                ``agent_id`` it is sent on every ``connect`` /
+                ``close`` / tool-call request so the gateway keeps one
+                upstream session per scope.
             connected (`bool`, defaults to `False`):
                 When ``True``, mark this client as already connected
                 (used by :meth:`GatewayClient.list_mcps` for entries
                 the gateway is already serving).
         """
         self._gateway = gateway
-        self._agent_id = agent_id
+        self._scope_params = {
+            "agent_id": agent_id,
+            "session_id": session_id,
+        }
         if connected:
             self._is_connected = True
 
@@ -241,7 +248,8 @@ class GatewayMCPClient(MCPClient):
         body = self.model_dump(mode="json")
         status, resp_body = await self._gateway.exec_request(
             "POST",
-            f"/mcps?agent_id={self._agent_id}",
+            "/mcps",
+            params=self._scope_params,
             body=body,
         )
         if status >= 400:
@@ -269,7 +277,8 @@ class GatewayMCPClient(MCPClient):
         try:
             status, resp_body = await self._gateway.exec_request(
                 "DELETE",
-                f"/mcps/{self.name}?agent_id={self._agent_id}",
+                f"/mcps/{self.name}",
+                params=self._scope_params,
             )
             if status >= 400 and not ignore_errors:
                 raise RuntimeError(
@@ -299,7 +308,8 @@ class GatewayMCPClient(MCPClient):
         assert self._gateway is not None
         status, body = await self._gateway.exec_request(
             "GET",
-            f"/mcps/{self.name}/tools?agent_id={self._agent_id}",
+            f"/mcps/{self.name}/tools",
+            params=self._scope_params,
         )
         if status >= 400:
             raise RuntimeError(
@@ -356,7 +366,7 @@ class GatewayMCPClient(MCPClient):
             mcp_name=self.name,
             tool=tool,
             gateway=self._gateway,
-            agent_id=self._agent_id,
+            scope_params=self._scope_params,
         )
 
 
@@ -440,17 +450,20 @@ class GatewayClient:
 
     async def list_mcps(
         self,
-        agent_id: str = "default_agent",
+        agent_id: str = "",
+        session_id: str = "",
     ) -> list[GatewayMCPClient]:
-        """Fetch MCPs registered on the gateway for a given agent.
+        """Fetch MCPs the gateway is serving for one scope.
 
         Returned clients are marked already-connected (via
         :meth:`GatewayMCPClient.attach`) — the gateway is already
         maintaining their upstream sessions.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``""``):
                 The agent whose MCP clients to fetch.
+            session_id (`str`, defaults to ``""``):
+                The session whose MCP clients to fetch.
 
         Raises:
             `RuntimeError`:
@@ -458,7 +471,8 @@ class GatewayClient:
         """
         status, body = await self.exec_request(
             "GET",
-            f"/mcps?agent_id={agent_id}",
+            "/mcps",
+            params={"agent_id": agent_id, "session_id": session_id},
         )
         if status >= 400:
             raise RuntimeError(
@@ -466,31 +480,45 @@ class GatewayClient:
             )
         specs = json.loads(body)
         return [
-            self.make_client(agent_id, spec, connected=True) for spec in specs
+            self.make_client(
+                spec,
+                agent_id=agent_id,
+                session_id=session_id,
+                connected=True,
+            )
+            for spec in specs
         ]
 
     def make_client(
         self,
-        agent_id: str,
         spec: dict[str, Any],
         *,
+        agent_id: str = "",
+        session_id: str = "",
         connected: bool = False,
     ) -> GatewayMCPClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
 
         Args:
-            agent_id (`str`):
-                The agent this MCP client belongs to.
             spec (`dict[str, Any]`):
                 ``MCPClient.model_dump(mode="json")`` payload — either
                 from ``GET /mcps`` or from user input via ``add_mcp``.
+            agent_id (`str`, defaults to ``""``):
+                The agent this MCP client belongs to.
+            session_id (`str`, defaults to ``""``):
+                The session this MCP client belongs to.
             connected (`bool`, defaults to `False`):
                 Mark the client as already-connected. Set by
                 :meth:`list_mcps`; leave ``False`` when the caller will
                 ``await client.connect()`` itself.
         """
         client = GatewayMCPClient.model_validate(spec)
-        client.attach(self, agent_id=agent_id, connected=connected)
+        client.attach(
+            self,
+            agent_id=agent_id,
+            session_id=session_id,
+            connected=connected,
+        )
         return client
 
     async def aclose(self) -> None:
@@ -506,6 +534,7 @@ class GatewayClient:
         method: str,
         path: str,
         *,
+        params: dict[str, str] | None = None,
         body: Any = None,
     ) -> tuple[int, bytes]:
         """Relay one HTTP request through the sandbox.
@@ -531,6 +560,10 @@ class GatewayClient:
                 HTTP verb (``GET`` / ``POST`` / ``DELETE``).
             path (`str`):
                 Path-only URL, e.g. ``/mcps/<name>/tools/<tool>``.
+            params (`dict[str, str] | None`, optional):
+                Query parameters, URL-encoded onto ``path``. Ids can
+                contain arbitrary characters, so callers must pass
+                them here rather than formatting them into ``path``.
             body (`Any`, optional):
                 JSON-serializable request body; ``None`` for no body.
 
@@ -543,6 +576,7 @@ class GatewayClient:
                 Shim crash (non-zero exit / non-JSON stdout) or
                 transport failure (``status == -1``).
         """
+        path = f"{path}?{urlencode(params)}" if params else path
         body_file = ""
         wrote_body_file: str | None = None
         if body is not None:

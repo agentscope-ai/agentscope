@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""E2E test: per-agent MCP isolation via DockerWorkspace.
+# pylint: disable=protected-access
+"""E2E test: per-scope MCP isolation via DockerWorkspace.
 
 Requires: Docker running locally.
 """
@@ -67,8 +68,8 @@ _SKIP_REASON = "Docker daemon not available"
     "Docker on Windows CI uses Windows container mode, "
     "Linux images unavailable",
 )
-class TestDockerPerAgentMCP(unittest.IsolatedAsyncioTestCase):
-    """Per-agent MCP isolation tests for DockerWorkspace."""
+class TestDockerPerScopeMCP(unittest.IsolatedAsyncioTestCase):
+    """Per-``(agent_id, session_id)`` MCP isolation for DockerWorkspace."""
 
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
@@ -90,10 +91,8 @@ class TestDockerPerAgentMCP(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_lazy_clone_from_default_mcps(
-        self,
-    ) -> None:
-        """First list_mcps clones from default_mcps for each agent."""
+    async def test_lazy_instantiation_from_default_mcps(self) -> None:
+        """Each scope instantiates its own copy of ``default_mcps``."""
         ws = DockerWorkspace(
             workspace_id="test-docker-clone",
             host_workdir=self.tmpdir,
@@ -102,23 +101,30 @@ class TestDockerPerAgentMCP(unittest.IsolatedAsyncioTestCase):
         try:
             await ws.initialize()
 
-            mcps_a = await ws.list_mcps("agent-A")
-            self.assertEqual(len(mcps_a), 1)
-            self.assertEqual(mcps_a[0].name, "default-fs")
+            # Nothing is connected until a scope asks.
+            self.assertEqual(ws._mcp_instances, {})
 
-            # Second access returns cached
-            mcps_a2 = await ws.list_mcps("agent-A")
-            self.assertEqual(len(mcps_a2), 1)
+            mcps_a = await ws.list_mcps("agent-A", "sess-1")
+            self.assertEqual([m.name for m in mcps_a], ["default-fs"])
 
-            # Agent B gets its own clone
-            mcps_b = await ws.list_mcps("agent-B")
-            self.assertEqual(len(mcps_b), 1)
-            self.assertEqual(mcps_b[0].name, "default-fs")
+            # Second access reuses the same instances.
+            mcps_a2 = await ws.list_mcps("agent-A", "sess-1")
+            self.assertEqual([id(m) for m in mcps_a2], [id(m) for m in mcps_a])
+
+            # A different session of the same agent gets its own.
+            mcps_a_s2 = await ws.list_mcps("agent-A", "sess-2")
+            self.assertEqual([m.name for m in mcps_a_s2], ["default-fs"])
+            self.assertIsNot(mcps_a_s2[0], mcps_a[0])
+
+            # And so does a different agent.
+            mcps_b = await ws.list_mcps("agent-B", "sess-1")
+            self.assertEqual([m.name for m in mcps_b], ["default-fs"])
+            self.assertIsNot(mcps_b[0], mcps_a[0])
         finally:
             await ws.close()
 
-    async def test_add_remove_per_agent_isolation(self) -> None:
-        """add_mcp / remove_mcp scoped to agent_id."""
+    async def test_add_remove_per_scope_isolation(self) -> None:
+        """``add_mcp`` / ``remove_mcp`` only touch the given scope."""
         ws = DockerWorkspace(
             workspace_id="test-docker-addrm",
             host_workdir=self.tmpdir,
@@ -126,53 +132,74 @@ class TestDockerPerAgentMCP(unittest.IsolatedAsyncioTestCase):
         try:
             await ws.initialize()
 
-            await ws.add_mcp("agent-A", self._make_mcp("extra"))
-            mcps_a = await ws.list_mcps("agent-A")
-            self.assertIn("extra", [m.name for m in mcps_a])
+            await ws.add_mcp(self._make_mcp("extra"), "agent-A", "sess-1")
+            mcps = await ws.list_mcps("agent-A", "sess-1")
+            self.assertIn("extra", [m.name for m in mcps])
 
-            # agent-B NOT affected
-            mcps_b = await ws.list_mcps("agent-B")
-            self.assertNotIn("extra", [m.name for m in mcps_b])
+            # Neither another session of the same agent...
+            other_session = await ws.list_mcps("agent-A", "sess-2")
+            self.assertNotIn("extra", [m.name for m in other_session])
 
-            # Remove from agent-A
-            await ws.remove_mcp("agent-A", "extra")
-            mcps_a = await ws.list_mcps("agent-A")
-            self.assertNotIn("extra", [m.name for m in mcps_a])
+            # ...nor another agent is affected.
+            other_agent = await ws.list_mcps("agent-B", "sess-1")
+            self.assertNotIn("extra", [m.name for m in other_agent])
+
+            await ws.remove_mcp("extra", "agent-A", "sess-1")
+            mcps = await ws.list_mcps("agent-A", "sess-1")
+            self.assertNotIn("extra", [m.name for m in mcps])
         finally:
             await ws.close()
 
-    async def test_duplicate_same_agent_raises(self) -> None:
-        """Duplicate MCP name within same agent raises ValueError."""
+    async def test_duplicate_in_same_scope_raises(self) -> None:
+        """A duplicate MCP name within one scope raises ``ValueError``."""
         ws = DockerWorkspace(
             workspace_id="test-docker-dup",
             host_workdir=self.tmpdir,
         )
         try:
             await ws.initialize()
-            await ws.add_mcp("agent-A", self._make_mcp("dup-me"))
+            await ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-1")
             with self.assertRaises(ValueError):
-                await ws.add_mcp("agent-A", self._make_mcp("dup-me"))
+                await ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-1")
+
+            # The same name in a different session is fine.
+            await ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-2")
         finally:
             await ws.close()
 
-    async def test_persistence_per_agent_format(self) -> None:
-        """.mcp file uses {agent_id: [configs]} format."""
+    async def test_persistence_scoped_format(self) -> None:
+        """``.mcp`` is written in the v2 nested agent/session format."""
         ws = DockerWorkspace(
             workspace_id="test-docker-persist",
             host_workdir=self.tmpdir,
         )
         try:
             await ws.initialize()
-            await ws.add_mcp("agent-A", self._make_mcp("a-tool"))
-            await ws.add_mcp("agent-B", self._make_mcp("b-tool"))
-
             mcp_file = os.path.join(self.tmpdir, ".mcp")
-            self.assertTrue(os.path.isfile(mcp_file))
+
+            # Untouched scopes leave no trace on disk.
+            await ws.list_mcps("agent-A", "sess-1")
+            self.assertFalse(os.path.exists(mcp_file))
+
+            await ws.add_mcp(self._make_mcp("a-tool"), "agent-A", "sess-1")
+            await ws.add_mcp(self._make_mcp("b-tool"), "agent-B", "sess-2")
+
             with open(mcp_file, encoding="utf-8") as f:
                 saved = json.load(f)
-            self.assertIn("agent-A", saved)
-            self.assertIn("agent-B", saved)
-            self.assertEqual(len(saved["agent-A"]), 1)
-            self.assertEqual(len(saved["agent-B"]), 1)
+            self.assertEqual(saved["version"], 2)
+            self.assertEqual(
+                [m["name"] for m in saved["mcps"]["agent-A"]["sess-1"]],
+                ["a-tool"],
+            )
+            self.assertEqual(
+                [m["name"] for m in saved["mcps"]["agent-B"]["sess-2"]],
+                ["b-tool"],
+            )
+
+            # purge_session forgets the scope entirely.
+            await ws.purge_session("agent-A", "sess-1")
+            with open(mcp_file, encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertNotIn("agent-A", saved["mcps"])
         finally:
             await ws.close()

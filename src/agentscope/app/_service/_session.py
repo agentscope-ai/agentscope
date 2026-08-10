@@ -50,6 +50,7 @@ from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
+from ..workspace_manager import WorkspaceManagerBase
 from ..storage._utils import _ensure_team_members
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
@@ -121,15 +122,21 @@ class SessionService:
         self,
         storage: StorageBase,
         message_bus: MessageBus,
+        workspace_manager: WorkspaceManagerBase | None = None,
     ) -> None:
         """Bind dependencies.
 
         Args:
             storage (`StorageBase`): Persistent storage backend.
             message_bus (`MessageBus`): Live message bus.
+            workspace_manager (`WorkspaceManagerBase | None`, optional):
+                Used by :meth:`delete_session` to drop the deleted
+                session's workspace state. ``None`` skips that step —
+                callers without a manager keep the previous behaviour.
         """
         self._storage = storage
         self._bus = message_bus
+        self._workspace_manager = workspace_manager
         self._projection = SessionProjection(message_bus)
 
     # ------------------------------------------------------------------
@@ -364,6 +371,10 @@ class SessionService:
         )
         all_sids = [session_id, *worker_sids]
 
+        # Resolve the workspace binding while the record still exists.
+        record = await self._storage.get_session(user_id, agent_id, session_id)
+        workspace_id = record.config.workspace_id if record else None
+
         # Clean leader-side subagent HITL projections before storage
         # cascades remove the records we need to resolve roles from.
         await self._purge_subagent_hitl(user_id, agent_id, session_id)
@@ -375,7 +386,50 @@ class SessionService:
             session_id,
         )
         await self._purge_bus(all_sids)
+        if deleted:
+            await self._purge_workspace(
+                user_id,
+                agent_id,
+                session_id,
+                workspace_id,
+            )
         return deleted
+
+    async def _purge_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        workspace_id: str | None,
+    ) -> None:
+        """Drop the deleted session's state from its workspace.
+
+        Workspaces outlive sessions and are commonly shared across
+        every session of an agent, so a deleted session's MCP clients
+        and offload files would otherwise accumulate for the life of
+        the workspace.
+
+        Best-effort: a workspace that cannot be resolved (backend
+        down, sandbox already gone) must never fail the deletion the
+        caller already committed to.
+        """
+        if self._workspace_manager is None or workspace_id is None:
+            return
+        try:
+            workspace = await self._workspace_manager.get_workspace(
+                user_id,
+                agent_id,
+                session_id,
+                workspace_id,
+            )
+            await workspace.purge_session(agent_id, session_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to purge workspace %r for session %r: %s",
+                workspace_id,
+                session_id,
+                e,
+            )
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Cancel, delete and bus-purge a team.

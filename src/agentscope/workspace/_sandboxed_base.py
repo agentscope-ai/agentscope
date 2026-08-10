@@ -17,14 +17,13 @@ add/remove routing, ``.mcp`` persistence, reset — lives here.
 """
 
 import asyncio
-import json
 import shlex
 from abc import abstractmethod
-from typing import TYPE_CHECKING
 
 from .._logging import logger
 from ..mcp import MCPClient
 from ._base import WorkspaceBase
+from ._mcp_registry import MCPKey
 from ._gateway_client import GatewayClient
 from ._utils import (
     DEFAULT_GATEWAY_LOG,
@@ -34,9 +33,6 @@ from ._utils import (
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
 )
-
-if TYPE_CHECKING:
-    from ._gateway_client import GatewayMCPClient
 
 
 class SandboxedWorkspaceBase(WorkspaceBase):
@@ -64,10 +60,6 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     _gateway: GatewayClient | None
     """Workspace-side gateway facade. ``None`` before init / after close."""
-
-    _gateway_clients: "dict[str, dict[str, GatewayMCPClient]]"
-    """Per-agent gateway-wrapped MCP handles:
-    ``{agent_id: {MCPClient.name: GatewayMCPClient}}``."""
 
     _bootstrap_cmd_timeout: float = 1800.0
     """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
@@ -122,6 +114,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        max_live_stateful_mcps: int | None = None,
     ) -> None:
         """Initialise sandbox-workspace state.
 
@@ -129,17 +122,21 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             workspace_id (`str | None`, optional):
                 Existing identifier; ``None`` mints a fresh UUID.
             default_mcps (`list[MCPClient] | None`, optional):
-                MCPs registered when no persisted ``.mcp`` exists.
+                MCPs seeded into every scope that has not declared
+                its own.
             skill_paths (`list[str] | None`, optional):
                 Local skill dirs seeded on first start.
+            max_live_stateful_mcps (`int | None`, optional):
+                Cap on concurrently live stateful MCP instances
+                across all scopes.
         """
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
             skill_paths=skill_paths,
+            max_live_stateful_mcps=max_live_stateful_mcps,
         )
         self._gateway = None
-        self._gateway_clients = {}
 
     # ── subclass hooks ────────────────────────────────────────────
 
@@ -191,26 +188,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             self._backend is not None
         ), "_provision_backend must set self._backend before returning"
 
-        # Restore per-agent MCP state from .mcp file
-        self._mcps = await self._restore_or_seed_mcps()
+        # Restore MCP declarations from .mcp
+        self._mcp_specs = await self._restore_mcp_specs()
 
         # Set up the workspace layout
         await self._ensure_workspace_layout()
 
-        # Set up the MCP gateway server
+        # Set up the MCP gateway server. No upstream is connected
+        # here — the gateway starts empty and each scope registers
+        # its own MCPs on its first list_mcps.
         await self._setup_mcp_gateway()
-
-        # Populate per-agent gateway handles from the gateway.
-        # Each real agent in self._mcps gets its own client instances.
-        # "_default" is a template key — skip it.
-        self._gateway_clients = {}
-        for agent_id in list(self._mcps.keys()):
-            if agent_id == "_default":
-                continue
-            gw_clients = await self._gateway.list_mcps(agent_id)
-            self._gateway_clients[agent_id] = {c.name: c for c in gw_clients}
-
-        await self._save_mcp_file()
 
         # Set up the skills if not exists
         await self._setup_skills()
@@ -235,8 +222,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             except Exception:
                 pass
             self._gateway = None
-        self._gateway_clients.clear()
-        self._mcps.clear()
+        # The gateway process dies with the sandbox, so the proxies
+        # need no individual close — just drop them.
+        self._mcp_instances.clear()
+        self._mcp_last_used.clear()
 
         try:
             await self._teardown_backend()
@@ -249,138 +238,56 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Deregisters every MCP from the gateway, clears local handles,
         and wipes ``.mcp``, ``skills/``, ``sessions/``, and ``data/``.
-        ``default_mcps`` / ``skill_paths`` are not re-seeded.
+        ``skill_paths`` are not re-seeded, but ``default_mcps`` are:
+        with ``.mcp`` gone, every scope is "never configured" again
+        and inherits the defaults on its next ``list_mcps``.
         """
         backend = self.get_backend()
         async with self._mcp_lock, self._skill_lock:
-            for by_name in self._gateway_clients.values():
-                for gw_client in list(by_name.values()):
-                    try:
-                        await gw_client.close()
-                    except Exception as e:
-                        logger.warning(
-                            "MCP %r close failed during reset: %s",
-                            gw_client.name,
-                            e,
-                        )
-            self._gateway_clients.clear()
-            self._mcps.clear()
+            await self._close_all_mcp_instances()
+            self._mcp_specs.clear()
 
             for path in (
                 self._sessions_dir,
                 self._data_dir,
                 self._skills_dir,
+                self._mcp_file,
             ):
                 await backend.delete_path(path)
 
-            # Empty out .mcp so a restart won't fall back to default_mcps.
-            await self._save_mcp_file()
+    # ── MCP management (gateway-routed) ───────────────────────────
 
-    # ── MCP management (gateway-routed, per-agent) ────────────────
-
-    async def list_mcps(
+    async def _new_mcp_instance(
         self,
-        agent_id: str = "default_agent",
-    ) -> list[MCPClient]:
-        """Gateway-wrapped MCP handles for the given agent.
+        scope: MCPKey,
+        spec: MCPClient,
+    ) -> MCPClient:
+        """Register ``spec`` with the in-sandbox gateway for ``scope``.
 
-        On first access for an ``agent_id`` that has no cached handles,
-        new :class:`GatewayMCPClient` instances are built from the
-        ``_default`` config specs and registered with the gateway, so
-        each agent gets its own isolated sessions.
-        """
-        if self._gateway is None:
-            return []
-        if agent_id not in self._gateway_clients:
-            new_clients: dict[str, "GatewayMCPClient"] = {}
-            default_cfgs = self._mcps.get("_default", [])
-            for cfg in default_cfgs:
-                spec = cfg.model_dump(mode="json")
-                gw_client = self._gateway.make_client(agent_id, spec)
-                await gw_client.connect()
-                new_clients[gw_client.name] = gw_client
-                self._mcps.setdefault(agent_id, []).append(cfg)
-            self._gateway_clients[agent_id] = new_clients
-            if new_clients:
-                await self._save_mcp_file()
-        return list(self._gateway_clients.get(agent_id, {}).values())
-
-    async def add_mcp(
-        self,
-        agent_id: str = "default_agent",
-        mcp_client: MCPClient | None = None,
-    ) -> None:
-        """Register a new MCP server for an agent through the gateway.
+        The returned proxy carries the scope, so every gateway request
+        it makes is tagged with it and the gateway keeps one upstream
+        session per ``(agent_id, session_id, name)``.
 
         Args:
-            agent_id (`str`, defaults to ``"default_agent"``):
-                The agent this MCP client belongs to.
-            mcp_client (`MCPClient`):
-                The MCP to register.
+            scope (`MCPKey`):
+                The ``(agent_id, session_id)`` owning the instance.
+            spec (`MCPClient`):
+                The declared config to instantiate from.
 
         Raises:
-            `ValueError`:
-                If an MCP with the same name already exists for
-                this agent.
             `RuntimeError`:
                 If the gateway is not attached or rejects the
                 registration.
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
-        assert mcp_client is not None  # pragma: no cover
-        async with self._mcp_lock:
-            by_name = self._gateway_clients.setdefault(agent_id, {})
-            if mcp_client.name in by_name:
-                raise ValueError(
-                    f"MCP {mcp_client.name!r} already exists for "
-                    f"agent {agent_id!r}.",
-                )
-            spec = mcp_client.model_dump(mode="json")
-            gw_client = self._gateway.make_client(agent_id, spec)
-            await gw_client.connect()
-            self._mcps.setdefault(agent_id, []).append(mcp_client)
-            by_name[gw_client.name] = gw_client
-            await self._save_mcp_file()
-
-    async def remove_mcp(
-        self,
-        agent_id: str = "default_agent",
-        name: str | None = None,
-    ) -> None:
-        """Deregister an MCP server by name for an agent.
-
-        Args:
-            agent_id (`str`, defaults to ``"default_agent"``):
-                The agent whose MCP client to remove.
-            name (`str`):
-                MCP name to remove. Unknown names log a warning and
-                return silently.
-
-        Raises:
-            `RuntimeError`:
-                If the gateway is not attached.
-        """
-        if self._gateway is None:
-            raise RuntimeError("Workspace has no MCP gateway attached.")
-        assert name is not None  # pragma: no cover
-        async with self._mcp_lock:
-            by_name = self._gateway_clients.get(agent_id, {})
-            gw_client = by_name.pop(name, None)
-            if gw_client is None:
-                logger.warning(
-                    "MCP %r not found for agent %r",
-                    name,
-                    agent_id,
-                )
-                return
-            try:
-                await gw_client.close()
-            except Exception as e:
-                logger.warning("MCP %r close failed: %s", name, e)
-            agent_mcps = self._mcps.get(agent_id, [])
-            self._mcps[agent_id] = [m for m in agent_mcps if m.name != name]
-            await self._save_mcp_file()
+        client = self._gateway.make_client(
+            spec.model_dump(mode="json"),
+            agent_id=scope[0],
+            session_id=scope[1],
+        )
+        await client.connect()
+        return client
 
     # ── workspace layout helpers ──────────────────────────────────
 
@@ -400,40 +307,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             cwd="/",
         )
 
-        # Seed ``.mcp`` on first use in per-agent dict format.
-        # Accepts both old flat-list and new per-agent dict.
-        payload = json.dumps(
-            {
-                "_default": [
-                    m.model_dump(mode="json") for m in self.default_mcps
-                ],
-            },
-            indent=2,
-            ensure_ascii=False,
-        ).encode("utf-8")
-
-        if await backend.file_exists(self._mcp_file):
-            try:
-                existing = await backend.read_file(self._mcp_file)
-                parsed = json.loads(existing.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as e:
-                logger.warning(
-                    "%s: %s is corrupted (%s); reseeding defaults",
-                    type(self).__name__,
-                    self._mcp_file,
-                    e,
-                )
-            else:
-                if isinstance(parsed, (list, dict)):
-                    return
-                logger.warning(
-                    "%s: %s does not contain a JSON list or dict "
-                    "(got %s); reseeding defaults",
-                    type(self).__name__,
-                    self._mcp_file,
-                    type(parsed).__name__,
-                )
-        await backend.write_file(self._mcp_file, payload)
+        # ``.mcp`` is not seeded here: an absent file means "no scope
+        # has diverged from default_mcps yet", and it is written on
+        # the first add_mcp / remove_mcp.
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
@@ -486,12 +362,12 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         # Launch. ``pkill`` clears any gateway left running by a
         # previous resume so the new one can bind the port cleanly.
-        # The gateway reads ``.mcp`` directly — no separate config file.
+        # The gateway starts with an empty registry — it never reads
+        # ``.mcp``; every MCP is registered through it on demand.
         launch_cmd = (
             "pkill -f _mcp_gateway_app.py || true; "
             f"nohup {shlex.quote(self._gateway_python)} -u "
             f"{shlex.quote(self._gateway_script)} "
-            f"--config {shlex.quote(self._mcp_file)} "
             f"--port {self.gateway_port} "
             f"> {shlex.quote(self._gateway_log)} 2>&1 &"
         )
@@ -523,6 +399,5 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 f"Tail of {self._gateway_log}:\n{tail}",
             )
 
-        # Per-agent gateway handles are populated in initialize()
-        # after _setup_mcp_gateway returns, via _gateway.list_mcps()
-        # for each agent_id in _mcps.
+        # Nothing is registered here — the gateway stays empty until a
+        # scope calls list_mcps and registers its own MCPs.

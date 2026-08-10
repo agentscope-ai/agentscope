@@ -63,6 +63,7 @@ class _FakeWorkspace:
     async def list_mcps(
         self,
         agent_id: str,  # pylint: disable=unused-argument
+        session_id: str,  # pylint: disable=unused-argument
     ) -> list:
         """Return the configured workspace MCP descriptors."""
         return list(self._mcps)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""E2E test: per-agent MCP isolation via HTTP API (pytest).
+"""E2E test: per-scope MCP isolation via HTTP API (pytest).
 
 Requires: Redis running on localhost:6379
 """
@@ -159,11 +159,11 @@ class TestPerAgentMCPAPI:
         return [m["name"] for m in resp.json()]
 
     @pytest.mark.asyncio
-    async def test_lazy_clone_both_agents_get_default_search(
+    async def test_both_agents_get_default_search(
         self,
         client: httpx.AsyncClient,
     ) -> None:
-        """Leader and worker each get default-search via lazy clone."""
+        """Each scope is seeded from ``default_mcps`` on first list."""
         leader = await self._create_agent(client, "Leader")
         worker = await self._create_agent(client, "Worker")
         lsid = await self._create_session(client, leader)
@@ -185,7 +185,7 @@ class TestPerAgentMCPAPI:
         self,
         client: httpx.AsyncClient,
     ) -> None:
-        """Leader adds MCP; worker does NOT see it."""
+        """Leader adds an MCP; the worker does NOT see it."""
         leader = await self._create_agent(client, "LeaderAdd")
         worker = await self._create_agent(client, "WorkerAdd")
         lsid = await self._create_session(client, leader)
@@ -217,7 +217,7 @@ class TestPerAgentMCPAPI:
         self,
         client: httpx.AsyncClient,
     ) -> None:
-        """Same name within same agent returns 409."""
+        """The same name within one scope returns 409."""
         leader = await self._create_agent(client, "LeaderDup")
         lsid = await self._create_session(client, leader)
 
@@ -249,7 +249,7 @@ class TestPerAgentMCPAPI:
         self,
         client: httpx.AsyncClient,
     ) -> None:
-        """Remove from leader; worker unaffected."""
+        """Remove from the leader; the worker is unaffected."""
         leader = await self._create_agent(client, "LeaderRm")
         worker = await self._create_agent(client, "WorkerRm")
         lsid = await self._create_session(client, leader)
@@ -279,3 +279,42 @@ class TestPerAgentMCPAPI:
         await client.delete(f"/sessions/{wsid}")
         await client.delete(f"/agent/{leader}")
         await client.delete(f"/agent/{worker}")
+
+    @pytest.mark.asyncio
+    async def test_mcp_isolated_between_sessions_of_one_agent(
+        self,
+        client: httpx.AsyncClient,
+    ) -> None:
+        """Two sessions of one agent hold independent MCP sets."""
+        agent = await self._create_agent(client, "TwoSessions")
+        sid_a = await self._create_session(client, agent)
+        sid_b = await self._create_session(client, agent)
+
+        resp = await client.post(
+            "/workspace/mcp",
+            json=MCPClient(
+                name="session-a-only",
+                is_stateful=False,
+                mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+            ).model_dump(),
+            params={"agent_id": agent, "session_id": sid_a},
+        )
+        assert resp.status_code == 201
+
+        a_names = await self._list_mcps(client, agent, sid_a)
+        assert "session-a-only" in a_names
+        b_names = await self._list_mcps(client, agent, sid_b)
+        assert "session-a-only" not in b_names
+        assert "default-search" in b_names
+
+        # Deleting session A drops its declaration: a session recreated
+        # later starts from default_mcps again.
+        await client.delete(f"/sessions/{sid_a}")
+        sid_c = await self._create_session(client, agent)
+        c_names = await self._list_mcps(client, agent, sid_c)
+        assert "session-a-only" not in c_names
+        assert "default-search" in c_names
+
+        await client.delete(f"/sessions/{sid_b}")
+        await client.delete(f"/sessions/{sid_c}")
+        await client.delete(f"/agent/{agent}")
