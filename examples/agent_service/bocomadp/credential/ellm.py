@@ -16,7 +16,7 @@ from typing import Any, Literal, Self, Type
 from pydantic import ConfigDict, Field, SecretStr, model_validator
 
 from agentscope.credential import CredentialBase
-from agentscope.model import ChatModelBase, OpenAIChatModel, EllmChatModel
+from agentscope.model import ChatModelBase
 
 
 # class ELLMChatModel(OpenAIChatModel):
@@ -117,9 +117,11 @@ class ELLMCredential(CredentialBase):
 
     @classmethod
     def get_chat_model_class(cls) -> Type[ChatModelBase]:
-        """ELLM 是 OpenAI 兼容接口——基于 :class:`OpenAIChatModel` 的子类。
+        """ELLM 是 OpenAI 兼容接口——基于本包的 :class:`EllmChatModel`。
 
-        子类化使 :meth:`list_models` 读取本包的 ``_models/*.yaml``
+        子类化使 :meth:`list_models` 读取本包 ``providers/_models/*.yaml``
         候选卡（而不是官方 OpenAI 的候选）。
         """
+        from bocomadp.providers.ellm_chat_model import EllmChatModel
+
         return EllmChatModel

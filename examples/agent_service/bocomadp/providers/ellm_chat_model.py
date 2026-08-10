@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The ELLM chat model implementation.
+"""The ELLM chat model implementation (BOCOM adapter).
 
 The BOCOM ELLM (Enterprise Large Language Model) gateway exposes an
 OpenAI-compatible ``/chat/completions`` endpoint with two protocol
@@ -11,8 +11,10 @@ differences handled by this class:
 - The generation cap must be sent under the ``max_tokens`` field name
   (the adapter rejects ``max_completion_tokens``).
 
-The key-refresh logic (api-key header rotation) lives in a downstream
-subclass; this class only carries the protocol differences.
+The key-refresh logic (api-key header rotation) lives in the
+:class:`~bocomadp.middleware.ellm_refresh.EllmKeyRefreshMiddleware`,
+which injects the fresh key per call via :meth:`set_api_key`; this class
+only carries the protocol differences.
 """
 from collections import OrderedDict
 from datetime import datetime
@@ -20,16 +22,16 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
-from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
-from .._model_usage import ChatUsage
-from ..._utils._common import _generate_id
-from ...credential import EllmCredential
-from ...formatter import FormatterBase, DeepSeekChatFormatter
-from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
-from ...tool import ToolChoice
+from agentscope.model._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from agentscope.model._model_response import ChatResponse, StructuredResponse
+from agentscope.model._model_usage import ChatUsage
+from agentscope._utils._common import _generate_id
+from agentscope.formatter import FormatterBase, DeepSeekChatFormatter
+from agentscope.message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
+from agentscope.tool import ToolChoice
 
 if TYPE_CHECKING:
+    from bocomadp.credential import ELLMCredential
     from openai.types.chat import ChatCompletion
     from openai import AsyncStream
 else:
@@ -77,7 +79,7 @@ class EllmChatModel(ChatModelBase):
 
     def __init__(
         self,
-        credential: EllmCredential,
+        credential: "ELLMCredential",
         model: str,
         parameters: "EllmChatModel.Parameters | None" = None,
         stream: bool = True,
@@ -90,8 +92,8 @@ class EllmChatModel(ChatModelBase):
         """Initialize the ELLM chat model.
 
         Args:
-            credential (`EllmCredential`):
-                The ELLM credential used to authenticate API calls.
+            credential (`ELLMCredential`):
+                The BOCOM ELLM credential used to authenticate API calls.
             model (`str`):
                 The ELLM model name, e.g. ``Qwen3-235B-A22B``.
             parameters (`EllmChatModel.Parameters | None`, defaults to \
@@ -125,6 +127,10 @@ class EllmChatModel(ChatModelBase):
         )
         self.formatter = formatter or DeepSeekChatFormatter()
         self.client_kwargs = client_kwargs or {}
+        # Request-level api key override, injected per call by the
+        # ``EllmKeyRefreshMiddleware``.  When unset, the static
+        # ``credential.api_key`` configured at construction time is used.
+        self._api_key_override: str | None = None
 
         import openai
 
@@ -133,6 +139,21 @@ class EllmChatModel(ChatModelBase):
             base_url=self.credential.base_url,
             **self.client_kwargs,
         )
+
+    def set_api_key(self, api_key: str) -> None:
+        """Set the request-level API key override for subsequent calls.
+
+        Used by :class:`~bocomadp.middleware.ellm_refresh.
+        EllmKeyRefreshMiddleware` to inject a freshly-refreshed key before
+        each model call without recreating the client.  When unset, the
+        static ``credential.api_key`` configured at construction time is
+        used.
+
+        Args:
+            api_key (`str`):
+                The API key to send as ``Authorization: Bearer <api_key>``.
+        """
+        self._api_key_override = api_key
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -191,6 +212,11 @@ class EllmChatModel(ChatModelBase):
             kwargs["top_p"] = self.parameters.top_p
 
         kwargs.update(generate_kwargs)
+
+        if self._api_key_override:
+            headers = dict(kwargs.pop("extra_headers", None) or {})
+            headers["Authorization"] = f"Bearer {self._api_key_override}"
+            kwargs["extra_headers"] = headers
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -424,3 +450,6 @@ class EllmChatModel(ChatModelBase):
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
+
+
+__all__ = ["EllmChatModel"]

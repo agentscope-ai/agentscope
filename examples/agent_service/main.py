@@ -52,7 +52,6 @@ from bocomadp.config import (
     load_models_from_yaml,
     build_model_instance,
 )
-# from bocomadp.credential import BocomEllmCredential
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
@@ -294,8 +293,6 @@ app = create_app(
         ExternalSkillHub(),
     ],
     custom_subagent_templates=load_subagent_templates(),
-    # 注册 BOCOM ELLM credential（扩展核心 EllmCredential 的 key-service 字段）
-    # extra_credentials=[BocomEllmCredential],
     # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
     # + ELLM key 刷新中间件（每次模型调用前惰性刷新 apikey）。
     extra_agent_middlewares=_build_agent_middlewares_with_ellm,

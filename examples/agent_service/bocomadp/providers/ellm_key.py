@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""ELLM API key fetch helper — stateless, lazy key acquisition.
+"""ELLM API key fetch/refresh helpers.
 
-Fetches a fresh API key from the BOCOM ELLM gateway on demand. This is the
-"get a new key" primitive for the outer-product lazy-refresh scheme: callers
-(``AutoRefreshEllmChatModel``) check expiry before each model call and invoke
-:func:`fetch_ellm_key` when the key is stale.
+- :func:`fetch_ellm_key` — the stateless "get a new key" primitive.
+- :class:`EllmKeyRefresher` — the lazy-refresh state machine (expiry
+  check / distributed-lock debounce / fetch / write-back), extracted from
+  the former ``AutoRefreshEllmChatModel`` so the key lifecycle lives
+  outside the model.  :class:`EllmKeyRefreshMiddleware` uses it and
+  injects the fresh key per call via ``EllmChatModel.set_api_key``.
 
 The request/response handling is adapted from deer-flow's
 ``EllmApiKeyManager._fetch_key_from_server`` / ``_parse_key_response``
@@ -36,12 +38,17 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from typing import Any
 
 import httpx
+
+from agentscope.app.message_bus import MessageBus
+from agentscope.app.storage import CredentialRecord, StorageBase
+from agentscope.credential import CredentialFactory
 
 logger = logging.getLogger(__name__)
 
@@ -150,4 +157,156 @@ def _parse_key_response(scene_code: str, data: dict[str, Any]) -> tuple[str, int
     return api_key, ttl_ms
 
 
-__all__ = ["fetch_ellm_key"]
+# Distributed-lock lease for a single key refresh — a crash while holding
+# it delays the next refresh by at most this long.
+_LOCK_TTL_SECS = 30
+
+
+class EllmKeyRefresher:
+    """Lazily refresh the ELLM api key stored in a credential record.
+
+    The gateway issues keys valid for ~25 minutes; the stored key's expiry
+    is judged solely from the independent ``record.data["apikey_expires_at"]``
+    (Unix seconds, stamped on every refresh).  A record without a usable
+    stamp is treated as expired, so the refresh writes it and the record
+    converges.  An empty ``api_key`` (e.g. the frontend cleared it on
+    update) forces an immediate refresh regardless of any expiry stamp.
+
+    All key state lives in the user-scoped credential record identified by
+    ``credential_id``; the record's ``data`` dict is expected to carry
+    ``api_key``, ``scene_code``, ``api_key_url`` and (optionally)
+    ``inject_think_tag``.
+    """
+
+    _LOCK_TTL_SECS = _LOCK_TTL_SECS
+
+    def __init__(
+        self,
+        storage: StorageBase,
+        message_bus: MessageBus,
+        user_id: str,
+    ) -> None:
+        """Initialize the refresher.
+
+        Args:
+            storage (StorageBase): Credential read/write backend —
+                accessed only through ``get_credential`` /
+                ``upsert_credential``.
+            message_bus (MessageBus): Transport used for the refresh lock
+                (``acquire_lock``); ``InMemoryMessageBus`` in tests.
+            user_id (str): Owner of the credential records.
+        """
+        self._storage = storage
+        self._message_bus = message_bus
+        self._user_id = user_id
+
+    @property
+    def user_id(self) -> str:
+        """The credential owner this refresher serves."""
+        return self._user_id
+
+    def _is_expired(self, record: CredentialRecord) -> bool:
+        """Whether the record's stored key is stale enough to refresh.
+
+        Judged in priority order:
+
+        1. An empty/absent ``data["api_key"]`` — external updates (e.g.
+           the frontend) clear it to force a refresh — is immediately
+           expired regardless of any expiry stamp.
+        2. A valid ``data["apikey_expires_at"]`` (Unix seconds, stamped on
+           every write-back) is expired once ``now`` passes it.  A record
+           without a usable expiry stamp is treated as expired, so the
+           refresh writes the stamp and the record converges.
+        """
+        api_key = record.data.get("api_key")
+        if not api_key:
+            return True
+        apikey_expires_at = record.data.get("apikey_expires_at")
+        if isinstance(apikey_expires_at, (int, float)) and apikey_expires_at > 0:
+            return time.time() > apikey_expires_at
+        return True
+
+    async def ensure_fresh_key(
+        self,
+        credential_id: str,
+    ) -> tuple[str, CredentialRecord]:
+        """Return ``(api_key, record)`` with a currently-valid key.
+
+        Fast path — read the credential once; reuse the stored key while
+        it is not yet expired (no lock, no network).
+
+        Slow path — when stale, refresh under ``ellm:refresh:<id>`` lock
+        with a freshness double-check, so concurrent refreshers for the
+        same credential fetch from the gateway at most once.
+
+        Args:
+            credential_id (str): The stored ELLM credential record id.
+
+        Returns:
+            A tuple ``(api_key, record)``; ``record.data`` carries the
+            freshest ``api_key`` / ``apikey_expires_at`` and any runtime
+            switches (e.g. ``inject_think_tag``).
+        """
+        record = await self._storage.get_credential(
+            self._user_id,
+            credential_id,
+        )
+        if record is None:
+            raise RuntimeError(
+                "EllmKeyRefresher: credential "
+                f"{credential_id!r} not found for user {self._user_id!r}",
+            )
+        if not self._is_expired(record):
+            return record.data["api_key"], record
+
+        lock_key = f"ellm:refresh:{credential_id}"
+        async with self._message_bus.acquire_lock(
+            lock_key,
+            ttl_secs=self._LOCK_TTL_SECS,
+        ):
+            record = await self._storage.get_credential(
+                self._user_id,
+                credential_id,
+            )
+            if record is None:
+                raise RuntimeError(
+                    "EllmKeyRefresher: credential "
+                    f"{credential_id!r} disappeared during refresh "
+                    f"for user {self._user_id!r}",
+                )
+            if not self._is_expired(record):
+                return record.data["api_key"], record
+            return await self._refresh_key(record)
+
+    async def _refresh_key(
+        self,
+        record: CredentialRecord,
+    ) -> tuple[str, CredentialRecord]:
+        """Fetch a fresh key and persist it; on failure keep the old one.
+
+        The synchronous gateway call runs in a worker thread so the event
+        loop is not blocked for the (up to 30 s) HTTP timeout.
+        """
+        try:
+            new_key, ttl_ms = await asyncio.to_thread(
+                fetch_ellm_key,
+                record.data["scene_code"],
+                record.data["api_key_url"],
+            )
+        except Exception as exc:  # noqa: BLE001 — keep serving on failure
+            logger.warning(
+                "EllmKeyRefresher: key refresh failed for credential %s; "
+                "falling back to previous key (error=%s)",
+                record.data.get("id"),
+                exc,
+            )
+            return record.data["api_key"], record
+
+        record.data["api_key"] = new_key
+        record.data["apikey_expires_at"] = time.time() + ttl_ms / 1000
+        credential_obj = CredentialFactory.from_dict(record.data)
+        await self._storage.upsert_credential(self._user_id, credential_obj)
+        return new_key, record
+
+
+__all__ = ["fetch_ellm_key", "EllmKeyRefresher"]
