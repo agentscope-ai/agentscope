@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 #bash compose-images.sh  -f ../docker-compose.uat.yml   -o -d ./ 
-bash compose-images.sh  -f ./docker-compose.yml   -i -d ./ 
+# bash compose-images.sh  -f ./docker-compose.yml   -i -d ./ 
 # compose-images.sh
 # 功能：按照指定 docker-compose 文件的 image 列表，支持：
 #   -o 保存镜像到 -d 指定目录（默认当前目录）
