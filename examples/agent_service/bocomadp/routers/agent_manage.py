@@ -194,6 +194,17 @@ async def delete_agent(agent_id: str, request: Request) -> dict:
     mgr = _get_manager(request)
     try:
         ok = mgr.delete_agent(agent_id)
+        # ── 清理该 agent 的池资源（Pod + PVC） ──
+        try:
+            import asyncio
+            runtime = getattr(request.app.state, "runtime", None)
+            if runtime is not None:
+                ws_mgr = getattr(runtime, "workspace_manager", None)
+                if ws_mgr is not None and hasattr(ws_mgr, "cleanup_pool"):
+                    # 后台任务，不阻塞响应
+                    asyncio.create_task(ws_mgr.cleanup_pool(agent_id))
+        except Exception:
+            pass
         return {"deleted": ok}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

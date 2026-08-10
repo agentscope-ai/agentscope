@@ -100,6 +100,7 @@ class DualPvcK8sWorkspace(K8sWorkspace):
         instructions: str = "",
         default_mcps: list[Any] | None = None,
         skill_paths: list[str] | None = None,
+        max_active_pods: int = 0,
     ) -> None:
         super().__init__(
             workspace_id=workspace_id,
@@ -128,6 +129,7 @@ class DualPvcK8sWorkspace(K8sWorkspace):
         self._session_pvc_name: str = session_pvc_name
         self._agent_pvc_access_mode: str = agent_pvc_access_mode
         self._session_pvc_access_mode: str = session_pvc_access_mode
+        self._max_active_pods: int = max_active_pods
 
         # workdir = /workspace (session PVC 挂载点，父类已设置)
         # self.workdir = POD_WORKDIR
@@ -260,7 +262,34 @@ class DualPvcK8sWorkspace(K8sWorkspace):
                 mcp_target,
             )
 
-    # ── 覆盖 Pod 创建：双卷挂载 ────────────────────────────────
+    # ── 覆盖 Pod 创建：双卷挂载 + 限流 ─────────────────────────
+
+    async def _ensure_pod(self) -> None:
+        """创建 Pod 前检查 agent 下活跃 Pod 数量。
+
+        通过 K8s label ``agentscope.pvc.agent`` 计数，确保
+        同一 agent 的活跃 Pod 不超过 ``max_active_pods``。
+        任意服务实例均可独立完成此检查——K8s API 是唯一真实源。
+        """
+        if self._max_active_pods > 0:
+            pods = await self._v1.list_namespaced_pod(
+                namespace=self._namespace,
+                label_selector=(
+                    f"agentscope.pvc.agent={self._agent_pvc_name}"
+                ),
+            )
+            active = sum(
+                1
+                for p in pods.items
+                if p.status.phase in ("Running", "Pending")
+            )
+            if active >= self._max_active_pods:
+                raise RuntimeError(
+                    f"达到同一智能体的沙箱上限（当前 {active}，"
+                    f"最大 {self._max_active_pods}）。"
+                    f"请等待空闲会话结束后再试。",
+                )
+        await super()._ensure_pod()
 
     async def _create_pod(self) -> None:
         """Pod 挂载 agent + session 两个 PVC。"""
@@ -382,8 +411,8 @@ class DualPvcK8sWorkspace(K8sWorkspace):
                         "DualPvcK8sWorkspace: Pod delete failed: %s", e,
                     )
 
-            # 2. 删除 session PVC（session 结束即清理）
-            if self._session_pvc_name:
+            # 2. 删除 session PVC（仅 delete_pvc_on_close=True 时）
+            if self._session_pvc_name and self._delete_pvc_on_close:
                 try:
                     await self._v1.delete_namespaced_persistent_volume_claim(
                         self._session_pvc_name,
@@ -449,6 +478,7 @@ class DualPvcK8sWorkspaceManager(K8sWorkspaceManager):
         ttl: float = 3600.0,
         sweep_interval: float = 300.0,
         delete_pvc_on_close: bool = False,
+        max_active_pods: int = 0,
     ) -> None:
         """初始化双 PVC 模式的 Manager。
 
@@ -484,6 +514,7 @@ class DualPvcK8sWorkspaceManager(K8sWorkspaceManager):
         )
         self._agent_pvc_access_mode = agent_pvc_access_mode
         self._session_pvc_access_mode = session_pvc_access_mode
+        self._max_active_pods: int = max_active_pods
 
     # ── 覆盖 get_workspace ──────────────────────────────────────
 
@@ -586,6 +617,7 @@ class DualPvcK8sWorkspaceManager(K8sWorkspaceManager):
             instructions=DEFAULT_WORKSPACE_INSTRUCTIONS,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
+            max_active_pods=self._max_active_pods,
         )
         await ws.initialize()
         return ws
