@@ -2,6 +2,7 @@
 """The workspace module in agentscope."""
 
 
+from ._artifact import Artifact, ArtifactAdd, ArtifactRemove, Upstream
 from ._base import WorkspaceBase
 from ._local_workspace import LocalWorkspace
 from ._offload_protocol import Offloader
@@ -17,6 +18,10 @@ from ._bubblewrap import BubblewrapBackend, BubblewrapWorkspace
 __all__ = [
     "WorkspaceBase",
     "LocalWorkspace",
+    "Artifact",
+    "ArtifactAdd",
+    "ArtifactRemove",
+    "Upstream",
     "BubblewrapBackend",
     "BubblewrapWorkspace",
     "DockerBackend",

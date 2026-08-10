@@ -32,7 +32,12 @@ from agentscope.tool import (
     Write,
 )
 from agentscope.permission import PermissionDecision, PermissionBehavior
-from agentscope.workspace import LocalWorkspace, WorkspaceBase
+from agentscope.workspace import (
+    ArtifactAdd,
+    ArtifactRemove,
+    LocalWorkspace,
+    WorkspaceBase,
+)
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
@@ -110,12 +115,16 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
             finally:
                 await workspace.close()
 
-        self.assertEqual(len(tools), 6)
+        self.assertEqual(len(tools), 8)
         self.assertSetEqual(
             {type(tool) for tool in tools},
-            {Bash, Edit, Glob, Grep, Read, Write},
+            {Bash, Edit, Glob, Grep, Read, Write, ArtifactAdd, ArtifactRemove},
         )
+        # The artifact tools act on the workspace's own declarations,
+        # so unlike the rest they bind no backend.
         for tool in tools:
+            if isinstance(tool, (ArtifactAdd, ArtifactRemove)):
+                continue
             self.assertIsInstance(tool._backend, LocalBackend)
 
     async def test_list_tools_builtin_windows_uses_powershell(self) -> None:
@@ -132,12 +141,23 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
             finally:
                 await workspace.close()
 
-        self.assertEqual(len(tools), 6)
+        self.assertEqual(len(tools), 8)
         self.assertSetEqual(
             {type(tool) for tool in tools},
-            {PowerShell, Edit, Glob, Grep, Read, Write},
+            {
+                PowerShell,
+                Edit,
+                Glob,
+                Grep,
+                Read,
+                Write,
+                ArtifactAdd,
+                ArtifactRemove,
+            },
         )
         for tool in tools:
+            if isinstance(tool, (ArtifactAdd, ArtifactRemove)):
+                continue
             self.assertIsInstance(tool._backend, LocalBackend)
 
     async def test_windows_shell_switch_is_local_workspace_behavior(

@@ -67,6 +67,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     _mcps: list[MCPClient]
     """Inherited MCP handle list, repeated for file-scoped type checks."""
 
+    @property
+    def _reserved_ports(self) -> set[int]:
+        """Keep the agent's services off the gateway's port.
+
+        Declaring the gateway port would point a viewer at the
+        workspace's own control channel, and a service that bound it
+        first would break every MCP call.
+        """
+        return {self.gateway_port}
+
     _bootstrap_cmd_timeout: float = 1800.0
     """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
     bootstrap step. Subclasses lower this for lighter base images
@@ -211,6 +221,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         Idempotent — errors are swallowed so ``close`` is always
         safe to call.
         """
+        await self._close_artifacts()
+
         if self._gateway is not None:
             try:
                 await self._gateway.aclose()

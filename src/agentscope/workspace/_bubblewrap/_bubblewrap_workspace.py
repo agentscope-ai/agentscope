@@ -17,6 +17,7 @@ from typing import Any
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from .._artifact import Upstream
 from .._gateway_client import GatewayClient
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import (
@@ -186,6 +187,29 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
     def is_persistent(self) -> bool:
         """Whether the workspace files survive ``close``."""
         return self._host_workdir_input is not None
+
+    async def _open_upstream(self, port: int) -> Upstream:
+        """A bwrap service listens on the host's own network stack.
+
+        The sandbox is filesystem- and namespace-isolated but shares
+        the host network namespace (``--share-net``, which the gateway
+        requires), so a port bound inside it *is* a port on the host —
+        nothing to publish or tunnel. The viewer being on that same
+        host can load it directly.
+
+        Args:
+            port (`int`):
+                The port to expose.
+
+        Returns:
+            `Upstream`:
+                A loopback address, reachable by the browser as-is.
+        """
+        return Upstream(
+            kind="loopback",
+            url=f"http://127.0.0.1:{port}",
+            browser_reachable=True,
+        )
 
     async def _provision_backend(self) -> None:
         """Validate Bubblewrap availability and bind the backend."""

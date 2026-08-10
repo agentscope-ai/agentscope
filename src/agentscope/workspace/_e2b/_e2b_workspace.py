@@ -43,6 +43,7 @@ from typing import Any
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from .._artifact import Upstream
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
@@ -153,6 +154,38 @@ class E2BWorkspace(SandboxedWorkspaceBase):
     def sandbox_id(self) -> str | None:
         """E2B sandbox id, or ``None`` if not started."""
         return self._sandbox.sandbox_id if self._sandbox else None
+
+    async def _open_upstream(self, port: int) -> Upstream:
+        """Hand back E2B's own preview URL for the port.
+
+        E2B fronts every sandbox with an edge proxy that routes by
+        hostname, so exposing a port is purely a naming operation —
+        nothing is allocated here and nothing needs tearing down. The
+        URL is public, which is what lets the browser load it without
+        this process sitting in the path.
+
+        Args:
+            port (`int`):
+                The port to expose.
+
+        Returns:
+            `Upstream`:
+                The provider's preview URL, reachable by the browser.
+
+        Raises:
+            `RuntimeError`:
+                If the sandbox is not running.
+        """
+        if self._sandbox is None:
+            raise RuntimeError(
+                "E2BWorkspace has no running sandbox; cannot expose a "
+                "port.",
+            )
+        return Upstream(
+            kind="provider",
+            url=f"https://{self._sandbox.get_host(port)}",
+            browser_reachable=True,
+        )
 
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.

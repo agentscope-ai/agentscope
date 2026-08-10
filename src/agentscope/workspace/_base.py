@@ -53,6 +53,7 @@ import json
 import mimetypes
 import os
 import tarfile
+import time
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
@@ -73,6 +74,7 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import BackendBase, ToolBase
+from ._artifact import Artifact, Upstream
 from ._utils import (
     DEFAULT_DATA_DIR,
     DEFAULT_MCP_FILE,
@@ -142,7 +144,9 @@ _EXTRACT_ARCHIVE_SHIM = (
 DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 
 
-class WorkspaceBase:
+# Deliberately a wide facade: one workspace owns MCPs, skills, offload
+# and artifacts, and each concern needs its own verbs.
+class WorkspaceBase:  # pylint: disable=too-many-public-methods
     """Abstract base class for all workspace implementations.
 
     Subclasses provide concrete behaviour for one execution backend
@@ -190,6 +194,18 @@ class WorkspaceBase:
 
     _skill_lock: asyncio.Lock
     """Guards mutation of the ``skills/`` directory."""
+
+    _artifacts: dict[int, Artifact]
+    """Ports declared viewable, keyed by port. A declaration on its own
+    connects nothing — see :meth:`ensure_upstream`."""
+
+    _upstreams: dict[int, Upstream]
+    """Forwards currently open, keyed by port. A subset of
+    :attr:`_artifacts`: only ports someone has actually opened."""
+
+    _artifact_lock: asyncio.Lock
+    """Serialises opening and closing forwards, so two concurrent
+    viewers of one port cannot each open their own."""
 
     @property
     def _glob_helper_path(self) -> str | None:
@@ -240,6 +256,10 @@ class WorkspaceBase:
         self._mcps = []
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
+
+        self._artifacts = {}
+        self._upstreams = {}
+        self._artifact_lock = asyncio.Lock()
 
     # ── derived paths ──────────────────────────────────────────────
 
@@ -375,6 +395,7 @@ class WorkspaceBase:
                 If the workspace has not been initialised yet.
         """
         from ..tool import Bash, Edit, Glob, Grep, Read, Write
+        from ._artifact import ArtifactAdd, ArtifactRemove
 
         backend = self.get_backend()
         glob_kwargs: dict = {"backend": backend}
@@ -387,11 +408,210 @@ class WorkspaceBase:
             Grep(backend=backend),
             Read(backend=backend),
             Write(backend=backend),
+            ArtifactAdd(workspace=self),
+            ArtifactRemove(workspace=self),
         ]
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return the currently registered MCP clients."""
         return list(self._mcps)
+
+    # ── artifacts: declared ports and their forwards ───────────────
+
+    @property
+    def _reserved_ports(self) -> set[int]:
+        """Ports the workspace uses itself and will not hand out."""
+        return set()
+
+    def declare_artifact(
+        self,
+        port: int,
+        *,
+        title: str | None = None,
+        entry_path: str = "/",
+    ) -> Artifact:
+        """Record ``port`` as viewable. Connects nothing.
+
+        Synchronous and free of I/O by design: the agent may declare a
+        port before its service is listening, and an artifact nobody
+        opens must not cost anything. The forward is opened later by
+        :meth:`ensure_upstream`.
+
+        Re-declaring a port already declared updates its label and keeps
+        its :attr:`Artifact.id`, so a URL already handed to a viewer
+        survives the agent restating it.
+
+        Args:
+            port (`int`):
+                Port inside the workspace.
+            title (`str | None`, optional):
+                Label for the viewer.
+            entry_path (`str`, defaults to `"/"`):
+                Path to open first.
+
+        Returns:
+            `Artifact`:
+                The new or updated declaration.
+
+        Raises:
+            `ValueError`:
+                If the port is outside 1024-65535 or is reserved by the
+                workspace itself.
+        """
+        if not 1024 <= port <= 65535:
+            raise ValueError(
+                f"Port {port} is out of range; use a port between 1024 "
+                f"and 65535.",
+            )
+        if port in self._reserved_ports:
+            raise ValueError(
+                f"Port {port} is reserved by the workspace itself. Run "
+                f"your service on a different port.",
+            )
+
+        existing = self._artifacts.get(port)
+        if existing is not None:
+            if title is not None:
+                existing.title = title
+            existing.entry_path = entry_path
+            return existing
+
+        artifact = Artifact(
+            id=_generate_id(),
+            port=port,
+            title=title,
+            entry_path=entry_path,
+            declared_at=time.time(),
+        )
+        self._artifacts[port] = artifact
+        return artifact
+
+    async def undeclare_artifact(self, port: int) -> bool:
+        """Withdraw ``port`` and tear down any forward open for it.
+
+        Args:
+            port (`int`):
+                The declared port to withdraw.
+
+        Returns:
+            `bool`:
+                ``False`` if the port was not declared.
+        """
+        await self.release_upstream(port)
+        return self._artifacts.pop(port, None) is not None
+
+    def list_artifacts(self) -> list[Artifact]:
+        """Return every port currently declared viewable."""
+        return list(self._artifacts.values())
+
+    def has_open_upstream(self) -> bool:
+        """Whether any forward is currently open.
+
+        Lets a lifecycle manager tell an idle workspace from one a
+        viewer is actively watching, so a TTL sweep does not pull the
+        sandbox out from under an open preview.
+        """
+        return bool(self._upstreams)
+
+    async def ensure_upstream(self, port: int) -> Upstream:
+        """Return a dialable address for ``port``, opening it if needed.
+
+        Idempotent: concurrent viewers of one port share a single
+        forward.
+
+        Args:
+            port (`int`):
+                A declared port.
+
+        Returns:
+            `Upstream`:
+                Where to dial to reach it.
+
+        Raises:
+            `ValueError`:
+                If the port was never declared.
+        """
+        if port not in self._artifacts:
+            raise ValueError(f"Port {port} is not declared as an artifact.")
+        async with self._artifact_lock:
+            existing = self._upstreams.get(port)
+            if existing is not None:
+                return existing
+            upstream = await self._open_upstream(port)
+            self._upstreams[port] = upstream
+            return upstream
+
+    async def release_upstream(self, port: int) -> None:
+        """Close the forward for ``port``, keeping the declaration.
+
+        A no-op when nothing is open. Teardown failures are logged
+        rather than raised: the caller is usually shutting something
+        down and has nothing useful to do with the error.
+
+        Args:
+            port (`int`):
+                The port whose forward should be closed.
+        """
+        async with self._artifact_lock:
+            upstream = self._upstreams.pop(port, None)
+        if upstream is None:
+            return
+        try:
+            await self._close_upstream(port, upstream)
+        except Exception as e:
+            logger.warning(
+                "Failed to close the forward for port %d in workspace "
+                "%s: %s",
+                port,
+                self.workspace_id,
+                e,
+            )
+
+    async def _close_artifacts(self) -> None:
+        """Release every forward and drop every declaration.
+
+        Called from :meth:`close` so a workspace never outlives its
+        forwards.
+        """
+        for port in list(self._upstreams):
+            await self.release_upstream(port)
+        self._artifacts.clear()
+
+    async def _open_upstream(self, port: int) -> Upstream:
+        """Make ``port`` dialable and describe how to reach it.
+
+        The single place where execution backends differ: a cloud
+        sandbox returns its own preview URL, a local one returns
+        loopback, a container returns a published or routable address.
+
+        Args:
+            port (`int`):
+                The port to expose.
+
+        Returns:
+            `Upstream`:
+                Where to dial to reach it.
+        """
+        unsupported = (
+            f"{type(self).__name__} cannot expose port {port} yet, so "
+            f"its artifacts cannot be viewed."
+        )
+        raise NotImplementedError(unsupported)
+
+    async def _close_upstream(self, port: int, upstream: Upstream) -> None:
+        """Tear down what :meth:`_open_upstream` set up.
+
+        Defaults to doing nothing, which is correct for every backend
+        whose address is standing infrastructure rather than something
+        this process allocated.
+
+        Args:
+            port (`int`):
+                The port being released.
+            upstream (`Upstream`):
+                What :meth:`_open_upstream` returned for it.
+        """
+        del port, upstream
 
     # ── for User: dynamic MCP management ───────────────────────────
 

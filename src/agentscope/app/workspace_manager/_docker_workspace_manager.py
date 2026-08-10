@@ -369,13 +369,21 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 logger.exception("Docker workspace sweeper tick failed")
 
     async def _sweep_once(self) -> None:
-        """One sweeper tick: evict expired entries and close them."""
+        """One sweeper tick: evict expired entries and close them.
+
+        A workspace with a forward open is spared however long it has
+        been idle. "Idle" here means nobody has asked the manager for
+        it, which is exactly what a viewer watching a dev server looks
+        like — the traffic goes to the container, not through here.
+        Evicting on that signal would tear the sandbox out from under
+        an open preview.
+        """
         now = time.monotonic()
         async with self._lock:
             expired_ids = [
                 wid
-                for wid, (_, ts) in self._cache.items()
-                if now - ts > self._ttl
+                for wid, (ws, ts) in self._cache.items()
+                if now - ts > self._ttl and not ws.has_open_upstream()
             ]
             evicted = [self._cache.pop(wid)[0] for wid in expired_ids]
         if not evicted:

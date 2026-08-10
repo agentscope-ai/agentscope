@@ -63,6 +63,19 @@ easier to review tool calls and give permission.
  - You may specify an optional timeout in milliseconds (up to 600000ms
    / 10 minutes). By default, your command will timeout after 120000ms
    (2 minutes).
+ - A command meant to keep running — a dev server, a file watcher, a
+   queue worker — must be detached AND have its output redirected to a
+   file:
+
+     nohup npm run dev > /tmp/dev.log 2>&1 < /dev/null &
+
+   The redirection is what lets this tool return. A detached process
+   that still holds the output stream keeps it open, so the call blocks
+   until that process exits — for a server, that means burning the whole
+   timeout and then reporting a failure that never happened. Writing
+   just `npm run dev &` hits exactly this.
+   Afterwards, read the log file to confirm it came up, and to diagnose
+   it when it did not.
  - Write a clear, concise description of what your command does. For
    simple commands, keep it brief (5-10 words). For complex commands
    (piped commands, obscure flags, or anything hard to understand at a
