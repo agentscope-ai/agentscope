@@ -49,6 +49,7 @@ from typing import Any
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from .._artifact import Upstream
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
@@ -186,6 +187,46 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         await self._attach_or_create_sandbox()
         await self._derive_sdk_paths()
         self._backend = DaytonaBackend(self._sandbox, workdir=self.workdir)
+
+    async def _open_upstream(self, port: int) -> Upstream:
+        """Hand back Daytona's own preview URL for the port.
+
+        Daytona opens the port and mints the link in one call, so
+        nothing is allocated on this side and nothing needs tearing
+        down.
+
+        A private sandbox's link is gated on a header, and a browser
+        cannot add one to an iframe's own request — so a token is
+        precisely what makes the URL *not* directly loadable, and the
+        upstream is marked accordingly for the serving layer to proxy
+        and attach it. A public sandbox needs no header and is handed
+        straight to the browser.
+
+        Args:
+            port (`int`):
+                The port to expose.
+
+        Returns:
+            `Upstream`:
+                The provider's preview URL.
+
+        Raises:
+            `RuntimeError`:
+                If the sandbox is not running.
+        """
+        if self._sandbox is None:
+            raise RuntimeError(
+                "DaytonaWorkspace has no running sandbox; cannot expose "
+                "a port.",
+            )
+        preview = await self._sandbox.get_preview_link(port)
+        token = getattr(preview, "token", None)
+        return Upstream(
+            kind="provider",
+            url=preview.url,
+            headers=({"X-Daytona-Preview-Token": token} if token else {}),
+            browser_reachable=not token,
+        )
 
     async def _teardown_backend(self) -> None:
         """Gracefully stop the sandbox and release the SDK client.

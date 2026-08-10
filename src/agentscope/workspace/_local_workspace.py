@@ -11,6 +11,7 @@ from typing import AsyncIterator, Literal, TypedDict
 
 import frontmatter
 
+from ._artifact import Upstream
 from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
 from .._utils._common import _generate_id, _normalize_local_path
@@ -129,6 +130,7 @@ class LocalWorkspace(WorkspaceBase):
     async def list_tools(self) -> list[ToolBase]:
         """Return builtin tools, using PowerShell as the shell on Windows."""
         from ..tool import Bash, Edit, Glob, Grep, PowerShell, Read, Write
+        from ._artifact import ArtifactAdd, ArtifactRemove
 
         backend = self.get_backend()
         glob_kwargs: dict = {"backend": backend}
@@ -147,7 +149,30 @@ class LocalWorkspace(WorkspaceBase):
             Grep(backend=backend),
             Read(backend=backend),
             Write(backend=backend),
+            ArtifactAdd(workspace=self),
+            ArtifactRemove(workspace=self),
         ]
+
+    async def _open_upstream(self, port: int) -> Upstream:
+        """A local service is already where the browser can reach it.
+
+        The workspace shares the host's network namespace, so there is
+        nothing to publish or tunnel — and the viewer, being on that
+        same host, can load the address directly.
+
+        Args:
+            port (`int`):
+                The port to expose.
+
+        Returns:
+            `Upstream`:
+                A loopback address, reachable by the browser as-is.
+        """
+        return Upstream(
+            kind="loopback",
+            url=f"http://127.0.0.1:{port}",
+            browser_reachable=True,
+        )
 
     async def initialize(self) -> None:
         """Initialise the workspace.
@@ -433,6 +458,7 @@ class LocalWorkspace(WorkspaceBase):
         closed explicitly. Stateless HTTP MCPs are skipped — they
         spin up an ad-hoc session per call and have nothing to close.
         """
+        await self._close_artifacts()
         async with self._mcp_lock:
             for mcp in self._mcps:
                 if mcp.is_stateful and mcp.is_connected:
