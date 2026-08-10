@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Tests for the four framework-builtin team tools — :class:`TeamCreate`,
-:class:`AgentCreate`, :class:`TeamSay`, :class:`TeamDelete`.
+"""Tests for the framework-builtin team tools.
 
-Each tool's business logic now lives inline in its ``__call__`` (the
-old ``TeamService`` orchestration layer is gone), so unit tests run the
-tools directly against a real :class:`RedisStorage` + :class:`RedisMessageBus`
-backed by ``fakeredis``. They assert:
+Unit tests run the tools against a real :class:`RedisStorage` and
+:class:`RedisMessageBus` backed by ``fakeredis``. They assert:
 
 - the success path: storage rows updated, inbox + wakeup pushed where
   expected;
@@ -14,8 +11,10 @@ backed by ``fakeredis``. They assert:
   recipient missing / etc.) returns an ``ERROR`` ``ToolChunk`` instead
   of raising.
 """
+
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 
@@ -25,16 +24,18 @@ from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._tool import (
     AgentCreate,
     AgentInvite,
+    AgentKick,
     DEFAULT_SUB_AGENT_TEMPLATE,
     TeamCreate,
     TeamDelete,
     TeamSay,
 )
 from agentscope.app._types import SubAgentTemplate
-from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
+    AsyncSQLAlchemyStorage,
     RedisStorage,
     SessionConfig,
 )
@@ -167,6 +168,7 @@ class TestTeamCreate(_TeamToolsTestBase):
                 "id": AnyString(),
             },
         )
+
         # A team exists and the leader's session now points at it.
         sess = await self.storage.get_session(
             self.user_id,
@@ -1248,6 +1250,417 @@ class TestTeamDelete(_TeamToolsTestBase):
         )
         self.assertIsNone(sess.team_id)
 
+    async def test_dissolves_team_with_created_member(self) -> None:
+        """The refactored member primitive preserves full-team cleanup."""
+        await AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="worker", description="d", prompt="p")
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        worker_id = team.data.members[0].agent_id
+
+        chunk = await TeamDelete(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )()
+
+        self.assertEqual(chunk.state.value, "running")
+        self.assertIsNone(await self.storage.get_team(self.user_id, team.id))
+        self.assertIsNone(
+            await self.storage.get_agent(self.user_id, worker_id),
+        )
+
+
+class TestAgentKickCreated(_TeamToolsTestBase):
+    """``AgentKick`` fully deletes a created member only."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await TeamCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="team", description="d")
+        create = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        await create(name="w1", description="d", prompt="p1")
+        await create(name="w2", description="d", prompt="p2")
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        self.team = await self.storage.get_team(
+            self.user_id,
+            leader.team_id,
+        )
+        self.w1 = next(
+            member
+            for member in self.team.data.members
+            if member.agent_id == self.team.data.member_ids[0]
+        )
+        self.w2 = next(
+            member
+            for member in self.team.data.members
+            if member.agent_id == self.team.data.member_ids[1]
+        )
+
+    def _tool(
+        self,
+        *,
+        session_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> AgentKick:
+        """Build an ``AgentKick`` bound to the requested caller."""
+        return AgentKick(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=session_id or self.leader_session.id,
+            agent_id=agent_id or self.leader_agent.id,
+        )
+
+    async def test_kicks_created_member_and_preserves_team(self) -> None:
+        """The target agent/session disappear while siblings survive."""
+        from agentscope.app._service import SessionService
+
+        with (
+            patch.object(
+                SessionService,
+                "cancel_session_run",
+                new=AsyncMock(return_value=True),
+            ) as cancel,
+            patch.object(
+                self.storage,
+                "upsert_team",
+                wraps=self.storage.upsert_team,
+            ) as upsert_team,
+        ):
+            chunk = await self._tool()(target="w1")
+
+        self.assertEqual(chunk.state.value, "running")
+        cancel.assert_awaited_once_with(self.w1.session_id)
+        # RedisStorage.delete_agent performs the one required roster
+        # scrub. delete_team_member must not add a redundant write.
+        self.assertEqual(upsert_team.await_count, 1)
+        self.assertIsNone(
+            await self.storage.get_agent(self.user_id, self.w1.agent_id),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.w1.agent_id,
+                self.w1.session_id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, self.w2.agent_id),
+        )
+
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertEqual(
+            [member.agent_id for member in team.data.members],
+            [self.w2.agent_id],
+        )
+        self.assertEqual(team.data.member_ids, [self.w2.agent_id])
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        self.assertEqual(leader.team_id, self.team.id)
+
+        say = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            role="leader",
+        )
+        self.assertEqual(
+            (await say(content="still there?", to="w1")).state.value,
+            "error",
+        )
+
+    async def test_rejects_unknown_and_self_targets(self) -> None:
+        """Unknown targets and the leader's own name are rejected."""
+        unknown = await self._tool()(target="ghost")
+        own = await self._tool()(target=self.leader_agent.data.name)
+        self.assertEqual(unknown.state.value, "error")
+        self.assertEqual(own.state.value, "error")
+
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertEqual(len(team.data.members), 2)
+
+    async def test_rejects_worker_caller(self) -> None:
+        """Runtime authorization rejects a worker-bound tool."""
+        chunk = await self._tool(
+            session_id=self.w1.session_id,
+            agent_id=self.w1.agent_id,
+        )(target="w2")
+        self.assertEqual(chunk.state.value, "error")
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertEqual(len(team.data.members), 2)
+
+    async def test_rejects_session_outside_team(self) -> None:
+        """A session without a team cannot remove a member."""
+        loner = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=self.leader_agent.id,
+            config=SessionConfig(workspace_id="ws-lone"),
+        )
+        chunk = await self._tool(session_id=loner.id)(target="w1")
+        self.assertEqual(chunk.state.value, "error")
+
+    async def test_kicks_member_from_legacy_roster(self) -> None:
+        """A ``member_ids``-only roster migrates before target lookup."""
+        self.team.data.members = []
+        await self.storage.upsert_team(self.user_id, self.team)
+
+        chunk = await self._tool()(target="w1")
+
+        self.assertEqual(chunk.state.value, "running")
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertEqual(
+            [member.agent_id for member in team.data.members],
+            [self.w2.agent_id],
+        )
+        self.assertEqual(team.data.member_ids, [self.w2.agent_id])
+
+    async def test_cancel_exception_preserves_created_member(self) -> None:
+        """A failed cancel leaves the full member state retriable."""
+        from agentscope.app._service import SessionService
+
+        with patch.object(
+            SessionService,
+            "cancel_session_run",
+            new=AsyncMock(side_effect=RuntimeError("cancel failed")),
+        ):
+            chunk = await self._tool()(target="w1")
+
+        self.assertEqual(chunk.state.value, "error")
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertIn(
+            self.w1.session_id,
+            [member.session_id for member in team.data.members],
+        )
+        self.assertIn(self.w1.agent_id, team.data.member_ids)
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, self.w1.agent_id),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.w1.agent_id,
+                self.w1.session_id,
+            ),
+        )
+
+    async def test_agent_delete_exception_remains_retriable(self) -> None:
+        """After session cleanup, an AgentRecord failure can be retried."""
+        with patch.object(
+            self.storage,
+            "delete_agent",
+            new=AsyncMock(side_effect=RuntimeError("agent delete failed")),
+        ):
+            first = await self._tool()(target="w1")
+
+        self.assertEqual(first.state.value, "error")
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertIn(
+            self.w1.session_id,
+            [member.session_id for member in team.data.members],
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, self.w1.agent_id),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.w1.agent_id,
+                self.w1.session_id,
+            ),
+        )
+
+        second = await self._tool()(target="w1")
+        self.assertEqual(second.state.value, "running")
+        self.assertIsNone(
+            await self.storage.get_agent(self.user_id, self.w1.agent_id),
+        )
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertNotIn(
+            self.w1.session_id,
+            [member.session_id for member in team.data.members],
+        )
+
+    async def test_bus_purge_exception_remains_retriable(self) -> None:
+        """A retry purges bus data using the roster's stale session id."""
+        from agentscope.app._service import SessionService
+
+        session_id = self.w1.session_id
+        inbox_key = MessageBusKeys.inbox(session_id)
+        events_key = MessageBusKeys.session_events(session_id)
+        bg_tasks_key = MessageBusKeys.bg_tasks(session_id)
+        await self.bus.queue_push(inbox_key, {"residual": "inbox"})
+        await self.bus.log_append(events_key, {"residual": "event"})
+        await self.bus.registry_set(
+            bg_tasks_key,
+            "residual-task",
+            "{}",
+        )
+
+        with patch.object(
+            SessionService,
+            "_purge_bus",
+            new=AsyncMock(side_effect=RuntimeError("bus purge failed")),
+        ):
+            first = await self._tool()(target="w1")
+
+        self.assertEqual(first.state.value, "error")
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.w1.agent_id,
+                self.w1.session_id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, self.w1.agent_id),
+        )
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertIn(
+            self.w1.session_id,
+            [member.session_id for member in team.data.members],
+        )
+
+        with patch.object(
+            SessionService,
+            "cancel_session_run",
+            new=AsyncMock(return_value=True),
+        ) as cancel:
+            second = await self._tool()(target="w1")
+        self.assertEqual(second.state.value, "running")
+        cancel.assert_awaited_once_with(session_id)
+        team = await self.storage.get_team(self.user_id, self.team.id)
+        self.assertNotIn(
+            self.w1.session_id,
+            [member.session_id for member in team.data.members],
+        )
+        self.assertEqual(await self.bus.queue_drain(inbox_key), [])
+        self.assertEqual(await self.bus.log_read(events_key), [])
+        self.assertEqual(
+            await self.bus.registry_getall(bg_tasks_key),
+            {},
+        )
+
+
+class TestAgentKickSQL(IsolatedAsyncioTestCase):
+    """``AgentKick`` created-member integration on the SQL backend."""
+
+    user_id = "sql-user"
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.storage = await self._stack.enter_async_context(
+            AsyncSQLAlchemyStorage(
+                "sqlite+aiosqlite:///:memory:",
+                create_tables=True,
+            ),
+        )
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+        self.workspace_manager = FakeWorkspaceManager()
+        self.leader_agent = _make_agent_record(self.user_id, "leader")
+        await self.storage.upsert_agent(self.user_id, self.leader_agent)
+        self.leader_session = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=self.leader_agent.id,
+            config=SessionConfig(workspace_id="sql-ws"),
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_created_member_is_fully_removed(self) -> None:
+        """SQL removes the agent/session and scrubs both roster fields."""
+        await TeamCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="team", description="d")
+        await AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="worker", description="d", prompt="work")
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        member = team.data.members[0]
+
+        chunk = await AgentKick(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(target="worker")
+
+        self.assertEqual(chunk.state.value, "running")
+        self.assertIsNone(
+            await self.storage.get_agent(self.user_id, member.agent_id),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                member.agent_id,
+                member.session_id,
+            ),
+        )
+        team = await self.storage.get_team(self.user_id, team.id)
+        self.assertEqual(team.data.members, [])
+        self.assertEqual(team.data.member_ids, [])
+
+
+class TestTeamDeleteOutsideTeam(_TeamToolsTestBase):
+    """``TeamDelete`` rejects callers outside a team."""
+
     async def test_rejects_when_not_in_team(self) -> None:
         """Calling ``TeamDelete`` from a session that isn't in any team
         returns an error chunk."""
@@ -1621,6 +2034,200 @@ class TestTeamSayInvitedRouting(_AgentInviteTestBase):
             max_count=10,
         )
         self.assertEqual(primary_inbox, [])
+
+
+class TestAgentKickInvited(_AgentInviteTestBase):
+    """``AgentKick`` removes only an invited member's team session."""
+
+    async def test_kicks_borrowed_session_and_preserves_agent(self) -> None:
+        """The standalone agent and primary session remain usable."""
+        from agentscope.app._service import SessionService
+
+        target = f"Monday@{self.monday_agent.id[:8]}"
+        await AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )(target=target, prompt="join")
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        borrowed = team.data.members[0]
+
+        with patch.object(
+            SessionService,
+            "cancel_session_run",
+            new=AsyncMock(return_value=True),
+        ) as cancel:
+            chunk = await AgentKick(
+                storage=self.storage,
+                message_bus=self.bus,
+                workspace_manager=self.workspace_manager,
+                user_id=self.user_id,
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            )(target=target)
+
+        self.assertEqual(chunk.state.value, "running")
+        cancel.assert_awaited_once_with(borrowed.session_id)
+        self.assertIsNotNone(
+            await self.storage.get_agent(
+                self.user_id,
+                self.monday_agent.id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.monday_agent.id,
+                self.monday_session.id,
+            ),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.monday_agent.id,
+                borrowed.session_id,
+            ),
+        )
+        team = await self.storage.get_team(self.user_id, team.id)
+        self.assertEqual(team.data.members, [])
+        self.assertEqual(team.data.member_ids, [])
+
+    async def test_roster_write_failure_is_retriable(self) -> None:
+        """A deleted borrowed session can be kicked again by display."""
+        target = f"Monday@{self.monday_agent.id[:8]}"
+        await AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )(target=target, prompt="join")
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        borrowed = team.data.members[0]
+
+        with patch.object(
+            self.storage,
+            "upsert_team",
+            new=AsyncMock(side_effect=RuntimeError("roster write failed")),
+        ):
+            first = await AgentKick(
+                storage=self.storage,
+                message_bus=self.bus,
+                workspace_manager=self.workspace_manager,
+                user_id=self.user_id,
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            )(target=target)
+
+        self.assertEqual(first.state.value, "error")
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.monday_agent.id,
+                borrowed.session_id,
+            ),
+        )
+        team = await self.storage.get_team(self.user_id, team.id)
+        self.assertEqual(len(team.data.members), 1)
+
+        second = await AgentKick(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(target=target)
+        self.assertEqual(second.state.value, "running")
+        team = await self.storage.get_team(self.user_id, team.id)
+        self.assertEqual(team.data.members, [])
+
+
+class TestTeamDeleteMixedMembers(_AgentInviteTestBase):
+    """``TeamDelete`` cleans mixed created and invited rosters."""
+
+    async def test_dissolves_mixed_team_by_role(self) -> None:
+        """Created agents die while invited standalone state survives."""
+        await AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="worker", description="d", prompt="work")
+        target = f"Monday@{self.monday_agent.id[:8]}"
+        await AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )(target=target, prompt="join")
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        created = next(
+            member for member in team.data.members if member.role == "created"
+        )
+        invited = next(
+            member for member in team.data.members if member.role == "invited"
+        )
+
+        chunk = await TeamDelete(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )()
+
+        self.assertEqual(chunk.state.value, "running")
+        self.assertIsNone(await self.storage.get_team(self.user_id, team.id))
+        self.assertIsNone(
+            await self.storage.get_agent(self.user_id, created.agent_id),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, invited.agent_id),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                invited.agent_id,
+                invited.session_id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                self.user_id,
+                self.monday_agent.id,
+                self.monday_session.id,
+            ),
+        )
 
 
 class TestTeamDeletePreservesInvited(_AgentInviteTestBase):
