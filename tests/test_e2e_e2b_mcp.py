@@ -72,55 +72,105 @@ class TestE2BPerScopeMCP(unittest.IsolatedAsyncioTestCase):
         """Each scope instantiates its own copy of ``default_mcps``."""
         self.assertEqual(self._ws._mcp_instances, {})
 
-        mcps_a = await self._ws.list_mcps("agent-A", "sess-1")
+        mcps_a = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         self.assertEqual([m.name for m in mcps_a], ["default-fs"])
 
-        mcps_a2 = await self._ws.list_mcps("agent-A", "sess-1")
+        mcps_a2 = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         self.assertEqual([id(m) for m in mcps_a2], [id(m) for m in mcps_a])
 
-        mcps_a_s2 = await self._ws.list_mcps("agent-A", "sess-2")
+        mcps_a_s2 = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
         self.assertEqual([m.name for m in mcps_a_s2], ["default-fs"])
         self.assertIsNot(mcps_a_s2[0], mcps_a[0])
 
-        mcps_b = await self._ws.list_mcps("agent-B", "sess-1")
+        mcps_b = await self._ws.list_mcps(
+            agent_id="agent-B",
+            session_id="sess-1",
+        )
         self.assertEqual([m.name for m in mcps_b], ["default-fs"])
         self.assertIsNot(mcps_b[0], mcps_a[0])
 
     async def test_add_remove_per_scope_isolation(self) -> None:
         """``add_mcp`` / ``remove_mcp`` only touch the given scope."""
-        await self._ws.add_mcp(self._make_mcp("extra"), "agent-A", "sess-1")
-        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        await self._ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        mcps = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         self.assertIn("extra", [m.name for m in mcps])
 
-        other_session = await self._ws.list_mcps("agent-A", "sess-2")
+        other_session = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
         self.assertNotIn("extra", [m.name for m in other_session])
 
-        other_agent = await self._ws.list_mcps("agent-B", "sess-1")
+        other_agent = await self._ws.list_mcps(
+            agent_id="agent-B",
+            session_id="sess-1",
+        )
         self.assertNotIn("extra", [m.name for m in other_agent])
 
-        await self._ws.remove_mcp("extra", "agent-A", "sess-1")
-        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        await self._ws.remove_mcp(
+            "extra",
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        mcps = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         self.assertNotIn("extra", [m.name for m in mcps])
 
     async def test_duplicate_in_same_scope_raises(self) -> None:
         """A duplicate MCP name within one scope raises ``ValueError``."""
-        await self._ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-1")
+        await self._ws.add_mcp(
+            self._make_mcp("dup-me"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         with self.assertRaises(ValueError):
             await self._ws.add_mcp(
                 self._make_mcp("dup-me"),
-                "agent-A",
-                "sess-1",
+                agent_id="agent-A",
+                session_id="sess-1",
             )
 
         # The same name in a different session is fine.
-        await self._ws.add_mcp(self._make_mcp("dup-me"), "agent-A", "sess-2")
+        await self._ws.add_mcp(
+            self._make_mcp("dup-me"),
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
 
     async def test_purge_session_drops_the_scope(self) -> None:
         """``purge_session`` forgets a scope; defaults come back."""
-        await self._ws.add_mcp(self._make_mcp("a-tool"), "agent-A", "sess-1")
-        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        await self._ws.add_mcp(
+            self._make_mcp("a-tool"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        mcps = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         self.assertIn("a-tool", [m.name for m in mcps])
 
-        await self._ws.purge_session("agent-A", "sess-1")
-        mcps = await self._ws.list_mcps("agent-A", "sess-1")
+        await self._ws.purge_session(agent_id="agent-A", session_id="sess-1")
+        mcps = await self._ws.list_mcps(
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         self.assertEqual([m.name for m in mcps], ["default-fs"])

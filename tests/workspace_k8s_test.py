@@ -198,21 +198,38 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
             ),
         )
         self.assertListEqual(
-            await ws.list_mcps("test-agent", "test-session"),
+            await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            ),
             [],
         )
 
-        await ws.add_mcp(mcp_client, "test-agent", "test-session")
-        mcps = await ws.list_mcps("test-agent", "test-session")
+        await ws.add_mcp(
+            mcp_client,
+            agent_id="test-agent",
+            session_id="test-session",
+        )
+        mcps = await ws.list_mcps(
+            agent_id="test-agent",
+            session_id="test-session",
+        )
         self.assertEqual(len(mcps), 1)
         self.assertEqual(mcps[0].name, "time")
 
         tools = await mcps[0].list_raw_tools()
         self.assertGreater(len(tools), 0)
 
-        await ws.remove_mcp("time", "test-agent", "test-session")
+        await ws.remove_mcp(
+            "time",
+            agent_id="test-agent",
+            session_id="test-session",
+        )
         self.assertListEqual(
-            await ws.list_mcps("test-agent", "test-session"),
+            await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            ),
             [],
         )
 
@@ -331,7 +348,10 @@ class TestK8sWorkspaceReset(IsolatedAsyncioTestCase):
 
             state_after = {
                 "skills": await ws.list_skills(),
-                "mcps": await ws.list_mcps("test-agent", "test-session"),
+                "mcps": await ws.list_mcps(
+                    agent_id="test-agent",
+                    session_id="test-session",
+                ),
                 "sessions_exists": await backend.file_exists(
                     f"{POD_WORKDIR}/sessions",
                 ),

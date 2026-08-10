@@ -712,7 +712,10 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         try:
             await ws.initialize()
             self.assertListEqual(
-                await ws.list_mcps("test-agent", "test-session"),
+                await ws.list_mcps(
+                    agent_id="test-agent",
+                    session_id="test-session",
+                ),
                 [],
             )
         finally:

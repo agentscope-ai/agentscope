@@ -22,8 +22,7 @@ from abc import abstractmethod
 
 from .._logging import logger
 from ..mcp import MCPClient
-from ._base import WorkspaceBase
-from ._mcp_registry import MCPKey
+from ._base import MCPKey, WorkspaceBase
 from ._gateway_client import GatewayClient
 from ._utils import (
     DEFAULT_GATEWAY_LOG,
@@ -194,9 +193,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         # Set up the workspace layout
         await self._ensure_workspace_layout()
 
-        # Set up the MCP gateway server. No upstream is connected
-        # here — the gateway starts empty and each scope registers
-        # its own MCPs on its first list_mcps.
+        # The gateway starts empty; each scope registers its own
+        # MCPs on its first list_mcps.
         await self._setup_mcp_gateway()
 
         # Set up the skills if not exists
@@ -307,9 +305,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             cwd="/",
         )
 
-        # ``.mcp`` is not seeded here: an absent file means "no scope
-        # has diverged from default_mcps yet", and it is written on
-        # the first add_mcp / remove_mcp.
+        # ``.mcp`` is not seeded: an absent file means no scope has
+        # diverged from default_mcps yet.
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
@@ -360,10 +357,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 _read_gateway_script_bytes(),
             )
 
-        # Launch. ``pkill`` clears any gateway left running by a
-        # previous resume so the new one can bind the port cleanly.
-        # The gateway starts with an empty registry — it never reads
-        # ``.mcp``; every MCP is registered through it on demand.
+        # ``pkill`` clears any gateway left by a previous resume so
+        # the new one can bind the port. It never reads ``.mcp``.
         launch_cmd = (
             "pkill -f _mcp_gateway_app.py || true; "
             f"nohup {shlex.quote(self._gateway_python)} -u "
@@ -399,5 +394,4 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 f"Tail of {self._gateway_log}:\n{tail}",
             )
 
-        # Nothing is registered here — the gateway stays empty until a
-        # scope calls list_mcps and registers its own MCPs.
+        # Nothing is registered here — scopes register on demand.

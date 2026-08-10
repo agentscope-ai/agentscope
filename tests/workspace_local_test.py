@@ -1299,7 +1299,11 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         self.assertTrue(ws.is_alive)
         # Instantiated lazily on first list_mcps for this scope
         names = [
-            m.name for m in await ws.list_mcps("test-agent", "test-session")
+            m.name
+            for m in await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            )
         ]
         self.assertNotIn("will_fail_connect", names)
 
@@ -1358,9 +1362,9 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         # Nothing is instantiated before the first list_mcps.
         self.assertEqual(ws._mcp_instances, {})
 
-        a1 = await ws.list_mcps("agent-A", "sess-1")
-        a2 = await ws.list_mcps("agent-A", "sess-2")
-        b1 = await ws.list_mcps("agent-B", "sess-1")
+        a1 = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
+        a2 = await ws.list_mcps(agent_id="agent-A", session_id="sess-2")
+        b1 = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
 
         self.assertEqual([m.name for m in a1], ["seed"])
         self.assertEqual([m.name for m in a2], ["seed"])
@@ -1368,7 +1372,10 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         self.assertIsNot(a1[0], b1[0])
 
         # Repeat access reuses the same instances.
-        self.assertIs((await ws.list_mcps("agent-A", "sess-1"))[0], a1[0])
+        self.assertIs(
+            (await ws.list_mcps(agent_id="agent-A", session_id="sess-1"))[0],
+            a1[0],
+        )
 
         # A scope that only read defaults leaves no trace on disk.
         self.assertFalse(os.path.exists(self.mcp_file))
@@ -1377,18 +1384,40 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""
         ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
 
-        await ws.add_mcp(self._make_mcp("extra"), "agent-A", "sess-1")
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
 
         self.assertEqual(
-            [m.name for m in await ws.list_mcps("agent-A", "sess-1")],
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
             ["seed", "extra"],
         )
         self.assertEqual(
-            [m.name for m in await ws.list_mcps("agent-A", "sess-2")],
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-2",
+                )
+            ],
             ["seed"],
         )
         self.assertEqual(
-            [m.name for m in await ws.list_mcps("agent-B", "sess-1")],
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-B",
+                    session_id="sess-1",
+                )
+            ],
             ["seed"],
         )
 
@@ -1396,9 +1425,15 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         self.assertEqual(saved["version"], 2)
         self.assertEqual(list(saved["mcps"]), ["agent-A"])
 
-        await ws.remove_mcp("extra", "agent-A", "sess-1")
+        await ws.remove_mcp("extra", agent_id="agent-A", session_id="sess-1")
         self.assertEqual(
-            [m.name for m in await ws.list_mcps("agent-A", "sess-1")],
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
             ["seed"],
         )
 
@@ -1406,19 +1441,34 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         """A duplicate name is rejected per scope, not globally."""
         ws = await self._workspace()
 
-        await ws.add_mcp(self._make_mcp("dup"), "agent-A", "sess-1")
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         with self.assertRaises(ValueError):
-            await ws.add_mcp(self._make_mcp("dup"), "agent-A", "sess-1")
+            await ws.add_mcp(
+                self._make_mcp("dup"),
+                agent_id="agent-A",
+                session_id="sess-1",
+            )
 
         # The same name in another scope is fine.
-        await ws.add_mcp(self._make_mcp("dup"), "agent-A", "sess-2")
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
 
     async def test_emptied_scope_is_not_reseeded(self) -> None:
         """An empty declaration differs from an absent one."""
         ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
 
-        await ws.remove_mcp("seed", "agent-A", "sess-1")
-        self.assertEqual(await ws.list_mcps("agent-A", "sess-1"), [])
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
         self.assertEqual(
             self._read_mcp_file()["mcps"]["agent-A"]["sess-1"],
             [],
@@ -1427,10 +1477,19 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         # It survives a restart rather than falling back to defaults.
         await ws.close()
         ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
-        self.assertEqual(await ws2.list_mcps("agent-A", "sess-1"), [])
+        self.assertEqual(
+            await ws2.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
         # An untouched scope still gets the defaults.
         self.assertEqual(
-            [m.name for m in await ws2.list_mcps("agent-A", "sess-9")],
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-9",
+                )
+            ],
             ["seed"],
         )
 
@@ -1438,15 +1497,25 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         """``reset`` drops ``.mcp``, so defaults are seeded again."""
         ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
 
-        await ws.add_mcp(self._make_mcp("extra"), "agent-A", "sess-1")
-        await ws.remove_mcp("seed", "agent-A", "sess-1")
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
         self.assertTrue(os.path.exists(self.mcp_file))
 
         await ws.reset()
 
         self.assertFalse(os.path.exists(self.mcp_file))
         self.assertEqual(
-            [m.name for m in await ws.list_mcps("agent-A", "sess-1")],
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
             ["seed"],
         )
 
@@ -1454,7 +1523,11 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         """``purge_session`` forgets declarations and offload files."""
         ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
 
-        await ws.add_mcp(self._make_mcp("extra"), "agent-A", "sess-1")
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
         await ws.offload_context(
             "sess-1",
             [UserMsg(name="user", content="hi")],
@@ -1462,13 +1535,19 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         session_dir = os.path.join(self.temp_dir.name, "sessions", "sess-1")
         self.assertTrue(os.path.isdir(session_dir))
 
-        await ws.purge_session("agent-A", "sess-1")
+        await ws.purge_session(agent_id="agent-A", session_id="sess-1")
 
         self.assertFalse(os.path.exists(session_dir))
         self.assertNotIn("agent-A", self._read_mcp_file()["mcps"])
         # The scope is back to "never seen" — defaults apply again.
         self.assertEqual(
-            [m.name for m in await ws.list_mcps("agent-A", "sess-1")],
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
             ["seed"],
         )
 
@@ -1511,16 +1590,16 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         await ws.initialize()
         self.addAsyncCleanup(ws.close)
 
-        first = await ws.list_mcps("agent-A", "sess-1")
+        first = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
         self.assertEqual(len(first), 2)
 
         # The cap is 2, so serving a second scope evicts the first —
         # but the second scope still gets its full set.
-        second = await ws.list_mcps("agent-B", "sess-1")
+        second = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
         self.assertEqual(len(second), 2)
         self.assertEqual(ws._mcp_instances[("agent-A", "sess-1")], {})
 
         # Coming back rebuilds the evicted scope from its declaration.
-        again = await ws.list_mcps("agent-A", "sess-1")
+        again = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
         self.assertEqual([m.name for m in again], ["a", "b"])
         self.assertEqual(len(instantiated), 6)

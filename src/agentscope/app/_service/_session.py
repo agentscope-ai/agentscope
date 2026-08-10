@@ -422,7 +422,10 @@ class SessionService:
                 session_id,
                 workspace_id,
             )
-            await workspace.purge_session(agent_id, session_id)
+            await workspace.purge_session(
+                agent_id=agent_id,
+                session_id=session_id,
+            )
         except Exception as e:
             logger.warning(
                 "Failed to purge workspace %r for session %r: %s",

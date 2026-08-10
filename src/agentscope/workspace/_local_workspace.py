@@ -15,8 +15,7 @@ from .._logging import logger
 from ..mcp import MCPClient
 from ..skill import Skill
 from ..tool._builtin._backend import LocalBackend
-from ._base import WorkspaceBase
-from ._mcp_registry import MCPKey
+from ._base import MCPKey, WorkspaceBase
 
 
 class _SkillEntry(TypedDict):

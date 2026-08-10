@@ -192,9 +192,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="In-workspace MCP gateway (FastAPI)",
     )
-    # Accepted and ignored: the gateway no longer reads ``.mcp``.
-    # Kept so a workspace image shipping an older launch command
-    # still starts.
+    # Accepted and ignored — kept so an image shipping an older
+    # launch command still starts.
     parser.add_argument("--config", default=None)
     parser.add_argument("--port", type=int, default=5600)
     args = parser.parse_args()

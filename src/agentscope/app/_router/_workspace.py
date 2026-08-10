@@ -81,7 +81,10 @@ async def list_mcps(
         storage,
         workspace_manager,
     )
-    clients = await workspace.list_mcps(agent_id, session_id)
+    clients = await workspace.list_mcps(
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     results = []
     for client in clients:
@@ -128,7 +131,7 @@ async def add_mcp(
         workspace_manager,
     )
     try:
-        await workspace.add_mcp(mcp, agent_id, session_id)
+        await workspace.add_mcp(mcp, agent_id=agent_id, session_id=session_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -156,7 +159,11 @@ async def remove_mcp(
         storage,
         workspace_manager,
     )
-    await workspace.remove_mcp(mcp_name, agent_id, session_id)
+    await workspace.remove_mcp(
+        mcp_name,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 # ---------------------------------------------------------------------------
