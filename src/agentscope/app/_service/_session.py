@@ -343,6 +343,10 @@ class SessionService:
            this session leads one — recursive into worker agents).
         3. Purge transient bus state for ``session_id`` (events log,
            inbox).
+        4. Drop the session's workspace state (MCP clients, offload
+           files). Workspaces outlive sessions and are usually shared
+           by every session of an agent, so this would otherwise
+           accumulate for the life of the workspace.
 
         Worker sessions that storage cascades through are picked up
         here too: when this session is a team leader,
@@ -379,60 +383,40 @@ class SessionService:
         # cascades remove the records we need to resolve roles from.
         await self._purge_subagent_hitl(user_id, agent_id, session_id)
 
-        await self._cancel_runs(all_sids)
+        await asyncio.gather(
+            *(self.cancel_session_run(sid) for sid in all_sids),
+        )
         deleted = await self._storage.delete_session(
             user_id,
             agent_id,
             session_id,
         )
-        await self._purge_bus(all_sids)
-        if deleted:
-            await self._purge_workspace(
-                user_id,
-                agent_id,
-                session_id,
-                workspace_id,
-            )
+        await asyncio.gather(
+            *(self._purge_session_bus(sid) for sid in all_sids),
+        )
+
+        # Best-effort: a workspace that cannot be resolved (backend
+        # down, sandbox gone) must not fail a committed deletion.
+        if deleted and self._workspace_manager and workspace_id:
+            try:
+                workspace = await self._workspace_manager.get_workspace(
+                    user_id,
+                    agent_id,
+                    session_id,
+                    workspace_id,
+                )
+                await workspace.purge_session(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to purge workspace %r for session %r: %s",
+                    workspace_id,
+                    session_id,
+                    e,
+                )
         return deleted
-
-    async def _purge_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-        workspace_id: str | None,
-    ) -> None:
-        """Drop the deleted session's state from its workspace.
-
-        Workspaces outlive sessions and are commonly shared across
-        every session of an agent, so a deleted session's MCP clients
-        and offload files would otherwise accumulate for the life of
-        the workspace.
-
-        Best-effort: a workspace that cannot be resolved (backend
-        down, sandbox already gone) must never fail the deletion the
-        caller already committed to.
-        """
-        if self._workspace_manager is None or workspace_id is None:
-            return
-        try:
-            workspace = await self._workspace_manager.get_workspace(
-                user_id,
-                agent_id,
-                session_id,
-                workspace_id,
-            )
-            await workspace.purge_session(
-                agent_id=agent_id,
-                session_id=session_id,
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to purge workspace %r for session %r: %s",
-                workspace_id,
-                session_id,
-                e,
-            )
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Cancel, delete and bus-purge a team.
@@ -638,32 +622,6 @@ class SessionService:
             return []
         members = await _ensure_team_members(self._storage, user_id, team)
         return [m.session_id for m in members]
-
-    async def _cancel_runs(self, session_ids: list[str]) -> None:
-        """Cancel every in-flight run in ``session_ids`` concurrently.
-
-        Args:
-            session_ids (`list[str]`):
-                Sessions whose runs should be cancelled.
-        """
-        if not session_ids:
-            return
-        await asyncio.gather(
-            *(self.cancel_session_run(sid) for sid in session_ids),
-        )
-
-    async def _purge_bus(self, session_ids: list[str]) -> None:
-        """Drop bus state (events log + inbox) for each id concurrently.
-
-        Args:
-            session_ids (`list[str]`):
-                Sessions whose bus state should be purged.
-        """
-        if not session_ids:
-            return
-        await asyncio.gather(
-            *(self._purge_session_bus(sid) for sid in session_ids),
-        )
 
     async def _purge_session_bus(self, session_id: str) -> None:
         """Drop all per-session bus state for one session."""

@@ -18,7 +18,7 @@ Endpoints::
     POST   /mcps/{name}/tools/{tool}   # body: {arguments: {...}}
 
 Every endpoint except ``/health`` takes ``?agent_id=&session_id=``.
-Upstream sessions are keyed by ``(agent_id, session_id, name)``, so two
+Upstream sessions are kept per agent, session and MCP name, so two
 sessions running the same MCP get independent state (browser cookies,
 login state) and one closing its client never disturbs the other.
 
@@ -36,14 +36,12 @@ from fastapi.responses import PlainTextResponse
 
 from agentscope.mcp import MCPClient
 
-_Scope = tuple[str, str]
-
 
 class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[_Scope, dict[str, MCPClient]] = {}
+        self.clients: dict[str, dict[str, dict[str, MCPClient]]] = {}
         self.lock = asyncio.Lock()
 
 
@@ -62,14 +60,14 @@ def _build_app(state: _State) -> FastAPI:
     """Build the FastAPI app with all routes wired against ``state``."""
     app = FastAPI(title="agentscope-workspace-mcp-gateway")
 
-    def _lookup(scope: _Scope, name: str) -> MCPClient:
+    def _lookup(agent_id: str, session_id: str, name: str) -> MCPClient:
         """Resolve one registered client or raise 404."""
-        client = state.clients.get(scope, {}).get(name)
+        client = state.clients.get(agent_id, {}).get(session_id, {}).get(name)
         if client is None:
             raise HTTPException(
                 404,
-                f"{name!r} not found for agent={scope[0]!r} "
-                f"session={scope[1]!r}",
+                f"{name!r} not found for agent={agent_id!r} "
+                f"session={session_id!r}",
             )
         return client
 
@@ -84,7 +82,9 @@ def _build_app(state: _State) -> FastAPI:
     ) -> list[dict[str, Any]]:
         return [
             c.model_dump(mode="json")
-            for c in state.clients.get((agent_id, session_id), {}).values()
+            for c in state.clients.get(agent_id, {})
+            .get(session_id, {})
+            .values()
         ]
 
     @app.post("/mcps")
@@ -97,9 +97,11 @@ def _build_app(state: _State) -> FastAPI:
         name = body.get("name", "")
         if not name:
             raise HTTPException(400, "name required")
-        scope = (agent_id, session_id)
         async with state.lock:
-            by_name = state.clients.setdefault(scope, {})
+            by_name = state.clients.setdefault(agent_id, {}).setdefault(
+                session_id,
+                {},
+            )
             if name in by_name:
                 raise HTTPException(
                     409,
@@ -120,12 +122,14 @@ def _build_app(state: _State) -> FastAPI:
         agent_id: str = "",
         session_id: str = "",
     ) -> dict[str, Any]:
-        scope = (agent_id, session_id)
         async with state.lock:
-            client = _lookup(scope, name)
-            del state.clients[scope][name]
-            if not state.clients[scope]:
-                del state.clients[scope]
+            client = _lookup(agent_id, session_id, name)
+            by_session = state.clients[agent_id]
+            del by_session[session_id][name]
+            if not by_session[session_id]:
+                del by_session[session_id]
+            if not by_session:
+                del state.clients[agent_id]
             if client.is_stateful and client.is_connected:
                 await client.close()
         return {"ok": True}
@@ -136,7 +140,7 @@ def _build_app(state: _State) -> FastAPI:
         agent_id: str = "",
         session_id: str = "",
     ) -> list[dict[str, Any]]:
-        client = _lookup((agent_id, session_id), name)
+        client = _lookup(agent_id, session_id, name)
         raw = await client.list_raw_tools()
         return [t.model_dump(mode="json") for t in raw]
 
@@ -148,7 +152,7 @@ def _build_app(state: _State) -> FastAPI:
         agent_id: str = "",
         session_id: str = "",
     ) -> dict[str, Any]:
-        client = _lookup((agent_id, session_id), name)
+        client = _lookup(agent_id, session_id, name)
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
@@ -181,10 +185,11 @@ async def _run(port: int) -> None:
     try:
         await server.serve()
     finally:
-        for by_name in state.clients.values():
-            for client in by_name.values():
-                if client.is_stateful and client.is_connected:
-                    await client.close()
+        for by_session in state.clients.values():
+            for by_name in by_session.values():
+                for client in by_name.values():
+                    if client.is_stateful and client.is_connected:
+                        await client.close()
 
 
 def main() -> None:

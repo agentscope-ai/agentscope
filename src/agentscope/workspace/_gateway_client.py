@@ -70,7 +70,8 @@ class GatewayMCPTool(ToolBase):
         mcp_name: str,
         tool: mcp.types.Tool,
         gateway: "GatewayClient",
-        scope_params: dict[str, str] | None = None,
+        agent_id: str = "",
+        session_id: str = "",
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -89,12 +90,14 @@ class GatewayMCPTool(ToolBase):
             gateway (`GatewayClient`):
                 Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
-            scope_params (`dict[str, str] | None`, optional):
-                ``agent_id`` / ``session_id`` query params selecting
-                the gateway-side session this tool runs against.
+            agent_id (`str`, defaults to ``""``):
+                The agent whose gateway-side session to run against.
+            session_id (`str`, defaults to ``""``):
+                The session whose gateway-side session to run against.
         """
         self.mcp_name = mcp_name
-        self._scope_params = scope_params or {}
+        self._agent_id = agent_id
+        self._session_id = session_id
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
@@ -143,7 +146,10 @@ class GatewayMCPTool(ToolBase):
         status, body = await self._gateway.exec_request(
             "POST",
             f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
-            params=self._scope_params,
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
             body={"arguments": kwargs},
         )
         if status >= 400:
@@ -179,7 +185,8 @@ class GatewayMCPClient(MCPClient):
     """
 
     _gateway: "GatewayClient | None" = PrivateAttr(default=None)
-    _scope_params: dict[str, str] = PrivateAttr(default_factory=dict)
+    _agent_id: str = PrivateAttr(default="")
+    _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
         """No-op — the parent builds local stdio/HTTP transport, which
@@ -214,17 +221,15 @@ class GatewayMCPClient(MCPClient):
                 The session this MCP client belongs to. Together with
                 ``agent_id`` it is sent on every ``connect`` /
                 ``close`` / tool-call request so the gateway keeps one
-                upstream session per scope.
+                upstream session per agent and session.
             connected (`bool`, defaults to `False`):
                 When ``True``, mark this client as already connected
                 (used by :meth:`GatewayClient.list_mcps` for entries
                 the gateway is already serving).
         """
         self._gateway = gateway
-        self._scope_params = {
-            "agent_id": agent_id,
-            "session_id": session_id,
-        }
+        self._agent_id = agent_id
+        self._session_id = session_id
         if connected:
             self._is_connected = True
 
@@ -249,7 +254,10 @@ class GatewayMCPClient(MCPClient):
         status, resp_body = await self._gateway.exec_request(
             "POST",
             "/mcps",
-            params=self._scope_params,
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
             body=body,
         )
         if status >= 400:
@@ -278,7 +286,10 @@ class GatewayMCPClient(MCPClient):
             status, resp_body = await self._gateway.exec_request(
                 "DELETE",
                 f"/mcps/{self.name}",
-                params=self._scope_params,
+                params={
+                    "agent_id": self._agent_id,
+                    "session_id": self._session_id,
+                },
             )
             if status >= 400 and not ignore_errors:
                 raise RuntimeError(
@@ -309,7 +320,10 @@ class GatewayMCPClient(MCPClient):
         status, body = await self._gateway.exec_request(
             "GET",
             f"/mcps/{self.name}/tools",
-            params=self._scope_params,
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
         )
         if status >= 400:
             raise RuntimeError(
@@ -366,7 +380,8 @@ class GatewayMCPClient(MCPClient):
             mcp_name=self.name,
             tool=tool,
             gateway=self._gateway,
-            scope_params=self._scope_params,
+            agent_id=self._agent_id,
+            session_id=self._session_id,
         )
 
 
@@ -453,7 +468,7 @@ class GatewayClient:
         agent_id: str = "",
         session_id: str = "",
     ) -> list[GatewayMCPClient]:
-        """Fetch MCPs the gateway is serving for one scope.
+        """Fetch MCPs the gateway is serving for one agent/session.
 
         Returned clients are marked already-connected (via
         :meth:`GatewayMCPClient.attach`) — the gateway is already

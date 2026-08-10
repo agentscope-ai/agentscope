@@ -22,7 +22,7 @@ from abc import abstractmethod
 
 from .._logging import logger
 from ..mcp import MCPClient
-from ._base import MCPKey, WorkspaceBase
+from ._base import WorkspaceBase
 from ._gateway_client import GatewayClient
 from ._utils import (
     DEFAULT_GATEWAY_LOG,
@@ -121,13 +121,13 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             workspace_id (`str | None`, optional):
                 Existing identifier; ``None`` mints a fresh UUID.
             default_mcps (`list[MCPClient] | None`, optional):
-                MCPs seeded into every scope that has not declared
-                its own.
+                MCPs seeded into every agent/session that has not
+                declared its own.
             skill_paths (`list[str] | None`, optional):
                 Local skill dirs seeded on first start.
             max_live_stateful_mcps (`int | None`, optional):
                 Cap on concurrently live stateful MCP instances
-                across all scopes.
+                across all agents and sessions.
         """
         super().__init__(
             workspace_id=workspace_id,
@@ -193,7 +193,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         # Set up the workspace layout
         await self._ensure_workspace_layout()
 
-        # The gateway starts empty; each scope registers its own
+        # The gateway starts empty; each session registers its own
         # MCPs on its first list_mcps.
         await self._setup_mcp_gateway()
 
@@ -237,8 +237,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         Deregisters every MCP from the gateway, clears local handles,
         and wipes ``.mcp``, ``skills/``, ``sessions/``, and ``data/``.
         ``skill_paths`` are not re-seeded, but ``default_mcps`` are:
-        with ``.mcp`` gone, every scope is "never configured" again
-        and inherits the defaults on its next ``list_mcps``.
+        with ``.mcp`` gone, every agent/session is "never configured"
+        again and inherits the defaults on its next ``list_mcps``.
         """
         backend = self.get_backend()
         async with self._mcp_lock, self._skill_lock:
@@ -257,18 +257,21 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     async def _new_mcp_instance(
         self,
-        scope: MCPKey,
+        agent_id: str,
+        session_id: str,
         spec: MCPClient,
     ) -> MCPClient:
-        """Register ``spec`` with the in-sandbox gateway for ``scope``.
+        """Register ``spec`` with the in-sandbox gateway.
 
-        The returned proxy carries the scope, so every gateway request
-        it makes is tagged with it and the gateway keeps one upstream
-        session per ``(agent_id, session_id, name)``.
+        The returned proxy tags every gateway request with the two
+        ids, so the gateway keeps one upstream session per
+        ``(agent_id, session_id, name)``.
 
         Args:
-            scope (`MCPKey`):
-                The ``(agent_id, session_id)`` owning the instance.
+            agent_id (`str`):
+                The agent owning the instance.
+            session_id (`str`):
+                The session owning the instance.
             spec (`MCPClient`):
                 The declared config to instantiate from.
 
@@ -281,8 +284,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             raise RuntimeError("Workspace has no MCP gateway attached.")
         client = self._gateway.make_client(
             spec.model_dump(mode="json"),
-            agent_id=scope[0],
-            session_id=scope[1],
+            agent_id=agent_id,
+            session_id=session_id,
         )
         await client.connect()
         return client
@@ -305,8 +308,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             cwd="/",
         )
 
-        # ``.mcp`` is not seeded: an absent file means no scope has
-        # diverged from default_mcps yet.
+        # ``.mcp`` is not seeded: an absent file means no session
+        # has diverged from default_mcps yet.
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
@@ -394,4 +397,4 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 f"Tail of {self._gateway_log}:\n{tail}",
             )
 
-        # Nothing is registered here — scopes register on demand.
+        # Nothing is registered here — sessions register on demand.

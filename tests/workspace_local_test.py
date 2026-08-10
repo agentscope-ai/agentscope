@@ -1571,11 +1571,12 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
 
             async def _new_mcp_instance(
                 self,
-                scope: tuple,
+                agent_id: str,
+                session_id: str,
                 spec: MCPClient,
             ) -> MCPClient:
                 """Return an already-connected stub, skipping connect."""
-                instantiated.append((scope, spec.name))
+                instantiated.append((agent_id, session_id, spec.name))
                 client = MCPClient.model_validate(
                     spec.model_dump(mode="json"),
                 )
@@ -1597,7 +1598,7 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         # but the second scope still gets its full set.
         second = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
         self.assertEqual(len(second), 2)
-        self.assertEqual(ws._mcp_instances[("agent-A", "sess-1")], {})
+        self.assertEqual(ws._mcp_instances["agent-A"]["sess-1"], {})
 
         # Coming back rebuilds the evicted scope from its declaration.
         again = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")

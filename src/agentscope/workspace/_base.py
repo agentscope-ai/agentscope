@@ -34,17 +34,16 @@ the workspace's :class:`BackendBase` plus a fixed layout derived from
 .. code-block:: text
 
     {workdir}/
-    ├── .mcp          # declared MCP configs, scoped per agent/session
+    ├── .mcp          # declared MCP configs, per agent and session
     ├── data/         # offloaded multimodal payloads
     ├── skills/       # skill subdirectories
     └── sessions/     # per-session context and tool-result files
 
-MCPs are declared per ``(agent_id, session_id)`` scope and
-instantiated lazily: nothing connects until a scope first calls
-``list_mcps``, and each scope gets its own instances so stateful
-sessions never leak across agents or sessions. ``.mcp`` holds only
-the declarations, and only for scopes that diverged from
-``default_mcps``.
+MCPs are declared per agent and session, and instantiated lazily:
+nothing connects until that session first calls ``list_mcps``, and
+each session gets its own instances so stateful MCP state never leaks
+across agents or sessions. ``.mcp`` holds only the declarations, and
+only for sessions that diverged from ``default_mcps``.
 
 Subclasses only set ``self.workdir`` (the agent-visible root); all
 other directory paths are derived via :meth:`BackendBase.join_path`,
@@ -63,7 +62,7 @@ import time
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
-from typing import Self, TypeAlias
+from typing import Self
 
 from pydantic import AnyUrl
 
@@ -87,15 +86,9 @@ from ._utils import (
     DEFAULT_SKILLS_DIR,
 )
 
-#: Scope an MCP belongs to: ``(agent_id, session_id)``. ``("", "")`` is
-#: the legacy scope used by callers that pass neither id.
-MCPKey: TypeAlias = tuple[str, str]
-
 #: Current ``.mcp`` schema version. Version 1 was a bare JSON list of
-#: specs with no scoping; it is read back into the legacy scope.
+#: specs with no ids; it is read back under the legacy empty ids.
 MCP_FILE_VERSION = 2
-
-_LEGACY_SCOPE: MCPKey = ("", "")
 
 _DEFAULT_MAX_LIVE_STATEFUL_MCPS = 40
 
@@ -154,20 +147,21 @@ class WorkspaceBase:
     """Local skill directories to seed on first :meth:`initialize`."""
 
     max_live_stateful_mcps: int
-    """Cap on live stateful MCP instances retained for *other* scopes.
-    See :meth:`_enforce_mcp_capacity`."""
+    """Cap on live stateful MCP instances retained for *other*
+    agents and sessions. See :meth:`_enforce_mcp_capacity`."""
 
-    _mcp_specs: dict[MCPKey, list[MCPClient]]
-    """Declared MCP configs per scope — the persisted layer. A missing
-    key inherits :attr:`default_mcps`; an empty list means none."""
+    _mcp_specs: dict[str, dict[str, list[MCPClient]]]
+    """Declared MCP configs, ``{agent_id: {session_id: [spec]}}`` — the
+    persisted layer, mirroring ``.mcp`` exactly. A missing session
+    inherits :attr:`default_mcps`; an empty list means none."""
 
-    _mcp_instances: dict[MCPKey, dict[str, MCPClient]]
-    """Live handles per scope, ``{scope: {name: client}}`` — built
-    lazily, never persisted."""
+    _mcp_instances: dict[str, dict[str, dict[str, MCPClient]]]
+    """Live handles, ``{agent_id: {session_id: {name: client}}}`` —
+    built lazily, never persisted."""
 
-    _mcp_last_used: dict[MCPKey, float]
-    """Last :meth:`list_mcps` per scope, driving LRU eviction. Turn-
-    level granularity — tool calls do not reach the workspace."""
+    _mcp_last_used: dict[str, dict[str, float]]
+    """Last :meth:`list_mcps` per agent/session, driving LRU eviction.
+    Turn-level granularity — tool calls do not reach the workspace."""
 
     _mcp_lock: asyncio.Lock
     """Guards mutation of the MCP dicts and the ``.mcp`` file."""
@@ -196,15 +190,15 @@ class WorkspaceBase:
                 Existing identifier to adopt; ``None`` mints a fresh
                 UUID.
             default_mcps (`list[MCPClient] | None`, optional):
-                MCP clients seeded into any scope that has never
-                added or removed an MCP of its own.
+                MCP clients seeded into any agent/session that has
+                never added or removed an MCP of its own.
             skill_paths (`list[str] | None`, optional):
                 Local skill directories to copy into ``skills/`` on
                 first start.
             max_live_stateful_mcps (`int | None`, optional):
                 Cap on concurrently live *stateful* MCP instances.
                 ``None`` derives ``max(40, 2 * <stateful defaults>)``
-                so a scope can always instantiate its own seeded set.
+                so one session can always start its own seeded set.
         """
         self.workspace_id = workspace_id or _generate_id()
         self.is_alive = False
@@ -371,14 +365,18 @@ class WorkspaceBase:
             Write(backend=backend),
         ]
 
-    def _declared_specs(self, scope: MCPKey) -> list[MCPClient]:
-        """Configs declared for ``scope``, seeded from defaults.
+    def _declared_specs(
+        self,
+        agent_id: str,
+        session_id: str,
+    ) -> list[MCPClient]:
+        """Configs declared for one agent/session, seeded from defaults.
 
-        A scope missing from :attr:`_mcp_specs` has never been
+        A session missing from :attr:`_mcp_specs` has never been
         modified and inherits fresh copies of :attr:`default_mcps`; an
-        empty list means the scope explicitly has none.
+        empty list means it explicitly has none.
         """
-        declared = self._mcp_specs.get(scope)
+        declared = self._mcp_specs.get(agent_id, {}).get(session_id)
         if declared is not None:
             return declared
         return [
@@ -389,17 +387,20 @@ class WorkspaceBase:
     @abstractmethod
     async def _new_mcp_instance(
         self,
-        scope: MCPKey,
+        agent_id: str,
+        session_id: str,
         spec: MCPClient,
     ) -> MCPClient:
-        """Build and connect one live MCP handle for ``scope``.
+        """Build and connect one live MCP handle for an agent/session.
 
         Raising propagates to :meth:`list_mcps`, which logs and skips
         the entry.
 
         Args:
-            scope (`MCPKey`):
-                The ``(agent_id, session_id)`` owning the instance.
+            agent_id (`str`):
+                The agent owning the instance.
+            session_id (`str`):
+                The session owning the instance.
             spec (`MCPClient`):
                 The declared config to instantiate from.
         """
@@ -410,37 +411,48 @@ class WorkspaceBase:
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> list[MCPClient]:
-        """Return the MCP clients for one ``(agent_id, session_id)``.
+        """Return the MCP clients for one agent/session.
 
-        Instances are built on first use and are private to the scope,
-        so stateful sessions (browser cookies, login state) never leak
-        across agents or sessions. Instances dropped by
-        :meth:`_enforce_mcp_capacity` are rebuilt here.
+        Instances are built on first use and are private to that
+        agent/session, so stateful sessions (browser cookies, login
+        state) never leak across agents or sessions. Instances dropped
+        by :meth:`_enforce_mcp_capacity` are rebuilt here.
 
         Args:
             agent_id (`str | None`, optional):
-                The owning agent. ``None`` selects the legacy scope.
+                The owning agent. ``None`` means the legacy ``""``.
                 Keyword-only: both ids are plain strings, so passing
-                them positionally could silently hit another scope.
+                them positionally could silently hit another session.
             session_id (`str | None`, optional):
-                The owning session. ``None`` selects the legacy scope.
+                The owning session. ``None`` means the legacy ``""``.
         """
-        scope = (agent_id or "", session_id or "")
+        agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
-            self._mcp_last_used[scope] = time.monotonic()
-            live = self._mcp_instances.setdefault(scope, {})
-            specs = self._declared_specs(scope)
+            self._mcp_last_used.setdefault(agent_id, {})[
+                session_id
+            ] = time.monotonic()
+            live = self._mcp_instances.setdefault(agent_id, {}).setdefault(
+                session_id,
+                {},
+            )
+            specs = self._declared_specs(agent_id, session_id)
             for spec in specs:
                 if spec.name in live:
                     continue
-                await self._enforce_mcp_capacity(scope, spec)
+                await self._enforce_mcp_capacity(agent_id, session_id, spec)
                 try:
-                    live[spec.name] = await self._new_mcp_instance(scope, spec)
+                    live[spec.name] = await self._new_mcp_instance(
+                        agent_id,
+                        session_id,
+                        spec,
+                    )
                 except Exception as e:
                     logger.warning(
-                        "Failed to start MCP %r for %s: %s, skipping.",
+                        "Failed to start MCP %r for agent=%r session=%r: "
+                        "%s, skipping.",
                         spec.name,
-                        scope,
+                        agent_id,
+                        session_id,
                         e,
                     )
             # Declaration order: an MCP rebuilt after eviction must
@@ -456,39 +468,46 @@ class WorkspaceBase:
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        """Register a new MCP server for one scope and persist it.
+        """Register a new MCP server for one agent/session and persist.
 
         Args:
             mcp_client (`MCPClient`):
                 The MCP to register.
             agent_id (`str | None`, optional):
-                The owning agent. ``None`` selects the legacy scope.
+                The owning agent. ``None`` means the legacy ``""``.
                 Keyword-only: both ids are plain strings, so passing
-                them positionally could silently hit another scope.
+                them positionally could silently hit another session.
             session_id (`str | None`, optional):
-                The owning session. ``None`` selects the legacy scope.
+                The owning session. ``None`` means the legacy ``""``.
 
         Raises:
             `ValueError`:
-                If the name already exists in this scope.
+                If the name already exists for this agent/session.
         """
-        scope = (agent_id or "", session_id or "")
+        agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
-            specs = self._declared_specs(scope)
+            specs = self._declared_specs(agent_id, session_id)
             if any(m.name == mcp_client.name for m in specs):
                 raise ValueError(
                     f"MCP {mcp_client.name!r} already exists for "
-                    f"agent={scope[0]!r} session={scope[1]!r}.",
+                    f"agent={agent_id!r} session={session_id!r}.",
                 )
-            live = self._mcp_instances.setdefault(scope, {})
-            await self._enforce_mcp_capacity(scope, mcp_client)
+            live = self._mcp_instances.setdefault(agent_id, {}).setdefault(
+                session_id,
+                {},
+            )
+            await self._enforce_mcp_capacity(agent_id, session_id, mcp_client)
             live[mcp_client.name] = await self._new_mcp_instance(
-                scope,
+                agent_id,
+                session_id,
                 mcp_client,
             )
             # Materialise the full list on first divergence so the
             # persisted copy is self-contained.
-            self._mcp_specs[scope] = [*specs, mcp_client]
+            self._mcp_specs.setdefault(agent_id, {})[session_id] = [
+                *specs,
+                mcp_client,
+            ]
             await self._save_mcp_file()
 
     async def remove_mcp(
@@ -498,37 +517,43 @@ class WorkspaceBase:
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        """Deregister an MCP by name within one scope.
+        """Deregister an MCP by name within one agent/session.
 
-        Other scopes keep their own declarations and instances, so
-        there is nothing to reconcile across them.
+        Other agents and sessions keep their own declarations and
+        instances, so there is nothing to reconcile across them.
 
         Args:
             name (`str`):
                 MCP name to remove. Unknown names log a warning and
                 return silently.
             agent_id (`str | None`, optional):
-                The owning agent. ``None`` selects the legacy scope.
+                The owning agent. ``None`` means the legacy ``""``.
                 Keyword-only: both ids are plain strings, so passing
-                them positionally could silently hit another scope.
+                them positionally could silently hit another session.
             session_id (`str | None`, optional):
-                The owning session. ``None`` selects the legacy scope.
+                The owning session. ``None`` means the legacy ``""``.
         """
-        scope = (agent_id or "", session_id or "")
+        agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
-            specs = self._declared_specs(scope)
+            specs = self._declared_specs(agent_id, session_id)
             if not any(m.name == name for m in specs):
                 logger.warning(
                     "MCP %r not found for agent=%r session=%r",
                     name,
-                    scope[0],
-                    scope[1],
+                    agent_id,
+                    session_id,
                 )
                 return
-            instance = self._mcp_instances.get(scope, {}).pop(name, None)
+            instance = (
+                self._mcp_instances.get(agent_id, {})
+                .get(session_id, {})
+                .pop(name, None)
+            )
             if instance is not None:
                 await self._close_mcp_instance(instance)
-            self._mcp_specs[scope] = [m for m in specs if m.name != name]
+            self._mcp_specs.setdefault(agent_id, {})[session_id] = [
+                m for m in specs if m.name != name
+            ]
             await self._save_mcp_file()
 
     # ── session teardown ───────────────────────────────────────────
@@ -543,8 +568,8 @@ class WorkspaceBase:
 
         Closes the session's MCP instances, forgets its ``.mcp``
         declaration and deletes its offload directory. Removing every
-        MCP one by one is not equivalent: an emptied scope persists as
-        ``[]``, which is a meaningful state, and would keep dead
+        MCP one by one is not equivalent: an emptied session persists
+        as ``[]``, which is a meaningful state, and would keep dead
         sessions in ``.mcp`` forever.
 
         Best-effort — failures are logged, never raised, so a purge
@@ -556,14 +581,28 @@ class WorkspaceBase:
             session_id (`str`):
                 The session being deleted.
         """
-        scope = (agent_id or "", session_id or "")
         async with self._mcp_lock:
-            for instance in list(
-                self._mcp_instances.pop(scope, {}).values(),
-            ):
+            dropped = self._mcp_instances.get(agent_id, {}).pop(
+                session_id,
+                {},
+            )
+            for instance in list(dropped.values()):
                 await self._close_mcp_instance(instance)
-            self._mcp_last_used.pop(scope, None)
-            if self._mcp_specs.pop(scope, None) is not None:
+            self._mcp_last_used.get(agent_id, {}).pop(session_id, None)
+            forgotten = self._mcp_specs.get(agent_id, {}).pop(
+                session_id,
+                None,
+            )
+            # Drop the agent too once its last session is gone, or the
+            # purged agent lingers in ``.mcp`` as an empty object.
+            for by_agent in (
+                self._mcp_instances,
+                self._mcp_last_used,
+                self._mcp_specs,
+            ):
+                if by_agent.get(agent_id) == {}:
+                    del by_agent[agent_id]
+            if forgotten is not None:
                 await self._save_mcp_file()
 
         if self._backend is None or not session_id:
@@ -596,7 +635,8 @@ class WorkspaceBase:
 
     async def _enforce_mcp_capacity(
         self,
-        scope: MCPKey,
+        agent_id: str,
+        session_id: str,
         incoming: MCPClient,
     ) -> None:
         """Make room for ``incoming`` under
@@ -604,9 +644,10 @@ class WorkspaceBase:
 
         Only stateful instances count — a stateless client holds no
         connection or subprocess, so capping them reclaims nothing.
-        Eviction never targets ``scope`` itself, so a scope always gets
-        its full set no matter how the cap is configured; when every
-        live instance belongs to ``scope`` the cap is exceeded instead.
+        Eviction never targets the requesting agent/session, which
+        therefore always gets its full set no matter how the cap is
+        configured; when every live instance belongs to it the cap is
+        exceeded instead.
 
         Callers must hold :attr:`_mcp_lock`.
         """
@@ -615,41 +656,50 @@ class WorkspaceBase:
         while True:
             live_count = sum(
                 1
-                for by_name in self._mcp_instances.values()
+                for by_session in self._mcp_instances.values()
+                for by_name in by_session.values()
                 for c in by_name.values()
                 if c.is_stateful
             )
             if live_count < self.max_live_stateful_mcps:
                 return
-            victim_scope = min(
-                (
-                    s
-                    for s, by_name in self._mcp_instances.items()
-                    if s != scope
-                    and any(c.is_stateful for c in by_name.values())
-                ),
-                key=lambda s: self._mcp_last_used.get(s, 0.0),
-                default=None,
-            )
-            if victim_scope is None:
+
+            victim_agent, victim_session, oldest = None, None, 0.0
+            for other_agent, by_session in self._mcp_instances.items():
+                for other_session, by_name in by_session.items():
+                    if other_agent == agent_id and other_session == session_id:
+                        continue
+                    if not any(c.is_stateful for c in by_name.values()):
+                        continue
+                    used = self._mcp_last_used.get(other_agent, {}).get(
+                        other_session,
+                        0.0,
+                    )
+                    if victim_agent is None or used < oldest:
+                        victim_agent = other_agent
+                        victim_session = other_session
+                        oldest = used
+
+            if victim_agent is None or victim_session is None:
                 logger.warning(
                     "All %d live stateful MCPs belong to agent=%r "
                     "session=%r; exceeding max_live_stateful_mcps to "
                     "start %r.",
                     live_count,
-                    scope[0],
-                    scope[1],
+                    agent_id,
+                    session_id,
                     incoming.name,
                 )
                 return
-            by_name = self._mcp_instances[victim_scope]
+
+            by_name = self._mcp_instances[victim_agent][victim_session]
             name = next(n for n, c in by_name.items() if c.is_stateful)
             logger.info(
                 "Evicting idle MCP %r (agent=%r session=%r) to stay "
                 "under max_live_stateful_mcps=%d.",
                 name,
-                victim_scope[0],
-                victim_scope[1],
+                victim_agent,
+                victim_session,
                 self.max_live_stateful_mcps,
             )
             await self._close_mcp_instance(by_name.pop(name))
@@ -659,9 +709,10 @@ class WorkspaceBase:
 
         Declarations survive — a later :meth:`list_mcps` rebuilds.
         """
-        for by_name in self._mcp_instances.values():
-            for instance in list(by_name.values()):
-                await self._close_mcp_instance(instance)
+        for by_session in self._mcp_instances.values():
+            for by_name in by_session.values():
+                for instance in list(by_name.values()):
+                    await self._close_mcp_instance(instance)
         self._mcp_instances.clear()
         self._mcp_last_used.clear()
 
@@ -670,7 +721,7 @@ class WorkspaceBase:
     async def _save_mcp_file(self) -> None:
         """Persist :attr:`_mcp_specs` to ``${workdir}/.mcp``.
 
-        Only declarations are written, and only for scopes that
+        Only declarations are written, and only for sessions that
         diverged from :attr:`default_mcps`, so the file does not grow
         with session count on its own. No-op when
         :attr:`is_persistent` is ``False``; failures are logged, not
@@ -683,15 +734,17 @@ class WorkspaceBase:
         backend = self._backend
         if backend is None:
             return
-        # Nested {agent_id: {session_id: [...]}} rather than a joined
-        # key, so no separator can collide with an id.
-        mcps: dict[str, dict[str, list[dict]]] = {}
-        for (agent_id, session_id), specs in self._mcp_specs.items():
-            mcps.setdefault(agent_id, {})[session_id] = [
-                m.model_dump(mode="json") for m in specs
-            ]
         payload = json.dumps(
-            {"version": MCP_FILE_VERSION, "mcps": mcps},
+            {
+                "version": MCP_FILE_VERSION,
+                "mcps": {
+                    agent_id: {
+                        session_id: [m.model_dump(mode="json") for m in specs]
+                        for session_id, specs in by_session.items()
+                    }
+                    for agent_id, by_session in self._mcp_specs.items()
+                },
+            },
             indent=2,
             ensure_ascii=False,
         ).encode("utf-8")
@@ -704,13 +757,16 @@ class WorkspaceBase:
                 e,
             )
 
-    async def _restore_mcp_specs(self) -> dict[MCPKey, list[MCPClient]]:
+    async def _restore_mcp_specs(
+        self,
+    ) -> dict[str, dict[str, list[MCPClient]]]:
         """Read the declarations persisted in ``${workdir}/.mcp``.
 
         Returns an empty mapping when the file is absent or unusable —
-        every scope then falls back to :attr:`default_mcps`, so a
-        corrupt file cannot block startup. Version 1 files (a bare
-        list) are read into the legacy scope; the next write emits v2.
+        every agent/session then falls back to :attr:`default_mcps`, so
+        a corrupt file cannot block startup. Version 1 files (a bare
+        list) are read under the legacy empty ids; the next write emits
+        v2.
         """
         if not self.is_persistent:
             return {}
@@ -731,7 +787,11 @@ class WorkspaceBase:
             )
             return {}
 
-        def _parse(cfgs: list, scope: MCPKey) -> list[MCPClient]:
+        def _parse(
+            cfgs: list,
+            agent_id: str,
+            session_id: str,
+        ) -> list[MCPClient]:
             """Parse serialised configs, skipping invalid entries."""
             parsed: list[MCPClient] = []
             for m in cfgs:
@@ -740,16 +800,18 @@ class WorkspaceBase:
                 except Exception as e:
                     name = m.get("name", "?") if isinstance(m, dict) else "?"
                     logger.warning(
-                        "Skipping invalid MCP entry %r in scope %s: %s",
+                        "Skipping invalid MCP entry %r for agent=%r "
+                        "session=%r: %s",
                         name,
-                        scope,
+                        agent_id,
+                        session_id,
                         e,
                     )
             return parsed
 
         if isinstance(data, list):
-            logger.info("Migrating .mcp v1 (flat list) into the legacy scope.")
-            return {_LEGACY_SCOPE: _parse(data, _LEGACY_SCOPE)}
+            logger.info("Migrating .mcp v1 (flat list) to the legacy ids.")
+            return {"": {"": _parse(data, "", "")}}
 
         if not isinstance(data, dict):
             logger.warning(
@@ -758,14 +820,17 @@ class WorkspaceBase:
             )
             return {}
 
-        specs: dict[MCPKey, list[MCPClient]] = {}
+        specs: dict[str, dict[str, list[MCPClient]]] = {}
         for agent_id, by_session in (data.get("mcps") or {}).items():
             if not isinstance(by_session, dict):
                 continue
             for session_id, cfgs in by_session.items():
                 if isinstance(cfgs, list):
-                    scope = (agent_id, session_id)
-                    specs[scope] = _parse(cfgs, scope)
+                    specs.setdefault(agent_id, {})[session_id] = _parse(
+                        cfgs,
+                        agent_id,
+                        session_id,
+                    )
         return specs
 
     # ── for Agent: offload (shared) ────────────────────────────────
