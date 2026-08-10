@@ -7,15 +7,22 @@ import json
 import os
 import re
 import shutil
-from typing import TypedDict
+from typing import AsyncIterator, Literal, TypedDict
 
 import frontmatter
 
+from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
+from .._utils._common import _generate_id, _normalize_local_path
 from ..mcp import MCPClient
 from ..skill import Skill
+from ..tool import ToolBase
 from ..tool._builtin._backend import LocalBackend
-from ._base import WorkspaceBase
+from ._base import (
+    DEFAULT_MAX_EXTRACTED_BYTES,
+    _EXTRACT_ARCHIVE_SHIM,
+    WorkspaceBase,
+)
 
 
 class _SkillEntry(TypedDict):
@@ -54,45 +61,6 @@ def _sanitize_dir_name(name: str) -> str:
     return re.sub(r"[^\w一-鿿-]", "_", name)
 
 
-_DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>
-You have access to a local workspace at {workdir} with the following structure:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files (images, etc.)
-├── skills/      # reusable skills, each in its own subdirectory
-└── sessions/    # session context and tool results
-```
-
-This workspace is your personal working environment for completing various tasks.
-You are responsible for keeping it clean, structured, and easy to navigate over time.
-
-### Project Directory
-- Create a dedicated subdirectory for each task or project under the workspace root.
-- Name the directory concisely and descriptively, e.g. `20240315_web-scraper`, so it remains identifiable long after creation.
-- Always create a `README.md` at the project root documenting:
-  - What the project is about
-  - When it was created
-  - Key decisions or context that would help you resume work later
-  - The changes you have made (and when)
-
-### Version Control
-- It is recommended to initialize a `git` repository in each project directory
-  to track changes and allow rollbacks.
-- Always create a `.gitignore` before the first commit to exclude unwanted files
-  (e.g. virtual environments, cache, secrets).
-
-### Python Environment
-- If a project requires Python, use `uv` to create an isolated virtual environment
-  inside the project directory:
-  ```shell
-  uv venv && uv pip install ...
-  ```
-- Never install packages into a shared or global environment — each project must
-  manage its own dependencies to avoid conflicts.
-</workspace>"""  # noqa: E501
-
-
 class LocalWorkspace(WorkspaceBase):
     """Local-directory workspace.
 
@@ -112,7 +80,7 @@ class LocalWorkspace(WorkspaceBase):
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
-        instructions: str = _DEFAULT_WORKSPACE_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         max_live_stateful_mcps: int | None = None,
     ) -> None:
         """Construct a :class:`LocalWorkspace`.
@@ -131,7 +99,7 @@ class LocalWorkspace(WorkspaceBase):
                 Local skill directories seeded into
                 ``<workdir>/skills`` on first :meth:`initialize`.
             instructions (`str`, defaults to \
-            `_DEFAULT_WORKSPACE_INSTRUCTIONS`):
+            `DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template returned by
                 :meth:`get_instructions`. Supports the ``{workdir}``
                 placeholder.
@@ -148,13 +116,39 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── serializable config ─────────────────────────────────
         self.workdir = os.path.abspath(workdir)
-        self.instructions = instructions.format(workdir=self.workdir)
+        self.instructions = instructions.format(
+            backend="local",
+            workdir=self.workdir,
+        )
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
+
+    async def list_tools(self) -> list[ToolBase]:
+        """Return builtin tools, using PowerShell as the shell on Windows."""
+        from ..tool import Bash, Edit, Glob, Grep, PowerShell, Read, Write
+
+        backend = self.get_backend()
+        glob_kwargs: dict = {"backend": backend}
+        if self._glob_helper_path is not None:
+            glob_kwargs["glob_helper_path"] = self._glob_helper_path
+
+        if os.name == "nt":
+            shell: ToolBase = PowerShell(cwd=self.workdir, backend=backend)
+        else:
+            shell = Bash(cwd=self.workdir, backend=backend)
+
+        return [
+            shell,
+            Edit(backend=backend),
+            Glob(**glob_kwargs),
+            Grep(backend=backend),
+            Read(backend=backend),
+            Write(backend=backend),
+        ]
 
     async def initialize(self) -> None:
         """Initialise the workspace.
@@ -661,6 +655,8 @@ class LocalWorkspace(WorkspaceBase):
         Raises:
             `ValueError`:
                 If the name already exists for this agent/session.
+                Names are unique because they compose the model-facing
+                tool name ``mcp__{name}__{tool}``.
         """
         agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
@@ -739,6 +735,7 @@ class LocalWorkspace(WorkspaceBase):
             ValueError: If the skill at ``skill_path`` is invalid (missing or
                 malformed ``SKILL.md``).
         """
+        skill_path = _normalize_local_path(skill_path)
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)
@@ -815,6 +812,65 @@ class LocalWorkspace(WorkspaceBase):
                 mtime if mtime is not None else 0.0
             )
             await self._save_skills_file(skills_dir, skills_file)
+
+    async def add_skill_archive(
+        self,
+        stream: AsyncIterator[bytes],
+        fmt: Literal["zip", "tar", "tar.gz"],
+        dir_name: str,
+        max_extracted_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
+    ) -> None:
+        """Expand a skill archive, then install it as a local directory.
+
+        Unpacks inside the workspace and hands the result to
+        :meth:`add_skill`, so hash dedup, name conflict resolution and
+        the ``.skills`` index behave exactly as for a path install —
+        which is also why ``dir_name`` is ignored here: the directory
+        name comes from the ``SKILL.md`` front matter.
+
+        Args:
+            stream (`AsyncIterator[bytes]`):
+                The archive bytes, in order.
+            fmt (`Literal["zip", "tar", "tar.gz"]`):
+                The archive format.
+            dir_name (`str`):
+                Unused; kept for interface compatibility.
+            max_extracted_bytes (`int`):
+                Ceiling on the archive's expanded size.
+
+        Raises:
+            ValueError:
+                If the archive holds no valid ``SKILL.md``.
+            RuntimeError:
+                If expanding the archive fails.
+        """
+        staging = os.path.join(
+            self.workdir,
+            f".skill-staging-{_generate_id()}",
+        )
+        archive_path = f"{staging}.{'tar.gz' if fmt == 'tar.gz' else fmt}"
+        try:
+            await self._backend.write_stream(archive_path, stream)
+            result = await self._backend.exec_shell(
+                [
+                    "python3",
+                    "-c",
+                    _EXTRACT_ARCHIVE_SHIM,
+                    archive_path,
+                    staging,
+                    fmt,
+                    str(max_extracted_bytes),
+                ],
+            )
+            if not result.ok():
+                raise RuntimeError(
+                    f"Failed to expand skill archive: "
+                    f"{result.stderr.decode('utf-8', 'replace')}",
+                )
+            await self.add_skill(await self._find_skill_root(staging))
+        finally:
+            await self._backend.delete_path(staging)
+            await self._backend.delete_path(archive_path)
 
     async def remove_skill(self, name: str) -> None:
         """Remove a skill from the workspace by its agent-facing name.

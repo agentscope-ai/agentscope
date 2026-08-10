@@ -37,7 +37,7 @@ class QdrantStore(VectorStoreBase):
     retrieval.
 
     .. note:: The ``qdrant-client`` package is required. Install it
-        with ``pip install qdrant-client``.
+        with ``pip install agentscope[vdb-qdrant]``.
 
     .. code-block:: python
 

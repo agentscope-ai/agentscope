@@ -10,6 +10,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
+from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
     TextBlock,
@@ -207,6 +208,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello, world!",
                     },
@@ -226,6 +229,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello, world!",
                     },
@@ -261,6 +266,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "a",
                         "text": "123",
                     },
@@ -279,6 +286,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "b",
                         "text": "456",
                     },
@@ -297,6 +306,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "b",
                         "text": "789",
                     },
@@ -315,6 +326,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -338,6 +351,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "2",
                         "name": None,
                         "source": {
@@ -361,6 +376,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -389,12 +406,16 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "a",
                         # All consecutive TextBlocks merged
                         "text": "123456789",
                     },
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -405,6 +426,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "2",
                         "name": None,
                         "source": {
@@ -536,6 +559,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Result: 8",
                     },
@@ -555,6 +580,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Result: 8",
                     },
@@ -602,6 +629,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The weather in Chengdu is sunny.",
                     },
@@ -620,6 +649,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The weather in Chengdu is sunny.",
                     },
@@ -755,6 +786,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": str(i),
                         },
@@ -774,6 +807,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "123",  # All consecutive TextBlocks merged
                     },
@@ -905,6 +940,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Product: 10.0",
                     },
@@ -924,6 +961,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Product: 10.0",
                     },
@@ -1009,6 +1048,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": f"Number: {num}",
                         },
@@ -1028,6 +1069,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         # All consecutive TextBlocks merged
                         "text": "Number: 5Number: 6Number: 7",
@@ -1240,6 +1283,8 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": """The currently activated tool group(s): group_2.
 <tool-instructions>
@@ -1274,6 +1319,8 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": """The currently activated tool group(s): group_1, group_2.
 <tool-instructions>
@@ -1308,6 +1355,8 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All tool groups are currently deactivated.",
                     },
@@ -1316,6 +1365,28 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "state": "success",
             },
         )
+
+    async def test_broken_mcp_is_skipped_not_fatal(self) -> None:
+        """One unreachable MCP must not take the whole reply down with
+        it: an expired token or a server that is simply down would
+        otherwise end the conversation instead of just withdrawing that
+        server's tools."""
+        toolkit = Toolkit(
+            mcps=[
+                MCPClient(
+                    name="broken",
+                    is_stateful=False,
+                    # Nothing listens on port 1; the connection is
+                    # refused rather than hanging.
+                    mcp_config=HttpMCPConfig(
+                        url="http://127.0.0.1:1/mcp",
+                        timeout=1.0,
+                    ),
+                ),
+            ],
+        )
+
+        self.assertEqual(await toolkit.get_tool_schemas(), [])
 
 
 class RemoveTitleFieldTest(TestCase):

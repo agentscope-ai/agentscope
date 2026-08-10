@@ -6,22 +6,33 @@ import json
 import base64
 import hashlib
 import tempfile
-from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from dataclasses import asdict
 from urllib.parse import urlparse
-from urllib.request import url2pathname
 
 import aiofiles
 from utils import AnyString, MockModel
-from agentscope.agent import Agent, ContextConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
-from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.tool import (
+    Bash,
+    Edit,
+    Glob,
+    Grep,
+    LocalBackend,
+    PowerShell,
+    Read,
+    Toolkit,
+    ToolBase,
+    ToolChunk,
+    Write,
+)
 from agentscope.permission import PermissionDecision, PermissionBehavior
-from agentscope.workspace import LocalWorkspace
+from agentscope.workspace import LocalWorkspace, WorkspaceBase
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
@@ -80,6 +91,77 @@ class _LongResultTool(ToolBase):
             ],
             state=ToolResultState.SUCCESS,
         )
+
+
+class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace builtin tools."""
+
+    async def test_list_tools_builtin_posix_uses_bash(self) -> None:
+        """A POSIX local workspace returns Bash and filesystem tools."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="posix"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_list_tools_builtin_windows_uses_powershell(self) -> None:
+        """A Windows local workspace returns PowerShell, not Bash."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="nt"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {PowerShell, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_windows_shell_switch_is_local_workspace_behavior(
+        self,
+    ) -> None:
+        """Build the tool list in LocalWorkspace without delegating up."""
+        workspace = LocalWorkspace(workdir="workspace")
+        backend = workspace.get_backend()
+
+        with (
+            patch.object(
+                WorkspaceBase,
+                "list_tools",
+                new=AsyncMock(side_effect=AssertionError("must not delegate")),
+            ),
+            patch(
+                "agentscope.workspace._local_workspace.os",
+                SimpleNamespace(name="nt"),
+            ),
+        ):
+            tools = await workspace.list_tools()
+
+        self.assertIsInstance(tools[0], PowerShell)
+        self.assertIs(tools[0]._backend, backend)
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
@@ -225,9 +307,12 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         self.assertIsInstance(loaded_msg.content, list)
         self.assertEqual(len(loaded_msg.content), 2)
         data_url = str(loaded_msg.content[1].source.url)
-        self.assertTrue(data_url.startswith("file://"))
-        # Convert file URL to local path (works on both Windows and Unix)
-        data_file_path = url2pathname(urlparse(data_url).path)
+        self.assertTrue(data_url.startswith("workspace://"))
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
         self.assertTrue(os.path.exists(data_file_path))
 
         # Verify the data file contains the correct content
@@ -243,11 +328,13 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
                 TextBlock(
                     text="Check this image:",
                     id=loaded_msg.content[0].id,
+                    created_at=loaded_msg.content[0].created_at,
                 ),
                 DataBlock(
                     id=loaded_msg.content[1].id,
                     source=loaded_msg.content[1].source,
                     name="test_image",
+                    created_at=loaded_msg.content[1].created_at,
                 ),
             ],
             id=loaded_msg.id,
@@ -279,16 +366,19 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         )
 
         # Offload both data blocks
-        result1 = await self.workspace._offload_data_block(data_block1)
-        result2 = await self.workspace._offload_data_block(data_block2)
+        result1 = await self.workspace.offload_data_block(data_block1)
+        result2 = await self.workspace.offload_data_block(data_block2)
 
         # Verify both point to the same file by comparing source URLs
         self.assertEqual(str(result1.source.url), str(result2.source.url))
 
         # Verify the file exists
         data_url = str(result1.source.url)
-        # Convert file URL to local path (works on both Windows and Unix)
-        data_file_path = url2pathname(urlparse(data_url).path)
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
         self.assertTrue(os.path.exists(data_file_path))
 
         # Verify only one file was created in the data directory
@@ -314,7 +404,7 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         )
 
         # Offload the data block
-        result = await self.workspace._offload_data_block(data_block)
+        result = await self.workspace.offload_data_block(data_block)
 
         # Verify the data block is returned as-is by comparing full objects
         self.assertDictEqual(result.model_dump(), data_block.model_dump())
@@ -407,7 +497,7 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
 
         # Verify the content structure (URL format varies by platform)
         self.assertTrue(content.startswith("File created successfully: "))
-        self.assertIn("<data url='file://", content)
+        self.assertIn("<data url='workspace://", content)
         self.assertIn("name='output.txt'", content)
         self.assertIn("media_type='text/plain'", content)
         self.assertTrue(content.endswith("/>"))
@@ -419,8 +509,11 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         url_match = re.search(r"url='([^']+)'", content)
         self.assertIsNotNone(url_match)
         data_url = url_match.group(1)
-        # Convert file URL to local path (works on both Windows and Unix)
-        data_file_path = url2pathname(urlparse(data_url).path)
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
         self.assertTrue(os.path.exists(data_file_path))
 
 
@@ -566,6 +659,88 @@ description: {description}
             {k: v["skill_name"] for k, v in skills_index.items()},
             {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
         )
+
+    async def test_initialize_with_tilde_skill_path(self) -> None:
+        """Test that ``skill_paths`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is seeded through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            with patch.dict(os.environ, env, clear=False):
+                workspace = LocalWorkspace(
+                    workdir=self.temp_dir.name,
+                    skill_paths=[os.path.join("~", "tilde_skill")],
+                )
+                self.assertEqual(
+                    workspace.skill_paths,
+                    [os.path.abspath(skill_dir)],
+                )
+                await workspace.initialize()
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
+
+    async def test_add_skill_with_tilde_path(self) -> None:
+        """Test that ``add_skill`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is added through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            workspace = LocalWorkspace(workdir=self.temp_dir.name)
+            await workspace.initialize()
+            with patch.dict(os.environ, env, clear=False):
+                await workspace.add_skill(os.path.join("~", "tilde_skill"))
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
 
     async def test_initialize_skip_duplicate_skills(self) -> None:
         """Test that duplicate skills are not copied again.
@@ -823,7 +998,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
         """
         with tempfile.TemporaryDirectory() as workdir:
             session_id = "test_session"
-            model = MockModel(stream=False)
+            model = MockModel(stream=False, context_size=100000)
             agent = Agent(
                 name="Friday",
                 system_prompt="You're a helpful assistant named Friday.",
@@ -834,6 +1009,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 context_config=ContextConfig(
                     tool_result_limit=50,
                 ),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 offloader=LocalWorkspace(
                     workdir=workdir,
                 ),
@@ -894,7 +1073,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             # The full text is "0" * 30000 followed by a base64 DataBlock;
             # tool_result_limit=50 reserves ~200 chars of text in context, the
             # remaining 29800 chars + the DataBlock placeholder are offloaded.
-            data_url = Path(data_file_path).as_uri()
+            data_url = f"workspace:///data/{data_hash}.png"
             expected_offload_content = (
                 "0" * 29800 + f"<data url='{data_url}' name='fake_image.png' "
                 f"media_type='image/png'/>"
@@ -915,6 +1094,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": "long_result_tool",
                         "input": "{}",
@@ -923,11 +1104,15 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": "long_result_tool",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "text": "0" * 200 + reminder_1,
                                 "id": AnyString(),
                             },
@@ -937,6 +1122,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "text": "End_1.",
                         "id": AnyString(),
                     },
@@ -944,6 +1131,9 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(
@@ -981,6 +1171,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 model=model,
                 toolkit=Toolkit(),
                 offloader=LocalWorkspace(workdir=workdir),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 state=AgentState(session_id=session_id),
             )
 
@@ -1040,8 +1234,13 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                             data=b64_data,
                             media_type="image/png",
                         ),
+                        created_at="2026-01-01T00:00:00",
                     ),
-                    TextBlock(id="text_block_a", text="A" * 500),
+                    TextBlock(
+                        id="text_block_a",
+                        text="A" * 500,
+                        created_at="2026-01-01T00:00:00",
+                    ),
                 ],
                 id="msg_a",
                 created_at="2026-01-01T00:00:00",
@@ -1052,6 +1251,17 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             self.assertTrue(os.path.exists(offload_path))
             async with aiofiles.open(offload_path, "r") as f:
                 content_after_first = await f.read()
+
+            # The offloader rewrites the DataBlock (Base64Source → URLSource)
+            # as a fresh block, so its ``created_at`` is regenerated rather
+            # than preserved; capture the actual value for the assertion.
+            offloaded_data_created_at = (
+                Msg.model_validate_json(
+                    content_after_first.strip(),
+                )
+                .content[0]
+                .created_at
+            )
 
             # The DataBlock is persisted to ``{workdir}/data/`` as soon as
             # it is included in an offloaded line — this happens during the
@@ -1074,17 +1284,23 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             # literally so a developer can read off exactly what gets
             # persisted; only the temp-dir-dependent file URL is
             # interpolated via ``data_url``.
-            data_url = Path(data_file_path).as_uri()
+            data_url = f"workspace:///data/{data_hash}.png"
             expected_user_msg_a_offloaded_json = (
                 '{"name":"user","content":['
                 '{"type":"data","id":"data_block_a","source":'
                 '{"type":"url","url":"' + data_url + '",'
-                '"media_type":"image/png"},"name":"fake_image_a.png"},'
+                '"media_type":"image/png"},"name":"fake_image_a.png",'
+                '"created_at":"' + offloaded_data_created_at + '",'
+                '"finished_at":null},'
                 '{"type":"text","text":"' + "A" * 500 + '",'
-                '"id":"text_block_a"}'
+                '"id":"text_block_a",'
+                '"created_at":"2026-01-01T00:00:00","finished_at":null}'
                 '],"role":"user","id":"msg_a","metadata":{},'
                 '"created_at":"2026-01-01T00:00:00",'
-                '"finished_at":"2026-01-01T00:00:00","usage":null}'
+                '"usage":null,'
+                '"finished_at":"2026-01-01T00:00:00",'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             self.assertEqual(
                 content_after_first,
@@ -1104,7 +1320,11 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             user_msg_b = UserMsg(
                 name="user",
                 content=[
-                    TextBlock(id="text_block_b", text="B" * 500),
+                    TextBlock(
+                        id="text_block_b",
+                        text="B" * 500,
+                        created_at="2026-01-02T00:00:00",
+                    ),
                 ],
                 id="msg_b",
                 created_at="2026-01-02T00:00:00",
@@ -1124,18 +1344,29 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '{"name":"Friday","content":['
                 '{"type":"text","text":"End_1.","id":"'
                 + assistant_1.content[0].id
-                + '"}'
+                + '","created_at":"'
+                + assistant_1.content[0].created_at
+                + '","finished_at":'
+                + json.dumps(assistant_1.content[0].finished_at)
+                + "}"
                 '],"role":"assistant","id":"' + assistant_1.id + '",'
                 '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
-                '"finished_at":null,"usage":null}'
+                '"usage":null,'
+                '"finished_at":null,'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             expected_user_msg_b_json = (
                 '{"name":"user","content":['
                 '{"type":"text","text":"' + "B" * 500 + '",'
-                '"id":"text_block_b"}'
+                '"id":"text_block_b",'
+                '"created_at":"2026-01-02T00:00:00","finished_at":null}'
                 '],"role":"user","id":"msg_b","metadata":{},'
                 '"created_at":"2026-01-02T00:00:00",'
-                '"finished_at":"2026-01-02T00:00:00","usage":null}'
+                '"usage":null,'
+                '"finished_at":"2026-01-02T00:00:00",'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             self.assertEqual(
                 content_after_second,
@@ -1177,6 +1408,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "text": "End_2.",
                         "id": AnyString(),
                     },
@@ -1184,6 +1417,9 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(

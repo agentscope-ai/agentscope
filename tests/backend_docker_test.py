@@ -212,7 +212,3 @@ class TestDockerBackend(IsolatedAsyncioTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{CONTAINER_WORKDIR}/missing")
-
-
-if __name__ == "__main__":
-    unittest.main()

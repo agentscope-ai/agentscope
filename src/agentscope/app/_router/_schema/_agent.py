@@ -5,7 +5,8 @@ import warnings
 from pydantic import BaseModel, Field
 
 from ....agent import ContextConfig, ReActConfig
-from ...storage import AgentRecord, InviteConfig
+from ...storage import InviteConfig
+from ..._service import AgentView
 
 
 class CreateAgentRequest(BaseModel):
@@ -72,7 +73,7 @@ class UpdateAgentRequest(BaseModel):
 class ListAgentsResponse(BaseModel):
     """Response body for listing agents."""
 
-    agents: list[AgentRecord] = Field(description="Agent records.")
+    agents: list[AgentView] = Field(description="Agent records.")
     total: int = Field(description="Total number of agents.")
 
 

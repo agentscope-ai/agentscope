@@ -208,7 +208,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         None,
                     )
                     if reasoning_item_id:
-                        if content_parts:
+                        if content_parts and block.thinking:
                             items.append(
                                 {
                                     "role": msg.role,
@@ -216,8 +216,11 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                 },
                             )
                             content_parts = []
-                        # summary may be empty when the model did not produce
-                        # reasoning summary text (e.g. o4-mini with streaming)
+                        # Empty reasoning blocks can arrive after text deltas
+                        # only to carry reasoning_item_id; emit them before
+                        # pending assistant text for replay. Non-empty
+                        # reasoning starts a new output segment, so flush text
+                        # first.
                         summary = (
                             [{"type": "summary_text", "text": block.thinking}]
                             if block.thinking

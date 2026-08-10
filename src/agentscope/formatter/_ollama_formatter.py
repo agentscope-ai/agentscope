@@ -232,9 +232,15 @@ class OllamaChatFormatter(_OllamaFormatterBase):
 
                     # Ollama expects tool results as a separate "tool" role
                     # message, regardless of the containing Msg's role.
+                    # Per the Ollama tool-calling spec, the "tool" message
+                    # must carry a "tool_name" field (not the OpenAI-style
+                    # "tool_call_id") so the model can correlate the result
+                    # with the function that produced it — see
+                    # https://docs.ollama.com/capabilities/tool-calling
                     messages.append(
                         {
                             "role": "tool",
+                            "tool_name": block.name,
                             "content": textual_output,
                         },
                     )

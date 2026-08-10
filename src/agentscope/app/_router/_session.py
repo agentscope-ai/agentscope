@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from ..._utils._common import _generate_id
+from ..access import ResourceKind
 from ..deps import (
     get_chat_service,
     get_current_user_id,
     get_message_bus,
+    get_resource_access_service,
     get_session_service,
     get_storage,
     get_workspace_manager,
@@ -30,13 +32,15 @@ from ._schema import (
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from .._service import (
+    AgentView,
+    ResourceAccessService,
     ChatService,
     SessionService,
+    SessionStatus,
     SessionProjection,
     SubagentHitlProjector,
 )
 from ..storage import (
-    AgentRecord,
     ChatModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
@@ -46,6 +50,7 @@ from ..storage import (
     TeamRecord,
 )
 from ...message import ToolCallState
+from ...state import ToolContext
 from ..storage._utils import _ensure_team_members
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
@@ -73,13 +78,20 @@ async def _build_team_detail(
             The team plus its resolved leader and member agents (each
             member paired with its session id when available).
     """
-    leader_agent: AgentRecord | None = None
+    leader_agent: AgentView | None = None
     leader_session = await storage.get_session(user_id, "", team.session_id)
     if leader_session is not None:
-        leader_agent = await storage.get_agent(
+        leader_record = await storage.get_agent(
             user_id,
             leader_session.agent_id,
         )
+        if leader_record is not None:
+            leader_agent = AgentView.model_validate(
+                {
+                    **leader_record.model_dump(),
+                    "editable": leader_record.user_id == user_id,
+                },
+            )
 
     members: list[TeamMemberView] = []
     for member in await _ensure_team_members(storage, user_id, team):
@@ -88,9 +100,18 @@ async def _build_team_detail(
             continue
         # Use the member's team-scoped session id directly; an invited
         # agent has multiple sessions and only ``member.session_id``
-        # belongs to this team.
+        # belongs to this team. A member whose owner is not the current
+        # user was invited from another user's pool — read-only here.
         members.append(
-            TeamMemberView(agent=agent, session_id=member.session_id),
+            TeamMemberView(
+                agent=AgentView.model_validate(
+                    {
+                        **agent.model_dump(),
+                        "editable": member.owner_id == user_id,
+                    },
+                ),
+                session_id=member.session_id,
+            ),
         )
 
     return TeamDetailResponse(
@@ -108,62 +129,61 @@ session_router = APIRouter(
 
 
 async def _ensure_credential_exists(
-    storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     config: ChatModelConfig | TTSModelConfig | None,
 ) -> None:
-    """Validate that the credential referenced by ``config`` belongs to the
-    given user. No-op when ``config`` is ``None``.
+    """Validate that the credential referenced by ``config`` is visible to
+    the given user (own or shared). No-op when ``config`` is ``None``.
 
     Args:
-        storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
         config (`ChatModelConfig | TTSModelConfig | None`): Model config to
             validate. Pass ``None`` to skip the check.
 
     Raises:
-        `HTTPException`: 404 if the credential does not exist or does not
-            belong to the user.
+        `HTTPException`: 404 if the credential does not exist or is not
+            visible to the user.
     """
     if config is None:
         return
-    credentials = await storage.list_credentials(user_id)
-    if not any(c.id == config.credential_id for c in credentials):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Credential '{config.credential_id}' not found.",
-        )
+    # ``get_resource`` raises 404 when the credential is neither owned
+    # nor shared to the viewer — exactly the semantics we want.
+    await access.get_resource(
+        user_id,
+        ResourceKind.CREDENTIAL,
+        config.credential_id,
+    )
 
 
 async def _ensure_knowledge_bases_exist(
-    storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     config: SessionKnowledgeConfig | None,
 ) -> None:
-    """Validate every KB id in ``config`` belongs to the given user.
+    """Validate every KB id in ``config`` is visible to the given user.
 
     No-op when ``config`` is ``None`` or its ``knowledge_base_ids``
     list is empty.
 
     Args:
-        storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
         config (`SessionKnowledgeConfig | None`):
             Knowledge config to validate.  Pass ``None`` to skip.
 
     Raises:
-        `HTTPException`: 404 if any KB id does not exist or is not
-            owned by the user.
+        `HTTPException`: 404 if any KB id is not visible to the user.
     """
     if config is None or not config.knowledge_base_ids:
         return
     for kb_id in config.knowledge_base_ids:
-        kb = await storage.get_knowledge_base(user_id, kb_id)
-        if kb is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Knowledge base '{kb_id}' not found.",
-            )
+        await access.get_resource(
+            user_id,
+            ResourceKind.KNOWLEDGE_BASE,
+            kb_id,
+        )
 
 
 @session_router.get(
@@ -175,24 +195,34 @@ async def list_sessions(
     agent_id: str = Query(description="Filter sessions by agent ID."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
     message_bus: MessageBus = Depends(get_message_bus),
 ) -> ListSessionsResponse:
     """Return all sessions for an agent as enriched
     :class:`SessionView` entries.
 
-    Each entry bundles three things the chat UI needs to render
-    without follow-up requests: the session record (incl.
-    ``state``), whether a chat run is currently active, and — when
+    Each entry bundles what the chat UI needs to render without
+    follow-up requests: the session record, its status, and — when
     the session participates in a team — the resolved team detail
     (leader agent + member agents with their session ids).
 
+    The record arrives trimmed: ``state.context``, ``state.summary``
+    and ``state.tool_context`` are cleared, since they hold the model's
+    conversation and every file it has read. Fetch a session's messages
+    from ``GET /sessions/{id}/messages`` instead.
+
     Args:
         agent_id (`str`):
-            Agent whose sessions to list.
+            Agent whose sessions to list. May be an agent shared to
+            the viewer through :class:`ResourceAccessPolicyBase`;
+            the returned sessions are still the viewer's own.
         user_id (`str`):
             Injected authenticated user ID.
         storage (`StorageBase`):
             Injected storage backend.
+        access (`ResourceAccessService`):
+            Injected resource access service; used to validate that
+            the target agent is visible to the viewer.
         message_bus (`MessageBus`):
             Injected message bus (used for ``session_is_running``).
 
@@ -201,19 +231,12 @@ async def list_sessions(
             Enriched session views and their count.
 
     Raises:
-        `HTTPException`: 404 if the agent does not exist or does not
-            belong to the authenticated user.
+        `HTTPException`: 404 if the agent is not visible to the caller.
     """
-    # Direct ownership check via get_agent — handles both source=user
-    # and source=team agents (the latter aren't returned by
-    # storage.list_agents but are still owned by the user; reachable
-    # via team navigation).
-    agent = await storage.get_agent(user_id, agent_id)
-    if agent is None or agent.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{agent_id}' not found.",
-        )
+    # Verify visibility (own or shared) — raises 404 otherwise. Sessions
+    # themselves are always looked up under ``user_id``, so a viewer
+    # only ever sees their own runs of a shared agent.
+    await access.resolve_agent(user_id, agent_id)
 
     sessions = await storage.list_sessions(user_id, agent_id)
     views: list[SessionView] = []
@@ -227,12 +250,34 @@ async def list_sessions(
                     user_id,
                     team_record,
                 )
+        is_running = await message_bus.is_locked(
+            MessageBusKeys.session_lock(session.id),
+        )
+        # Derived before the trim below, which drops the context it reads.
+        session_status = (
+            SessionStatus.RUNNING
+            if is_running
+            else SessionService.derive_parked_status(session.state.context)
+        )
         views.append(
             SessionView(
-                session=session,
-                is_running=await message_bus.is_locked(
-                    MessageBusKeys.session_lock(session.id),
+                # ``context`` is the conversation the model sees,
+                # ``summary`` its compressed form, and ``tool_context``
+                # caches every file read — megabytes a session, none of
+                # which a sidebar renders.
+                session=session.model_copy(
+                    update={
+                        "state": session.state.model_copy(
+                            update={
+                                "context": [],
+                                "summary": "",
+                                "tool_context": ToolContext(),
+                            },
+                        ),
+                    },
                 ),
+                is_running=is_running,
+                status=session_status,
                 team=team_detail,
             ),
         )
@@ -250,6 +295,7 @@ async def create_session(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    access: ResourceAccessService = Depends(get_resource_access_service),
 ) -> CreateSessionResponse:
     """Create (or resume) a session for a given agent and workspace.
 
@@ -265,30 +311,27 @@ async def create_session(
             manager; consulted via
             :meth:`WorkspaceManagerBase.assign_workspace_id` to fill in
             ``workspace_id`` when the request body omits it.
+        access (`ResourceAccessService`): Injected access service.
 
     Returns:
         `CreateSessionResponse`: The session identifier.
 
     Raises:
-        `HTTPException`: 404 if the agent or credential does not exist or
-            does not belong to the authenticated user.
+        `HTTPException`: 404 if the agent / credential / knowledge base
+            is not visible to the caller.
     """
-    agent = await storage.get_agent(user_id, body.agent_id)
-    if agent is None or agent.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{body.agent_id}' not found.",
-        )
+    # Agent must be visible to the caller (own or shared).
+    await access.resolve_agent(user_id, body.agent_id)
 
-    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    await _ensure_credential_exists(access, user_id, body.chat_model_config)
     await _ensure_credential_exists(
-        storage,
+        access,
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(storage, user_id, body.tts_model_config)
+    await _ensure_credential_exists(access, user_id, body.tts_model_config)
     await _ensure_knowledge_bases_exist(
-        storage,
+        access,
         user_id,
         body.knowledge_config,
     )
@@ -415,21 +458,32 @@ async def update_session(
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> SessionRecord:
-    """Update the model configuration of an existing session.
+    """Update the configuration of an existing session.
+
+    Rejected while a chat run holds the session: the agent snapshots
+    its configuration once at run start, so a mid-run change would be
+    ignored for the current reply anyway — and writing it would race
+    the run's own state persistence.
 
     Args:
         session_id (`str`): The session to update.
         body (`UpdateSessionRequest`): Fields to update.
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
+        message_bus (`MessageBus`): Injected message bus; used to
+            detect an in-flight run.
 
     Returns:
         `SessionRecord`: The full session record after the update.
 
     Raises:
-        `HTTPException`: 404 if the session, agent, or credential does not
-            exist or does not belong to the authenticated user.
+        `HTTPException`: 404 if the session does not exist, or if the
+            referenced credential / KB is not visible to the caller;
+            409 if a chat run is currently active on the session.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -438,20 +492,37 @@ async def update_session(
             detail=f"Session '{session_id}' not found.",
         )
 
-    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    # Checked after the 404 so a missing session reports as missing, and
+    # before the validation round trips below so we fail fast.
+    if await message_bus.is_locked(MessageBusKeys.session_lock(session_id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot modify session configuration while the session "
+                "is running."
+            ),
+        )
+
+    await _ensure_credential_exists(access, user_id, body.chat_model_config)
     await _ensure_credential_exists(
-        storage,
+        access,
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(storage, user_id, body.tts_model_config)
+    await _ensure_credential_exists(access, user_id, body.tts_model_config)
     await _ensure_knowledge_bases_exist(
-        storage,
+        access,
         user_id,
         body.knowledge_config,
     )
 
-    updated_state = existing.state
+    # ``None`` leaves the stored state untouched (see
+    # ``StorageBase.upsert_session``). ``permission_mode`` is the only
+    # request field living inside ``state``; every other field is a
+    # pure config write, and rewriting ``state`` for those would put
+    # this handler's opening snapshot back over whatever the run has
+    # persisted since.
+    updated_state = None
     if body.permission_mode is not None:
         updated_ctx = existing.state.permission_context.model_copy(
             update={"mode": body.permission_mode},
@@ -496,25 +567,47 @@ async def update_session(
 async def list_messages(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
-    offset: int = Query(0, ge=0, description="Pagination offset."),
+    before: str
+    | None = Query(
+        None,
+        description=(
+            "A message ID used as the pagination cursor. Omit to get "
+            "the latest page. Provide a message ID from a previous "
+            "response to load older messages."
+        ),
+    ),
+    offset: int
+    | None = Query(
+        None,
+        deprecated=True,
+        description=(
+            "**Deprecated.** Use ``before`` for cursor-based pagination. "
+            "This parameter is always ignored."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200, description="Max messages."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
 ) -> ListMessagesResponse:
-    """Return persisted messages for a session.
+    """Return persisted messages for a session with cursor-based
+    pagination.
 
     Args:
         session_id: The session to query.
         agent_id: Agent the session belongs to.
-        offset: Pagination offset.
+        before: A message ID used as the pagination cursor. Omit for
+            the latest page; provide a message ID from a previous
+            response to load older messages.
+        offset: **Deprecated.** Numeric offset, always ignored. Still
+            accepted for backward compatibility.
         limit: Maximum number of messages to return.
         user_id: Injected authenticated user ID.
         storage: Injected storage backend.
         message_bus: Injected message bus.
 
     Returns:
-        Messages and running status.
+        Messages, running status, and whether more pages exist.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -523,17 +616,24 @@ async def list_messages(
             detail=f"Session '{session_id}' not found.",
         )
 
-    messages = await storage.list_messages(
+    # Forward deprecated offset via kwargs so storage can warn.
+    extra: dict = {}
+    if offset is not None:
+        extra["offset"] = offset
+
+    messages, has_more = await storage.list_messages(
         user_id,
         session_id,
-        offset=offset,
         limit=limit,
+        before=before,
+        **extra,
     )
     return ListMessagesResponse(
         messages=messages,
         is_running=await message_bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ),
+        has_more=has_more,
     )
 
 

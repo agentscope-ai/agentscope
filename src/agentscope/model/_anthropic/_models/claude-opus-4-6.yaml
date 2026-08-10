@@ -15,7 +15,23 @@ output_types:
   - application/x-thinking
 
 context_size: 1000000
-output_size: 131072
+output_size: 128000
 
 parameter_overrides:
-  max_tokens: {"maximum": 131072}
+  max_tokens: {"maximum": 128000}
+  # The last generation to accept both thinking modes; budget-based
+  # thinking still works here but is deprecated in favour of adaptive.
+  thinking_enable:
+    hidden: true
+  thinking_mode:
+    default: adaptive
+    anyOf:
+      - enum: [adaptive, enabled, disabled]
+        type: string
+      - type: "null"
+  # xhigh landed after this generation; max is supported.
+  reasoning_effort:
+    anyOf:
+      - enum: [low, medium, high, max]
+        type: string
+      - type: "null"

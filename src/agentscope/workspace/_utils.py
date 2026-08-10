@@ -14,6 +14,69 @@ import importlib.resources as _res
 
 # ── shared constants ───────────────────────────────────────────────
 
+#: Standard prompt injected to the system prompt
+DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>You have access to a {backend} \
+workspace at {workdir} with the following structure:
+
+```
+{workdir}
+├── data/        # offloaded multimodal files (images, etc.) — system-managed
+├── skills/      # reusable skills, each in its own subdirectory
+└── sessions/    # offloaded session context and tool results — system-managed
+```
+
+This workspace is your personal working environment. You are responsible for \
+keeping it clean, structured, and easy to navigate over time.
+
+### Project Directory
+- Create a dedicated subdirectory for each task or project under the \
+workspace root.
+- Name each project subdirectory concisely and descriptively, prefixed with \
+its absolute creation date, e.g. `20240315_web-scraper`, so it stays \
+identifiable long after creation.
+- Always create a `README.md` at the project root documenting:
+  - What the project is about
+  - Its absolute creation date
+  - Key decisions or context that would help you resume work later
+
+### Working Across Sessions
+- The same project may be worked on from more than one session at a time. \
+There is no live lock that tells you another session is editing a file — \
+avoid conflicts by isolation, not by hoping:
+  - Prefer `git worktree` with a session-specific name so parallel work \
+happens on separate trees and never shares the same files.
+  - Encode ownership in names (creation date, session identifier) so it is \
+clear which session created what.
+- Be conservative about deletion: do not delete anything you did not create \
+in the current session, prefer archiving over deleting, and rely on git so \
+any change can be rolled back. Confirm before destructive cleanup.
+
+### Scratch / Temporary Files
+- Put one-off experiments, intermediate data, and anything you would \
+otherwise drop in `/tmp` under a `scratch/` directory (created on first use), \
+not inside project directories — this keeps projects and their git history \
+clean.
+- Treat `scratch/` as disposable: exclude it from git, and assume nothing in \
+it is guaranteed to persist. Nothing clears it automatically (it lives inside \
+your persistent workspace, not the OS temp dir), so delete your own scratch \
+files when you are done with them.
+
+### Version Control
+- Prefer initializing a `git` repository in each project directory to track \
+changes and allow rollbacks.
+- If you use git, create a `.gitignore` before the first commit to exclude \
+unwanted files (e.g. virtual environments, cache, `scratch/`, secrets).
+- Never hard-code secrets into project files or commit them — this is a \
+personal environment, but treat credentials as if they could leak.
+
+### Python Environment
+- `uv` is recommended for managing and isolating Python environments per \
+project:
+```shell
+uv venv && uv pip install ...
+- Never install packages into a shared or global environment — each project \
+must manage its own dependencies to avoid conflicts.</workspace>"""
+
 #: Standard workspace-relative directory for offloaded multimodal data.
 DEFAULT_DATA_DIR = "data"
 
@@ -34,10 +97,17 @@ DEFAULT_GLOB_HELPER_SCRIPT = "_glob_helper.py"
 #: Minimum Python packages the gateway script needs at runtime.
 #: Both Docker (image build) and E2B (sandbox bootstrap) install this
 #: same tuple into the gateway venv before adding ``agentscope`` itself.
+#:
+#: ``agentscope`` goes in with ``--no-deps``, so anything it imports has
+#: to be named here — depending on another package to drag it along is
+#: what broke when ``mcp`` 2.0 swapped ``httpx`` for ``httpx2``. The
+#: bound on ``mcp`` mirrors ``pyproject.toml``, so the gateway speaks
+#: the same protocol version as the process driving it.
 _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
-    "mcp",
+    "mcp<2.0.0",
     "uvicorn",
     "fastapi",
+    "httpx",
 )
 
 

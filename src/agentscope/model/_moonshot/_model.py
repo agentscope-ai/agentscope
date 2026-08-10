@@ -46,6 +46,16 @@ class MoonshotChatModel(ChatModelBase):
             ),
         )
 
+        reasoning_effort: Literal["low", "high", "max"] | None = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "The reasoning effort level for kimi-k3. "
+                "Supports 'low', 'high', and 'max' "
+                "(default 'max')."
+            ),
+        )
+
         temperature: float | None = Field(
             default=None,
             title="Temperature",
@@ -116,6 +126,14 @@ class MoonshotChatModel(ChatModelBase):
         self.formatter = formatter or MoonshotChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import openai
+
+        self.client: openai.AsyncClient = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import openai
@@ -155,16 +173,6 @@ class MoonshotChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import openai
-
-        client = openai.AsyncClient(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -173,8 +181,13 @@ class MoonshotChatModel(ChatModelBase):
             "stream": self.stream,
         }
 
+        is_k3 = model_name == "kimi-k3"
+
         if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
+            if is_k3:
+                kwargs["max_completion_tokens"] = self.parameters.max_tokens
+            else:
+                kwargs["max_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature
@@ -184,12 +197,19 @@ class MoonshotChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        thinking_type = (
-            "enabled" if self.parameters.thinking_enable else "disabled"
-        )
-        kwargs.setdefault("extra_body", {})
-        kwargs["extra_body"].setdefault("thinking", {})
-        kwargs["extra_body"]["thinking"].setdefault("type", thinking_type)
+        if is_k3:
+            if self.parameters.reasoning_effort is not None:
+                kwargs["reasoning_effort"] = self.parameters.reasoning_effort
+        else:
+            thinking_type = (
+                "enabled" if self.parameters.thinking_enable else "disabled"
+            )
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"].setdefault("thinking", {})
+            kwargs["extra_body"]["thinking"].setdefault(
+                "type",
+                thinking_type,
+            )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -203,7 +223,7 @@ class MoonshotChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
+        response = await self.client.chat.completions.create(**kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)

@@ -41,7 +41,7 @@ ENV GATEWAY_HOME=/root/.agentscope
 RUN mkdir -p "${GATEWAY_HOME}" \
  && uv venv "${GATEWAY_HOME}/.venv" \
  && uv pip install --python "${GATEWAY_HOME}/.venv/bin/python" \
-        mcp uvicorn fastapi
+        'mcp<2.0.0' uvicorn fastapi httpx
 
 # Install agentscope itself from the local checkout.
 # Build context is repo root, so pyproject.toml + src/ are visible at /src.
@@ -64,4 +64,3 @@ WORKDIR /workspace
 # Container has nothing to run by itself — K8s Pod spec will override CMD
 # with the sleep loop from ``_build_pod_spec``.
 CMD ["sleep", "infinity"]
-

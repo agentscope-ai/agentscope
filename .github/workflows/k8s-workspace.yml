@@ -78,4 +78,3 @@ jobs:
             kubectl -n agentscope describe "$p" || true
             kubectl -n agentscope logs "$p" --all-containers=true --tail=200 || true
           done
-

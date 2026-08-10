@@ -28,6 +28,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     Gemini API does not support certain JSON Schema constructs. This
     function removes or rewrites the following:
 
+    - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
@@ -54,6 +55,9 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         return schema
 
     schema = dict(schema)
+
+    # Gemini's Schema model does not support the JSON Schema dialect marker.
+    schema.pop("$schema", None)
 
     # Gemini (and many third-party proxies) reject `null` as a standalone
     # functionDeclaration property type. Some MCP servers emit
@@ -206,6 +210,13 @@ class GeminiChatModel(ChatModelBase):
         self.formatter = formatter or GeminiChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        from google import genai
+
+        self.client: genai.Client = genai.Client(
+            api_key=self.credential.api_key.get_secret_value(),
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         from google.genai import errors
@@ -245,15 +256,6 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        from google import genai
-
-        client = genai.Client(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         config: dict[str, Any] = {**config_kwargs}
@@ -295,25 +297,21 @@ class GeminiChatModel(ChatModelBase):
         start_datetime = datetime.now()
 
         if self.stream:
-            response = await client.aio.models.generate_content_stream(
+            response = await self.client.aio.models.generate_content_stream(
                 **kwargs,
             )
-            # Pass client to the generator so the aiohttp session it owns
-            # stays alive until the stream is fully consumed.
             return self._parse_stream_response(
                 start_datetime,
                 response,
-                client,
             )
 
-        response = await client.aio.models.generate_content(**kwargs)
+        response = await self.client.aio.models.generate_content(**kwargs)
         return self._parse_completion_response(start_datetime, response)
 
     async def _parse_stream_response(
         self,
         start_datetime: datetime,
         response: Any,
-        _client: Any = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the Gemini streaming response.
 
@@ -323,10 +321,6 @@ class GeminiChatModel(ChatModelBase):
             response (`Any`):
                 The Gemini async stream object from
                 ``client.aio.models.generate_content_stream``.
-            _client (`Any`, optional):
-                The ``genai.Client`` that produced the stream. Held here so
-                its aiohttp session is not garbage-collected before the
-                stream is fully consumed.
 
         Yields:
             `ChatResponse`:

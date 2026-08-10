@@ -493,6 +493,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                             "[1] (source: doc-1.txt)\nParis is in France."
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
                 "state": "success",

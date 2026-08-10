@@ -234,9 +234,9 @@ class KnowledgeBaseManagerBase(ABC):
         if record is None:
             return None
         if name is not None:
-            record.name = name
+            record.data.name = name
         if description is not None:
-            record.description = description
+            record.data.description = description
         return await self._storage.upsert_knowledge_base(user_id, record)
 
     @abstractmethod

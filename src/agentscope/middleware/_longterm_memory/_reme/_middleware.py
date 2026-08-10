@@ -242,7 +242,7 @@ class ReMeMiddleware(MiddlewareBase):
         except ImportError as e:  # pragma: no cover - import guard
             raise ImportError(
                 "ReMeMiddleware requires the `reme-ai` package. Install "
-                'it with `pip install "agentscope[reme]"` (or '
+                'it with `pip install "agentscope[memory-reme]"` (or '
                 "`pip install reme-ai`).",
             ) from e
 

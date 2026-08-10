@@ -6,7 +6,7 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
@@ -30,6 +30,11 @@ from ...tool import (
     ToolGroup,
 )
 from ...workspace import WorkspaceBase
+from ..access import ResourceKind
+from ._access import ResourceAccessService
+
+if TYPE_CHECKING:
+    from ..channel import ChannelLifecycleDispatcher
 
 
 async def get_toolkit(
@@ -44,8 +49,10 @@ async def get_toolkit(
     user_id: str,
     agent_record: AgentRecord,
     session_record: SessionRecord,
+    resource_access_service: ResourceAccessService,
     extra_factory: AgentToolFactory | None = None,
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
+    channel_dispatcher: "ChannelLifecycleDispatcher | None" = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -71,6 +78,9 @@ async def get_toolkit(
        (``TeamCreate / AgentCreate / TeamSay / TeamDelete``, plus
        ``AgentInvite`` when the user has at least one invitable agent).
     6. Caller-supplied extras (``extra_factory``)
+    7. Channel platform tools — only for a session that originated from
+       a channel; the channel exposes them via
+       :meth:`ChannelBase.list_tools` (e.g. send a file to another user).
 
     Plus the workspace's skills and MCPs, which become the toolkit's
     ``skills_or_loaders`` and ``mcps`` parameters.
@@ -119,6 +129,10 @@ optional):
             Passed to the ``AgentCreate`` tool so it can route to
             the appropriate template when a ``subagent_type`` is
             specified by the leader agent.
+        channel_dispatcher (`ChannelLifecycleDispatcher | None`, optional):
+            The node's channel dispatcher. When the session came from a
+            channel, its local channel is resolved through this to attach
+            that channel's platform tools. ``None`` disables them.
 
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
@@ -206,11 +220,19 @@ time or interval"
         # targets). Team-tool base is safe to call for either team or
         # non-team sessions — AgentInvite rechecks the leader
         # precondition at call time.
+        #
+        # Walk agents *visible* to the caller (own + shared through the
+        # resource access policy) so a leader can invite a partner's
+        # agent when the policy grants access.
+        visible_agents = await resource_access_service.list_resource(
+            user_id,
+            ResourceKind.AGENT,
+        )
         invitable_pool = [
-            a
-            for a in await storage.list_agents(user_id)
-            if a.data.invite_config.invitable
-            and (a.data.invite_config.invite_description or "").strip()
+            view
+            for view in visible_agents
+            if view.data.invite_config.invitable
+            and (view.data.invite_config.invite_description or "").strip()
         ]
         if invitable_pool:
             tools.append(
@@ -231,6 +253,17 @@ time or interval"
     # Tools from middleware
     for mw in middlewares:
         tools.extend(await mw.list_tools())
+
+    # Channel platform tools — when this session originated from a
+    # channel, ask that channel (resolved locally; every node runs every
+    # channel) for the tools it lets the agent call, e.g. send a file to
+    # another user. Mirrors ``workspace.list_tools`` / ``mw.list_tools``.
+    if session_record.source_channel_id and channel_dispatcher is not None:
+        channel = channel_dispatcher.get_local_channel(
+            session_record.source_channel_id,
+        )
+        if channel is not None:
+            tools += await channel.list_tools(workspace)
 
     return Toolkit(
         tools=tools,

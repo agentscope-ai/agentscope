@@ -9,12 +9,14 @@ from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
     ResetTools,
     Bash,
+    PowerShell,
     Edit,
     Glob,
     Grep,
     Read,
     Write,
     BackendBase,
+    DirEntry,
     ExecResult,
     LocalBackend,
 )
@@ -43,9 +45,11 @@ __all__ = [
     # Builtin tools
     "BackendBase",
     "LocalBackend",
+    "DirEntry",
     "ExecResult",
     "ResetTools",
     "Bash",
+    "PowerShell",
     "Edit",
     "Glob",
     "Grep",

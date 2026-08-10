@@ -72,30 +72,54 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     has_tool_result = False
 
                 if isinstance(block, TextBlock):
-                    content_blocks.append(
-                        {"type": "text", "text": block.text},
-                    )
+                    # Anthropic rejects empty text blocks with a 400
+                    # ("text blocks must be non-empty"). Empty TextBlocks
+                    # occur after a tool-call-only assistant turn whose
+                    # streamed text is empty, so drop them here.
+                    if block.text:
+                        content_blocks.append(
+                            {"type": "text", "text": block.text},
+                        )
 
                 elif isinstance(block, ThinkingBlock):
-                    # Anthropic rejects thinking blocks without a valid
-                    # signature ("Invalid `signature` in `thinking` block").
-                    # ThinkingBlocks from other providers (OpenAI, DeepSeek,
-                    # ...) carry no signature, so drop them instead of
-                    # forwarding an empty one.
-                    signature = getattr(block, "signature", None)
-                    if signature:
+                    redacted_data = getattr(
+                        block,
+                        "redacted_thinking_data",
+                        None,
+                    )
+                    if redacted_data is not None:
                         content_blocks.append(
                             {
-                                "type": "thinking",
-                                "thinking": block.thinking,
-                                "signature": signature,
+                                "type": "redacted_thinking",
+                                "data": redacted_data,
                             },
                         )
                     else:
-                        logger.debug(
-                            "Dropping ThinkingBlock without signature; "
-                            "Anthropic requires a valid signature.",
+                        # Anthropic rejects thinking blocks without
+                        # a valid signature ("Invalid `signature`
+                        # in `thinking` block"). ThinkingBlocks from
+                        # other providers (OpenAI, DeepSeek, ...)
+                        # carry no signature, so drop them instead
+                        # of forwarding an empty one.
+                        signature = getattr(
+                            block,
+                            "signature",
+                            None,
                         )
+                        if signature:
+                            content_blocks.append(
+                                {
+                                    "type": "thinking",
+                                    "thinking": block.thinking,
+                                    "signature": signature,
+                                },
+                            )
+                        else:
+                            logger.debug(
+                                "Dropping ThinkingBlock without "
+                                "signature; Anthropic requires "
+                                "a valid signature.",
+                            )
 
                 elif isinstance(block, HintBlock):
                     if content_blocks:
@@ -173,15 +197,22 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     tool_result_content: list[dict] = []
                     output = block.output
                     if isinstance(output, str):
-                        tool_result_content.append(
-                            {"type": "text", "text": output},
-                        )
+                        if output:
+                            tool_result_content.append(
+                                {"type": "text", "text": output},
+                            )
                     else:
                         for out_block in output:
                             if isinstance(out_block, TextBlock):
-                                tool_result_content.append(
-                                    {"type": "text", "text": out_block.text},
-                                )
+                                # Skip empty text — Anthropic rejects
+                                # {"type": "text", "text": ""}.
+                                if out_block.text:
+                                    tool_result_content.append(
+                                        {
+                                            "type": "text",
+                                            "text": out_block.text,
+                                        },
+                                    )
                             elif isinstance(out_block, DataBlock):
                                 fmt_block = self._format_anthropic_data_block(
                                     out_block,
@@ -204,6 +235,15 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                     tool_result_content.append(
                                         {"type": "text", "text": fallback},
                                     )
+
+                    # Anthropic rejects a tool_result whose content list is
+                    # empty. If every output block was an empty text (or the
+                    # output was an empty string), fall back to a placeholder
+                    # so the tool_result remains valid.
+                    if not tool_result_content:
+                        tool_result_content.append(
+                            {"type": "text", "text": "(empty tool output)"},
+                        )
 
                     content_blocks.append(
                         {

@@ -2,12 +2,21 @@
 """Unit tests for :class:`agentscope.model.ChatModelBase.__call__` — the
 retry / accumulation / interrupt wrapper around ``_call_api``."""
 import asyncio
+import base64
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.message import TextBlock, ThinkingBlock, ToolCallBlock, UserMsg
-from agentscope.model import ChatResponse, FinishedReason
+from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    URLSource,
+    UserMsg,
+)
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 
 
 def _dump(chat_response: ChatResponse) -> dict:
@@ -30,6 +39,9 @@ def _expected(
     """Build the expected serialized ``ChatResponse`` dict, with
     ``AnyString`` placeholders for auto-generated fields (id,
     created_at)."""
+    content = [
+        {"created_at": AnyString(), "finished_at": None, **b} for b in content
+    ]
     return {
         "content": content,
         "is_last": is_last,
@@ -461,6 +473,595 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                     ],
                     is_last=True,
                     finished_reason=FinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # 7) stream with large tool call arguments — O(n) accumulation
+    # ------------------------------------------------------------------
+    async def test_stream_large_tool_call_linear_accumulation(
+        self,
+    ) -> None:
+        """A large tool call argument (simulating write_file with many
+        fragments) must be accumulated in O(n) time. We verify the
+        final accumulated content is correct with 10000 fragments."""
+        num_chunks = 10000
+        fragment = "x" * 100  # 100 chars per chunk
+
+        deltas = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-big",
+                        name="write_file",
+                        input=fragment,
+                    ),
+                ],
+                is_last=False,
+                id=f"chunk-{i}",
+            )
+            for i in range(num_chunks)
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "tool_call",
+                        "id": "tool-big",
+                        "name": "write_file",
+                        "input": fragment * num_chunks,
+                        "state": "pending",
+                        "suggested_rules": [],
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 8) stream with is_last=True — no acc_res needed
+    # ------------------------------------------------------------------
+    async def test_stream_with_final_chunk_no_acc_res(self) -> None:
+        """When the model stream produces a final chunk with
+        is_last=True, acc_res should NOT be yielded (the model
+        provides the complete response itself)."""
+        deltas = [
+            ChatResponse(
+                content=[TextBlock(text="hello", id="t1")],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[TextBlock(text=" world", id="t1")],
+                is_last=False,
+                id="chunk-2",
+            ),
+            # Model provides its own final complete response
+            ChatResponse(
+                content=[TextBlock(text="hello world", id="t1")],
+                is_last=True,
+                id="chunk-final",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        collected = [_dump(c) async for c in gen]
+
+        # Only 3 chunks: 2 deltas + 1 model-provided final
+        # (NOT 4 — no acc_res appended)
+        self.assertListEqual(
+            collected,
+            [
+                _expected(
+                    content=[
+                        {"type": "text", "text": "hello", "id": "t1"},
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": " world",
+                            "id": "t1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "hello world",
+                            "id": "t1",
+                        },
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # 9) stream mixed block types — normal completion (happy path)
+    # ------------------------------------------------------------------
+    async def test_stream_mixed_blocks_normal_completion(self) -> None:
+        """Mixed block types (thinking + text + tool_call) in a
+        normal stream completion (no CancelledError). The final
+        accumulated response must contain all blocks in order with
+        correctly joined fragments."""
+        deltas = [
+            # thinking part 1
+            ChatResponse(
+                content=[
+                    ThinkingBlock(thinking="step 1: ", id="think-1"),
+                ],
+                is_last=False,
+                id="chunk-1",
+            ),
+            # thinking part 2
+            ChatResponse(
+                content=[
+                    ThinkingBlock(thinking="analyze", id="think-1"),
+                ],
+                is_last=False,
+                id="chunk-2",
+            ),
+            # text part 1
+            ChatResponse(
+                content=[TextBlock(text="I will ", id="text-1")],
+                is_last=False,
+                id="chunk-3",
+            ),
+            # text part 2
+            ChatResponse(
+                content=[TextBlock(text="help you", id="text-1")],
+                is_last=False,
+                id="chunk-4",
+            ),
+            # tool_call part 1
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="search",
+                        input='{"query":',
+                    ),
+                ],
+                is_last=False,
+                id="chunk-5",
+            ),
+            # tool_call part 2
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="search",
+                        input='"hello"}',
+                    ),
+                ],
+                is_last=False,
+                id="chunk-6",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        collected = [_dump(c) async for c in gen]
+
+        self.assertListEqual(
+            collected,
+            [
+                _expected(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "step 1: ",
+                            "id": "think-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "analyze",
+                            "id": "think-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "I will ",
+                            "id": "text-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "help you",
+                            "id": "text-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "tool_call",
+                            "id": "tool-1",
+                            "name": "search",
+                            "input": '{"query":',
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "tool_call",
+                            "id": "tool-1",
+                            "name": "search",
+                            "input": '"hello"}',
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                    ],
+                    is_last=False,
+                ),
+                # accumulated final — all blocks merged
+                _expected(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "step 1: analyze",
+                            "id": "think-1",
+                        },
+                        {
+                            "type": "text",
+                            "text": "I will help you",
+                            "id": "text-1",
+                        },
+                        {
+                            "type": "tool_call",
+                            "id": "tool-1",
+                            "name": "search",
+                            "input": '{"query":"hello"}',
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # 10) stream audio data block — raw bytes joined, encoded once
+    # ------------------------------------------------------------------
+    async def test_stream_audio_data_block_accumulation(self) -> None:
+        """Audio deltas must accumulate as raw bytes. Joining the base64
+        strings instead would silently truncate at the first padded
+        fragment, so the decoded result is checked against the
+        concatenated raw bytes."""
+        raw = [b"ab", b"cd", b"ef"]  # each encodes to a '='-padded string
+        deltas = [
+            ChatResponse(
+                content=[
+                    DataBlock(
+                        id="audio-1",
+                        source=Base64Source(
+                            data=base64.b64encode(part).decode("ascii"),
+                            media_type="audio/wav",
+                        ),
+                        # Providers name the asset on the opening delta
+                        name="out.wav" if i == 0 else None,
+                    ),
+                ],
+                is_last=False,
+                id=f"chunk-{i}",
+            )
+            for i, part in enumerate(raw)
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "data",
+                        "id": "audio-1",
+                        "source": {
+                            "type": "base64",
+                            "data": base64.b64encode(b"".join(raw)).decode(
+                                "ascii",
+                            ),
+                            "media_type": "audio/wav",
+                        },
+                        "name": "out.wav",
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 11) stream non-audio data block — the latest delta wins
+    # ------------------------------------------------------------------
+    async def test_stream_non_audio_data_block_latest_wins(self) -> None:
+        """Non-audio media are standalone assets rather than streamable
+        deltas, so byte concatenation is meaningless and the latest
+        delta must replace the previous one."""
+        deltas = [
+            ChatResponse(
+                content=[
+                    DataBlock(
+                        id="img-1",
+                        source=Base64Source(
+                            data="AAAA",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[
+                    DataBlock(
+                        id="img-1",
+                        source=Base64Source(
+                            data="BBBB",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+                is_last=False,
+                id="chunk-2",
+            ),
+            ChatResponse(
+                content=[
+                    DataBlock(
+                        id="url-1",
+                        source=URLSource(
+                            url="https://example.com/a.png",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+                is_last=False,
+                id="chunk-3",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "data",
+                        "id": "img-1",
+                        "source": {
+                            "type": "base64",
+                            "data": "BBBB",
+                            "media_type": "image/png",
+                        },
+                        "name": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": "url-1",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/a.png",
+                            "media_type": "image/png",
+                        },
+                        "name": None,
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 12) stream data block whose media type switches mid-stream
+    # ------------------------------------------------------------------
+    async def test_stream_data_block_media_type_switch(self) -> None:
+        """A media type change makes the accumulated fragments
+        incompatible with the incoming delta, so they are dropped and
+        the latest delta wins."""
+        deltas = [
+            ChatResponse(
+                content=[
+                    DataBlock(
+                        id="audio-1",
+                        source=Base64Source(
+                            data=base64.b64encode(b"old").decode("ascii"),
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[
+                    DataBlock(
+                        id="audio-1",
+                        source=Base64Source(
+                            data=base64.b64encode(b"new").decode("ascii"),
+                            media_type="audio/mpeg",
+                        ),
+                    ),
+                ],
+                is_last=False,
+                id="chunk-2",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "data",
+                        "id": "audio-1",
+                        "source": {
+                            "type": "base64",
+                            "data": base64.b64encode(b"new").decode("ascii"),
+                            "media_type": "audio/mpeg",
+                        },
+                        "name": None,
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 13) stream thinking whose signature arrives on the closing delta
+    # ------------------------------------------------------------------
+    async def test_stream_thinking_signature_on_closing_delta(self) -> None:
+        """Provider-specific extras (e.g. Anthropic's ``signature``) are
+        often emitted only on the closing delta and must survive into
+        the accumulated block."""
+        deltas = [
+            ChatResponse(
+                content=[ThinkingBlock(thinking="step ", id="think-1")],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[ThinkingBlock(thinking="one", id="think-1")],
+                is_last=False,
+                id="chunk-2",
+            ),
+            ChatResponse(
+                content=[
+                    ThinkingBlock(
+                        thinking="",
+                        id="think-1",
+                        signature="sig-abc",
+                    ),
+                ],
+                is_last=False,
+                id="chunk-3",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "thinking",
+                        "thinking": "step one",
+                        "id": "think-1",
+                        "signature": "sig-abc",
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 14) stream usage carried by a trailing usage-only chunk
+    # ------------------------------------------------------------------
+    async def test_stream_usage_absorbed_into_accumulated(self) -> None:
+        """OpenAI-compatible APIs emit a trailing usage-only chunk with
+        no content. It must not be surfaced to the consumer, but its
+        usage must land on the accumulated response."""
+        deltas = [
+            ChatResponse(
+                content=[TextBlock(text="hello", id="t1")],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[],
+                is_last=False,
+                id="chunk-2",
+                usage=ChatUsage(input_tokens=3, output_tokens=7, time=0.5),
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        collected = [_dump(c) async for c in gen]
+
+        # The usage-only carrier chunk is absorbed, not forwarded
+        self.assertListEqual(
+            collected,
+            [
+                _expected(
+                    content=[
+                        {"type": "text", "text": "hello", "id": "t1"},
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {"type": "text", "text": "hello", "id": "t1"},
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.COMPLETED,
+                    usage={
+                        "input_tokens": 3,
+                        "output_tokens": 7,
+                        "time": 0.5,
+                        "cache_creation_input_tokens": 0,
+                        "cache_input_tokens": 0,
+                        "type": "chat",
+                        "metadata": None,
+                    },
                 ),
             ],
         )

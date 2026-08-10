@@ -121,20 +121,20 @@ class PermissionEngine:
     ) -> PermissionDecision:
         """Permission check for :attr:`PermissionMode.DEFAULT`.
 
-        Every operation requires explicit permission unless either an
-        allow rule matches or the tool's own ``check_permissions``
-        explicitly returns ALLOW (e.g. ``Bash`` auto-allows recognized
-        read-only commands like ``ls``/``git status``). Evaluation order:
+        Every operation requires explicit permission unless it is a
+        read-only invocation, an allow rule matches, or the tool's own
+        ``check_permissions`` returns ALLOW. Evaluation order:
 
         1. Deny rules → DENY
         2. Ask rules → ASK (with suggestions)
-        3. ``tool.check_permissions``:
+        3. Read-only fast path → ALLOW
+        4. ``tool.check_permissions``:
             - ALLOW / DENY → returned as-is
             - Safety ASK (bypass-immune) → returned with suggestions; cannot
               be overridden by allow rules
             - Non-safety ASK / PASSTHROUGH → continue
-        4. Allow rules → ALLOW
-        5. Default → ASK (with suggestions)
+        5. Allow rules → ALLOW
+        6. Default → ASK (with suggestions)
 
         Args:
             tool (`ToolBase`):
@@ -146,12 +146,16 @@ class PermissionEngine:
             `PermissionDecision`:
                 The final decision.
         """
-        # step 1: deny rules — highest priority
+        # ================================================================
+        # Step 1: Deny rules — highest priority (all modes)
+        # ================================================================
         deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
-        # step 2: ask rules
+        # ================================================================
+        # Step 2: Ask rules → ASK (with suggestions)
+        # ================================================================
         ask = await self._check_ask_rules(tool, tool_input)
         if ask:
             ask.suggested_rules = await self._generate_suggestions(
@@ -160,15 +164,25 @@ class PermissionEngine:
             )
             return ask
 
-        # step 3: tool's own check_permissions
+        # ================================================================
+        # Step 3: Read-only fast path → ALLOW
+        # ================================================================
+        read_only = await self._check_read_only_fast_path(tool, tool_input)
+        if read_only:
+            return read_only
+
+        # ================================================================
+        # Step 4: Tool's own check_permissions
+        #   - ALLOW / DENY → returned as-is
+        #   - safety ASK (bypass-immune) → returned; allow rules can't override
+        #   - non-safety ASK / PASSTHROUGH → continue
+        # ================================================================
         tool_decision = await tool.check_permissions(tool_input, self.context)
-        # step 3a: tool ALLOW / DENY returned as-is
         if tool_decision.behavior in (
             PermissionBehavior.ALLOW,
             PermissionBehavior.DENY,
         ):
             return tool_decision
-        # step 3b: safety ASK is bypass-immune — allow rules can't override
         if self._is_safety_ask(tool_decision):
             tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
@@ -176,12 +190,16 @@ class PermissionEngine:
             )
             return tool_decision
 
-        # step 4: allow rules
+        # ================================================================
+        # Step 5: Allow rules → ALLOW
+        # ================================================================
         allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
-        # step 5: default — ASK the user
+        # ================================================================
+        # Step 6: Mode fallback → ASK the user
+        # ================================================================
         default = PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message=f"Permission required for {tool.name}",
@@ -205,9 +223,10 @@ class PermissionEngine:
 
         1. Deny rules → DENY
         2. Ask rules → ASK (with suggestions)
-        3. :meth:`ToolBase.check_read_only` (input-aware):
-            - True  → ALLOW
-            - False → DENY
+        3. Read-only fast path → ALLOW
+        4. ``tool.check_permissions`` → not applicable (see below)
+        5. Allow rules → not applicable (see below)
+        6. Mode fallback → DENY
 
         ``tool.check_permissions`` is not invoked: EXPLORE is fully
         resolved by the read-only verdict, so safety ASK paths (e.g.
@@ -225,12 +244,16 @@ class PermissionEngine:
             `PermissionDecision`:
                 ALLOW for read-only invocations, DENY otherwise.
         """
-        # step 1: deny rules
+        # ================================================================
+        # Step 1: Deny rules — highest priority (all modes)
+        # ================================================================
         deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
-        # step 2: ask rules
+        # ================================================================
+        # Step 2: Ask rules → ASK (with suggestions)
+        # ================================================================
         ask = await self._check_ask_rules(tool, tool_input)
         if ask:
             ask.suggested_rules = await self._generate_suggestions(
@@ -239,16 +262,29 @@ class PermissionEngine:
             )
             return ask
 
-        # step 3: read-only verdict decides everything (ALLOW or DENY)
-        if await tool.check_read_only(tool_input):
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message=(
-                    f"Permission granted for {tool.name} "
-                    f"(explore mode - read-only invocation)"
-                ),
-                decision_reason="Explore mode allows read-only operations",
-            )
+        # ================================================================
+        # Step 3: Read-only fast path → ALLOW
+        # ================================================================
+        read_only = await self._check_read_only_fast_path(tool, tool_input)
+        if read_only:
+            return read_only
+
+        # ================================================================
+        # Step 4: Tool's own check_permissions
+        #   Not applicable in EXPLORE: any non-read-only op is denied below
+        #   regardless of the tool's opinion, so the tool is never consulted
+        #   (a safety ASK would only be subsumed into the broader DENY).
+        # ================================================================
+
+        # ================================================================
+        # Step 5: Allow rules
+        #   Not applicable in EXPLORE: the read-only guarantee cannot be
+        #   granted away by a user-configured allow rule.
+        # ================================================================
+
+        # ================================================================
+        # Step 6: Mode fallback → DENY (invocation is not read-only)
+        # ================================================================
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message=(
@@ -290,12 +326,16 @@ class PermissionEngine:
             `PermissionDecision`:
                 The final decision.
         """
-        # step 1: deny rules
+        # ================================================================
+        # Step 1: Deny rules — highest priority (all modes)
+        # ================================================================
         deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
-        # step 2: ask rules
+        # ================================================================
+        # Step 2: Ask rules → ASK (with suggestions)
+        # ================================================================
         ask = await self._check_ask_rules(tool, tool_input)
         if ask:
             ask.suggested_rules = await self._generate_suggestions(
@@ -304,28 +344,26 @@ class PermissionEngine:
             )
             return ask
 
-        # step 3: read-only fast path — ALLOW without invoking the tool
-        if await tool.check_read_only(tool_input):
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message=(
-                    f"Permission granted for {tool.name} "
-                    f"(accept edits mode - read-only invocation)"
-                ),
-                decision_reason="Accept edits mode allows read-only "
-                "operations",
-            )
+        # ================================================================
+        # Step 3: Read-only fast path → ALLOW
+        # ================================================================
+        read_only = await self._check_read_only_fast_path(tool, tool_input)
+        if read_only:
+            return read_only
 
-        # step 4: tool's own check_permissions (working-directory check
-        # for Write/Edit, path-checked auto-allow for Bash, ...)
+        # ================================================================
+        # Step 4: Tool's own check_permissions (working-directory auto-allow
+        #   for Write/Edit, path-checked auto-allow for Bash, ...)
+        #   - ALLOW / DENY → returned as-is
+        #   - safety ASK (bypass-immune) → returned; allow rules can't override
+        #   - non-safety ASK / PASSTHROUGH → continue
+        # ================================================================
         tool_decision = await tool.check_permissions(tool_input, self.context)
-        # step 4a: tool ALLOW / DENY returned as-is
         if tool_decision.behavior in (
             PermissionBehavior.ALLOW,
             PermissionBehavior.DENY,
         ):
             return tool_decision
-        # step 4b: safety ASK is bypass-immune
         if self._is_safety_ask(tool_decision):
             tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
@@ -333,12 +371,16 @@ class PermissionEngine:
             )
             return tool_decision
 
-        # step 5: allow rules
+        # ================================================================
+        # Step 5: Allow rules → ALLOW
+        # ================================================================
         allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
-        # step 6: default — ASK the user
+        # ================================================================
+        # Step 6: Mode fallback → ASK the user
+        # ================================================================
         default = PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message=f"Permission required for {tool.name}",
@@ -375,12 +417,13 @@ class PermissionEngine:
 
         1. Deny rules → DENY
         2. Ask rules → ASK (with suggestions; honors explicit user intent)
-        3. ``tool.check_permissions``:
+        3. Read-only fast path → ALLOW
+        4. ``tool.check_permissions``:
             - ALLOW / DENY → returned as-is
             - ASK (including bypass-immune safety ASKs) → falls through
             - PASSTHROUGH → falls through
-        4. Allow rules → ALLOW
-        5. Fallback → ALLOW (BYPASS)
+        5. Allow rules → ALLOW
+        6. Fallback → ALLOW (BYPASS)
 
         Args:
             tool (`ToolBase`):
@@ -392,12 +435,16 @@ class PermissionEngine:
             `PermissionDecision`:
                 The final decision.
         """
-        # step 1: deny rules
+        # ================================================================
+        # Step 1: Deny rules — highest priority (all modes)
+        # ================================================================
         deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
-        # step 2: ask rules (honor explicit user intent to be prompted)
+        # ================================================================
+        # Step 2: Ask rules → ASK (honor explicit user intent to be prompted)
+        # ================================================================
         ask = await self._check_ask_rules(tool, tool_input)
         if ask:
             ask.suggested_rules = await self._generate_suggestions(
@@ -406,9 +453,18 @@ class PermissionEngine:
             )
             return ask
 
-        # step 3: tool's own check_permissions — ALLOW / DENY returned;
-        # any ASK (including bypass-immune safety ASK) is intentionally
-        # NOT honored here, per BYPASS's "skip safety prompts" contract.
+        # ================================================================
+        # Step 3: Read-only fast path → ALLOW
+        # ================================================================
+        read_only = await self._check_read_only_fast_path(tool, tool_input)
+        if read_only:
+            return read_only
+
+        # ================================================================
+        # Step 4: Tool's own check_permissions — ALLOW / DENY returned;
+        #   any ASK (including bypass-immune safety ASK) is intentionally
+        #   NOT honored here, per BYPASS's "skip safety prompts" contract.
+        # ================================================================
         tool_decision = await tool.check_permissions(tool_input, self.context)
         if tool_decision.behavior in (
             PermissionBehavior.ALLOW,
@@ -416,12 +472,16 @@ class PermissionEngine:
         ):
             return tool_decision
 
-        # step 4: allow rules
+        # ================================================================
+        # Step 5: Allow rules → ALLOW
+        # ================================================================
         allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
-        # step 5: bypass fallback — ALLOW everything else
+        # ================================================================
+        # Step 6: Mode fallback → ALLOW everything else (BYPASS)
+        # ================================================================
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message=f"Permission granted for {tool.name} (bypass mode)",
@@ -436,19 +496,25 @@ class PermissionEngine:
         """Permission check for :attr:`PermissionMode.DONT_ASK`.
 
         Used when no user is available to answer prompts (scheduled
-        tasks, background runs). Invariant: this method must never
-        return :attr:`PermissionBehavior.ASK` — every code path that
-        would otherwise ASK is converted to DENY via
+        tasks, background runs). Behaves as the *unattended* counterpart
+        of :attr:`PermissionMode.ACCEPT_EDITS`: read-only invocations and
+        edits within a working directory are auto-allowed, while anything
+        that would otherwise prompt the (absent) user is refused.
+        Invariant: this method must never return
+        :attr:`PermissionBehavior.ASK` — every code path that would
+        otherwise ASK is converted to DENY via
         :meth:`_convert_ask_to_deny`. Evaluation order:
 
         1. Deny rules → DENY
         2. Ask rules → DENY (converted, with suggestions preserved)
-        3. ``tool.check_permissions``:
-            - ALLOW / DENY → returned as-is
+        3. Read-only fast path → ALLOW
+        4. ``tool.check_permissions``:
+            - ALLOW (e.g. an edit within a working directory) / DENY →
+              returned as-is
             - Safety ASK → DENY (converted, with suggestions preserved)
             - Non-safety ASK / PASSTHROUGH → continue
-        4. Allow rules → ALLOW
-        5. Default → DENY (user not available to answer)
+        5. Allow rules → ALLOW
+        6. Default → DENY (user not available to answer)
 
         Args:
             tool (`ToolBase`):
@@ -460,12 +526,16 @@ class PermissionEngine:
             `PermissionDecision`:
                 The final decision (never ASK).
         """
-        # step 1: deny rules
+        # ================================================================
+        # Step 1: Deny rules — highest priority (all modes)
+        # ================================================================
         deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
-        # step 2: ask rules — converted to DENY (no user available)
+        # ================================================================
+        # Step 2: Ask rules → DENY (converted; no user available to answer)
+        # ================================================================
         ask = await self._check_ask_rules(tool, tool_input)
         if ask:
             ask.suggested_rules = await self._generate_suggestions(
@@ -474,15 +544,25 @@ class PermissionEngine:
             )
             return self._convert_ask_to_deny(tool, ask)
 
-        # step 3: tool's own check_permissions
+        # ================================================================
+        # Step 3: Read-only fast path → ALLOW
+        # ================================================================
+        read_only = await self._check_read_only_fast_path(tool, tool_input)
+        if read_only:
+            return read_only
+
+        # ================================================================
+        # Step 4: Tool's own check_permissions
+        #   - ALLOW (e.g. edit within a working directory) / DENY → as-is
+        #   - safety ASK → DENY (converted; no user available)
+        #   - non-safety ASK / PASSTHROUGH → continue
+        # ================================================================
         tool_decision = await tool.check_permissions(tool_input, self.context)
-        # step 3a: tool ALLOW / DENY returned as-is
         if tool_decision.behavior in (
             PermissionBehavior.ALLOW,
             PermissionBehavior.DENY,
         ):
             return tool_decision
-        # step 3b: safety ASK converted to DENY (no user available)
         if self._is_safety_ask(tool_decision):
             tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
@@ -490,12 +570,16 @@ class PermissionEngine:
             )
             return self._convert_ask_to_deny(tool, tool_decision)
 
-        # step 4: allow rules
+        # ================================================================
+        # Step 5: Allow rules → ALLOW
+        # ================================================================
         allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
-        # step 5: default — DENY (no user available to confirm)
+        # ================================================================
+        # Step 6: Mode fallback → DENY (no user available to confirm)
+        # ================================================================
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message=(
@@ -571,6 +655,41 @@ class PermissionEngine:
             decision.behavior == PermissionBehavior.ASK
             and decision.bypass_immune
         )
+
+    async def _check_read_only_fast_path(
+        self,
+        tool: ToolBase,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision | None:
+        """Read-only fast path shared by every mode.
+
+        A read-only invocation has no side effects, so it is auto-allowed
+        in every :class:`PermissionMode`. Keeping this in a single helper
+        (rather than re-inlining it per mode) guarantees the modes cannot
+        drift apart on read-only handling — the exact divergence that
+        previously left ``DEFAULT`` and ``DONT_ASK`` without a read-only
+        fast path while ``ACCEPT_EDITS`` / ``EXPLORE`` had one.
+
+        Args:
+            tool (`ToolBase`):
+                The tool instance being called.
+            tool_input (`dict[str, Any]`):
+                The tool input data.
+
+        Returns:
+            `PermissionDecision | None`:
+                An ALLOW decision if this invocation is read-only, else None.
+        """
+        if await tool.check_read_only(tool_input):
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=(
+                    f"Permission granted for {tool.name} "
+                    f"(read-only invocation)"
+                ),
+                decision_reason="Read-only operations are auto-allowed",
+            )
+        return None
 
     async def _check_deny_rules(
         self,
