@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from dataclasses import asdict
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -1552,11 +1553,20 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
         )
 
     async def test_capacity_never_evicts_the_caller(self) -> None:
-        """The live-stateful cap only evicts other scopes."""
-        instantiated: list[tuple] = []
+        """The live-stateful cap only evicts other agents/sessions."""
+        connected: list[str] = []
+
+        async def _fake_connect(client: MCPClient) -> None:
+            """Mark connected without opening a transport."""
+            connected.append(client.name)
+            client._is_connected = True
+
+        async def _fake_close(client: MCPClient, *_a: Any, **_kw: Any) -> None:
+            """Mark disconnected without touching a transport."""
+            client._is_connected = False
 
         def _stateful(name: str) -> MCPClient:
-            """A stateful spec whose transport is never touched."""
+            """A stateful spec whose transport is never opened."""
             return MCPClient(
                 name=name,
                 is_stateful=True,
@@ -1566,41 +1576,26 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
                 },
             )
 
-        class _Recording(LocalWorkspace):
-            """Records instantiations; returns pre-connected stubs."""
+        with patch.object(MCPClient, "connect", _fake_connect), patch.object(
+            MCPClient,
+            "close",
+            _fake_close,
+        ):
+            ws = await self._workspace(
+                default_mcps=[_stateful("a"), _stateful("b")],
+                max_live_stateful_mcps=2,
+            )
 
-            async def _new_mcp_instance(
-                self,
-                agent_id: str,
-                session_id: str,
-                spec: MCPClient,
-            ) -> MCPClient:
-                """Return an already-connected stub, skipping connect."""
-                instantiated.append((agent_id, session_id, spec.name))
-                client = MCPClient.model_validate(
-                    spec.model_dump(mode="json"),
-                )
-                client._is_connected = True
-                return client
+            first = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual(len(first), 2)
 
-        ws = _Recording(
-            workdir=self.temp_dir.name,
-            default_mcps=[_stateful("a"), _stateful("b")],
-            max_live_stateful_mcps=2,
-        )
-        await ws.initialize()
-        self.addAsyncCleanup(ws.close)
+            # The cap is 2, so serving another session evicts the
+            # first — but the newcomer still gets its full set.
+            second = await ws.list_mcps(agent_id="agent-B", session_id="s1")
+            self.assertEqual(len(second), 2)
+            self.assertEqual(ws._mcp_instances[("agent-A", "s1")], {})
 
-        first = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
-        self.assertEqual(len(first), 2)
-
-        # The cap is 2, so serving a second scope evicts the first —
-        # but the second scope still gets its full set.
-        second = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
-        self.assertEqual(len(second), 2)
-        self.assertEqual(ws._mcp_instances["agent-A"]["sess-1"], {})
-
-        # Coming back rebuilds the evicted scope from its declaration.
-        again = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
-        self.assertEqual([m.name for m in again], ["a", "b"])
-        self.assertEqual(len(instantiated), 6)
+            # Coming back rebuilds the evicted session's declaration.
+            again = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual([m.name for m in again], ["a", "b"])
+            self.assertEqual(len(connected), 6)

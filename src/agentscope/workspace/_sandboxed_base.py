@@ -18,6 +18,7 @@ add/remove routing, ``.mcp`` persistence, reset — lives here.
 
 import asyncio
 import shlex
+import time
 from abc import abstractmethod
 
 from .._logging import logger
@@ -255,40 +256,153 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── MCP management (gateway-routed) ───────────────────────────
 
-    async def _new_mcp_instance(
+    async def list_mcps(
         self,
-        agent_id: str,
-        session_id: str,
-        spec: MCPClient,
-    ) -> MCPClient:
-        """Register ``spec`` with the in-sandbox gateway.
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[MCPClient]:
+        """Gateway-wrapped MCP handles for one agent/session.
 
-        The returned proxy tags every gateway request with the two
-        ids, so the gateway keeps one upstream session per
-        ``(agent_id, session_id, name)``.
+        Same contract as :meth:`WorkspaceBase.list_mcps`, but every
+        handle is a :class:`GatewayMCPClient` proxy tagged with the two
+        ids, so the gateway keeps one upstream session per agent,
+        session and MCP name.
 
         Args:
-            agent_id (`str`):
-                The agent owning the instance.
-            session_id (`str`):
-                The session owning the instance.
-            spec (`MCPClient`):
-                The declared config to instantiate from.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
+        """
+        if self._gateway is None:
+            return []
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            self._mcp_last_used[(agent_id, session_id)] = time.monotonic()
+            live = self._mcp_instances.setdefault((agent_id, session_id), {})
+            specs = self._declared_specs(agent_id, session_id)
+            for spec in specs:
+                if spec.name in live:
+                    continue
+                await self._enforce_mcp_capacity(agent_id, session_id, spec)
+                try:
+                    client = self._gateway.make_client(
+                        spec.model_dump(mode="json"),
+                        agent_id=agent_id,
+                        session_id=session_id,
+                    )
+                    await client.connect()
+                    live[spec.name] = client
+                except Exception as e:
+                    logger.warning(
+                        "Failed to start MCP %r for agent=%r session=%r: "
+                        "%s, skipping.",
+                        spec.name,
+                        agent_id,
+                        session_id,
+                        e,
+                    )
+            # Declaration order: an MCP rebuilt after eviction must
+            # not jump to the end.
+            return [live[s.name] for s in specs if s.name in live]
+
+    async def add_mcp(
+        self,
+        mcp_client: MCPClient,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Register a new MCP server through the in-sandbox gateway.
+
+        Args:
+            mcp_client (`MCPClient`):
+                The MCP to register.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
 
         Raises:
+            `ValueError`:
+                If the name already exists for this agent/session.
             `RuntimeError`:
                 If the gateway is not attached or rejects the
                 registration.
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
-        client = self._gateway.make_client(
-            spec.model_dump(mode="json"),
-            agent_id=agent_id,
-            session_id=session_id,
-        )
-        await client.connect()
-        return client
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            specs = self._declared_specs(agent_id, session_id)
+            if any(m.name == mcp_client.name for m in specs):
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists for "
+                    f"agent={agent_id!r} session={session_id!r}.",
+                )
+            live = self._mcp_instances.setdefault(
+                (agent_id, session_id),
+                {},
+            )
+            await self._enforce_mcp_capacity(agent_id, session_id, mcp_client)
+            client = self._gateway.make_client(
+                mcp_client.model_dump(mode="json"),
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            await client.connect()
+            live[client.name] = client
+            # Materialise the full list on first divergence so the
+            # persisted copy is self-contained.
+            self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
+            await self._save_mcp_file()
+
+    async def remove_mcp(
+        self,
+        name: str,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Deregister an MCP by name, closing it on the gateway.
+
+        Args:
+            name (`str`):
+                MCP name to remove. Unknown names log a warning and
+                return silently.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
+
+        Raises:
+            `RuntimeError`:
+                If the gateway is not attached.
+        """
+        if self._gateway is None:
+            raise RuntimeError("Workspace has no MCP gateway attached.")
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            specs = self._declared_specs(agent_id, session_id)
+            if not any(m.name == name for m in specs):
+                logger.warning(
+                    "MCP %r not found for agent=%r session=%r",
+                    name,
+                    agent_id,
+                    session_id,
+                )
+                return
+            instance = self._mcp_instances.get(
+                (agent_id, session_id),
+                {},
+            ).pop(name, None)
+            if instance is not None:
+                await self._close_mcp_instance(instance)
+            self._mcp_specs[(agent_id, session_id)] = [
+                m for m in specs if m.name != name
+            ]
+            await self._save_mcp_file()
 
     # ── workspace layout helpers ──────────────────────────────────
 

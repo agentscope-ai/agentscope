@@ -641,31 +641,86 @@ class LocalWorkspace(WorkspaceBase):
             )
             return None
 
-    async def _new_mcp_instance(
+    async def add_mcp(
         self,
-        agent_id: str,
-        session_id: str,
-        spec: MCPClient,
-    ) -> MCPClient:
-        """Build a local client and connect it.
-
-        The spec is copied rather than shared so two sessions running
-        the same MCP hold independent state. Stateless clients need no
-        connection — they open an ad-hoc session per call.
+        mcp_client: MCPClient,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Add an MCP client for one agent/session and persist it.
 
         Args:
-            agent_id (`str`):
-                The agent owning the instance.
-            session_id (`str`):
-                The session owning the instance.
-            spec (`MCPClient`):
-                The declared config to instantiate from.
+            mcp_client (`MCPClient`):
+                The MCP client to add.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
+
+        Raises:
+            `ValueError`:
+                If the name already exists for this agent/session.
         """
-        del agent_id, session_id
-        client = MCPClient.model_validate(spec.model_dump(mode="json"))
-        if client.is_stateful:
-            await client.connect()
-        return client
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            specs = self._declared_specs(agent_id, session_id)
+            if any(m.name == mcp_client.name for m in specs):
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists for "
+                    f"agent={agent_id!r} session={session_id!r}.",
+                )
+            live = self._mcp_instances.setdefault(
+                (agent_id, session_id),
+                {},
+            )
+            await self._enforce_mcp_capacity(agent_id, session_id, mcp_client)
+            if mcp_client.is_stateful and not mcp_client.is_connected:
+                await mcp_client.connect()
+            live[mcp_client.name] = mcp_client
+            # Materialise the full list on first divergence so the
+            # persisted copy is self-contained.
+            self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
+            await self._save_mcp_file()
+
+    async def remove_mcp(
+        self,
+        name: str,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Remove an MCP client by name, disconnecting it if stateful.
+
+        Args:
+            name (`str`):
+                The ``name`` field of the client to remove.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
+        """
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            specs = self._declared_specs(agent_id, session_id)
+            if not any(m.name == name for m in specs):
+                logger.warning(
+                    "MCP client %r not found for agent=%r session=%r",
+                    name,
+                    agent_id,
+                    session_id,
+                )
+                return
+            instance = self._mcp_instances.get(
+                (agent_id, session_id),
+                {},
+            ).pop(name, None)
+            if instance is not None:
+                await self._close_mcp_instance(instance)
+            self._mcp_specs[(agent_id, session_id)] = [
+                m for m in specs if m.name != name
+            ]
+            await self._save_mcp_file()
 
     async def add_skill(self, skill_path: str) -> None:
         """Add a skill to the workspace by copying from the given path.

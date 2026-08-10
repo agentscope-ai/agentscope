@@ -41,7 +41,7 @@ class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[str, dict[str, dict[str, MCPClient]]] = {}
+        self.clients: dict[tuple[str, str], dict[str, MCPClient]] = {}
         self.lock = asyncio.Lock()
 
 
@@ -62,7 +62,7 @@ def _build_app(state: _State) -> FastAPI:
 
     def _lookup(agent_id: str, session_id: str, name: str) -> MCPClient:
         """Resolve one registered client or raise 404."""
-        client = state.clients.get(agent_id, {}).get(session_id, {}).get(name)
+        client = state.clients.get((agent_id, session_id), {}).get(name)
         if client is None:
             raise HTTPException(
                 404,
@@ -82,9 +82,7 @@ def _build_app(state: _State) -> FastAPI:
     ) -> list[dict[str, Any]]:
         return [
             c.model_dump(mode="json")
-            for c in state.clients.get(agent_id, {})
-            .get(session_id, {})
-            .values()
+            for c in state.clients.get((agent_id, session_id), {}).values()
         ]
 
     @app.post("/mcps")
@@ -98,10 +96,7 @@ def _build_app(state: _State) -> FastAPI:
         if not name:
             raise HTTPException(400, "name required")
         async with state.lock:
-            by_name = state.clients.setdefault(agent_id, {}).setdefault(
-                session_id,
-                {},
-            )
+            by_name = state.clients.setdefault((agent_id, session_id), {})
             if name in by_name:
                 raise HTTPException(
                     409,
@@ -124,12 +119,9 @@ def _build_app(state: _State) -> FastAPI:
     ) -> dict[str, Any]:
         async with state.lock:
             client = _lookup(agent_id, session_id, name)
-            by_session = state.clients[agent_id]
-            del by_session[session_id][name]
-            if not by_session[session_id]:
-                del by_session[session_id]
-            if not by_session:
-                del state.clients[agent_id]
+            del state.clients[(agent_id, session_id)][name]
+            if not state.clients[(agent_id, session_id)]:
+                del state.clients[(agent_id, session_id)]
             if client.is_stateful and client.is_connected:
                 await client.close()
         return {"ok": True}
@@ -185,11 +177,10 @@ async def _run(port: int) -> None:
     try:
         await server.serve()
     finally:
-        for by_session in state.clients.values():
-            for by_name in by_session.values():
-                for client in by_name.values():
-                    if client.is_stateful and client.is_connected:
-                        await client.close()
+        for by_name in state.clients.values():
+            for client in by_name.values():
+                if client.is_stateful and client.is_connected:
+                    await client.close()
 
 
 def main() -> None:
