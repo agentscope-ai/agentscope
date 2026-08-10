@@ -68,16 +68,22 @@ from bocomadp.routers.agent_manage import (
     agent_manage_router,
 )
 from bocomadp.routers.chat_sse import chat_sse_router
+from bocomadp.routers.uploads import uploads_router
 from bocomadp.routers.credential_model import credential_model_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
 from bocomadp.routers.platform_health import platform_health_router
 from bocomadp.routers.skill_router import skill_router
 from bocomadp.routers.stats import stats_router
+# 框架内置路由（credential / knowledge_bases / agent / session / schedule /
+# skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
+# 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与本项目
+# chat_sse_router(POST /chat/run、/chat/stop) 路径不同，互不冲突。
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
+from bocomadp.uploads.manager import cleanup_stale_upload_staging_files
 
 # K8s 沙箱工作区（纯配置驱动，零框架侵入）
 from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
@@ -121,6 +127,13 @@ logger = logging.getLogger("bocomadp.main")
 # ---------------------------------------------------------------------------
 # 2. 框架模块初始化
 # ---------------------------------------------------------------------------
+# 启动时清理上次异常遗留的 .part 临时文件（crash recovery）
+try:
+    _cleaned = cleanup_stale_upload_staging_files()
+    if _cleaned:
+        logger.info("cleaned %d stale upload staging file(s)", _cleaned)
+except Exception:  # 上传未配置也不应阻断启动
+    logger.warning("cleanup_stale_upload_staging_files failed", exc_info=True)
 tool_registry = ToolRegistry()
 if config.tools.enabled:
     tool_registry.load_builtin_tools()
@@ -352,9 +365,9 @@ app.state.hook_registry = hook_registry
 app.include_router(health_router)
 app.include_router(stats_router)
 app.include_router(chat_sse_router)
+app.include_router(uploads_router)
 app.include_router(agent_manage_router)
 app.include_router(models_router)
-# 平台健康检查（/platform/health）
 app.include_router(platform_health_router)
 # 外部 skill hub（目录查询 / 我的上传 / 下载安装）
 app.include_router(skill_router)

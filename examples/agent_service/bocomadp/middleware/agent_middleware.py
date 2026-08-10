@@ -80,3 +80,7 @@ class LoggingMiddleware(MiddlewareBase):
 # 模块级实例 —— MiddlewareRegistry.load_builtin() 会扫描并自动注册。
 # 新增内置 middleware：实例化后在此导出即可。
 logging_mw = LoggingMiddleware()
+
+# 文件上传上下文注入中间件（见 middleware/uploads_middleware.py）。
+# 与 logging_mw 并列，load_builtin 自动扫描注册，无需改 factory.py。
+from bocomadp.middleware.uploads_middleware import uploads_mw  # noqa: E402,F401

@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-chat_sse_router = APIRouter(prefix="/api/chat", tags=["chat-sse"])
+chat_sse_router = APIRouter(prefix="/chat", tags=["chat-sse"])
 
 
 class ChatRunRequest(BaseModel):
@@ -41,6 +41,14 @@ class ChatRunRequest(BaseModel):
     agent_id: str = Field(default="default", description="Agent to run")
     user_id: str = Field(default="default", description="User id for workspace isolation")
     input: str = Field(default="", description="User message text")
+    files: list[dict] | None = Field(
+        default=None,
+        description=(
+            "关联的上传文件元数据列表，元素形如 "
+            "{'filename': str, 'filetype': str, 'virtual_path': str}。"
+            "由 UploadsMiddleware 注入上下文。"
+        ),
+    )
 
 
 class ChatStopRequest(BaseModel):
@@ -72,6 +80,7 @@ async def run_chat(
         agent_id=body.agent_id,
         user_id=body.user_id,
         input=body.input,
+        files=body.files,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -120,11 +129,17 @@ class _SimpleRequest:
         agent_id: str,
         input: str,
         user_id: str = "default",
+        files: list[dict] | None = None,
     ):
         self.session_id = session_id
         self.agent_id = agent_id
         self.user_id = user_id
-        self.input_msgs = [{"role": "user", "content": input}]
+        human = {"role": "user", "content": input}
+        if files:
+            # 把文件元数据挂到 human 消息的 additional_kwargs，
+            # UploadsMiddleware 据此注入大纲 + 虚拟路径引用。
+            human["additional_kwargs"] = {"files": files}
+        self.input_msgs = [human]
 
 
 async def _error_stream(msg: str) -> AsyncGenerator[str, None]:

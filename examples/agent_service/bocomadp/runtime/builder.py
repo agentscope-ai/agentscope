@@ -83,6 +83,8 @@ class AgentBuilder:
 
         # Resolve system prompt (config > fallback)
         sys_prompt = getattr(cfg, "system_prompt", None) or self._build_prompt(ctx)
+        # 始终向系统提示追加当前会话身份，便于查询上传文件（见 _build_prompt）。
+        sys_prompt = self._with_identity_hint(sys_prompt, ctx)
 
         # Resolve max_iters (config > default)
         max_iters = getattr(cfg, "max_iters", None) or 20
@@ -157,6 +159,25 @@ class AgentBuilder:
             "You are a helpful AI assistant. "
             "Use the available tools to answer user questions."
         )
+
+    @staticmethod
+    def _with_identity_hint(sys_prompt: str, ctx: Any) -> str:
+        """向系统提示追加当前会话身份，便于查询本会话上传的文件。
+
+        模型在用户询问「我上传了哪些文件」时，需知道 user_id 与 session_id
+        才能调用 list_uploaded_files。这两个值来自运行时 ctx，无法从工具侧
+        自动获取，因此在此始终注入（无论是否使用 agent_config 的提示）。
+        """
+        user_id = getattr(ctx, "user_id", "") or "default"
+        session_id = getattr(ctx, "session_id", "") or ""
+        identity_hint = (
+            "\n\n[当前会话身份]\n"
+            f"user_id = {user_id}\n"
+            f"session_id = {session_id}\n"
+            "查询本会话用户上传的文件时，请直接用以上 user_id 与 session_id "
+            "调用 list_uploaded_files；若消息中提供了 virtual_path，也可直接传入。"
+        )
+        return sys_prompt + identity_hint
 
 
 __all__ = ["AgentBuilder"]

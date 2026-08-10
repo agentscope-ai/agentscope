@@ -62,6 +62,20 @@ interface TextInputProps {
 	 */
 	allowedInputTypes?: string[];
 	/**
+	 * Controls which file types the file *picker* accepts (the `accept`
+	 * attribute on the hidden `<input type="file">`). Unlike
+	 * `allowedInputTypes` (which gates whether the model accepts files at
+	 * all, i.e. the attach button's disabled state), this is purely about
+	 * what the OS file dialog lets the user pick.
+	 *
+	 * This is decoupled from the model's `input_types` on purpose: the
+	 * BocomADP upload capability converts documents server-side, so users
+	 * must be able to pick PDF / Office / HTML / CSV files even when the
+	 * underlying model only advertises `text/plain` input. When undefined,
+	 * no restriction is applied to the picker.
+	 */
+	acceptTypes?: string[];
+	/**
 	 * Called immediately when a file is selected (at attach time, NOT at send time).
 	 * Should resolve to a ContentBlock to include in the message, or null to skip the file.
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
@@ -115,8 +129,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			autoComplete,
 			disabled = false,
 			className,
-			allowedInputTypes,
-			fileProcessor,
+		allowedInputTypes,
+		acceptTypes,
+		fileProcessor,
 			phase = 'idle',
 			onInterrupt,
 		},
@@ -133,11 +148,17 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		/** ``true`` — textarea takes the full width, buttons drop to their own row. */
 		const [isStacked, setIsStacked] = useState(false);
 
-		// Derive the accept attribute for the hidden file input
+		// Derive the accept attribute for the hidden file input.
+		// `acceptTypes` (when provided) takes precedence over `allowedInputTypes`
+		// so the picker always lets users choose upload-capable document types
+		// (PDF / Office / HTML / CSV ...), independent of the model's own
+		// multimodal input abilities.
 		const acceptAttr =
-			allowedInputTypes && allowedInputTypes.length > 0
-				? allowedInputTypes.join(',')
-				: undefined;
+			acceptTypes && acceptTypes.length > 0
+				? acceptTypes.join(',')
+				: allowedInputTypes && allowedInputTypes.length > 0
+					? allowedInputTypes.join(',')
+					: undefined;
 
 		// Attachment button is disabled when the model explicitly accepts no file types
 		const attachDisabled =
