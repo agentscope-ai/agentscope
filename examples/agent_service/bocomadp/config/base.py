@@ -131,3 +131,57 @@ def yaml_val(
             return default
         node = node.get(key)
     return node
+
+
+def int_or(default: Any, value: Any) -> Any:
+    """把值解析为 int，失败则返回 ``default``。
+
+    ``value`` 为 ``None`` 时直接返回 ``default``（便于调用方统一写法
+    ``int_or(None, cfg if cfg is not None else 10)``）。
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def float_or(default: Any, value: Any) -> Any:
+    """把值解析为 float，失败则返回 ``default``。
+
+    ``value`` 为 ``None`` 时直接返回 ``default``。
+    """
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def split_list(value: Any) -> list[str]:
+    """把 YAML 列表（或逗号分隔字符串 / 单个标量）解析为 str 列表。
+
+    - ``list`` → 逐项转 str 并过滤空串
+    - ``str``  → 按 ``,`` 切分并去除空白
+    - 其他标量 → 转成单元素列表（空则 ``[]``）
+    """
+    if value is None:
+        return []
+    items: list[Any]
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = [item.strip() for item in value.split(",") if item.strip()]
+        return items
+    else:
+        items = [value]
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def str_dict(value: Any) -> dict[str, str]:
+    """把 YAML 字典解析为 ``dict[str, str]``，非 dict 返回空字典。"""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): str(v) for k, v in value.items()}

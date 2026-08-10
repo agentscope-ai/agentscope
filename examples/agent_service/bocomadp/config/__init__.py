@@ -25,6 +25,7 @@ from .base import (
     yaml_val,
 )
 from .audit_config import AuditConfig, get_audit_config
+from .uploads_config import UploadConfig, VIRTUAL_PATH_PREFIX, get_upload_config
 from .app_config import (
     AppConfig,
     CheckpointsConfig,
@@ -62,6 +63,10 @@ __all__ = [
     # audit_config.py —— 审计留痕配置
     "AuditConfig",
     "get_audit_config",
+    # uploads_config.py —— 文件上传配置
+    "UploadConfig",
+    "VIRTUAL_PATH_PREFIX",
+    "get_upload_config",
     # app_config.py —— 单源化配置（config.yaml 主源 + env 覆盖）
     "AppConfig",
     "CheckpointsConfig",

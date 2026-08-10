@@ -37,9 +37,67 @@ import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
+import { useChatUpload } from '@/hooks/useChatUpload';
+import { isServerProcessedFile } from '@/api/uploads';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useTranslation } from '@/i18n/useI18n';
+
+/**
+ * File types the OS file dialog should always offer when the user clicks the
+ * attach (paperclip) button. This intentionally covers every format the
+ * BocomADP upload endpoint can convert to Markdown — including PDF / Office /
+ * HTML / CSV — even if the current model only advertises `text/plain` input.
+ * Kept separate from `allowedInputTypes`, which only gates whether the attach
+ * button is disabled based on the model's declared multimodal capabilities.
+ */
+const ACCEPT_TYPES_FOR_PICKER: string[] = [
+	// Images (inline attachments)
+	'image/*',
+	// Text / data
+	'text/*',
+	'.txt',
+	'.md',
+	'.markdown',
+	'.csv',
+	'.tsv',
+	'.json',
+	'.jsonl',
+	'.xml',
+	'.yaml',
+	'.yml',
+	'.toml',
+	'.log',
+	'.ini',
+	'.conf',
+	'.py',
+	'.js',
+	'.jsx',
+	'.ts',
+	'.tsx',
+	'.java',
+	'.go',
+	'.c',
+	'.cpp',
+	'.h',
+	'.cs',
+	'.rb',
+	'.php',
+	'.rs',
+	'.sql',
+	'.sh',
+	// Documents
+	'.pdf',
+	'.doc',
+	'.docx',
+	'.ppt',
+	'.pptx',
+	'.xls',
+	'.xlsx',
+	'.xlsm',
+	'.html',
+	'.htm',
+];
 
 interface ChatViewportProps {
 	/**
@@ -161,6 +219,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			onTeamUpdated: handleTeamUpdated,
 			onStateUpdated: handleStateUpdated,
 		});
+	const { uploaded: uploadedFiles, queueUpload, takeRefs, remove: removeUploaded } =
+		useChatUpload(sessionId);
+
+	// Wrap `send` so queued server-processed uploads are attached as `files`.
+	const sendWithUploads = useCallback(
+		async (blocks: ContentBlock[]) => {
+			const files = takeRefs();
+			await send(blocks, files);
+		},
+		[send, takeRefs],
+	);
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -623,7 +692,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									msgs={msgs}
 									phase={phase}
 									disabled={selectedModel === null}
-									onSend={send}
+									onSend={sendWithUploads}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
 									footerSlot={
@@ -642,19 +711,34 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											/>
 										) : null
 									}
-									allowedInputTypes={(
-										selectedModelCard?.input_types ?? []
-									).filter(
-										(t) =>
-											/^(image|video|audio|text)\/.+/.test(t) ||
-											t === 'application/pdf' ||
-											t.startsWith('application/vnd.') ||
-											t.startsWith('application/msword') ||
-											t.startsWith('application/vnd.openxmlformats'),
-									)}
-									fileProcessor={async (file) => {
-										const filePath = (file as File & { path?: string }).path;
-										if (filePath) {
+								allowedInputTypes={(
+									selectedModelCard?.input_types ?? []
+								).filter(
+									(t) =>
+										/^(image|video|audio|text)\/.+/.test(t) ||
+										t === 'application/pdf' ||
+										t.startsWith('application/vnd.') ||
+										t.startsWith('application/msword') ||
+										t.startsWith('application/vnd.openxmlformats'),
+								)}
+								// The file picker must accept everything the BocomADP
+								// upload capability can convert, regardless of whether
+								// the selected model advertises those MIME types. This
+								// decouples "what the OS file dialog shows" from "what
+								// the model accepts" (the latter only gates the button).
+								acceptTypes={ACCEPT_TYPES_FOR_PICKER}
+							fileProcessor={async (file) => {
+									// Server-processed uploads (docs/sheets/pdf/txt/csv/html…):
+									// push to the BocomADP upload endpoint, then attach via the
+									// `files` field rather than inlining the content. Return null
+									// so the block is not added to the message body.
+									if (isServerProcessedFile(file)) {
+										const ref = await queueUpload(file);
+										if (ref) return null;
+										// Upload failed: fall back to inline handling below.
+									}
+									const filePath = (file as File & { path?: string }).path;
+									if (filePath) {
 											return {
 												id: crypto.randomUUID(),
 												type: 'data' as const,

@@ -15,6 +15,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
+import type { ChatFileRef } from '@/api/types';
 import { useAudioManager } from '@/context/AudioContext';
 
 /**
@@ -314,9 +315,12 @@ export function useMessages(
 	 * arrive via the already-open SSE connection.
 	 *
 	 * @param content - The message content blocks.
+	 * @param files - Optional uploaded-file references (BocomADP uploads
+	 *   capability). When provided, the backend's `UploadsMiddleware`
+	 *   injects each file's outline into the human message.
 	 */
 	const send = useCallback(
-		async (content: ContentBlock[]) => {
+		async (content: ContentBlock[], files?: ChatFileRef[]) => {
 			if (!agentId || !sessionId) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
@@ -328,6 +332,7 @@ export function useMessages(
 					agent_id: agentId,
 					session_id: sessionId,
 					input: userMsg,
+					...(files && files.length > 0 ? { files } : {}),
 				});
 			} catch (e) {
 				setError(e as Error);

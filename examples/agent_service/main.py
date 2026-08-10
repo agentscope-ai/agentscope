@@ -36,12 +36,14 @@ import uvicorn
 from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
-from agentscope.app import create_app
+from agentscope._logging import setup_logger
+from agentscope.app import create_app, SubAgentTemplate
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus, RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import AsyncSQLAlchemyStorage, RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
@@ -65,19 +67,54 @@ from bocomadp.routers.agent_manage import (
     agent_manage_router,
 )
 from bocomadp.routers.chat_sse import chat_sse_router
+from bocomadp.routers.uploads import uploads_router
 from bocomadp.routers.credential_model import credential_model_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
 from bocomadp.routers.platform_health import platform_health_router
 from bocomadp.routers.skill_router import skill_router
 from bocomadp.routers.stats import stats_router
+# 框架内置路由（credential / knowledge_bases / agent / session / schedule /
+# skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
+# 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与本项目
+# chat_sse_router(POST /chat/run、/chat/stop) 路径不同，互不冲突。
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
+from bocomadp.uploads.manager import cleanup_stale_upload_staging_files
 
 # K8s 沙箱工作区（纯配置驱动，零框架侵入）
 from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
+
+# 在 agentscope 子模块被 import 之前完成 setup_logger，
+# 以便它们使用的 ``as`` logger 自动拥有文件 handler。
+_LOG_DIR = os.getenv("AGENTSCOPE_LOG_DIR", "/app/logs")
+_LOG_FILE = os.path.join(_LOG_DIR, "events.log")
+os.makedirs(_LOG_DIR, exist_ok=True)
+setup_logger("INFO", filepath=_LOG_FILE)
+
+# 把 uvicorn 的 HTTP 访问日志（``uvicorn.access``）也并入同一个文件，
+# 便于在一个文件中对照"客户端请求 → 后端处理 → 模型调用 → 工具调用"时间线。
+_access_logger = logging.getLogger("uvicorn.access")
+_access_file_handler = logging.FileHandler(_LOG_FILE)
+_access_file_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s - %(message)s",
+    ),
+)
+_access_logger.addHandler(_access_file_handler)
+
+default_mcps = [
+    MCPClient(
+        name="browser-use",
+        mcp_config=StdioMCPConfig(
+            command="npx",
+            args=["@playwright/mcp@latest"],
+        ),
+        is_stateful=True,
+    ),
+]
 
 # ---------------------------------------------------------------------------
 # 1. 配置加载 + 日志初始化
@@ -89,6 +126,13 @@ logger = logging.getLogger("bocomadp.main")
 # ---------------------------------------------------------------------------
 # 2. 框架模块初始化
 # ---------------------------------------------------------------------------
+# 启动时清理上次异常遗留的 .part 临时文件（crash recovery）
+try:
+    _cleaned = cleanup_stale_upload_staging_files()
+    if _cleaned:
+        logger.info("cleaned %d stale upload staging file(s)", _cleaned)
+except Exception:  # 上传未配置也不应阻断启动
+    logger.warning("cleanup_stale_upload_staging_files failed", exc_info=True)
 tool_registry = ToolRegistry()
 if config.tools.enabled:
     tool_registry.load_builtin_tools()
@@ -318,9 +362,9 @@ app.state.hook_registry = hook_registry
 app.include_router(health_router)
 app.include_router(stats_router)
 app.include_router(chat_sse_router)
+app.include_router(uploads_router)
 app.include_router(agent_manage_router)
 app.include_router(models_router)
-# 平台健康检查（/platform/health）
 app.include_router(platform_health_router)
 # 外部 skill hub（目录查询 / 我的上传 / 下载安装）
 app.include_router(skill_router)
