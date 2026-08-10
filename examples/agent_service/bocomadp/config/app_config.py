@@ -130,6 +130,30 @@ class RedisConfig(BaseModel):
     port: int = Field(default=6379)
 
 
+class DbConfig(BaseModel):
+    """AgentScope 持久化存储后端（AsyncSQLAlchemyStorage）。
+
+    ``main.py`` 中 ``AsyncSQLAlchemyStorage`` 通过 ``config.db.url`` 读取，
+    禁止绕过本配置直接 ``os.getenv``。支持任意 SQLAlchemy async URL：
+    ``postgresql+asyncpg://`` / ``sqlite+aiosqlite://`` / ``mysql+aiomysql://``。
+    """
+
+    url: str = Field(
+        default=(
+            "postgresql+asyncpg://agentscope:agentscope"
+            "@localhost:5432/agentscope"
+        ),
+        description="SQLAlchemy async URL；AgentScope StorageBase 的关系库后端。",
+    )
+    create_tables: bool = Field(
+        default=True,
+        description=(
+            "启动时 Base.metadata.create_all 自动建表，dev/单机够用；"
+            "多副本生产应关闭，改用离线 alembic upgrade head 避免迁移竞争。"
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # PORT-FROM-QWENPAW placeholders
 # ---------------------------------------------------------------------------
@@ -392,6 +416,7 @@ class AppConfig(BaseSettings):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    db: DbConfig = Field(default_factory=DbConfig)
 
     # ---- QwenPaw migration placeholders (all default off) ----
     providers: ProviderConfig = Field(default_factory=ProviderConfig)

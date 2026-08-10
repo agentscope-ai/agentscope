@@ -38,22 +38,25 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
-from agentscope.app.storage import RedisStorage
+from agentscope.app.storage import AsyncSQLAlchemyStorage, RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import QdrantStore
 
 from bocomadp.agents.templates import load_subagent_templates
+from bocomadp.credential import ELLMCredential  # noqa: F401 — import 即注册自定义供应商
 from bocomadp.config import (
     get_app_config,
     is_trace_correlation_enabled,
     load_models_from_yaml,
     build_model_instance,
 )
+# from bocomadp.credential import BocomEllmCredential
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
+from bocomadp.middleware.ellm_refresh import build_ellm_refresh_middleware
 from bocomadp.middleware.factory import build_enterprise_middlewares
 from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
@@ -64,9 +67,11 @@ from bocomadp.routers.agent_manage import (
 )
 from bocomadp.routers.chat_sse import chat_sse_router
 from bocomadp.routers.uploads import uploads_router
+from bocomadp.routers.credential_model import credential_model_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
 from bocomadp.routers.platform_health import platform_health_router
+from bocomadp.routers.skill_router import skill_router
 from bocomadp.routers.stats import stats_router
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
@@ -74,8 +79,12 @@ from bocomadp.routers.stats import stats_router
 # chat_sse_router(POST /chat/run、/chat/stop) 路径不同，互不冲突。
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
+from bocomadp.skills import ExternalSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
 from bocomadp.uploads.manager import cleanup_stale_upload_staging_files
+
+# K8s 沙箱工作区（纯配置驱动，零框架侵入）
+from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
 
 # ---------------------------------------------------------------------------
 # 1. 配置加载 + 日志初始化
@@ -217,17 +226,35 @@ async def build_agent_middlewares(
 # ---------------------------------------------------------------------------
 # 4. 存储 / 消息总线 / 工作区 / 知识库
 # ---------------------------------------------------------------------------
-storage = RedisStorage(
-    host=config.redis.host,
-    port=config.redis.port,
+storage = AsyncSQLAlchemyStorage(
+    url=config.db.url,
+    create_tables=config.db.create_tables,
 )
 
 vector_store = QdrantStore(location=":memory:")
 
-workspace_manager = LocalWorkspaceManager(
-    basedir=str(config.workspace_dir),
-    default_mcps=build_default_mcps(),
-)
+# ── K8s 沙箱 vs 本地工作区 ──
+# 生产环境使用 K8s 沙箱（ADP_K8S_ENABLED=true，默认），
+# 本地开发可设置 ADP_K8S_ENABLED=false 退回到 LocalWorkspaceManager。
+if is_k8s_enabled():
+    # -- K8s 沙箱模式 —— 每个智能体的代码执行在独立的 K8s Pod 中运行。
+    # -- 双 PVC 模式下 skills/.mcp 共享（agent PVC），session 数据隔离。
+    from agentscope.app.message_bus import RedisMessageBus
+
+    workspace_manager = build_k8s_workspace_manager()
+    # 与 AppConfig 单源一致：Redis 连接统一走 config.redis，避免裸环境变量前缀坑
+    message_bus = RedisMessageBus(
+        host=config.redis.host,
+        port=config.redis.port,
+    )
+else:
+    # -- 本地模式 —— 工作区直接使用宿主机文件系统（开发/测试用）
+    message_bus = InMemoryMessageBus()
+    workspace_manager = LocalWorkspaceManager(
+        basedir=str(config.workspace_dir),
+        default_mcps=build_default_mcps(),
+    )
+
 runtime.workspace_manager = workspace_manager
 
 # ---------------------------------------------------------------------------
@@ -251,19 +278,40 @@ def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
     ]
 
 
+# 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
+# + ELLM key 刷新中间件（每次模型调用前惰性刷新 apikey）。
+_ellm_refresh_mw_factory = build_ellm_refresh_middleware(storage, message_bus)
+
+
+async def _build_agent_middlewares_with_ellm(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+):
+    mws = await build_agent_middlewares(user_id, agent_id, session_id)
+    mws.extend(await _ellm_refresh_mw_factory(user_id, agent_id, session_id))
+    return mws
+
+
 app = create_app(
     storage=storage,
-    message_bus=InMemoryMessageBus(),
+    message_bus=message_bus,
     workspace_manager=workspace_manager,
     knowledge_base_manager=CollectionPerKbManager(
         storage=storage,
         vector_store=vector_store,
     ),
     mcp_hubs=[GitHubMCPHub()],
-    skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
+    skill_hubs=[
+        ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN")),
+        ExternalSkillHub(),
+    ],
     custom_subagent_templates=load_subagent_templates(),
+    # 注册 BOCOM ELLM credential（扩展核心 EllmCredential 的 key-service 字段）
+    # extra_credentials=[BocomEllmCredential],
     # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
-    extra_agent_middlewares=build_agent_middlewares,
+    # + ELLM key 刷新中间件（每次模型调用前惰性刷新 apikey）。
+    extra_agent_middlewares=_build_agent_middlewares_with_ellm,
     # 通用工具构建入口：registry 自动扫描 + 企业工具主动 build（HR / Doc / ITSM）
     extra_agent_tools=build_agent_tools,
     title="BocomADP",
@@ -290,6 +338,10 @@ app.include_router(uploads_router)
 app.include_router(agent_manage_router)
 app.include_router(models_router)
 app.include_router(platform_health_router)
+# 外部 skill hub（目录查询 / 我的上传 / 下载安装）
+app.include_router(skill_router)
+# 按凭证查询模型（含单模型绑定过滤）
+app.include_router(credential_model_router)
 
 
 if __name__ == "__main__":
