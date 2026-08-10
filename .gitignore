@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.tar
+*.jsonl
+
 *.patch
 # C extensions
 *.so

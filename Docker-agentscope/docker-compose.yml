@@ -60,6 +60,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # K8s kubeconfig（K8s 沙箱模式必需）
       - .kube/config:/app/kubeconfig/config:ro
+      # AgentScope ``as`` logger 文件输出（与 main.py 中默认路径一致）
+      - ./logs:/app/logs
 
   webui-backend:
     image: webui-backend:dev
