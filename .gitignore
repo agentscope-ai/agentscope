@@ -5,6 +5,7 @@ __pycache__/
 *.tar
 *.jsonl
 
+*.patch
 # C extensions
 *.so
 
