@@ -359,6 +359,16 @@ class WorkspaceBase:
         )
 
     @property
+    def _python_command(self) -> str:
+        """Interpreter that runs the shims below through the backend.
+
+        Sandbox images all ship ``python3``. A backend executing on the
+        host does not get that guarantee — Windows has ``python`` or a
+        Store stub — so those workspaces override this.
+        """
+        return "python3"
+
+    @property
     def _skill_seed_dir(self) -> str:
         """``skills/.seed`` — the template every partition starts from."""
         return self.get_backend().join_path(
@@ -423,7 +433,7 @@ class WorkspaceBase:
         backend = self.get_backend()
         result = await backend.exec_shell(
             [
-                "python3",
+                self._python_command,
                 "-c",
                 _EQUIP_PARTITION_SHIM,
                 self._skill_seed_dir,
@@ -1284,7 +1294,7 @@ class WorkspaceBase:
             )
             result = await backend.exec_shell(
                 [
-                    "python3",
+                    self._python_command,
                     "-c",
                     _EXTRACT_TAR_SHIM,
                     tmp_path,
@@ -1361,7 +1371,7 @@ class WorkspaceBase:
             try:
                 result = await backend.exec_shell(
                     [
-                        "python3",
+                        self._python_command,
                         "-c",
                         _EXTRACT_ARCHIVE_SHIM,
                         archive_path,
@@ -1500,7 +1510,7 @@ class WorkspaceBase:
         try:
             result = await backend.exec_shell(
                 [
-                    "python3",
+                    self._python_command,
                     "-c",
                     _MIGRATE_SKILLS_SHIM,
                     self._skills_dir,
@@ -1561,7 +1571,7 @@ class WorkspaceBase:
         tmp_path = f"/tmp/skill-seed-{_generate_id()}.tar"
         await backend.write_file(tmp_path, tar_bytes)
         result = await backend.exec_shell(
-            ["python3", "-c", _EXTRACT_TAR_SHIM, tmp_path, seed],
+            [self._python_command, "-c", _EXTRACT_TAR_SHIM, tmp_path, seed],
         )
         if not result.ok():
             logger.warning(

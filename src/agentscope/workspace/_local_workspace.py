@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from typing import AsyncIterator, Literal, TypedDict
 
 import frontmatter
@@ -127,6 +128,15 @@ class LocalWorkspace(WorkspaceBase):
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
+
+    @property
+    def _python_command(self) -> str:
+        """The running interpreter, since the shims execute on the host.
+
+        ``python3`` is only a safe name inside a sandbox image; on
+        Windows it is absent or a Store stub that opens a web page.
+        """
+        return sys.executable or "python3"
 
     async def list_tools(self) -> list[ToolBase]:
         """Return builtin tools, using PowerShell as the shell on Windows."""
@@ -900,7 +910,7 @@ class LocalWorkspace(WorkspaceBase):
             await self._backend.write_stream(archive_path, stream)
             result = await self._backend.exec_shell(
                 [
-                    "python3",
+                    self._python_command,
                     "-c",
                     _EXTRACT_ARCHIVE_SHIM,
                     archive_path,
