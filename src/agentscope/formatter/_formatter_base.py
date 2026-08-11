@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
+import atexit
 import base64
 import mimetypes
+import os
+import shutil
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
@@ -17,6 +20,28 @@ from ..message import (
     URLSource,
     Base64Source,
 )
+
+_UNSUPPORTED_MEDIA_TEMP_DIR: str | None = None
+
+
+def _get_unsupported_media_temp_dir() -> str:
+    global _UNSUPPORTED_MEDIA_TEMP_DIR
+    if _UNSUPPORTED_MEDIA_TEMP_DIR is None:
+        temp_dir = tempfile.mkdtemp(prefix="agentscope-unsupported-media-")
+        os.chmod(temp_dir, 0o700)
+        _UNSUPPORTED_MEDIA_TEMP_DIR = temp_dir
+    return _UNSUPPORTED_MEDIA_TEMP_DIR
+
+
+def _cleanup_unsupported_media_temp_files() -> None:
+    global _UNSUPPORTED_MEDIA_TEMP_DIR
+    temp_dir = _UNSUPPORTED_MEDIA_TEMP_DIR
+    _UNSUPPORTED_MEDIA_TEMP_DIR = None
+    if temp_dir is not None:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+atexit.register(_cleanup_unsupported_media_temp_files)
 
 
 class FormatterBase(BaseModel):
@@ -141,21 +166,43 @@ class FormatterBase(BaseModel):
                     )
 
                 elif isinstance(block.source, Base64Source):
-                    # Have to save the base64 data locally
                     extension = mimetypes.guess_extension(
                         block.source.media_type,
                     )
-                    with tempfile.NamedTemporaryFile(
-                        suffix=extension,
-                        delete=False,
-                    ) as temp_file:
+                    stable_name = shortuuid.uuid(
+                        name=block.source.data,
+                    )
+                    tmp_dir = _get_unsupported_media_temp_dir()
+                    candidate_ext = extension or ""
+                    stable_path = os.path.join(
+                        tmp_dir,
+                        f"as-unsup-{stable_name}{candidate_ext}",
+                    )
+                    if not os.path.exists(stable_path):
                         decoded_data = base64.b64decode(block.source.data)
-                        temp_file.write(decoded_data)
-                        textual_output.append(
-                            f"<system-reminder>A(n) {main_type} file is "
-                            f"returned and saved locally at: {temp_file.name}."
-                            f"</system-reminder>",
-                        )
+                        written = ""
+                        try:
+                            with tempfile.NamedTemporaryFile(
+                                suffix=candidate_ext,
+                                dir=tmp_dir,
+                                prefix="staging-",
+                                delete=False,
+                            ) as temp_file:
+                                temp_file.write(decoded_data)
+                                written = temp_file.name
+                            os.replace(written, stable_path)
+                        except OSError:
+                            if written:
+                                try:
+                                    os.remove(written)
+                                except OSError:
+                                    pass
+                            raise
+                    textual_output.append(
+                        f"<system-reminder>A(n) {main_type} file is "
+                        f"returned and saved locally at: {stable_path}."
+                        f"</system-reminder>",
+                    )
 
         # Add system reminder tags if there is multimodal data to be promoted
         if multimodal_data:

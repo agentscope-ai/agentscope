@@ -3,12 +3,24 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+from contextlib import ExitStack
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+import agentscope.formatter._formatter_base as formatter_base
 from agentscope.formatter import (
     OpenAIChatFormatter,
     OpenAIMultiAgentFormatter,
+)
+from agentscope.formatter._formatter_base import (
+    FormatterBase,
+    _cleanup_unsupported_media_temp_files,
 )
 from agentscope.message import (
     UserMsg,
@@ -770,3 +782,205 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class _TextOnlyFormatter(FormatterBase):
+    """A formatter that accepts only ``text/plain``; everything else goes
+    through ``convert_tool_result_to_string``'s unsupported-media path."""
+
+    async def format(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> list[dict]:  # pragma: no cover
+        return []
+
+
+class FormatterBaseUnsupportedMediaTest(IsolatedAsyncioTestCase):
+    """Unsupported-media Base64Source storage regressions (issue #2173)."""
+
+    def setUp(self) -> None:
+        """Seed a text-only formatter and two base64 fixtures."""
+        _cleanup_unsupported_media_temp_files()
+        self._fmt = _TextOnlyFormatter(input_types=["text/plain"])
+        self._png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfakehdr"
+        self._png_b64 = base64.b64encode(self._png_bytes).decode("ascii")
+        self._mp3_bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00fake mp3 payload"
+        self._mp3_b64 = base64.b64encode(self._mp3_bytes).decode("ascii")
+
+    def tearDown(self) -> None:
+        """Run the atexit hook so no temp files leak between tests."""
+        _cleanup_unsupported_media_temp_files()
+
+    @staticmethod
+    def _blocks(data: str, media_type: str) -> list[DataBlock]:
+        """Build one unsupported-media block."""
+        return [
+            DataBlock(
+                source=Base64Source(
+                    data=data,
+                    media_type=media_type,
+                ),
+            ),
+        ]
+
+    @staticmethod
+    def _saved_path(text: str) -> str:
+        """Extract the saved path from a formatter reminder."""
+        prefix = "saved locally at: "
+        start = text.index(prefix) + len(prefix)
+        return text[start : text.index(".</system-reminder>", start)]
+
+    def test_same_base64_yields_deterministic_path(self) -> None:
+        """Identical ``Base64Source`` bytes must produce identical output."""
+        blocks = self._blocks(self._png_b64, "image/png")
+        first, _ = self._fmt.convert_tool_result_to_string(blocks)
+        second, _ = self._fmt.convert_tool_result_to_string(blocks)
+        self.assertEqual(first, second)
+        self.assertIn("saved locally at:", first)
+
+    def test_written_file_contains_decoded_bytes(self) -> None:
+        """The process-owned temp file must store the decoded bytes."""
+        blocks = self._blocks(self._mp3_b64, "audio/mpeg")
+        text, _ = self._fmt.convert_tool_result_to_string(blocks)
+        path = self._saved_path(text)
+        self.assertTrue(os.path.isfile(path))
+        with open(path, "rb") as handle:
+            payload = handle.read()
+        self.assertEqual(payload, self._mp3_bytes)
+
+    def test_distinct_contents_yield_distinct_paths(self) -> None:
+        """Different payloads must use different stable paths."""
+        blocks_a = self._blocks(self._png_b64, "image/png")
+        blocks_b = self._blocks(self._mp3_b64, "audio/mpeg")
+        text_a, _ = self._fmt.convert_tool_result_to_string(blocks_a)
+        text_b, _ = self._fmt.convert_tool_result_to_string(blocks_b)
+        self.assertNotEqual(text_a, text_b)
+        self.assertNotEqual(
+            self._saved_path(text_a),
+            self._saved_path(text_b),
+        )
+
+    def test_cache_directory_is_private_and_cleaned(self) -> None:
+        """The cache must be process-private and removed during cleanup."""
+        blocks = self._blocks(self._png_b64, "image/png")
+        text, _ = self._fmt.convert_tool_result_to_string(blocks)
+        path = self._saved_path(text)
+        temp_dir = os.path.dirname(path)
+        if os.name != "nt":
+            self.assertEqual(
+                stat.S_IMODE(os.stat(temp_dir).st_mode),
+                0o700,
+            )
+        _cleanup_unsupported_media_temp_files()
+        self.assertFalse(os.path.exists(temp_dir))
+
+    def test_no_leaked_temp_file_per_call(self) -> None:
+        """Five consecutive runs must leave only one temp payload file."""
+        blocks = self._blocks(self._png_b64, "image/png")
+        text = ""
+        for _ in range(5):
+            text, _ = self._fmt.convert_tool_result_to_string(blocks)
+        temp_dir = os.path.dirname(self._saved_path(text))
+        self.assertEqual(len(os.listdir(temp_dir)), 1)
+
+    def test_cache_hit_skips_redundant_base64_decode(self) -> None:
+        """A stable cache hit must not decode the payload again."""
+        blocks = self._blocks(self._png_b64, "image/png")
+        first, _ = self._fmt.convert_tool_result_to_string(blocks)
+        with patch.object(
+            formatter_base.base64,
+            "b64decode",
+            side_effect=AssertionError("unexpected decode"),
+        ):
+            second, _ = self._fmt.convert_tool_result_to_string(blocks)
+        self.assertEqual(first, second)
+
+    def test_replace_failure_is_propagated_without_invalid_path(self) -> None:
+        """A failed atomic write must not return a missing target."""
+        blocks = self._blocks(self._png_b64, "image/png")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch(
+                    "agentscope.formatter._formatter_base."
+                    "_get_unsupported_media_temp_dir",
+                    return_value=temp_dir,
+                ),
+                patch.object(
+                    formatter_base.os,
+                    "replace",
+                    side_effect=OSError("replace failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    self._fmt.convert_tool_result_to_string(blocks)
+            self.assertEqual(os.listdir(temp_dir), [])
+
+    def test_worker_exit_does_not_remove_another_worker_file(self) -> None:
+        """Each process must clean only its own unsupported-media cache."""
+        script = """
+import base64
+import sys
+
+from agentscope.formatter._formatter_base import FormatterBase
+from agentscope.message import Base64Source, DataBlock
+
+
+class TextOnlyFormatter(FormatterBase):
+    async def format(self, *args, **kwargs):
+        return []
+
+
+payload = base64.b64encode(b"shared payload").decode("ascii")
+text, _ = TextOnlyFormatter().convert_tool_result_to_string(
+    [
+        DataBlock(
+            source=Base64Source(
+                data=payload,
+                media_type="image/png",
+            ),
+        ),
+    ],
+)
+path = text.split("saved locally at: ", 1)[1].split(
+    ".</system-reminder>",
+    1,
+)[0]
+print(path, flush=True)
+sys.stdin.readline()
+"""
+        with ExitStack() as stack:
+            workers = [
+                stack.enter_context(
+                    subprocess.Popen(
+                        [sys.executable, "-c", script],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    ),
+                )
+                for _ in range(2)
+            ]
+            paths: list[str] = []
+            try:
+                for worker in workers:
+                    self.assertIsNotNone(worker.stdout)
+                    paths.append(worker.stdout.readline().strip())
+                self.assertNotEqual(
+                    os.path.dirname(paths[0]),
+                    os.path.dirname(paths[1]),
+                )
+                self.assertTrue(all(os.path.isfile(path) for path in paths))
+
+                self.assertIsNotNone(workers[0].stdin)
+                workers[0].stdin.close()
+                self.assertEqual(workers[0].wait(timeout=20), 0)
+                self.assertFalse(os.path.exists(paths[0]))
+                self.assertTrue(os.path.isfile(paths[1]))
+            finally:
+                for worker in workers:
+                    if worker.poll() is None:
+                        self.assertIsNotNone(worker.stdin)
+                        worker.stdin.close()
+                        worker.wait(timeout=20)
