@@ -46,6 +46,7 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+from dataclasses import dataclass
 from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
@@ -56,6 +57,16 @@ from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ..._logging import logger
 from ...message import ToolCallState
+
+
+@dataclass(frozen=True)
+class _SessionDeleteTarget:
+    """Session identity needed after storage has deleted its record."""
+
+    user_id: str
+    agent_id: str
+    session_id: str
+    workspace_id: str | None
 
 
 class SessionStatus(StrEnum):
@@ -343,18 +354,18 @@ class SessionService:
            this session leads one — recursive into worker agents).
         3. Purge transient bus state for ``session_id`` (events log,
            inbox).
-        4. Drop the session's workspace state (MCP clients, offload
-           files). Workspaces outlive sessions and are usually shared
-           by every session of an agent, so this would otherwise
+        4. Drop every cascade-deleted session's workspace state (MCP
+           clients, declarations, capacity records and offload files).
+           Workspaces outlive sessions, so this state would otherwise
            accumulate for the life of the workspace.
 
         Worker sessions that storage cascades through are picked up
         here too: when this session is a team leader,
         ``storage.delete_session`` calls ``storage.delete_team`` →
         ``storage.delete_agent`` → ``storage.delete_session`` for each
-        worker, and we mirror that on the bus side by purging worker
-        sessions identified up front via
-        :meth:`_team_worker_session_ids`.
+        worker, and we mirror that on the bus and workspace sides using
+        complete session identities captured up front via
+        :meth:`_session_delete_targets`.
 
         Args:
             user_id (`str`): The owner user id.
@@ -367,17 +378,14 @@ class SessionService:
                 ``False`` otherwise. Mirrors
                 :meth:`StorageBase.delete_session`.
         """
-        # Identify all bus-purge targets before storage mutates anything.
-        worker_sids = await self._team_worker_session_ids(
+        # Snapshot every target before storage cascades remove worker
+        # sessions and the workspace bindings needed to purge them.
+        targets = await self._session_delete_targets(
             user_id,
             agent_id,
             session_id,
         )
-        all_sids = [session_id, *worker_sids]
-
-        # Resolve the workspace binding while the record still exists.
-        record = await self._storage.get_session(user_id, agent_id, session_id)
-        workspace_id = record.config.workspace_id if record else None
+        all_sids = [target.session_id for target in targets]
 
         # Clean leader-side subagent HITL projections before storage
         # cascades remove the records we need to resolve roles from.
@@ -397,25 +405,28 @@ class SessionService:
 
         # Best-effort: a workspace that cannot be resolved (backend
         # down, sandbox gone) must not fail a committed deletion.
-        if deleted and self._workspace_manager and workspace_id:
-            try:
-                workspace = await self._workspace_manager.get_workspace(
-                    user_id,
-                    agent_id,
-                    session_id,
-                    workspace_id,
-                )
-                await workspace.purge_session(
-                    agent_id=agent_id,
-                    session_id=session_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to purge workspace %r for session %r: %s",
-                    workspace_id,
-                    session_id,
-                    e,
-                )
+        if deleted and self._workspace_manager:
+            for target in targets:
+                if not target.workspace_id:
+                    continue
+                try:
+                    workspace = await self._workspace_manager.get_workspace(
+                        target.user_id,
+                        target.agent_id,
+                        target.session_id,
+                        target.workspace_id,
+                    )
+                    await workspace.purge_session(
+                        agent_id=target.agent_id,
+                        session_id=target.session_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to purge workspace %r for session %r: %s",
+                        target.workspace_id,
+                        target.session_id,
+                        e,
+                    )
         return deleted
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
@@ -603,25 +614,21 @@ class SessionService:
     # Internals
     # ------------------------------------------------------------------
 
-    async def _team_worker_session_ids(
+    async def _session_delete_targets(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> list[str]:
-        """Return the session ids of every worker in the team that
-        ``session_id`` leads, or ``[]`` when the session does not lead
-        a team.
+    ) -> list[_SessionDeleteTarget]:
+        """Snapshot every session that storage will cascade-delete.
 
-        Mirrors :meth:`StorageBase.delete_session`'s own team-leader
-        cascade so the bus side can purge the same sessions.
+        The complete identity is captured before storage mutation because
+        workspace cleanup needs the owning agent and persisted workspace
+        binding after the corresponding session records are gone.
 
         Uses :func:`ensure_team_members` — which carries the exact
-        session id per member (including invited members whose agent
-        can have multiple sessions of its own, only one of which
-        belongs to this team). Falling back to
-        ``list_sessions(agent_id)[0]`` here would pick the wrong
-        session for invited agents.
+        member identity, including the exact borrowed session for an
+        invited agent whose unrelated ordinary sessions must survive.
 
         Args:
             user_id (`str`): The owner user id.
@@ -632,22 +639,58 @@ class SessionService:
                 The candidate leader session.
 
         Returns:
-            `list[str]`:
-                Worker session ids, empty when this session is not a
-                team leader.
+            `list[_SessionDeleteTarget]`:
+                The requested session followed by any worker sessions
+                storage will delete with it.
         """
         session = await self._storage.get_session(
             user_id,
             agent_id,
             session_id,
         )
-        if session is None or not session.team_id:
-            return []
+        if session is None:
+            return [
+                _SessionDeleteTarget(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    workspace_id=None,
+                ),
+            ]
+
+        targets = [
+            _SessionDeleteTarget(
+                user_id=session.user_id,
+                agent_id=session.agent_id,
+                session_id=session.id,
+                workspace_id=session.config.workspace_id,
+            ),
+        ]
+        if not session.team_id:
+            return targets
+
         team = await self._storage.get_team(user_id, session.team_id)
         if team is None or team.session_id != session_id:
-            return []
+            return targets
+
         members = await _ensure_team_members(self._storage, user_id, team)
-        return [m.session_id for m in members]
+        for member in members:
+            worker = await self._storage.get_session(
+                member.owner_id,
+                member.agent_id,
+                member.session_id,
+            )
+            targets.append(
+                _SessionDeleteTarget(
+                    user_id=member.owner_id,
+                    agent_id=member.agent_id,
+                    session_id=member.session_id,
+                    workspace_id=(
+                        worker.config.workspace_id if worker else None
+                    ),
+                ),
+            )
+        return targets
 
     async def _purge_session_bus(self, session_id: str) -> None:
         """Drop all per-session bus state for one session."""
