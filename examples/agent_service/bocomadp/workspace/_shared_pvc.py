@@ -54,6 +54,16 @@ from agentscope.workspace._utils import (
     DEFAULT_SKILLS_DIR,
 )
 
+# ── user-data layout constants ─────────────────────────────────────
+#: Workspace-relative root of the user working area.
+DEFAULT_USER_DATA_DIR = "user-data"
+
+#: Workspace-relative working directory for temporary files.
+DEFAULT_USER_SCRATCH_DIR = "scratch"
+
+#: Workspace-relative directory for final deliverables.
+DEFAULT_USER_OUTPUTS_DIR = "outputs"
+
 
 class SharedPvcK8sWorkspace(K8sWorkspace):
     """K8sWorkspace 子类：session Pod，共享 agent 级 PVC + 温池。
@@ -142,13 +152,29 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
             "\n│   └── .mcp           # MCP configuration"
             "\n└── sessions/"
             "\n    └── <session>/    # your working directory"
-            "\n        ├── data/     # offloaded multimodal files — system-managed"
-            "\n        └── sessions/ # offloaded session context and tool results — system-managed"
+            "\n        ├── data/      # offloaded multimodal files — system-managed"
+            "\n        ├── sessions/  # offloaded session context and tool results — system-managed"
+            "\n        └── user-data/ # user working directory"
+            "\n            ├── scratch/   # working directory for temporary files"
+            "\n            └── outputs/    # final deliverables — write finished files here, never ask"
             "\n```"
             "\n\nYour working directory is {workdir}. "
             "This workspace is your personal working environment. "
             "You are responsible for keeping it clean, structured, "
             "and easy to navigate over time."
+            "\n\n### File Management"
+            "\n- Temporary and intermediate files (scratch, drafts, build "
+            "artifacts, debugging scripts) go to `user-data/scratch/`."
+            "\n- Any file you generate as the final result of the task — "
+            "reports, documents, code, exports, images — MUST be written "
+            "directly to `user-data/outputs/`. Do NOT ask the user where "
+            "to save it; apply this rule automatically."
+            "\n- If you started a deliverable in `scratch/` (e.g. while "
+            "iterating), copy the finished file to `outputs/` once it is "
+            "complete."
+            "\n- Prefer relative paths (e.g. `hello.txt`, "
+            "`../outputs/report.md`) over hard-coded absolute paths in "
+            "scripts and commands."
             "\n\n### Project Directory"
             "\n- Create a dedicated subdirectory for each task or project "
             "under your working directory."
@@ -166,6 +192,51 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
         ).format(
             backend="Kubernetes-based (shared-PVC)",
             workdir=self.workdir,
+        )
+
+    # ── user-data paths (relative to workdir) ────────────────────
+
+    @property
+    def _user_data_dir(self) -> str:
+        """``${workdir}/user-data`` — user working area root."""
+        return self.get_backend().join_path(self.workdir, DEFAULT_USER_DATA_DIR)
+
+    @property
+    def _user_workspace_dir(self) -> str:
+        """``${workdir}/user-data/scratch`` — temp file working directory."""
+        return self.get_backend().join_path(
+            self._user_data_dir,
+            DEFAULT_USER_SCRATCH_DIR,
+        )
+
+    @property
+    def _user_outputs_dir(self) -> str:
+        """``${workdir}/user-data/outputs`` — final deliverables."""
+        return self.get_backend().join_path(
+            self._user_data_dir,
+            DEFAULT_USER_OUTPUTS_DIR,
+        )
+
+    async def _ensure_workspace_layout(self) -> None:
+        """Create the standard workspace directories plus user-data/.
+
+        The parent layout covers ``data/``, ``skills/``, ``sessions/``
+        and the gateway home; on top of that this session workspace
+        guarantees ``user-data/scratch/`` and ``user-data/outputs/``
+        exist so the model always has a writable working area and a
+        destination for final deliverables.
+        """
+        await super()._ensure_workspace_layout()
+        backend = self.get_backend()
+        await backend.exec_shell(
+            [
+                "mkdir",
+                "-p",
+                self._user_data_dir,
+                self._user_workspace_dir,
+                self._user_outputs_dir,
+            ],
+            cwd="/",
         )
 
     # ── 覆盖 provisioning: 支持池 Pod 名 ─────────────────────
