@@ -35,12 +35,12 @@ class _SkillEntry(TypedDict):
 
 
 class _SkillsFile(TypedDict):
-    """Schema of the .skills index file stored inside skills_dir."""
+    """Schema of the .skills index file stored inside a partition."""
 
     skills_dir_mtime: float
-    """mtime of skills_dir at the time the index was last written."""
+    """mtime of the partition at the time the index was last written."""
     skills: dict[str, _SkillEntry]
-    """Mapping from directory name (relative to skills_dir) to skill entry."""
+    """Mapping from directory name (relative to the partition) to entry."""
 
 
 def _sanitize_dir_name(name: str) -> str:
@@ -69,7 +69,7 @@ class LocalWorkspace(WorkspaceBase):
         {workdir}/
         ├── .mcp          # declared MCP configs per agent/session
         ├── data/         # offloaded multimodal files
-        ├── skills/       # skill subdirectories
+        ├── skills/       # one partition per agent, plus _workspace/
         └── sessions/     # per-session context and tool-result files
     """
 
@@ -167,8 +167,10 @@ class LocalWorkspace(WorkspaceBase):
 
         self._mcp_specs = await self._restore_mcp_specs()
 
-        # Seed skills
-        skills_dir = os.path.join(self.workdir, "skills")
+        # Seed skills into the shared partition — seeds have no owner
+        os.makedirs(self._skills_dir, exist_ok=True)
+        await self._migrate_skill_layout()
+        skills_dir = self._skill_partition(None)
         os.makedirs(skills_dir, exist_ok=True)
 
         skills_file = await self._load_skills_file(skills_dir)
@@ -431,57 +433,85 @@ class LocalWorkspace(WorkspaceBase):
             path = os.path.join(self.workdir, sub)
             await self._backend.delete_path(path)
 
-    async def list_skills(self) -> list[Skill]:
-        """List all skills available in the workspace.
+    async def list_skills(
+        self,
+        *,
+        agent_id: str | None = None,
+    ) -> list[Skill]:
+        """List the skills one agent can use.
 
-        The method uses the .skills index for agent-facing names, compares the
-        skills directory mtime to detect manual additions/removals since the
-        last write, and reconciles the index when a change is found.
+        Reads the agent's own partition plus the shared one, using each
+        partition's ``.skills`` index for agent-facing names.
+
+        Args:
+            agent_id (`str | None`, optional):
+                The agent asking. ``None`` reads every partition,
+                which is what unscoped callers saw before ``skills/``
+                was partitioned.
 
         Returns:
             `list[Skill]`:
                 A list of Skill objects found in the workspace.
         """
-        skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
-            if not await self._backend.is_dir(skills_dir):
-                return []
-
-            skills_file = await self._load_skills_file(skills_dir)
-            current_mtime = await self._backend.stat_mtime(skills_dir)
-            if current_mtime is None:
-                current_mtime = 0.0
-
-            # Detect if the skills directory has changed since last indexing
-            if current_mtime != skills_file["skills_dir_mtime"]:
-                skills_file = await self._reconcile_skills_dir(
-                    skills_dir,
-                    skills_file,
-                    current_mtime,
-                )
-
-            # Load skills from disk using the index for the agent-facing name
-            tasks = [
-                self._load_single_skill(
-                    os.path.join(skills_dir, dir_name),
-                    entry["skill_name"],
-                )
-                for dir_name, entry in skills_file["skills"].items()
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            skills: list = []
-            for dir_name, result in zip(skills_file["skills"], results):
-                if isinstance(result, Exception):
-                    logger.warning(
-                        "Failed to load skill from %s: %s",
-                        dir_name,
-                        str(result),
-                    )
-                elif result is not None:
-                    skills.append(result)
-
+            skills: list[Skill] = []
+            for partition in await self._skill_partitions(agent_id):
+                skills += await self._list_partition_skills(partition)
             return skills
+
+    async def _list_partition_skills(self, skills_dir: str) -> list[Skill]:
+        """List the skills held by one partition.
+
+        Compares the partition's mtime against its ``.skills`` index to
+        detect additions/removals made behind the workspace's back, and
+        reconciles the index when they differ.
+
+        Args:
+            skills_dir (`str`):
+                The partition directory to read.
+
+        Returns:
+            `list[Skill]`:
+                The partition's skills, empty when it does not exist.
+        """
+        if not await self._backend.is_dir(skills_dir):
+            return []
+
+        skills_file = await self._load_skills_file(skills_dir)
+        current_mtime = await self._backend.stat_mtime(skills_dir)
+        if current_mtime is None:
+            current_mtime = 0.0
+
+        # Detect if the partition has changed since last indexing
+        if current_mtime != skills_file["skills_dir_mtime"]:
+            skills_file = await self._reconcile_skills_dir(
+                skills_dir,
+                skills_file,
+                current_mtime,
+            )
+
+        # Load skills from disk using the index for the agent-facing name
+        tasks = [
+            self._load_single_skill(
+                os.path.join(skills_dir, dir_name),
+                entry["skill_name"],
+            )
+            for dir_name, entry in skills_file["skills"].items()
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        skills: list = []
+        for dir_name, result in zip(skills_file["skills"], results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Failed to load skill from %s: %s",
+                    dir_name,
+                    str(result),
+                )
+            elif result is not None:
+                skills.append(result)
+
+        return skills
 
     async def _reconcile_skills_dir(
         self,
@@ -718,25 +748,35 @@ class LocalWorkspace(WorkspaceBase):
             ]
             await self._save_mcp_file()
 
-    async def add_skill(self, skill_path: str) -> None:
-        """Add a skill to the workspace by copying from the given path.
+    async def add_skill(
+        self,
+        skill_path: str,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
+        """Add a skill to an agent's partition by copying from a path.
 
         The skill directory must contain a valid ``SKILL.md`` file with
         ``name`` and ``description`` frontmatter fields.  Duplicate skills
         (identified by the SHA-256 hash of ``SKILL.md``) are silently skipped.
         Name and directory conflicts are resolved by appending a numeric
-        suffix.
+        suffix. All three are scoped to the partition: what another agent
+        installed neither collides with this one nor dedups against it,
+        since either agent may later edit its own copy.
 
         Args:
             skill_path (`str`):
                 Absolute or relative path to the skill directory to copy.
+            agent_id (`str | None`, optional):
+                The agent taking ownership. ``None`` installs into the
+                shared partition every agent reads.
 
         Raises:
             ValueError: If the skill at ``skill_path`` is invalid (missing or
                 malformed ``SKILL.md``).
         """
         skill_path = _normalize_local_path(skill_path)
-        skills_dir = os.path.join(self.workdir, "skills")
+        skills_dir = self._skill_partition(agent_id)
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)
 
@@ -819,6 +859,8 @@ class LocalWorkspace(WorkspaceBase):
         fmt: Literal["zip", "tar", "tar.gz"],
         dir_name: str,
         max_extracted_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
+        *,
+        agent_id: str | None = None,
     ) -> None:
         """Expand a skill archive, then install it as a local directory.
 
@@ -837,6 +879,9 @@ class LocalWorkspace(WorkspaceBase):
                 Unused; kept for interface compatibility.
             max_extracted_bytes (`int`):
                 Ceiling on the archive's expanded size.
+            agent_id (`str | None`, optional):
+                The agent taking ownership. ``None`` installs into the
+                shared partition every agent reads.
 
         Raises:
             ValueError:
@@ -867,67 +912,79 @@ class LocalWorkspace(WorkspaceBase):
                     f"Failed to expand skill archive: "
                     f"{result.stderr.decode('utf-8', 'replace')}",
                 )
-            await self.add_skill(await self._find_skill_root(staging))
+            await self.add_skill(
+                await self._find_skill_root(staging),
+                agent_id=agent_id,
+            )
         finally:
             await self._backend.delete_path(staging)
             await self._backend.delete_path(archive_path)
 
-    async def remove_skill(self, name: str) -> None:
+    async def remove_skill(
+        self,
+        name: str,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
         """Remove a skill from the workspace by its agent-facing name.
 
-        The skill directory is deleted from disk and the ``.skills`` index is
-        updated.  If no skill with the given name is found, a warning is
-        logged and the method returns without error.
+        The skill directory is deleted from disk and the partition's
+        ``.skills`` index is updated. If no skill with the given name is
+        found, a warning is logged and the method returns without error.
 
         Args:
             name (`str`):
                 The agent-facing name of the skill to remove (as stored in the
                 ``.skills`` index, i.e. the ``name`` field from ``SKILL.md``
                 possibly with a numeric suffix for de-duplication).
+            agent_id (`str | None`, optional):
+                The agent asking. ``None`` searches every partition.
         """
-        skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
-            if not await self._backend.is_dir(skills_dir):
-                logger.warning(
-                    "Skills directory does not exist; cannot remove skill %r",
-                    name,
+            # Own partition first: when the same name exists in both,
+            # the agent means its own copy, which is the one it sees.
+            for skills_dir in reversed(
+                await self._skill_partitions(agent_id),
+            ):
+                if not await self._backend.is_dir(skills_dir):
+                    continue
+
+                skills_file = await self._load_skills_file(skills_dir)
+                existing: dict[str, _SkillEntry] = skills_file["skills"]
+
+                target_dir: str | None = None
+                for dir_name, entry in existing.items():
+                    if entry["skill_name"] == name:
+                        target_dir = dir_name
+                        break
+
+                if target_dir is None:
+                    continue
+
+                skill_dir_path = os.path.join(skills_dir, target_dir)
+                if await self._backend.is_dir(skill_dir_path):
+                    await self._backend.delete_path(skill_dir_path)
+                    logger.info(
+                        "Removed skill '%s' from %s",
+                        name,
+                        skill_dir_path,
+                    )
+                else:
+                    logger.warning(
+                        (
+                            "Skill directory %r not found on disk; "
+                            "removing index entry"
+                        ),
+                        skill_dir_path,
+                    )
+
+                del existing[target_dir]
+                skills_file["skills"] = existing
+                mtime = await self._backend.stat_mtime(skills_dir)
+                skills_file["skills_dir_mtime"] = (
+                    mtime if mtime is not None else 0.0
                 )
+                await self._save_skills_file(skills_dir, skills_file)
                 return
 
-            skills_file = await self._load_skills_file(skills_dir)
-            existing: dict[str, _SkillEntry] = skills_file["skills"]
-
-            target_dir: str | None = None
-            for dir_name, entry in existing.items():
-                if entry["skill_name"] == name:
-                    target_dir = dir_name
-                    break
-
-            if target_dir is None:
-                logger.warning("Skill %r not found in workspace", name)
-                return
-
-            skill_dir_path = os.path.join(skills_dir, target_dir)
-            if await self._backend.is_dir(skill_dir_path):
-                await self._backend.delete_path(skill_dir_path)
-                logger.info(
-                    "Removed skill '%s' from %s",
-                    name,
-                    skill_dir_path,
-                )
-            else:
-                logger.warning(
-                    (
-                        "Skill directory %r not found on disk; "
-                        "removing index entry"
-                    ),
-                    skill_dir_path,
-                )
-
-            del existing[target_dir]
-            skills_file["skills"] = existing
-            mtime = await self._backend.stat_mtime(skills_dir)
-            skills_file["skills_dir_mtime"] = (
-                mtime if mtime is not None else 0.0
-            )
-            await self._save_skills_file(skills_dir, skills_file)
+            logger.warning("Skill %r not found in workspace", name)

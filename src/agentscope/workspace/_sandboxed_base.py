@@ -202,6 +202,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         await self._setup_mcp_gateway()
 
         # Set up the skills if not exists
+        await self._migrate_skill_layout()
         await self._setup_skills()
 
         self.is_alive = True

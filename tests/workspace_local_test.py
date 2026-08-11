@@ -615,7 +615,7 @@ description: {description}
         await workspace.initialize()
 
         # Verify skills were copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", "_workspace")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify skill directories exist
@@ -700,6 +700,7 @@ This skill is seeded through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            "_workspace",
             "tilde_skill",
         )
         self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
@@ -738,6 +739,7 @@ This skill is added through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            "_workspace",
             "tilde_skill",
         )
         self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
@@ -767,6 +769,7 @@ This skill is added through a tilde path.
         skills_hash_file = os.path.join(
             self.temp_dir.name,
             "skills",
+            "_workspace",
             ".skills",
         )
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -776,6 +779,7 @@ This skill is added through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            "_workspace",
             "test_skill_dup",
         )
         mtime_first = os.path.getmtime(skill_target)
@@ -816,7 +820,7 @@ This skill is added through a tilde path.
         await workspace.initialize()
 
         # Verify only one skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", "_workspace")
         skill_target = os.path.join(skills_dir, "test_skill_dedup")
         self.assertTrue(os.path.exists(skill_target))
 
@@ -892,7 +896,7 @@ This skill is added through a tilde path.
         await workspace.initialize()
 
         # Verify only the valid skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", "_workspace")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify valid skill exists
@@ -1835,3 +1839,142 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
             again = await ws.list_mcps(agent_id="agent-A", session_id="s1")
             self.assertEqual([m.name for m in again], ["a", "b"])
             self.assertEqual(len(connected), 6)
+
+
+class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
+    """Per-agent skill partitions under ``skills/``.
+
+    Covers:
+    - an agent's installs stay out of every other agent's listing
+    - constructor seeds land in the shared partition all agents read
+    - a pre-partition ``skills/`` is migrated on first initialize
+    - removal prefers the agent's own copy over the shared one
+    - an agent id that would escape ``skills/`` is refused
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.src_dir = tempfile.TemporaryDirectory()
+        self.skills_dir = os.path.join(self.temp_dir.name, "skills")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+        self.src_dir.cleanup()
+
+    def _make_skill(self, dir_name: str, skill_name: str) -> str:
+        """Write a minimal skill directory outside the workspace."""
+        path = os.path.join(self.src_dir.name, dir_name)
+        os.makedirs(path, exist_ok=True)
+        with open(
+            os.path.join(path, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                f"---\nname: {skill_name}\ndescription: d\n---\n\nbody\n",
+            )
+        return path
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_agent_installs_are_isolated(self) -> None:
+        """One agent's skill is invisible to another, visible unscoped."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["a-skill"],
+        )
+        self.assertEqual(await ws.list_skills(agent_id="B"), [])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills()],
+            ["a-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
+        )
+
+    async def test_seeds_are_shared_by_every_agent(self) -> None:
+        """``skill_paths`` have no owner, so all agents read them."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+
+        for agent_id in ("A", "B", None):
+            self.assertEqual(
+                [s.name for s in await ws.list_skills(agent_id=agent_id)],
+                ["seed-skill"],
+            )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, "_workspace", "seed-skill"),
+            ),
+        )
+
+    async def test_pre_partition_layout_is_migrated(self) -> None:
+        """Skills sitting directly under ``skills/`` move to _workspace."""
+        legacy = os.path.join(self.skills_dir, "legacy")
+        os.makedirs(legacy)
+        with open(
+            os.path.join(legacy, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("---\nname: old\ndescription: d\n---\n\nbody\n")
+        with open(
+            os.path.join(self.skills_dir, ".skills"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "skills_dir_mtime": 0.0,
+                    "skills": {"legacy": {"hash": "h", "skill_name": "old"}},
+                },
+                f,
+            )
+
+        ws = await self._workspace()
+
+        self.assertEqual(os.listdir(self.skills_dir), ["_workspace"])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["old"],
+        )
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(self.skills_dir, "_workspace", ".skills"),
+            ),
+        )
+
+    async def test_remove_prefers_the_agents_own_copy(self) -> None:
+        """A shared skill of the same name survives an agent's removal."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("shared", "dup"))
+        await ws.add_skill(self._make_skill("owned", "dup"), agent_id="A")
+
+        await ws.remove_skill("dup", agent_id="A")
+
+        self.assertFalse(
+            os.path.exists(os.path.join(self.skills_dir, "A", "owned")),
+        )
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["dup"],
+        )
+
+    async def test_traversing_agent_id_is_refused(self) -> None:
+        """An agent id is a directory name, so it may not escape."""
+        ws = await self._workspace()
+        for agent_id in ("../escape", "..", "_workspace"):
+            with self.assertRaises(ValueError):
+                await ws.list_skills(agent_id=agent_id)

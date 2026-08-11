@@ -141,7 +141,7 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
         self.tmp = self.enterContext(tempfile.TemporaryDirectory())
         self.workspace = LocalWorkspace(workdir=self.tmp)
         await self.workspace.initialize()
-        self.skills_dir = os.path.join(self.tmp, "skills")
+        self.skills_dir = os.path.join(self.tmp, "skills", "_workspace")
 
     async def test_directory_name_is_suffixed_when_taken(self) -> None:
         """A repeated name gets a numeric suffix rather than an error."""
