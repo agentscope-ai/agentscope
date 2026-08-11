@@ -78,6 +78,8 @@ from bocomadp.routers.platform_health import platform_health_router
 from bocomadp.routers.skill_router import skill_router
 from bocomadp.routers.stats import stats_router
 from bocomadp.routers.workspace_files import workspace_files_router
+from bocomadp.routers.session_usage import session_usage_router
+from bocomadp.routers.agent_tools import agent_tools_router
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
 # 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与本项目
@@ -358,6 +360,7 @@ app.state.runtime = runtime
 app.state.provider_manager = provider_manager
 app.state.multi_agent_manager = multi_agent_manager
 app.state.tool_registry = tool_registry
+app.state.mcp_registry = mcp_registry
 app.state.middleware_registry = middleware_registry
 app.state.hook_registry = hook_registry
 
@@ -366,6 +369,8 @@ app.state.hook_registry = hook_registry
 # ---------------------------------------------------------------------------
 app.include_router(health_router)
 app.include_router(stats_router)
+app.include_router(session_usage_router)
+app.include_router(agent_tools_router)
 app.include_router(chat_sse_router)
 app.include_router(uploads_router)
 app.include_router(agent_manage_router)

@@ -22,6 +22,8 @@ from .platform_health import platform_health_router
 from .stats import stats_router
 from .uploads import uploads_router
 from .credential_model import credential_model_router
+from .session_usage import session_usage_router
+from .agent_tools import agent_tools_router
 
 __all__ = [
     "chat_sse_router",
@@ -32,4 +34,6 @@ __all__ = [
     "stats_router",
     "uploads_router",
     "credential_model_router",
+    "session_usage_router",
+    "agent_tools_router",
 ]
