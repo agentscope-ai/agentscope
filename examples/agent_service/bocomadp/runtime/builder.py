@@ -107,7 +107,7 @@ class AgentBuilder:
                 # source 3: MCP servers (filtered by whitelist)
                 all_mcps = await workspace.list_mcps()
                 if whitelist:
-                    mcps = _filter_by_name(all_mcps, whitelist)
+                    mcps = self._filter_by_name(all_mcps, whitelist)
                 else:
                     mcps = all_mcps
                 ctx.workspace = workspace
@@ -119,7 +119,7 @@ class AgentBuilder:
 
         # Apply whitelist to all tools (builtins + project)
         if whitelist:
-            tools = _filter_tools(tools, whitelist)
+            tools = self._filter_tools(tools, whitelist)
 
         toolkit = Toolkit(
             tools=tools,
