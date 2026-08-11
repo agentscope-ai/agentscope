@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Unit tests for :class:`agentscope.model.ChatResponse` and its
 ``append_*`` helpers."""
+from copy import deepcopy
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -45,6 +47,33 @@ def _expected(
         "finished_reason": finished_reason,
         "metadata": {},
     }
+
+
+class DictMixinAttributeTest(TestCase):
+    """Test attribute access on dictionary-backed model responses."""
+
+    def setUp(self) -> None:
+        """Create a response used by the attribute protocol tests."""
+        self.response = ChatResponse(content=[], is_last=True)
+
+    def test_deepcopy_works_with_missing_special_attributes(self) -> None:
+        """``deepcopy`` should work when ``__deepcopy__`` is not a key."""
+        copied = deepcopy(self.response)
+
+        self.assertIsNot(copied, self.response)
+        self.assertDictEqual(dict(copied), dict(self.response))
+
+    def test_missing_attribute_uses_python_attribute_protocol(self) -> None:
+        """Missing attributes should raise ``AttributeError``."""
+        self.assertFalse(hasattr(self.response, "missing"))
+        self.assertEqual(
+            getattr(self.response, "missing", "fallback"),
+            "fallback",
+        )
+
+    def test_missing_mapping_key_still_raises_key_error(self) -> None:
+        """Mapping-style access should keep its existing ``KeyError``."""
+        self.assertRaises(KeyError, self.response.__getitem__, "missing")
 
 
 class ChatResponseAppendTest(IsolatedAsyncioTestCase):
