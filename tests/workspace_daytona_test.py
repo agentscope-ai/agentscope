@@ -1491,8 +1491,8 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     [skill.dir for skill in seeded],
                     [
-                        f"{workspace.workdir}/skills/live_seed_one",
-                        f"{workspace.workdir}/skills/live_seed_two",
+                        f"{workspace.workdir}/skills/default/live_seed_one",
+                        f"{workspace.workdir}/skills/default/live_seed_two",
                     ],
                 )
 

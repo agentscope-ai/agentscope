@@ -182,7 +182,7 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
         self.assertEqual(len(skills), 1)
         self.assertEqual(
             (skills[0].name, skills[0].description, skills[0].dir),
-            ("greeter", "Says hi.", f"{POD_WORKDIR}/skills/greeter"),
+            ("greeter", "Says hi.", f"{POD_WORKDIR}/skills/default/greeter"),
         )
 
         await ws.remove_skill("greeter")
