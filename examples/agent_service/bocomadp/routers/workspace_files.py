@@ -2,7 +2,7 @@
 """Workspace 文件列表 / 下载路由（迁移自框架 ``_router._workspace``）。
 
 接口清单：
-- GET /workspace/files           列出会话工作区文件（排除 data/sessions/skills 等内部目录）
+- GET /workspace/files           列出会话工作区文件（仅返回 user-data/outputs 交付物目录）
 - GET /workspace/files/download  按虚拟路径 /workspace/<rel> 下载原始文件
 
 与框架实现逐字对齐（含 ``resolve_workspace_path`` 的 ``backend._path_module.sep``
@@ -17,6 +17,7 @@ from __future__ import annotations
 import mimetypes
 import os
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
@@ -32,6 +33,10 @@ from agentscope.workspace._utils import (
     DEFAULT_DATA_DIR,
     DEFAULT_SESSIONS_DIR,
     DEFAULT_SKILLS_DIR,
+)
+from ..workspace._shared_pvc import (
+    DEFAULT_USER_DATA_DIR,
+    DEFAULT_USER_OUTPUTS_DIR,
 )
 
 workspace_files_router = APIRouter(prefix="/workspace", tags=["workspace-files"])
@@ -210,7 +215,7 @@ async def list_workspace_files(
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> WorkspaceFilesListResponse:
-    """列出会话工作区中的文件，排除内部目录。"""
+    """列出会话工作区中的文件，仅返回 ``user-data/outputs`` 交付物目录。"""
     workspace = await _resolve_workspace(
         user_id,
         agent_id,
@@ -220,7 +225,21 @@ async def list_workspace_files(
     )
     backend = workspace.get_backend()
     files: list[WorkspaceFileInfo] = []
-    await _scan_workspace_files(backend, workspace.workdir, "", 0, files)
+    outputs_dir = backend.join_path(
+        workspace.workdir,
+        DEFAULT_USER_DATA_DIR,
+        DEFAULT_USER_OUTPUTS_DIR,
+    )
+    # rel 前缀保持与磁盘布局一致（user-data/outputs），
+    # 使 virtual_path 形如 /workspace/user-data/outputs/<file>，
+    # 下载接口按虚拟路径解析即可直接命中，无需改动。
+    await _scan_workspace_files(
+        backend,
+        outputs_dir,
+        f"{DEFAULT_USER_DATA_DIR}/{DEFAULT_USER_OUTPUTS_DIR}",
+        0,
+        files,
+    )
     files.sort(key=lambda f: f.virtual_path)
     return WorkspaceFilesListResponse(
         files=files,
@@ -262,16 +281,30 @@ async def download_workspace_file(
             f"Path is not a file: {path}",
         )
     content = await backend.read_file(resolved)
+    filename = backend.basename(resolved)
     content_type = (
-        mimetypes.guess_type(backend.basename(resolved))[0]
+        mimetypes.guess_type(filename)[0]
         or "application/octet-stream"
     )
+    # RFC 5987：响应头按 latin-1 编码，非 ASCII 文件名（如中文）必须用
+    # ``filename*=UTF-8''<percent-encoded>`` 形式传输，否则 UnicodeEncodeError。
+    # ASCII 文件名走常规 ``filename``；二者都给出时浏览器优先取 ``filename*``。
+    try:
+        filename.encode("latin-1")
+    except UnicodeEncodeError:
+        fallback = filename.encode("ascii", errors="ignore").decode(
+            "ascii",
+        ).strip() or "download"
+        content_disposition = (
+            f'attachment; filename="{fallback}"; '
+            f"filename*=UTF-8''{quote(filename, safe='')}"
+        )
+    else:
+        content_disposition = f'attachment; filename="{filename}"'
     return Response(
         content=content,
         media_type=content_type,
         headers={
-            "Content-Disposition": (
-                f'attachment; filename="{backend.basename(resolved)}"'
-            ),
+            "Content-Disposition": content_disposition,
         },
     )
