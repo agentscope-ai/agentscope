@@ -2117,3 +2117,20 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
         )
         with open(self.skill_file, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["skills"], {})
+
+    async def test_purge_agent_drops_its_partition_only(self) -> None:
+        """Deleting an agent takes its skills, not the shared ones."""
+        ws = await self._seeded_workspace()
+        await ws.set_session_skills([], agent_id="A", session_id="s1")
+
+        await ws.purge_agent(agent_id="A")
+
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["shared-skill"],
+        )
+        self.assertFalse(
+            os.path.exists(os.path.join(self.temp_dir.name, "skills", "A")),
+        )
+        with open(self.skill_file, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["skills"], {})

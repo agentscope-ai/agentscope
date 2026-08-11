@@ -1630,13 +1630,14 @@ class WorkspaceBase:
             )
             return {}
 
-        visibility: dict[tuple[str, str], list[str]] = {}
         if not isinstance(data, dict):
             logger.warning(
                 "%s is not an object; ignoring it.",
                 self._skill_file,
             )
             return {}
+
+        visibility: dict[tuple[str, str], list[str]] = {}
         for agent_id, by_session in (data.get("skills") or {}).items():
             if not isinstance(by_session, dict):
                 continue
@@ -1702,8 +1703,10 @@ class WorkspaceBase:
         backend = self._backend
         if backend is None:
             return
-        entries = await backend.list_dir(self._skill_partition(None))
-        if entries:
+        partition = self._skill_partition(None)
+        if await backend.is_dir(partition) and await backend.list_dir(
+            partition,
+        ):
             return
         for path in self.skill_paths:
             try:
