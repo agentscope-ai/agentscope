@@ -11,18 +11,6 @@ class AddSkillRequest(BaseModel):
     skill_path: str
 
 
-class SelectSkillsRequest(BaseModel):
-    """The request to choose which skills a session sees."""
-
-    names: list[str] | None = Field(
-        description=(
-            "Agent-facing skill names to keep. An empty list hides "
-            "every skill; null stops selecting, so the session sees "
-            "everything its agent has."
-        ),
-    )
-
-
 class AddFromLibraryRequest(BaseModel):
     """The request to put library MCPs into a workspace."""
 

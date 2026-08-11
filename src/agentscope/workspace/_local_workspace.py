@@ -168,7 +168,6 @@ class LocalWorkspace(WorkspaceBase):
         os.makedirs(self.workdir, exist_ok=True)
 
         self._mcp_specs = await self._restore_mcp_specs()
-        self._skill_visibility = await self._restore_skill_visibility()
 
         # Seeds have no owning agent, so they go to the template
         os.makedirs(self._skills_dir, exist_ok=True)
@@ -429,9 +428,7 @@ class LocalWorkspace(WorkspaceBase):
             await self._backend.delete_path(mcp_file)
 
         async with self._skill_lock:
-            self._skill_visibility.clear()
             self._equipped_partitions.clear()
-            await self._backend.delete_path(self._skill_file)
             skills_path = os.path.join(self.workdir, "skills")
             await self._backend.delete_path(skills_path)
 
@@ -443,23 +440,18 @@ class LocalWorkspace(WorkspaceBase):
         self,
         *,
         agent_id: str | None = None,
-        session_id: str | None = None,
     ) -> list[Skill]:
-        """List the skills one session can use.
+        """List the skills one agent can use.
 
         Reads the agent's own partition — equipping it from the seed
         template on the agent's first appearance — using the
-        partition's ``.index`` for agent-facing names, then narrows the
-        result to what the session selected.
+        partition's ``.index`` for agent-facing names.
 
         Args:
             agent_id (`str | None`, optional):
                 The agent asking. ``None`` reads the default
                 partition, which is where an SDK caller driving the
                 workspace without agents puts everything.
-            session_id (`str | None`, optional):
-                The session asking. A session that never selected
-                sees everything its agent has.
 
         Returns:
             `list[Skill]`:
@@ -467,8 +459,7 @@ class LocalWorkspace(WorkspaceBase):
         """
         partition = await self._equip_partition(agent_id)
         async with self._skill_lock:
-            skills = await self._list_partition_skills(partition)
-        return self._select_skills(skills, agent_id, session_id)
+            return await self._list_partition_skills(partition)
 
     async def _list_partition_skills(self, skills_dir: str) -> list[Skill]:
         """List the skills held by one partition.

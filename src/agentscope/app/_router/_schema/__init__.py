@@ -24,7 +24,6 @@ from ._workspace import (
     DirectoryListing,
     DownloadTokenResponse,
     MCPClientStatus,
-    SelectSkillsRequest,
     ToolInfo,
 )
 from ._embedding_model import (
@@ -104,7 +103,6 @@ __all__ = [
     "DirectoryListing",
     "DownloadTokenResponse",
     "MCPClientStatus",
-    "SelectSkillsRequest",
     "ToolInfo",
     # Agent
     "AgentSchemaResponse",

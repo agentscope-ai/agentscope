@@ -60,7 +60,6 @@ class _FakeWorkspace:
     async def list_skills(
         self,
         agent_id: str,  # pylint: disable=unused-argument
-        session_id: str,  # pylint: disable=unused-argument
     ) -> list:
         """Return the configured workspace skills."""
         return list(self._skills)

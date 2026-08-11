@@ -191,10 +191,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             self._backend is not None
         ), "_provision_backend must set self._backend before returning"
 
-        # Restore MCP declarations from .mcp and skill selections
-        # from .skills
+        # Restore MCP declarations from .mcp
         self._mcp_specs = await self._restore_mcp_specs()
-        self._skill_visibility = await self._restore_skill_visibility()
 
         # Set up the workspace layout
         await self._ensure_workspace_layout()
@@ -251,7 +249,6 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         async with self._mcp_lock, self._skill_lock:
             await self._close_all_mcp_instances()
             self._mcp_specs.clear()
-            self._skill_visibility.clear()
             self._equipped_partitions.clear()
 
             for path in (
@@ -259,7 +256,6 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 self._data_dir,
                 self._skills_dir,
                 self._mcp_file,
-                self._skill_file,
             ):
                 await backend.delete_path(path)
 
