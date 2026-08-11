@@ -59,13 +59,13 @@ class AgentBuilder:
 
         cfg = getattr(ctx, "agent_config", None)
 
-        # Resolve tools (apply whitelist if configured)
-        tools = []
+        # Resolve tools (apply whitelist across all sources)
+        whitelist: list[str] = getattr(cfg, "enabled_tools", None) or []
+        tools: list = []
+
+        # source 1: project tools from ToolRegistry
         if self._tool_registry is not None:
             tools = self._tool_registry.list_tools()
-        whitelist = getattr(cfg, "enabled_tools", None) or []
-        if whitelist:
-            tools = self._filter_tools(tools, whitelist)
 
         # Resolve model
         model = None
@@ -89,7 +89,7 @@ class AgentBuilder:
         # Resolve max_iters (config > default)
         max_iters = getattr(cfg, "max_iters", None) or 20
 
-        # Resolve workspace skills + MCPs (matches built-in /chat path)
+        # Resolve workspace skills + MCPs + builtins (matches built-in /chat path)
         skills: list = []
         mcps: list = []
         if self._workspace_manager is not None:
@@ -101,14 +101,25 @@ class AgentBuilder:
                     agent_id=getattr(ctx, "agent_id", "default"),
                     session_id=session_id,
                 )
+                # source 2: workspace builtins (Bash, Read, Write, etc.)
+                tools += await workspace.list_tools()
                 skills = await workspace.list_skills()
-                mcps = await workspace.list_mcps()
+                # source 3: MCP servers (filtered by whitelist)
+                all_mcps = await workspace.list_mcps()
+                if whitelist:
+                    mcps = self._filter_by_name(all_mcps, whitelist)
+                else:
+                    mcps = all_mcps
                 ctx.workspace = workspace
             except Exception:
                 logger.warning(
                     "builder: workspace load failed, skills/mcps skipped",
                     exc_info=True,
                 )
+
+        # Apply whitelist to all tools (builtins + project)
+        if whitelist:
+            tools = self._filter_tools(tools, whitelist)
 
         toolkit = Toolkit(
             tools=tools,
@@ -152,6 +163,11 @@ class AgentBuilder:
             if name in whitelist:
                 result.append(t)
         return result
+
+    @staticmethod
+    def _filter_by_name(items: list, whitelist: list[str]) -> list:
+        """Keep items whose ``.name`` attribute appears in *whitelist*."""
+        return [item for item in items if getattr(item, "name", "") in whitelist]
 
     def _build_prompt(self, ctx: Any) -> str:
         """Default system prompt when no agent config is set."""
