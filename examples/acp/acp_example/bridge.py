@@ -345,7 +345,9 @@ _PERMISSION_OPTIONS = [
         kind="allow_always",
     ),
     PermissionOption(
-        option_id="reject_once", name="Reject", kind="reject_once"
+        option_id="reject_once",
+        name="Reject",
+        kind="reject_once",
     ),
     PermissionOption(
         option_id="reject_always",

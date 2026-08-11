@@ -16,15 +16,15 @@ from acp import connect_to_agent, text_block
 from acp.schema import ClientCapabilities, FileSystemCapabilities
 from acp import run_agent
 
-from agentscope.message import TextBlock
-from agentscope.model import ChatResponse
-
 import acp_example.agent as agent_mod
 from acp_example.server import AgentScopeAcpAgent
 
 from mock_client import FakeClient
 from mock_model import MockModel
 from test_server import make_config
+
+from agentscope.message import TextBlock
+from agentscope.model import ChatResponse
 
 
 async def test_full_turn_over_socketpair(
@@ -39,7 +39,8 @@ async def test_full_turn_over_socketpair(
                 ChatResponse(content=[TextBlock(text="Hi ")], is_last=False),
                 ChatResponse(content=[TextBlock(text="there")], is_last=False),
                 ChatResponse(
-                    content=[TextBlock(text="Hi there")], is_last=True
+                    content=[TextBlock(text="Hi there")],
+                    is_last=True,
                 ),
             ],
         ],

@@ -45,6 +45,9 @@ class MockModel(ChatModelBase):
         self.formatter = OpenAIChatFormatter()
         self.responses: list = []
         self.cnt = 0
+        # Re-declared here (the base __init__ also sets it) so that
+        # set_responses' toggling is visibly an attribute update.
+        self.stream = True
 
     def set_responses(self, responses: list) -> None:
         """Script the upcoming model calls."""

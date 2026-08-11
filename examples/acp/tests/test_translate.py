@@ -7,6 +7,9 @@ from acp.schema import (
     ToolCallStart,
 )
 
+from acp_example.bridge import OpRegistry
+from acp_example.translate import Translator
+
 from agentscope.event import (
     HintBlockEvent,
     ModelCallEndEvent,
@@ -24,9 +27,6 @@ from agentscope.event import (
     ToolResultTextDeltaEvent,
 )
 from agentscope.message import ToolResultState
-
-from acp_example.bridge import OpRegistry
-from acp_example.translate import Translator
 
 REPLY = "reply-1"
 

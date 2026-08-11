@@ -15,18 +15,18 @@ import pytest
 
 from acp import text_block
 
+from acp_example.bridge import ClientBackend, OpRegistry
+from acp_example.translate import Translator
+
+from mock_client import FakeClient
+from test_server import setup, text_script, tool_call_script
+
 from agentscope.event import (
     ToolResultDataDeltaEvent,
     ToolResultEndEvent,
     ToolResultStartEvent,
 )
 from agentscope.message import ToolResultState
-
-from acp_example.bridge import ClientBackend, OpRegistry
-from acp_example.translate import Translator
-
-from mock_client import FakeClient
-from test_server import setup, text_script, tool_call_script
 
 REPLY = "reply-1"
 

@@ -16,16 +16,16 @@ import pytest
 from acp import RequestError, text_block
 from acp.schema import ClientCapabilities, FileSystemCapabilities
 
-from agentscope.message import TextBlock, ToolCallBlock
-from agentscope.model import ChatResponse
-from agentscope.types import ReplyFinishedReason
-
 import acp_example.agent as agent_mod
 from acp_example.config import Config
 from acp_example.server import AgentScopeAcpAgent, _stop_reason
 
 from mock_client import FakeClient
 from mock_model import MockModel
+
+from agentscope.message import TextBlock, ToolCallBlock
+from agentscope.model import ChatResponse
+from agentscope.types import ReplyFinishedReason
 
 FULL_CAPS = ClientCapabilities(
     fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
