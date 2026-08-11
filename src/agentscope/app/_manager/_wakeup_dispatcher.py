@@ -12,8 +12,9 @@ funnels through this one serial consumer.
 Each queue entry carries a ``kind`` that selects how a busy session is
 handled:
 
-- ``wake`` (idle-session wake-up, ``input_msg=None``): skipped while the
-  session is already running — the live run will drain the inbox.
+- ``wake`` (idle-session wake-up, ``input_msg=None``): re-queued while the
+  session is already running so inbox entries that arrive after the live
+  run's final drain are not stranded.
 - ``resume`` (a parked HITL run being fed its result): must *not* be
   skipped while running, because the session is typically still running
   the parked tail at trigger time. It is re-queued after a short backoff
@@ -54,21 +55,20 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
     UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
 )
 
-# Delay before re-queuing a ``resume`` trigger whose target session is
-# still running (the parked run is finishing and about to free its
-# lock). Short enough to feel instant to the user, long enough to avoid
-# a hot re-enqueue loop while the lock is held.
-_RESUME_RETRY_BACKOFF_SECS = 0.1
+# Delay before re-queuing a trigger whose target session is still running.
+# Short enough to feel instant to the user, long enough to avoid a hot
+# re-enqueue loop while the lock is held.
+_TRIGGER_RETRY_BACKOFF_SECS = 0.1
 
 
 class WakeupDispatcher:
     """One asyncio task per process, draining the shared trigger queue.
 
     Args:
-        message_bus (`MessageBus`):
-            Application message bus. Used for signal subscription,
-            queue drain, ``session_is_running`` checks, and re-queuing
-            deferred ``resume`` triggers.
+            message_bus (`MessageBus`):
+                Application message bus. Used for signal subscription,
+                queue drain, ``session_is_running`` checks, and re-queuing
+                deferred triggers.
         storage (`StorageBase`):
             Persistent storage backend. Consulted before spawning a
             run so triggers whose target session has been deleted are
@@ -104,7 +104,7 @@ class WakeupDispatcher:
         self._chat_service = chat_service
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
-        # Detached backoff timers for deferred ``resume`` re-enqueues.
+        # Detached backoff timers for deferred trigger re-enqueues.
         # Held so they are not garbage-collected mid-sleep and can be
         # cancelled on shutdown.
         self._retry_tasks: set[asyncio.Task] = set()
@@ -274,19 +274,16 @@ class WakeupDispatcher:
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
-            if carries_input:
-                # The session is busy. Do NOT drop input-carrying triggers
-                # — re-queue after a short backoff so they land once the
-                # running turn releases its lock.
-                self._schedule_input_retry(
-                    user_id,
-                    session_id,
-                    agent_id,
-                    kind,
-                    input_msg,
-                )
-            # ``wake`` triggers are safe to drop while running — the
-            # live run drains the inbox itself.
+            # The session may already have completed its final inbox drain.
+            # Keep every trigger alive until the running turn releases its
+            # lock; empty wake-ups are discarded inside ChatService.
+            self._schedule_trigger_retry(
+                user_id,
+                session_id,
+                agent_id,
+                kind,
+                input_msg,
+            )
             return
 
         # Orphan guard: the queue is unaware of session lifecycle. A
@@ -337,25 +334,18 @@ class WakeupDispatcher:
                 name=f"{kind}-run:{session_id}",
             )
         except RuntimeError:
-            # A local run was registered between the running-check and
-            # the spawn. For ``wake`` that run will drain the inbox; for
-            # input-carrying kinds re-queue so the input is not lost.
-            if carries_input:
-                self._schedule_input_retry(
-                    user_id,
-                    session_id,
-                    agent_id,
-                    kind,
-                    input_msg,
-                )
-            else:
-                logger.debug(
-                    "WakeupDispatcher: skipping wake trigger for session "
-                    "%s; a local run is already registered.",
-                    session_id,
-                )
+            # A local run was registered between the running-check and the
+            # spawn. Re-queue after it finishes for the same reason as the
+            # distributed-lock path above.
+            self._schedule_trigger_retry(
+                user_id,
+                session_id,
+                agent_id,
+                kind,
+                input_msg,
+            )
 
-    def _schedule_input_retry(
+    def _schedule_trigger_retry(
         self,
         user_id: str,
         session_id: str,
@@ -367,8 +357,7 @@ class WakeupDispatcher:
         | Msg
         | None,
     ) -> None:
-        """Re-enqueue an input-carrying (``resume``/``message``) trigger
-        after a short backoff.
+        """Re-enqueue a trigger after a short backoff.
 
         Spawns a detached timer that sleeps, then re-enqueues the trigger
         (which re-fires the signal, re-driving the drain). This keeps the
@@ -383,20 +372,20 @@ class WakeupDispatcher:
             agent_id (`str`):
                 The agent that owns the session.
             kind (`str`):
-                The trigger kind to re-enqueue (``resume`` / ``message``).
+                The trigger kind to re-enqueue.
             input_msg:
                 The parsed input to redeliver.
         """
 
         async def _retry() -> None:
             try:
-                await asyncio.sleep(_RESUME_RETRY_BACKOFF_SECS)
+                await asyncio.sleep(_TRIGGER_RETRY_BACKOFF_SECS)
                 await enqueue_run_trigger(
                     self._bus,
                     user_id=user_id,
                     session_id=session_id,
                     agent_id=agent_id,
-                    kind=kind,  # type: ignore[arg-type]  # resume | message
+                    kind=kind,  # type: ignore[arg-type]  # all trigger kinds
                     inputs=input_msg,
                 )
             except asyncio.CancelledError:

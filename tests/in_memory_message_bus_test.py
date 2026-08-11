@@ -79,6 +79,16 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         self.assertEqual([p for _id, p in a], [{"x": 1}])
         self.assertEqual([p for _id, p in b], [{"x": 2}])
 
+    async def test_queue_len_is_non_destructive(self) -> None:
+        """Queue length reports pending entries without consuming them."""
+        self.assertEqual(await self.bus.queue_len("k"), 0)
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2})
+
+        self.assertEqual(await self.bus.queue_len("k"), 2)
+        entries = await self.bus.queue_drain("k", max_count=10)
+        self.assertEqual([payload["i"] for _, payload in entries], [1, 2])
+
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
     """Mode C — replay log: append / read with cursor / trim."""

@@ -16,7 +16,7 @@ else:
     Redis = Any
 
 
-class RedisMessageBus(MessageBus):
+class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     """Redis-backed implementation of :class:`MessageBus`.
 
     Mapping of bus modes to Redis primitives:
@@ -275,6 +275,19 @@ class RedisMessageBus(MessageBus):
                 when the key does not exist.
         """
         await self._client.delete(key)
+
+    async def queue_len(self, key: str) -> int:
+        """Return the number of pending entries without consuming them.
+
+        Args:
+            key (`str`):
+                Stream key for the drain queue.
+
+        Returns:
+            `int`:
+                Number of entries currently stored in the stream.
+        """
+        return int(await self._client.xlen(key))
 
     # ------------------------------------------------------------------
     # Mode C — replay log

@@ -33,7 +33,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     WAKEUP_KIND_WAKE: Final = "wake"
     """Trigger kind: wake an *idle* session to drain pending inbox
     content. The dispatcher spawns the run with ``input_msg=None`` and
-    skips the session entirely while it is already running."""
+    re-queues it while the session is already running."""
 
     WAKEUP_KIND_RESUME: Final = "resume"
     """Trigger kind: resume a session parked on an awaiting tool call by
@@ -47,8 +47,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     inbound channel message). The dispatcher spawns the run with the
     carried message as ``input_msg`` so it is persisted and reasoned over
     as a real user turn. Like ``resume`` (and unlike ``wake``) it carries
-    input, so it is re-queued rather than dropped while the session is
-    running."""
+    input, so it is re-queued while the session is running."""
 
     # ------------------------------------------------------------------
     # Cross-session UI projection — a generic per-session Redis-hash

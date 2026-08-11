@@ -193,6 +193,26 @@ class InMemoryMessageBus(MessageBus):
         """
         self._queues.pop(key, None)
 
+    async def queue_len(self, key: str) -> int:
+        """Return the number of pending entries without consuming them.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+
+        Returns:
+            `int`:
+                Number of unexpired entries currently stored under ``key``.
+        """
+        queue = self._queues.get(key)
+        if not queue:
+            return 0
+        now = time.monotonic()
+        queue[:] = [
+            entry for entry in queue if entry[2] is None or entry[2] > now
+        ]
+        return len(queue)
+
     # ------------------------------------------------------------------
     # Mode C — replay log
     # ------------------------------------------------------------------

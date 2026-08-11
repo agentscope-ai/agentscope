@@ -288,12 +288,12 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_active_session_skipped(self) -> None:
-        """If the target session is already running, no chat run is
-        spawned for it."""
+    async def test_wake_running_session_requeues_until_free(self) -> None:
+        """A plain wake remains pending until the running session exits."""
         bus = _FakeBus()
         chat = _FakeChatService()
-        bus._locks.add(MessageBus._SESSION_LOCK_KEY.format(sid="busy"))
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="busy")
+        bus._locks.add(lock_key)
 
         async with WakeupDispatcher(
             message_bus=bus,
@@ -306,9 +306,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                 {"user_id": "u", "session_id": "busy", "agent_id": "a"},
             )
             await bus.publish(MessageBusKeys.wakeup_signal(), {})
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.25)
+            self.assertEqual(chat.calls, [])
 
-        self.assertEqual(chat.calls, [])
+            bus._locks.discard(lock_key)
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["session_id"], "busy")
 
     async def test_malformed_entry_skipped(self) -> None:
         """A wake-up entry missing required fields is logged and skipped,

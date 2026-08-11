@@ -90,9 +90,9 @@ async def enqueue_run_trigger(
 
     ``kind`` selects how the dispatcher handles the entry:
 
-    - ``wake`` — idle-session wake-up.  The dispatcher skips the entry
-      when the session is already running (the live run drains the inbox
-      itself).  ``inputs`` must be ``None``.
+    - ``wake`` — idle-session wake-up.  The dispatcher re-queues the entry
+      while the session is already running, then skips the deferred run if
+      the inbox has already been drained.  ``inputs`` must be ``None``.
     - ``resume`` — resume a HITL-parked session with a user confirmation,
       an external execution result, or a user interrupt.  The dispatcher
       waits (with backoff) until the parked run releases its lock, then

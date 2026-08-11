@@ -500,6 +500,39 @@ optional):
         )
         return True
 
+    async def _skip_empty_wakeup(
+        self,
+        session_id: str,
+        input_msg: object,
+    ) -> bool:
+        """Whether a wake-only run has no pending inbox work.
+
+        The check must run under the distributed session lock. A deferred or
+        duplicate wake may arrive after another run already drained the
+        inbox; returning early avoids an unprompted LLM turn in that case.
+
+        Args:
+            session_id (`str`):
+                Session whose inbox should be inspected.
+            input_msg (`object`):
+                Run input; only ``None`` represents a plain wake.
+
+        Returns:
+            `bool`:
+                ``True`` when the run should finish without invoking the
+                agent.
+        """
+        if input_msg is not None:
+            return False
+        if await self._message_bus.inbox_len(session_id) != 0:
+            return False
+        logger.info(
+            "Skipping empty wake-up for session %s: inbox has already "
+            "been drained.",
+            session_id,
+        )
+        return True
+
     async def _run_impl(
         # pylint: disable=too-many-statements,too-many-branches
         self,
@@ -799,6 +832,9 @@ optional):
             lock_key,
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
+            if await self._skip_empty_wakeup(session_id, input_msg):
+                return
+
             # Channel-bound run: signal the output forwarder so the reply
             # is streamed back to the platform chat. Covers scheduled /
             # background wakes, not just inbound channel messages.

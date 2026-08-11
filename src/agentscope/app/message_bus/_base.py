@@ -167,6 +167,28 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Queue identifier.
         """
 
+    async def queue_len(  # pylint: disable=unused-argument
+        self,
+        key: str,
+    ) -> int | None:
+        """Return the number of pending entries without consuming them.
+
+        Transports that cannot inspect a queue non-destructively may return
+        ``None``. This default keeps custom message-bus implementations
+        compatible while allowing built-in transports to suppress duplicate
+        empty wake-ups.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+
+        Returns:
+            `int | None`:
+                Number of entries currently stored in the queue, or ``None``
+                when the transport cannot determine it non-destructively.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Mode C — replay log (multi-consumer, externally bounded)
     # ------------------------------------------------------------------
@@ -680,6 +702,20 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             self._INBOX_KEY.format(sid=session_id),
             max_count=max_count,
         )
+
+    async def inbox_len(self, session_id: str) -> int | None:
+        """Return the number of pending inbox entries for a session.
+
+        Args:
+            session_id (`str`):
+                Session whose inbox should be inspected.
+
+        Returns:
+            `int | None`:
+                Number of entries currently waiting in the inbox, or
+                ``None`` when the transport cannot determine it.
+        """
+        return await self.queue_len(self._INBOX_KEY.format(sid=session_id))
 
     # Wakeup ----------------------------------------------------------
 
