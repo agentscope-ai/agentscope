@@ -89,6 +89,9 @@ DEFAULT_SESSIONS_DIR = "sessions"
 #: Standard workspace-relative file for persisted MCP registrations.
 DEFAULT_MCP_FILE = ".mcp"
 
+#: Standard workspace-relative file for per-session skill selections.
+DEFAULT_SKILL_FILE = ".skills"
+
 DEFAULT_GATEWAY_VENV = ".venv"
 DEFAULT_GATEWAY_LOG = "gateway.log"
 DEFAULT_GATEWAY_SCRIPT = "_mcp_gateway_app.py"

@@ -91,6 +91,7 @@ from ._utils import (
     DEFAULT_DATA_DIR,
     DEFAULT_MCP_FILE,
     DEFAULT_SESSIONS_DIR,
+    DEFAULT_SKILL_FILE,
     DEFAULT_SKILLS_DIR,
 )
 
@@ -102,6 +103,9 @@ MCP_FILE_VERSION = 2
 #: single agent: constructor seeds, unscoped installs, and whatever a
 #: pre-partition workspace already had. Every agent reads it.
 WORKSPACE_SKILL_PARTITION = "_workspace"
+
+#: Current ``.skills`` schema version.
+SKILL_FILE_VERSION = 1
 
 _DEFAULT_MAX_LIVE_STATEFUL_MCPS = 40
 
@@ -119,15 +123,15 @@ _MIGRATE_SKILLS_SHIM = (
     "        continue\n"
     "    path = os.path.join(skills, entry)\n"
     "    if entry == '.skills' and os.path.isfile(path):\n"
-    "        stale.append(entry)\n"
+    "        stale.append((entry, '.index'))\n"
     "    elif os.path.isfile(os.path.join(path, 'SKILL.md')):\n"
-    "        stale.append(entry)\n"
+    "        stale.append((entry, entry))\n"
     "if not stale:\n"
     "    sys.exit(0)\n"
     "dst = os.path.join(skills, partition)\n"
     "os.makedirs(dst, exist_ok=True)\n"
-    "for entry in stale:\n"
-    "    shutil.move(os.path.join(skills, entry), os.path.join(dst, entry))\n"
+    "for entry, name in stale:\n"
+    "    shutil.move(os.path.join(skills, entry), os.path.join(dst, name))\n"
     "print(len(stale))\n"
 )
 
@@ -247,6 +251,11 @@ class WorkspaceBase:
     _mcp_lock: asyncio.Lock
     """Guards mutation of the MCP dicts and the ``.mcp`` file."""
 
+    _skill_visibility: dict[tuple[str, str], list[str]]
+    """Selected ``<partition>/<dir>`` skills keyed by agent id and
+    session id. A missing session sees everything its agent has; one
+    persisted with an empty list sees none."""
+
     _skill_lock: asyncio.Lock
     """Guards mutation of the ``skills/`` directory."""
 
@@ -308,6 +317,7 @@ class WorkspaceBase:
         self._mcp_specs = {}
         self._mcp_instances = {}
         self._mcp_last_used = {}
+        self._skill_visibility = {}
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
@@ -399,6 +409,11 @@ class WorkspaceBase:
     def _mcp_file(self) -> str:
         """``${workdir}/.mcp`` — persisted MCP registrations."""
         return self.get_backend().join_path(self.workdir, DEFAULT_MCP_FILE)
+
+    @property
+    def _skill_file(self) -> str:
+        """``${workdir}/.skills`` — per-session skill selections."""
+        return self.get_backend().join_path(self.workdir, DEFAULT_SKILL_FILE)
 
     @property
     def is_persistent(self) -> bool:
@@ -662,10 +677,12 @@ class WorkspaceBase:
         """Drop everything this workspace holds for one session.
 
         Closes the session's MCP instances, forgets its ``.mcp``
-        declaration and deletes its offload directory. Removing every
-        MCP one by one is not equivalent: an emptied session persists
-        as ``[]``, which is a meaningful state, and would keep dead
-        sessions in ``.mcp`` forever.
+        declaration and ``.skills`` selection, and deletes its offload
+        directory. Removing every MCP one by one is not equivalent: an
+        emptied session persists as ``[]``, which is a meaningful
+        state, and would keep dead sessions in ``.mcp`` forever. No
+        skill content is deleted — a session selects skills, it never
+        owns them.
 
         Best-effort — failures are logged, never raised, so a purge
         cannot block session deletion.
@@ -684,6 +701,14 @@ class WorkspaceBase:
             forgotten = self._mcp_specs.pop((agent_id, session_id), None)
             if forgotten is not None:
                 await self._save_mcp_file()
+
+        async with self._skill_lock:
+            unselected = self._skill_visibility.pop(
+                (agent_id, session_id),
+                None,
+            )
+            if unselected is not None:
+                await self._save_skill_file()
 
         if self._backend is None or not session_id:
             return
@@ -1083,16 +1108,18 @@ class WorkspaceBase:
         self,
         *,
         agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[Skill]:
-        """Enumerate the skills one agent can use.
+        """Enumerate the skills one session can use.
 
         Reads the agent's own partition plus the shared one, parses
         every ``skills/<partition>/<dir>/SKILL.md``'s YAML front
         matter, and yields one :class:`Skill` per file that has both
-        ``name`` and ``description``.
+        ``name`` and ``description``. What the session selected via
+        :meth:`set_session_skills` then narrows the result.
 
         Subclasses with richer indexing (e.g.
-        :class:`LocalWorkspace` with its ``.skills`` hash index)
+        :class:`LocalWorkspace` with its ``.index`` hash index)
         override this method.
 
         Args:
@@ -1100,11 +1127,15 @@ class WorkspaceBase:
                 The agent asking. ``None`` reads every partition,
                 which is what unscoped callers saw before ``skills/``
                 was partitioned.
+            session_id (`str | None`, optional):
+                The session asking. A session that never selected
+                sees everything its agent has.
 
         Returns:
             `list[Skill]`:
-                Skills available to the agent. Empty when ``skills/``
-                is missing or contains no parseable ``SKILL.md``.
+                Skills available to the session. Empty when
+                ``skills/`` is missing or contains no parseable
+                ``SKILL.md``.
         """
         import frontmatter as fm
 
@@ -1142,7 +1173,99 @@ class WorkspaceBase:
                     )
                 except Exception as e:
                     logger.warning("Failed to load skill %s: %s", md_path, e)
-        return skills
+        return self._select_skills(skills, agent_id, session_id)
+
+    def _select_skills(
+        self,
+        skills: list[Skill],
+        agent_id: str | None,
+        session_id: str | None,
+    ) -> list[Skill]:
+        """Narrow ``skills`` to what one session selected.
+
+        Args:
+            skills (`list[Skill]`):
+                Everything the agent can reach.
+            agent_id (`str | None`):
+                The agent asking.
+            session_id (`str | None`):
+                The session asking.
+
+        Returns:
+            `list[Skill]`:
+                The selected skills, or all of them when the session
+                never selected.
+        """
+        selected = self._skill_visibility.get(
+            (agent_id or "", session_id or ""),
+        )
+        if selected is None:
+            return skills
+        backend = self.get_backend()
+        chosen: list[Skill] = []
+        for skill in skills:
+            partition = backend.basename(backend.dirname(skill.dir))
+            if f"{partition}/{backend.basename(skill.dir)}" in selected:
+                chosen.append(skill)
+        return chosen
+
+    async def set_session_skills(
+        self,
+        names: list[str] | None,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> None:
+        """Choose which of the agent's skills one session sees.
+
+        Skills are shared storage, so a session selects rather than
+        owns: nothing is copied or deleted here, and the selection
+        only narrows what reaches the session's prompt. ``None`` drops
+        the selection and the session follows its agent again; ``[]``
+        hides every skill.
+
+        Args:
+            names (`list[str] | None`):
+                Agent-facing skill names to keep, or ``None`` to stop
+                selecting.
+            agent_id (`str`):
+                The owning agent.
+            session_id (`str`):
+                The session being configured.
+
+        Raises:
+            KeyError:
+                If a name is not among the agent's skills.
+        """
+        if names is None:
+            async with self._skill_lock:
+                dropped = self._skill_visibility.pop(
+                    (agent_id, session_id),
+                    None,
+                )
+                if dropped is not None:
+                    await self._save_skill_file()
+            return
+
+        backend = self.get_backend()
+        available: dict[str, str] = {}
+        for skill in await self.list_skills(agent_id=agent_id):
+            partition = backend.basename(backend.dirname(skill.dir))
+            available[
+                skill.name
+            ] = f"{partition}/{backend.basename(skill.dir)}"
+        missing = [name for name in names if name not in available]
+        if missing:
+            raise KeyError(
+                f"Skills {missing} not found. "
+                f"Available: {sorted(available)}",
+            )
+
+        async with self._skill_lock:
+            self._skill_visibility[(agent_id, session_id)] = [
+                available[name] for name in names
+            ]
+            await self._save_skill_file()
 
     async def add_skill(
         self,
@@ -1409,6 +1532,83 @@ class WorkspaceBase:
             )
         await backend.delete_path(target_dir)
         logger.info("Removed skill %r at %s", name, target_dir)
+
+    async def _save_skill_file(self) -> None:
+        """Persist :attr:`_skill_visibility` to ``${workdir}/.skills``.
+
+        Only sessions that selected are written, so the file does not
+        grow with session count on its own. No-op when
+        :attr:`is_persistent` is ``False``; failures are logged, not
+        raised — the in-memory copy stays authoritative.
+
+        Callers are expected to hold :attr:`_skill_lock` already.
+        """
+        if not self.is_persistent:
+            return
+        backend = self._backend
+        if backend is None:
+            return
+        # Nested {agent_id: {session_id: [...]}} on disk rather than a
+        # joined key, so no separator can collide with an id.
+        skills: dict[str, dict[str, list[str]]] = {}
+        for (agent_id, session_id), dirs in self._skill_visibility.items():
+            skills.setdefault(agent_id, {})[session_id] = list(dirs)
+        payload = json.dumps(
+            {"version": SKILL_FILE_VERSION, "skills": skills},
+            indent=2,
+            ensure_ascii=False,
+        ).encode("utf-8")
+        try:
+            await backend.write_file(self._skill_file, payload)
+        except Exception as e:
+            logger.warning(
+                "Failed to save skill file at %s: %s",
+                self._skill_file,
+                e,
+            )
+
+    async def _restore_skill_visibility(
+        self,
+    ) -> dict[tuple[str, str], list[str]]:
+        """Read the selections persisted in ``${workdir}/.skills``.
+
+        Returns an empty mapping when the file is absent or unusable —
+        every session then sees everything its agent has, so a corrupt
+        file cannot hide skills.
+        """
+        if not self.is_persistent:
+            return {}
+        backend = self._backend
+        if backend is None:
+            return {}
+        try:
+            if not await backend.file_exists(self._skill_file):
+                return {}
+            raw = await backend.read_file(self._skill_file)
+            data = json.loads(raw.decode("utf-8"))
+        except Exception as e:
+            logger.warning(
+                "Failed to read skill file at %s, every session will see "
+                "every skill: %s",
+                self._skill_file,
+                e,
+            )
+            return {}
+
+        visibility: dict[tuple[str, str], list[str]] = {}
+        if not isinstance(data, dict):
+            logger.warning(
+                "%s is not an object; ignoring it.",
+                self._skill_file,
+            )
+            return {}
+        for agent_id, by_session in (data.get("skills") or {}).items():
+            if not isinstance(by_session, dict):
+                continue
+            for session_id, dirs in by_session.items():
+                if isinstance(dirs, list):
+                    visibility[(agent_id, session_id)] = [str(d) for d in dirs]
+        return visibility
 
     async def _migrate_skill_layout(self) -> None:
         """Move a pre-partition ``skills/`` into the shared partition.

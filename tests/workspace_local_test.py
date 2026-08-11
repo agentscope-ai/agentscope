@@ -639,7 +639,7 @@ description: {description}
         )
 
         # Verify .skills file was created with correct new structure
-        skills_hash_file = os.path.join(skills_dir, ".skills")
+        skills_hash_file = os.path.join(skills_dir, ".index")
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -770,7 +770,7 @@ This skill is added through a tilde path.
             self.temp_dir.name,
             "skills",
             "_workspace",
-            ".skills",
+            ".index",
         )
         async with aiofiles.open(skills_hash_file, "r") as f:
             hash_data_first = await f.read()
@@ -825,7 +825,7 @@ This skill is added through a tilde path.
         self.assertTrue(os.path.exists(skill_target))
 
         # Verify .skills file contains only one entry
-        skills_hash_file = os.path.join(skills_dir, ".skills")
+        skills_hash_file = os.path.join(skills_dir, ".index")
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -1952,7 +1952,7 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
         )
         self.assertTrue(
             os.path.isfile(
-                os.path.join(self.skills_dir, "_workspace", ".skills"),
+                os.path.join(self.skills_dir, "_workspace", ".index"),
             ),
         )
 
@@ -1978,3 +1978,142 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
         for agent_id in ("../escape", "..", "_workspace"):
             with self.assertRaises(ValueError):
                 await ws.list_skills(agent_id=agent_id)
+
+
+class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
+    """Per-session skill selection on top of the agent's partitions.
+
+    Covers:
+    - a session that never selected sees everything its agent has
+    - a selection narrows the listing and survives a reopen
+    - an empty selection is not the same as never having selected
+    - clearing the selection restores inheritance
+    - ``purge_session`` forgets the selection but keeps the content
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.src_dir = tempfile.TemporaryDirectory()
+        self.skill_file = os.path.join(self.temp_dir.name, ".skills")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+        self.src_dir.cleanup()
+
+    def _make_skill(self, skill_name: str) -> str:
+        """Write a minimal skill directory outside the workspace."""
+        path = os.path.join(self.src_dir.name, skill_name)
+        os.makedirs(path, exist_ok=True)
+        with open(
+            os.path.join(path, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                f"---\nname: {skill_name}\ndescription: d\n---\n\nbody\n",
+            )
+        return path
+
+    async def _workspace(self) -> LocalWorkspace:
+        """Open a workspace holding one shared and one owned skill."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def _seeded_workspace(self) -> LocalWorkspace:
+        """Open a workspace and install both skills once."""
+        ws = await self._workspace()
+        if not await ws.list_skills():
+            await ws.add_skill(self._make_skill("shared-skill"))
+            await ws.add_skill(self._make_skill("own-skill"), agent_id="A")
+        return ws
+
+    async def test_unselected_session_sees_every_skill(self) -> None:
+        """Selection is opt-in, so an untouched session sees it all."""
+        ws = await self._seeded_workspace()
+        self.assertEqual(
+            sorted(
+                s.name
+                for s in await ws.list_skills(agent_id="A", session_id="s1")
+            ),
+            ["own-skill", "shared-skill"],
+        )
+        self.assertFalse(os.path.exists(self.skill_file))
+
+    async def test_selection_narrows_and_survives_reopen(self) -> None:
+        """A selection is persisted and reapplied on the next open."""
+        ws = await self._seeded_workspace()
+        await ws.set_session_skills(
+            ["own-skill"],
+            agent_id="A",
+            session_id="s1",
+        )
+
+        self.assertEqual(
+            [
+                s.name
+                for s in await ws.list_skills(agent_id="A", session_id="s1")
+            ],
+            ["own-skill"],
+        )
+        # Another session of the same agent is untouched.
+        self.assertEqual(
+            len(await ws.list_skills(agent_id="A", session_id="s2")),
+            2,
+        )
+
+        await ws.close()
+        reopened = await self._seeded_workspace()
+        self.assertEqual(
+            [
+                s.name
+                for s in await reopened.list_skills(
+                    agent_id="A",
+                    session_id="s1",
+                )
+            ],
+            ["own-skill"],
+        )
+
+    async def test_empty_selection_differs_from_no_selection(self) -> None:
+        """``[]`` hides everything; clearing it restores inheritance."""
+        ws = await self._seeded_workspace()
+        await ws.set_session_skills([], agent_id="A", session_id="s1")
+        self.assertEqual(
+            await ws.list_skills(agent_id="A", session_id="s1"),
+            [],
+        )
+
+        await ws.set_session_skills(None, agent_id="A", session_id="s1")
+        self.assertEqual(
+            len(await ws.list_skills(agent_id="A", session_id="s1")),
+            2,
+        )
+
+    async def test_selecting_an_unavailable_skill_is_refused(self) -> None:
+        """A session may only select from what its agent can reach."""
+        ws = await self._seeded_workspace()
+        with self.assertRaises(KeyError):
+            await ws.set_session_skills(
+                ["own-skill"],
+                agent_id="B",
+                session_id="s1",
+            )
+
+    async def test_purge_session_forgets_only_the_selection(self) -> None:
+        """A session selects skills, so purging it deletes no content."""
+        ws = await self._seeded_workspace()
+        await ws.set_session_skills([], agent_id="A", session_id="s1")
+
+        await ws.purge_session(agent_id="A", session_id="s1")
+
+        self.assertEqual(
+            len(await ws.list_skills(agent_id="A", session_id="s1")),
+            2,
+        )
+        with open(self.skill_file, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["skills"], {})

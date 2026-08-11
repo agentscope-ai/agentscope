@@ -166,6 +166,7 @@ class LocalWorkspace(WorkspaceBase):
         os.makedirs(self.workdir, exist_ok=True)
 
         self._mcp_specs = await self._restore_mcp_specs()
+        self._skill_visibility = await self._restore_skill_visibility()
 
         # Seed skills into the shared partition — seeds have no owner
         os.makedirs(self._skills_dir, exist_ok=True)
@@ -273,15 +274,15 @@ class LocalWorkspace(WorkspaceBase):
         return self.instructions
 
     async def _load_skills_file(self, skills_dir: str) -> _SkillsFile:
-        """Load the .skills index file, returning an empty structure if absent.
+        """Load the .index file, returning an empty structure if absent.
 
         Args:
-            skills_dir (`str`): The skills directory path.
+            skills_dir (`str`): The partition directory path.
 
         Returns:
             `_SkillsFile`: The parsed index, or a fresh empty structure.
         """
-        path = os.path.join(skills_dir, ".skills")
+        path = os.path.join(skills_dir, ".index")
         if not await self._backend.file_exists(path):
             return {"skills_dir_mtime": 0.0, "skills": {}}
 
@@ -301,13 +302,13 @@ class LocalWorkspace(WorkspaceBase):
         skills_dir: str,
         data: _SkillsFile,
     ) -> None:
-        """Persist the .skills index file.
+        """Persist the .index file.
 
         Args:
-            skills_dir (`str`): The skills directory path.
+            skills_dir (`str`): The partition directory path.
             data (`_SkillsFile`): The index to write.
         """
-        path = os.path.join(skills_dir, ".skills")
+        path = os.path.join(skills_dir, ".index")
         try:
             await self._backend.write_file(
                 path,
@@ -426,6 +427,8 @@ class LocalWorkspace(WorkspaceBase):
             await self._backend.delete_path(mcp_file)
 
         async with self._skill_lock:
+            self._skill_visibility.clear()
+            await self._backend.delete_path(self._skill_file)
             skills_path = os.path.join(self.workdir, "skills")
             await self._backend.delete_path(skills_path)
 
@@ -437,17 +440,22 @@ class LocalWorkspace(WorkspaceBase):
         self,
         *,
         agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[Skill]:
-        """List the skills one agent can use.
+        """List the skills one session can use.
 
         Reads the agent's own partition plus the shared one, using each
-        partition's ``.skills`` index for agent-facing names.
+        partition's ``.index`` for agent-facing names, then narrows the
+        result to what the session selected.
 
         Args:
             agent_id (`str | None`, optional):
                 The agent asking. ``None`` reads every partition,
                 which is what unscoped callers saw before ``skills/``
                 was partitioned.
+            session_id (`str | None`, optional):
+                The session asking. A session that never selected
+                sees everything its agent has.
 
         Returns:
             `list[Skill]`:
@@ -457,7 +465,7 @@ class LocalWorkspace(WorkspaceBase):
             skills: list[Skill] = []
             for partition in await self._skill_partitions(agent_id):
                 skills += await self._list_partition_skills(partition)
-            return skills
+        return self._select_skills(skills, agent_id, session_id)
 
     async def _list_partition_skills(self, skills_dir: str) -> list[Skill]:
         """List the skills held by one partition.
