@@ -252,6 +252,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             await self._close_all_mcp_instances()
             self._mcp_specs.clear()
             self._skill_visibility.clear()
+            self._equipped_partitions.clear()
 
             for path in (
                 self._sessions_dir,

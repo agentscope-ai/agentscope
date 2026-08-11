@@ -1170,7 +1170,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         self.assertEqual([skill.name for skill in skills], ["demo-skill"])
         self.assertEqual(
             skills[0].dir,
-            "/home/daytona/skills/_workspace/local-skill",
+            "/home/daytona/skills/default/local-skill",
         )
 
         await self.workspace.remove_skill("demo-skill")

@@ -615,7 +615,7 @@ description: {description}
         await workspace.initialize()
 
         # Verify skills were copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills", "_workspace")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify skill directories exist
@@ -700,7 +700,7 @@ This skill is seeded through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
-            "_workspace",
+            ".seed",
             "tilde_skill",
         )
         self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
@@ -739,7 +739,7 @@ This skill is added through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
-            "_workspace",
+            "default",
             "tilde_skill",
         )
         self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
@@ -769,7 +769,7 @@ This skill is added through a tilde path.
         skills_hash_file = os.path.join(
             self.temp_dir.name,
             "skills",
-            "_workspace",
+            ".seed",
             ".index",
         )
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -779,7 +779,7 @@ This skill is added through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
-            "_workspace",
+            ".seed",
             "test_skill_dup",
         )
         mtime_first = os.path.getmtime(skill_target)
@@ -820,7 +820,7 @@ This skill is added through a tilde path.
         await workspace.initialize()
 
         # Verify only one skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills", "_workspace")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         skill_target = os.path.join(skills_dir, "test_skill_dedup")
         self.assertTrue(os.path.exists(skill_target))
 
@@ -896,7 +896,7 @@ This skill is added through a tilde path.
         await workspace.initialize()
 
         # Verify only the valid skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills", "_workspace")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify valid skill exists
@@ -1846,9 +1846,9 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
 
     Covers:
     - an agent's installs stay out of every other agent's listing
-    - constructor seeds land in the shared partition all agents read
-    - a pre-partition ``skills/`` is migrated on first initialize
-    - removal prefers the agent's own copy over the shared one
+    - ``skill_paths`` equip each agent with its own copy, once
+    - a caller that names no agent gets the default partition
+    - a pre-partition ``skills/`` becomes the seed template
     - an agent id that would escape ``skills/`` is refused
     """
 
@@ -1886,7 +1886,7 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
         return ws
 
     async def test_agent_installs_are_isolated(self) -> None:
-        """One agent's skill is invisible to another, visible unscoped."""
+        """What one agent installs, no other agent can see."""
         ws = await self._workspace()
         await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
 
@@ -1895,33 +1895,60 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
             ["a-skill"],
         )
         self.assertEqual(await ws.list_skills(agent_id="B"), [])
-        self.assertEqual(
-            [s.name for s in await ws.list_skills()],
-            ["a-skill"],
-        )
+        self.assertEqual(await ws.list_skills(), [])
         self.assertTrue(
             os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
         )
 
-    async def test_seeds_are_shared_by_every_agent(self) -> None:
-        """``skill_paths`` have no owner, so all agents read them."""
+    async def test_seeds_equip_each_agent_with_its_own_copy(self) -> None:
+        """``skill_paths`` reach every agent, but as separate copies."""
         ws = await self._workspace(
             skill_paths=[self._make_skill("seeded", "seed-skill")],
         )
 
-        for agent_id in ("A", "B", None):
+        for agent_id in ("A", "B"):
             self.assertEqual(
                 [s.name for s in await ws.list_skills(agent_id=agent_id)],
                 ["seed-skill"],
             )
+
+        # A drops its copy: B keeps its own, and A does not get it back.
+        await ws.remove_skill("seed-skill", agent_id="A")
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="B")],
+            ["seed-skill"],
+        )
         self.assertTrue(
             os.path.isdir(
-                os.path.join(self.skills_dir, "_workspace", "seed-skill"),
+                os.path.join(self.skills_dir, ".seed", "seed-skill"),
             ),
         )
 
-    async def test_pre_partition_layout_is_migrated(self) -> None:
-        """Skills sitting directly under ``skills/`` move to _workspace."""
+    async def test_unnamed_caller_gets_the_default_partition(self) -> None:
+        """The SDK path, which never names an agent, is just a partition."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+        await ws.add_skill(self._make_skill("plain", "plain-skill"))
+
+        self.assertEqual(
+            sorted(s.name for s in await ws.list_skills()),
+            ["plain-skill", "seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, "default", "plain-skill"),
+            ),
+        )
+        # An agent is equipped from the template, not from that partition.
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["seed-skill"],
+        )
+
+    async def test_pre_partition_layout_becomes_the_template(self) -> None:
+        """Skills sitting directly under ``skills/`` equip every agent."""
         legacy = os.path.join(self.skills_dir, "legacy")
         os.makedirs(legacy)
         with open(
@@ -1945,43 +1972,25 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
 
         ws = await self._workspace()
 
-        self.assertEqual(os.listdir(self.skills_dir), ["_workspace"])
+        self.assertEqual(os.listdir(self.skills_dir), [".seed"])
         self.assertEqual(
             [s.name for s in await ws.list_skills(agent_id="A")],
             ["old"],
         )
         self.assertTrue(
-            os.path.isfile(
-                os.path.join(self.skills_dir, "_workspace", ".index"),
-            ),
-        )
-
-    async def test_remove_prefers_the_agents_own_copy(self) -> None:
-        """A shared skill of the same name survives an agent's removal."""
-        ws = await self._workspace()
-        await ws.add_skill(self._make_skill("shared", "dup"))
-        await ws.add_skill(self._make_skill("owned", "dup"), agent_id="A")
-
-        await ws.remove_skill("dup", agent_id="A")
-
-        self.assertFalse(
-            os.path.exists(os.path.join(self.skills_dir, "A", "owned")),
-        )
-        self.assertEqual(
-            [s.name for s in await ws.list_skills(agent_id="A")],
-            ["dup"],
+            os.path.isfile(os.path.join(self.skills_dir, ".seed", ".index")),
         )
 
     async def test_traversing_agent_id_is_refused(self) -> None:
         """An agent id is a directory name, so it may not escape."""
         ws = await self._workspace()
-        for agent_id in ("../escape", "..", "_workspace"):
+        for agent_id in ("../escape", "..", ".seed"):
             with self.assertRaises(ValueError):
                 await ws.list_skills(agent_id=agent_id)
 
 
 class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
-    """Per-session skill selection on top of the agent's partitions.
+    """Per-session skill selection on top of the agent's partition.
 
     Covers:
     - a session that never selected sees everything its agent has
@@ -1989,6 +1998,7 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
     - an empty selection is not the same as never having selected
     - clearing the selection restores inheritance
     - ``purge_session`` forgets the selection but keeps the content
+    - ``purge_agent`` takes the partition and every selection with it
     """
 
     async def asyncSetUp(self) -> None:
@@ -2018,37 +2028,32 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
         return path
 
     async def _workspace(self) -> LocalWorkspace:
-        """Open a workspace holding one shared and one owned skill."""
+        """Open a workspace holding two skills owned by agent A."""
         ws = LocalWorkspace(workdir=self.temp_dir.name)
         await ws.initialize()
         self.addAsyncCleanup(ws.close)
-        return ws
-
-    async def _seeded_workspace(self) -> LocalWorkspace:
-        """Open a workspace and install both skills once."""
-        ws = await self._workspace()
-        if not await ws.list_skills():
-            await ws.add_skill(self._make_skill("shared-skill"))
-            await ws.add_skill(self._make_skill("own-skill"), agent_id="A")
+        if not await ws.list_skills(agent_id="A"):
+            await ws.add_skill(self._make_skill("first-skill"), agent_id="A")
+            await ws.add_skill(self._make_skill("second-skill"), agent_id="A")
         return ws
 
     async def test_unselected_session_sees_every_skill(self) -> None:
         """Selection is opt-in, so an untouched session sees it all."""
-        ws = await self._seeded_workspace()
+        ws = await self._workspace()
         self.assertEqual(
             sorted(
                 s.name
                 for s in await ws.list_skills(agent_id="A", session_id="s1")
             ),
-            ["own-skill", "shared-skill"],
+            ["first-skill", "second-skill"],
         )
         self.assertFalse(os.path.exists(self.skill_file))
 
     async def test_selection_narrows_and_survives_reopen(self) -> None:
         """A selection is persisted and reapplied on the next open."""
-        ws = await self._seeded_workspace()
+        ws = await self._workspace()
         await ws.set_session_skills(
-            ["own-skill"],
+            ["first-skill"],
             agent_id="A",
             session_id="s1",
         )
@@ -2058,7 +2063,7 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
                 s.name
                 for s in await ws.list_skills(agent_id="A", session_id="s1")
             ],
-            ["own-skill"],
+            ["first-skill"],
         )
         # Another session of the same agent is untouched.
         self.assertEqual(
@@ -2067,7 +2072,7 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
         )
 
         await ws.close()
-        reopened = await self._seeded_workspace()
+        reopened = await self._workspace()
         self.assertEqual(
             [
                 s.name
@@ -2076,12 +2081,12 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
                     session_id="s1",
                 )
             ],
-            ["own-skill"],
+            ["first-skill"],
         )
 
     async def test_empty_selection_differs_from_no_selection(self) -> None:
         """``[]`` hides everything; clearing it restores inheritance."""
-        ws = await self._seeded_workspace()
+        ws = await self._workspace()
         await ws.set_session_skills([], agent_id="A", session_id="s1")
         self.assertEqual(
             await ws.list_skills(agent_id="A", session_id="s1"),
@@ -2096,17 +2101,17 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
 
     async def test_selecting_an_unavailable_skill_is_refused(self) -> None:
         """A session may only select from what its agent can reach."""
-        ws = await self._seeded_workspace()
+        ws = await self._workspace()
         with self.assertRaises(KeyError):
             await ws.set_session_skills(
-                ["own-skill"],
+                ["first-skill"],
                 agent_id="B",
                 session_id="s1",
             )
 
     async def test_purge_session_forgets_only_the_selection(self) -> None:
         """A session selects skills, so purging it deletes no content."""
-        ws = await self._seeded_workspace()
+        ws = await self._workspace()
         await ws.set_session_skills([], agent_id="A", session_id="s1")
 
         await ws.purge_session(agent_id="A", session_id="s1")
@@ -2118,17 +2123,13 @@ class TestLocalWorkspaceSkillVisibility(IsolatedAsyncioTestCase):
         with open(self.skill_file, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["skills"], {})
 
-    async def test_purge_agent_drops_its_partition_only(self) -> None:
-        """Deleting an agent takes its skills, not the shared ones."""
-        ws = await self._seeded_workspace()
+    async def test_purge_agent_drops_its_partition(self) -> None:
+        """Deleting an agent takes its skills and its selections."""
+        ws = await self._workspace()
         await ws.set_session_skills([], agent_id="A", session_id="s1")
 
         await ws.purge_agent(agent_id="A")
 
-        self.assertEqual(
-            [s.name for s in await ws.list_skills(agent_id="A")],
-            ["shared-skill"],
-        )
         self.assertFalse(
             os.path.exists(os.path.join(self.temp_dir.name, "skills", "A")),
         )
