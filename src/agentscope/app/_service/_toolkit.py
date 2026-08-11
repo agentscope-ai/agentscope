@@ -267,7 +267,10 @@ time or interval"
 
     return Toolkit(
         tools=tools,
-        skills_or_loaders=await workspace.list_skills(),
+        skills_or_loaders=await workspace.list_skills(
+            agent_id=agent_record.id,
+            session_id=session_record.id,
+        ),
         mcps=await workspace.list_mcps(
             agent_id=agent_record.id,
             session_id=session_record.id,

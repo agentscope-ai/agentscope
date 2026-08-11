@@ -723,6 +723,41 @@ class WorkspaceBase:
                 e,
             )
 
+    async def purge_agent(self, *, agent_id: str) -> None:
+        """Drop everything this workspace holds for one agent.
+
+        Deletes the agent's skill partition and forgets every
+        selection made by its sessions. MCP declarations are keyed by
+        session and cleared by :meth:`purge_session` as those sessions
+        are deleted.
+
+        Best-effort — failures are logged, never raised, so a purge
+        cannot block agent deletion.
+
+        Args:
+            agent_id (`str`):
+                The agent being deleted.
+        """
+        async with self._skill_lock:
+            forgotten = [
+                key for key in self._skill_visibility if key[0] == agent_id
+            ]
+            for key in forgotten:
+                self._skill_visibility.pop(key)
+            if forgotten:
+                await self._save_skill_file()
+
+        if self._backend is None or not agent_id:
+            return
+        try:
+            await self._backend.delete_path(self._skill_partition(agent_id))
+        except Exception as e:
+            logger.warning(
+                "Failed to delete the skill partition of agent %r: %s",
+                agent_id,
+                e,
+            )
+
     # ── instance lifecycle ─────────────────────────────────────────
 
     @staticmethod

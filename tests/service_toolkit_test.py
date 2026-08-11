@@ -57,7 +57,11 @@ class _FakeWorkspace:
         """Return the configured workspace tools."""
         return list(self._tools)
 
-    async def list_skills(self) -> list:
+    async def list_skills(
+        self,
+        agent_id: str,  # pylint: disable=unused-argument
+        session_id: str,  # pylint: disable=unused-argument
+    ) -> list:
         """Return the configured workspace skills."""
         return list(self._skills)
 

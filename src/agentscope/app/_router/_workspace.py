@@ -38,6 +38,7 @@ from ._schema import (
     DirectoryListing,
     DownloadTokenResponse,
     MCPClientStatus,
+    SelectSkillsRequest,
     ToolInfo,
 )
 from ..._utils._common import _describe_exception
@@ -234,7 +235,10 @@ async def list_skills(
         agent_id,
         session_id,
     )
-    return await workspace.list_skills()
+    return await workspace.list_skills(
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 @workspace_router.post(
@@ -261,7 +265,7 @@ async def add_skill(
         agent_id,
         session_id,
     )
-    await workspace.add_skill(body.skill_path)
+    await workspace.add_skill(body.skill_path, agent_id=agent_id)
 
 
 @workspace_router.post(
@@ -310,6 +314,7 @@ async def upload_skill(
             workspace_service.tar_stream(parsed, files),
             "tar",
             "skill",
+            agent_id=agent_id,
         )
     except (SkillUploadError, ValueError) as e:
         raise HTTPException(
@@ -367,6 +372,7 @@ async def add_skills_from_library(
                 archive.stream,
                 archive.format,
                 record.name,
+                agent_id=agent_id,
             )
         except Exception as e:  # pylint: disable=broad-except
             failed[record.name] = _describe_exception(e)
@@ -393,7 +399,38 @@ async def remove_skill(
         agent_id,
         session_id,
     )
-    await workspace.remove_skill(skill_name)
+    await workspace.remove_skill(skill_name, agent_id=agent_id)
+
+
+@workspace_router.put(
+    "/skill/selection",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def select_skills(
+    body: SelectSkillsRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> None:
+    """Choose which of the agent's skills this session sees.
+
+    Narrows what reaches the session's prompt; nothing is installed or
+    deleted, and the agent's other sessions are unaffected.
+    """
+    workspace = await workspace_service.resolve(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    try:
+        await workspace.set_session_skills(
+            body.names,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+    except KeyError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
 
 
 # ---------------------------------------------------------------------------

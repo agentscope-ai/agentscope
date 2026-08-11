@@ -505,7 +505,12 @@ class SessionService:
             `bool`:
                 ``True`` if the agent record existed and was deleted.
         """
+        # Collected before the sessions go, since a deleted session can
+        # no longer tell us which workspace held the agent's skills.
+        workspaces: dict[str, str] = {}
         for session in await self._storage.list_sessions(user_id, agent_id):
+            if session.config.workspace_id:
+                workspaces[session.config.workspace_id] = session.id
             if session.team_id is not None:
                 team = await self._storage.get_team(
                     user_id,
@@ -536,6 +541,27 @@ class SessionService:
         for schedule in await self._storage.list_schedules(user_id):
             if schedule.agent_id == agent_id:
                 await self.delete_schedule(user_id, schedule.id)
+
+        # Best-effort: a workspace that cannot be resolved (backend
+        # down, sandbox gone) must not fail a committed deletion.
+        for workspace_id, session_id in workspaces.items():
+            if not self._workspace_manager:
+                break
+            try:
+                workspace = await self._workspace_manager.get_workspace(
+                    user_id,
+                    agent_id,
+                    session_id,
+                    workspace_id,
+                )
+                await workspace.purge_agent(agent_id=agent_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to purge workspace %r for agent %r: %s",
+                    workspace_id,
+                    agent_id,
+                    e,
+                )
 
         # storage.delete_agent re-iterates sessions and schedules —
         # those re-runs are idempotent no-ops because the records were
