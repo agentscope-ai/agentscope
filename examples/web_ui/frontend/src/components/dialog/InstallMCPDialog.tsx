@@ -52,7 +52,9 @@ export function InstallMCPDialog({ card, editing, onOpenChange, onInstalled }: P
 	useEffect(() => {
 		if (!card) return;
 		setName(editing?.name ?? card.name);
-		setValues(defaultValuesFromSchema(card.inputs_schema as JSONSchema, new Set()));
+		setValues(
+			editing ? {} : defaultValuesFromSchema(card.inputs_schema as JSONSchema, new Set()),
+		);
 		setError(null);
 	}, [card, editing]);
 
