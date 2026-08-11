@@ -3,6 +3,8 @@ import type { UploadProgress } from './knowledgeBase';
 import type {
 	AddFromLibraryResponse,
 	AddSkillRequest,
+	DirectoryListing,
+	WorkspaceStatus,
 	MCPClient,
 	MCPClientStatus,
 	Skill,
@@ -98,6 +100,36 @@ function uploadSkillXhr(
 }
 
 export const workspaceApi = {
+	/**
+	 * List one directory level inside the session's workspace.
+	 *
+	 * `path` may be absolute or relative to the workspace root; empty
+	 * lists the root itself. Not confined to the root — for a sandboxed
+	 * backend the reachable filesystem is the sandbox, and for a local
+	 * one the caller is already trusted with the host. The response
+	 * echoes the resolved absolute path.
+	 */
+	directories: (agentId: string, sessionId: string, path = '') =>
+		client.get<DirectoryListing>('/workspace/directories', {
+			agent_id: agentId,
+			session_id: sessionId,
+			path,
+		}),
+
+	/**
+	 * Where the session is pointed, plus the git state of that place.
+	 *
+	 * `silent` because this is fetched on the UI's own schedule: git
+	 * being unavailable is an ordinary answer, not something to raise a
+	 * toast over.
+	 */
+	status: (agentId: string, sessionId: string) =>
+		client.get<WorkspaceStatus>(
+			'/workspace/status',
+			{ agent_id: agentId, session_id: sessionId },
+			{ silent: true },
+		),
+
 	mcp: {
 		list: (agentId: string, sessionId: string) =>
 			client.get<MCPClientStatus[]>('/workspace/mcp', {

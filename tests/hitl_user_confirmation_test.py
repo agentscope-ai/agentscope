@@ -1748,5 +1748,84 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             [self.final_response_text],
         )
 
+    async def test_partial_concurrent_confirmation_defers_iteration(
+        self,
+    ) -> None:
+        """A tool round is not counted while one confirmed call is pending."""
+        name_a = self.concurrent_tool_name
+        name_b = "mock_user_confirm_concurrent_tool_b"
+        self.agent.toolkit = Toolkit(
+            tools=[
+                MockUserConfirmConcurrentTool(),
+                MockUserConfirmConcurrentToolB(),
+            ],
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id=self.tool_call_id_1,
+                            name=name_a,
+                            input=self.tool_input_1,
+                        ),
+                        ToolCallBlock(
+                            id=self.tool_call_id_2,
+                            name=name_b,
+                            input=self.tool_input_2,
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                self.final_mock_responses,
+            ],
+        )
+
+        parked = await self.agent.reply(
+            UserMsg(name="user", content=self.user_input_text),
+        )
+        self.assertIsNone(parked.finished_reason)
+        self.assertEqual(self.agent.state.cur_iter, 0)
+
+        partial = await self.agent.reply(
+            UserConfirmResultEvent(
+                reply_id=self.agent.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=ToolCallBlock(
+                            id=self.tool_call_id_1,
+                            name=name_a,
+                            input=self.tool_input_1,
+                        ),
+                    ),
+                ],
+            ),
+        )
+        self.assertIsNone(partial.finished_reason)
+        # The first call has run, but the round isn't over while the second
+        # one is still awaiting confirmation
+        self.assertEqual(self.agent.state.cur_iter, 0)
+
+        completed = await self.agent.reply(
+            UserConfirmResultEvent(
+                reply_id=self.agent.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=ToolCallBlock(
+                            id=self.tool_call_id_2,
+                            name=name_b,
+                            input=self.tool_input_2,
+                        ),
+                    ),
+                ],
+            ),
+        )
+        self.assertEqual(completed.finished_reason, "completed")
+        self.assertEqual(self.model.cnt, 2)
+        # One tool round plus the final reasoning
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

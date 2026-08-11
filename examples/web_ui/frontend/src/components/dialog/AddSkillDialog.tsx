@@ -236,10 +236,7 @@ export function AddSkillDialog({ children, present, onUpload, onAddFromLibrary }
 											{t('panel.skill.pickFolderDescription')}
 										</EmptyDescription>
 									</EmptyHeader>
-									<Button
-										variant="outline"
-										onClick={() => input.current?.click()}
-									>
+									<Button onClick={() => input.current?.click()}>
 										<FolderUp />
 										{t('panel.skill.pickFolder')}
 									</Button>

@@ -1,17 +1,18 @@
 import {
 	BookText,
 	BotMessageSquare,
+	Cable,
 	Calendars,
 	Compass,
 	KeyRound,
 	Languages,
 	LibraryBig,
-	Settings,
+	UserRound,
 } from 'lucide-react';
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-import AgentScope from '@/assets/images/agentscope.svg?react';
+import AgentScope from '@/assets/images/agentscope_white.svg?react';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { CHAT_TOUR_NAME } from '@/components/tour/chatTourSteps';
 import {
@@ -51,10 +52,13 @@ export function AppSidebar() {
 	};
 
 	return (
-		<Sidebar collapsible="none" className="w-[calc(var(--sidebar-width-icon)+1px)]! border-r">
+		<Sidebar
+			collapsible="none"
+			className="w-[calc(var(--sidebar-width-icon)+1px)]! bg-transparent"
+		>
 			<SidebarHeader>
-				<div className="flex items-center justify-center h-12 mt-2">
-					<AgentScope className="size-8 items-center justify-center rounded-lg" />
+				<div className="flex items-center justify-center size-8 mt-2 rounded-full bg-primary">
+					<AgentScope className="size-5 items-center justify-center rounded-lg" />
 				</div>
 			</SidebarHeader>
 			<SidebarContent>
@@ -69,7 +73,7 @@ export function AppSidebar() {
 										location.pathname.startsWith('/chat/')
 									}
 									onClick={() => navigate('/chat')}
-									className="px-2.5 md:px-2"
+									className="justify-center"
 								>
 									<BotMessageSquare />
 								</SidebarMenuButton>
@@ -79,9 +83,19 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.schedule'), hidden: false }}
 									isActive={location.pathname === '/schedule'}
 									onClick={() => navigate('/schedule')}
-									className="px-2"
+									className="justify-center"
 								>
 									<Calendars />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.channel'), hidden: false }}
+									isActive={location.pathname === '/channel'}
+									onClick={() => navigate('/channel')}
+									className="px-2"
+								>
+									<Cable />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 						</SidebarMenu>
@@ -95,7 +109,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.credential'), hidden: false }}
 									isActive={location.pathname === '/credential'}
 									onClick={() => navigate('/credential')}
-									className="px-2"
+									className="justify-center"
 								>
 									<KeyRound />
 								</SidebarMenuButton>
@@ -106,7 +120,7 @@ export function AppSidebar() {
 									// Stays lit while browsing a hub under /mcp/:hubId.
 									isActive={location.pathname.startsWith('/mcp')}
 									onClick={() => navigate('/mcp')}
-									className="px-2"
+									className="justify-center"
 								>
 									<MCPSvg />
 								</SidebarMenuButton>
@@ -116,7 +130,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.skill-hub'), hidden: false }}
 									isActive={location.pathname.startsWith('/skill')}
 									onClick={() => navigate('/skill')}
-									className="px-2"
+									className="justify-center"
 								>
 									<BookText />
 								</SidebarMenuButton>
@@ -126,7 +140,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.knowledge'), hidden: false }}
 									isActive={location.pathname === '/knowledge'}
 									onClick={() => navigate('/knowledge')}
-									className="px-2"
+									className="justify-center"
 								>
 									<LibraryBig />
 								</SidebarMenuButton>
@@ -146,7 +160,7 @@ export function AppSidebar() {
 								hidden: false,
 							}}
 							onClick={handleToggleLanguage}
-							className="px-2"
+							className="justify-center"
 						>
 							<Languages />
 						</SidebarMenuButton>
@@ -155,7 +169,7 @@ export function AppSidebar() {
 						<SidebarMenuButton
 							tooltip={{ children: t('tour.trigger'), hidden: false }}
 							onClick={handleStartTour}
-							className="px-2"
+							className="justify-center"
 						>
 							<Compass />
 						</SidebarMenuButton>
@@ -165,9 +179,9 @@ export function AppSidebar() {
 							tooltip={{ children: t('common.settings'), hidden: false }}
 							isActive={location.pathname === '/setup'}
 							onClick={() => navigate('/setup')}
-							className="px-2"
+							className="justify-center"
 						>
-							<Settings />
+							<UserRound />
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 				</SidebarMenu>

@@ -3,6 +3,7 @@
 		"add": "Add",
 		"agent": "Agent",
 		"cancel": "Cancel",
+		"channel": "Channels",
 		"chat": "Chat",
 		"close": "Close",
 		"confirm": "Confirm",
@@ -11,12 +12,10 @@
 		"credential": "Credentials",
 		"date": "Date",
 		"delete": "Delete",
-		"deleting": "Deleting…",
 		"disabled": "Disabled",
 		"edit": "Edit",
 		"error": "Something went wrong",
 		"information": "Information",
-		"interrupted": "Interrupted",
 		"knowledge": "Knowledge Bases",
 		"loading": "Loading...",
 		"shownCount": "{{count}} shown",
@@ -37,11 +36,9 @@
 		"settings": "Settings",
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
-		"success": "Success",
 		"team": "Team",
 		"uploading": "Uploading",
 		"leader": "Leader",
-		"worker": "Worker",
 		"time": "Time",
 		"yes": "Yes",
 		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
@@ -50,7 +47,11 @@
 		"mine": "Mine",
 		"my-mcp": "Installed MCPs",
 		"skill-hub": "Skill Hub",
-		"my-skill": "Installed skills"
+		"my-skill": "Installed skills",
+		"message": "Message",
+		"llm": "LLM",
+		"tts": "TTS",
+		"embedding": "Embedding"
 	},
 	"error": {
 		"description": "The page hit an unexpected error. You can retry or go back home.",
@@ -117,7 +118,8 @@
 			"team": "Team",
 			"team_message": "Team",
 			"schedule": "Schedule",
-			"system": "System"
+			"system": "System",
+			"channel": "Channel"
 		},
 		"error": {
 			"title": "Reply failed",
@@ -134,12 +136,9 @@
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",
-		"placeholder": "Type a message...",
-		"send": "Send",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
-		"noSessions": "No sessions yet",
 		"greeting": "Where should we start?",
 		"agent": {
 			"selectPlaceholder": "Select an agent",
@@ -152,13 +151,14 @@
 			"label": "Session",
 			"emptyTitle": "No sessions",
 			"emptyNoAgent": "Select an agent first.",
-			"emptyHasAgent": "Create a session to start chatting."
+			"emptyHasAgent": "Create a session to start chatting.",
+			"today": "Today",
+			"earlier": "Earlier"
 		}
 	},
 	"dialog-agent-create": {
 		"title": "Create agent",
-		"description": "Define a new agent's identity and behaviour.",
-		"trigger": "Create agent"
+		"description": "Define a new agent's identity and behaviour."
 	},
 	"agent-form": {
 		"identity": {
@@ -299,7 +299,6 @@
 	},
 	"credential": {
 		"noProviders": "No providers available",
-		"noConfigs": "No configurations",
 		"selectHint": "No credential selected",
 		"selectHintDescription": "Select a credential from the sidebar to view its details.",
 		"availableModels": "Available Models",
@@ -310,17 +309,21 @@
 		"configured": "Configured",
 		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
-		"maxContext": "Max. Context",
-		"maxOutput": "Max. Output",
-		"inputTypes": "Input",
-		"outputTypes": "Output",
-		"availableTTSModels": "TTS Models"
+		"realtime": "Realtime",
+		"table": {
+			"model": "Model",
+			"context": "Context",
+			"maxOutput": "Max output",
+			"accepts": "Accepts",
+			"outputs": "Outputs",
+			"legend": "Context and max output are token counts. REASONING marks models that support extended thinking.",
+			"dimensions": "Dimensions"
+		}
 	},
 	"knowledge": {
 		"subtitle": "Manage knowledge bases used by your agents",
 		"selectHint": "No knowledge base selected",
 		"selectHintDescription": "Select a knowledge base from the sidebar to view its details.",
-		"deleteEntity": "knowledge base",
 		"list": {
 			"label": "Knowledge bases",
 			"emptyTitle": "No knowledge bases",
@@ -328,24 +331,16 @@
 			"createButton": "Create knowledge base"
 		},
 		"document": {
-			"label": "Documents",
 			"emptyTitle": "No documents",
 			"emptyDescription": "Upload a document to index it into this knowledge base.",
 			"uploadButton": "Upload document",
 			"uploadButtonShort": "Upload",
-			"countLabel": "Documents ({{count}})",
-			"size": "Size",
-			"chunks": "Chunks",
 			"chunkCount_one": "{{count}} chunk",
 			"chunkCount_other": "{{count}} chunks",
-			"uploadedAt": "Uploaded {{when}}",
-			"deleteEntity": "document",
 			"deleteConfirmTitle": "Delete document",
 			"deleteConfirmDescription": "Delete \"{{name}}\"? This removes the document and every indexed chunk. This action cannot be undone.",
 			"deleteError": "Could not delete document.",
-			"dropHint": "Drop files here to upload",
 			"dropHintIdle": "or drop files here",
-			"invalidFile": "\"{{name}}\" could not be added.",
 			"unsupportedExtension": "\"{{name}}\" was skipped — file type not supported.",
 			"status": {
 				"queued": "Queued",
@@ -360,11 +355,11 @@
 			},
 			"actions": {
 				"cancel": "Cancel",
-				"retry": "Retry",
 				"dismiss": "Dismiss",
 				"remove": "Remove",
 				"clearFinished": "Clear finished"
-			}
+			},
+			"title": "Documents"
 		},
 		"test": {
 			"button": "Test",
@@ -382,12 +377,10 @@
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
-		"fallbackPlaceholder": "Fallback model",
 		"loading": "Loading…",
 		"empty": {
 			"title": "No models available",
-			"description": "Add a credential to get started.",
-			"addButton": "Add credential"
+			"description": "Add a credential to get started."
 		},
 		"addCredential": "Add Credential",
 		"clear": "Clear selection",
@@ -400,8 +393,7 @@
 			"title": "No embedding models available",
 			"description": "Add a credential that supports embedding to get started."
 		},
-		"addCredential": "Add Credential",
-		"clear": "Clear selection"
+		"addCredential": "Add Credential"
 	},
 	"dimension-select": {
 		"placeholder": "Select a dimension",
@@ -431,6 +423,7 @@
 		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
 	},
 	"schedule": {
+		"subtitle": "Schedule recurring or one-off tasks for your agents",
 		"calendar": "Calendar",
 		"createSchedule": {
 			"description": "Set up a recurring or one-time scheduled task for an agent.",
@@ -440,8 +433,7 @@
 			"title": "Create Schedule"
 		},
 		"deleteSchedule": {
-			"entity": "schedule",
-			"successToast": "Schedule deleted successfully."
+			"entity": "schedule"
 		},
 		"endAt": "End Date",
 		"end_at": "End At",
@@ -457,8 +449,6 @@
 		"more": "more",
 		"nextMonth": "Next Month",
 		"nextYear": "Next Year",
-		"noExecutions": "No executions yet",
-		"noExecutionsDescription": "This schedule has not been executed yet.",
 		"noSchedules": "No schedules",
 		"noSchedulesDescription": "Create a schedule to automate agent tasks.",
 		"pickDate": "Pick a date",
@@ -472,7 +462,6 @@
 		"previousMonth": "Previous Month",
 		"previousYear": "Previous Year",
 		"saturday": "Sat",
-		"startAt": "Start At",
 		"sunday": "Sun",
 		"thursday": "Thu",
 		"today": "Today",
@@ -500,6 +489,12 @@
 		"username": "Username",
 		"usernamePlaceholder": "Your username",
 		"submit": "Get Started",
+		"checking": "Connecting...",
+		"errorUnreachable": "Cannot reach this server. Check the address, make sure the service is running, and that it allows cross-origin requests.",
+		"errorTimeout": "The server accepted the connection but did not respond in time. It may be overloaded or stuck starting up.",
+		"errorNotAgentScope": "Reached the address, but it is not an AgentScope service — check the URL, or upgrade a backend too old to expose a health endpoint.",
+		"errorUnauthorized": "The server rejected this username. Enter a valid one.",
+		"errorNotReady": "The server is reachable but not ready. These subsystems failed to start:",
 		"hint": "This is a frontend-only application, and all data are served from the Server URL above. The username is used solely for server-side authentication."
 	},
 	"tour": {
@@ -531,11 +526,6 @@
 		}
 	},
 	"task-panel": {
-		"heading": "Tasks",
-		"noTasks": "No tasks yet.",
-		"pending": "Pending",
-		"inProgress": "In Progress",
-		"completed": "Completed",
 		"blockedBy": "blocked by"
 	},
 	"panel": {
@@ -547,7 +537,6 @@
 			"emptyDescription": "Tasks the agent plans will show up here."
 		},
 		"mcp": {
-			"title": "MCP",
 			"description": "The MCP servers equipped in the workspace.",
 			"searchPlaceholder": "Search MCP in the workspace",
 			"add": "Add MCP",
@@ -587,8 +576,7 @@
 			"emptyTitle": "No knowledge bases",
 			"emptyDescription": "Create one on the Knowledge Bases page first.",
 			"parametersTitle": "Retrieval settings",
-			"parametersDescription": "Knowledge base retrieval settings.",
-			"selectedCount": "{{count}} attached"
+			"parametersDescription": "Knowledge base retrieval settings."
 		},
 		"permission": {
 			"title": "Permissions",
@@ -607,14 +595,122 @@
 			"emptyTitle": "No results",
 			"emptyDescription": "Nothing matches “{{query}}”."
 		},
-		"loading": "Loading…"
+		"loading": "Loading…",
+		"team": {
+			"membersHeading": "Members",
+			"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+			"emptyTitle": "No team",
+			"emptyDescription": "This session is not part of a team. The agent forms one with TeamCreate.",
+			"running": "Running",
+			"idle": "Idle",
+			"missingSession": "(no session)"
+		}
 	},
-	"team-sidebar": {
-		"membersHeading": "Members",
-		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
-		"running": "Running",
-		"idle": "Idle",
-		"missingSession": "(no session)"
+	"channel": {
+		"title": "Channels",
+		"subtitle": "Connect external platforms like Feishu and Discord so agents work in group chats",
+		"status": "Status",
+		"connected": "Connected",
+		"enable": "Enable",
+		"disable": "Disable",
+		"deleteEntity": "channel",
+		"routing": "Routing",
+		"routingDesc": "Match inbound messages to an agent and a session scope. The last rule matches everything else.",
+		"sectionActive": "Connected",
+		"sectionAdd": "Add Channel",
+		"rules": "{{count}} rules",
+		"empty": {
+			"title": "No channels",
+			"description": "Create a channel to connect your agent to external platforms like Feishu, DingTalk, etc."
+		},
+		"create": {
+			"title": "Create Channel",
+			"titleFor": "Connect {{name}}",
+			"description": "Connect an agent to an external messaging platform.",
+			"channelType": "Platform",
+			"nameLabel": "Name",
+			"namePlaceholder": "e.g. Support desk",
+			"nameDesc": "Tells apart channels on the same platform",
+			"modelDesc": "Initial model for a new session",
+			"permissionMode": "Permission Mode",
+			"permissionModeDesc": "Initial permission mode for a new session",
+			"showToolMessages": "Show Tool Messages",
+			"showToolMessagesDesc": "Display tool call/result messages in the channel.",
+			"showThinking": "Show Thinking",
+			"showThinkingDesc": "Display model reasoning process in the channel."
+		},
+		"fields": {
+			"app_id": {
+				"title": "App ID",
+				"description": "Feishu App ID"
+			},
+			"app_secret": {
+				"title": "App Secret",
+				"description": "Feishu App Secret"
+			},
+			"bot_token": {
+				"title": "Bot Token"
+			},
+			"application_id": {
+				"title": "Application ID"
+			},
+			"only_at_reply": {
+				"title": "Reply only when mentioned",
+				"description": "In group chats, reply only when the bot is @mentioned"
+			},
+			"show_tool_process": {
+				"title": "Show tool process",
+				"description": "Show tool calls and results inline in the reply"
+			},
+			"show_thinking": {
+				"title": "Show thinking",
+				"description": "Show the model's reasoning inline in the reply"
+			}
+		},
+		"edit": {
+			"title": "Edit Channel",
+			"description": "Update routing, model, and reply settings. Platform and credentials are immutable."
+		},
+		"sessionScope": {
+			"per_chat": "Per Chat",
+			"per_chat_user": "Per Chat User"
+		},
+		"sessions": {
+			"title": "Sessions",
+			"empty": "No sessions yet",
+			"openInChat": "Open in chat"
+		},
+		"detail": {
+			"config": "Configuration",
+			"configDesc": "Initial configuration applied to new sessions",
+			"configItem": "Item",
+			"configValue": "Value",
+			"condition": "Condition",
+			"created": "Created",
+			"deleteChannel": "Delete channel",
+			"routingDesc": "How inbound messages map to an agent and session scope",
+			"sessionsDesc": "Sessions this channel has spawned",
+			"selectHint": "Select a channel to see details"
+		},
+		"state": {
+			"stopped": "Stopped",
+			"connecting": "Connecting",
+			"retrying": "Reconnecting",
+			"connected": "Connected",
+			"failed": "Failed"
+		},
+		"binding": {
+			"rule": "Match Rule",
+			"matchKey": "Match field",
+			"matchValue": "Match value",
+			"matchValuePlaceholder": "e.g. a chat_id",
+			"routeTo": "Route to",
+			"scope": "Session scope",
+			"fallback": "Fallback Rule",
+			"fallbackDesc": "Messages not matched by any rule above are routed here",
+			"catchAll": "All other messages",
+			"addRule": "Add rule"
+		}
 	},
 	"mcp": {
 		"subtitle": "Browse and install MCP servers",
@@ -669,5 +765,20 @@
 		"loadFailedTitle": "Couldn't reach the server",
 		"loadFailedDescription": "Check the server URL and that the service is running.",
 		"retry": "Retry"
+	},
+	"agent-menu": {
+		"settings": "Settings",
+		"delete": "Delete agent"
+	},
+	"workdir": {
+		"title": "Working directory",
+		"description": "Pick the agent's working directory.",
+		"root": "Workspace root",
+		"parent": "Up one level",
+		"errorTitle": "Could not list this folder",
+		"pathPlaceholder": "Type or paste a path",
+		"empty": "This folder is empty",
+		"pressEnter": "Press Enter to check this path first",
+		"gitTooltip": "{{staged}} staged · {{unstaged}} modified · {{untracked}} untracked\nLine counts exclude untracked files"
 	}
 }

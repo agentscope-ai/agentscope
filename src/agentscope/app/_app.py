@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
+import secrets
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
@@ -10,10 +11,13 @@ from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
+    channel_router,
     chat_router,
     credential_router,
+    health_router,
     hub_router,
     knowledge_base_router,
+    embedding_model_router,
     mcp_router,
     model_router,
     tts_model_router,
@@ -23,6 +27,7 @@ from ._router import (
     workspace_router,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
+from .channel import ChannelBase, ChannelTypeRegistry
 from .message_bus import MessageBus
 from .storage import StorageBase
 from ..agent import Agent
@@ -92,6 +97,8 @@ def create_app(
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
     resource_access_policy: ResourceAccessPolicyBase | None = None,
+    channels: list[Type[ChannelBase]] | None = None,
+    download_secret: str | None = None,
     title: str = "AgentScope",
     version: str = __version__,
 ) -> FastAPI:
@@ -190,14 +197,21 @@ def create_app(
         extra_middlewares (`list[Middleware] | None`, optional):
             Additional ASGI middlewares to add to the application.
         extra_agent_middlewares (`AgentMiddlewareFactory | None`, optional):
-            An async factory ``(user_id, agent_id, session_id) -> awaitable
-            of list[MiddlewareBase]`` that produces extra
+            An async factory ``(user_id, agent_id, session_id, workspace) ->
+            awaitable of list[MiddlewareBase]`` that produces extra
             :class:`~agentscope.middleware.MiddlewareBase` instances to
             attach to the agent on each invocation.  Called once per agent
             assembly (i.e. per chat turn / scheduled trigger), so it can
             return user/session-specific middleware (auth, audit logging,
-            tenant isolation, etc.).  The returned middlewares are appended
-            to the framework-supplied ones (e.g. ``ToolOffloadMiddleware``).
+            tenant isolation, etc.).  ``workspace`` is the session's
+            resolved :class:`~agentscope.workspace.WorkspaceBase`, exposing
+            ``workdir`` and ``get_backend()`` for filesystem-backed
+            middleware such as
+            :class:`~agentscope.middleware.AgenticMemoryMiddleware`.
+            Factories written against the older three-argument signature
+            keep working — the fourth argument is only passed to factories
+            that accept it.  The returned middlewares are appended to the
+            framework-supplied ones (e.g. ``ToolOffloadMiddleware``).
         extra_agent_tools (`AgentToolFactory | None`, optional):
             An async factory ``(user_id, agent_id, session_id) -> awaitable
             of list[ToolBase]`` that produces extra
@@ -225,6 +239,22 @@ def create_app(
             user. When ``None`` (default), a
             :class:`DenyAllResourceAccessPolicy` is installed which
             preserves the historical owner-isolated behavior.
+        channels (`list[Type[ChannelBase]] | None`, optional):
+            Channel adapter classes this service allows (e.g.
+            ``[FeishuChannel, DiscordChannel]``).  Each class
+            self-describes its ``channel_type``, credentials and config,
+            so the service registers it without a separate table; pass a
+            custom :class:`~agentscope.app.channel.ChannelBase` subclass
+            to add a platform.  When ``None`` (default), no channel types
+            are registered and the channel feature stays off until the
+            caller opts in by passing at least one adapter class.
+        download_secret (`str | None`, optional):
+            Signs the short-lived tokens that let a browser download a
+            workspace file by navigation. Defaults to a value generated
+            per process, which is fine for a single instance but **must
+            be set explicitly behind a load balancer** — otherwise a
+            token minted by one replica is rejected by the next, and
+            downloads fail at random.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to the package version):
@@ -253,8 +283,15 @@ def create_app(
     app.state.resource_access_policy = (
         resource_access_policy or DenyAllResourceAccessPolicy()
     )
+    # Channel types this service allows. A channel class self-describes
+    # its credentials / config, so the registry is built straight from
+    # the list — it has no lifecycle, so it lives on app.state directly
+    # rather than being created in the lifespan. Empty by default: the
+    # channel feature is off until the caller passes at least one class.
+    app.state.channel_type_registry = ChannelTypeRegistry(channels or [])
     app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
     app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
+    app.state.download_secret = download_secret or secrets.token_urlsafe(32)
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is
@@ -300,6 +337,7 @@ def create_app(
         agent_router,
         chat_router,
         credential_router,
+        health_router,
         hub_router,
         knowledge_base_router,
         mcp_router,
@@ -309,6 +347,8 @@ def create_app(
         workspace_router,
         model_router,
         tts_model_router,
+        embedding_model_router,
+        channel_router,
     ):
         app.include_router(router)
 

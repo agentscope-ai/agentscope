@@ -1,90 +1,48 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
+import mimetypes
+from urllib.parse import quote
+
 from fastapi import (
     APIRouter,
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..deps import (
     get_current_user_id,
     get_skill_hubs,
     get_storage,
-    get_workspace_manager,
+    get_workspace_service,
 )
 from ..hub import SkillHubBase
-from .._service._skill_upload import (
-    SkillUploadError,
-    UploadManifest,
-    _install_slots,
-    _tar_stream,
-    _validate_manifest,
-)
-from ..workspace_manager import WorkspaceManagerBase
+from .._service import WorkspaceService, WorkspaceStatus
+from .._service._workspace import SkillUploadError, UploadManifest
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
-from ...workspace import WorkspaceBase
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
     AddSkillRequest,
     AddSkillsFromLibraryRequest,
+    DirectoryEntry,
+    DirectoryListing,
+    DownloadTokenResponse,
     MCPClientStatus,
     ToolInfo,
 )
 from ..._utils._common import _describe_exception
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
-
-
-async def _resolve_workspace(
-    user_id: str,
-    agent_id: str,
-    session_id: str,
-    storage: StorageBase,
-    workspace_manager: WorkspaceManagerBase,
-) -> WorkspaceBase:
-    """Return the workspace backing the given session.
-
-    Args:
-        user_id (`str`):
-            The authenticated user ID.
-        agent_id (`str`):
-            The agent owning the session.
-        session_id (`str`):
-            The session whose workspace is wanted.
-        storage (`StorageBase`):
-            The storage used to look the session record up.
-        workspace_manager (`WorkspaceManagerBase`):
-            The manager that opens or reattaches the workspace.
-
-    Returns:
-        `WorkspaceBase`:
-            The session's workspace.
-
-    Raises:
-        `HTTPException`:
-            ``404`` when the session does not exist.
-    """
-    session_record = await storage.get_session(user_id, agent_id, session_id)
-    if session_record is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id!r} not found.",
-        )
-    return await workspace_manager.get_workspace(
-        user_id,
-        agent_id,
-        session_id,
-        session_record.config.workspace_id,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -97,18 +55,18 @@ async def list_mcps(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> list[MCPClientStatus]:
     """Return all MCP clients with live tool list and health status."""
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    clients = await workspace.list_mcps()
+    clients = await workspace.list_mcps(
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     results = []
     for client in clients:
@@ -145,7 +103,7 @@ async def add_mcp(
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> None:
     """Add an MCP client to the session's workspace.
 
@@ -155,14 +113,18 @@ async def add_mcp(
     that MCP is defined, and adding it to a second workspace must not
     silently redefine it.
     """
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    await workspace.add_mcp(mcp)
+    try:
+        await workspace.add_mcp(mcp, agent_id=agent_id, session_id=session_id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
 
     if await storage.get_mcp_by_name(user_id, mcp.name) is None:
         # No hub_id or card_id — this one has no card behind it, which
@@ -183,7 +145,7 @@ async def add_mcps_from_library(
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> AddFromLibraryResponse:
     """Put MCPs the user has already installed into this workspace.
 
@@ -193,14 +155,18 @@ async def add_mcps_from_library(
     Adding is per-MCP: one that fails to connect does not cancel the
     rest, and the response says which ones landed.
     """
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    present = {client.name for client in await workspace.list_mcps()}
+    present = {
+        client.name
+        for client in await workspace.list_mcps(
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+    }
 
     added: list[str] = []
     failed: dict[str, str] = {}
@@ -213,7 +179,11 @@ async def add_mcps_from_library(
             # Already there: not an error, just nothing to do.
             continue
         try:
-            await workspace.add_mcp(record.client)
+            await workspace.add_mcp(
+                record.client,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
         except Exception as e:
             failed[record.client.name] = _describe_exception(e)
             continue
@@ -231,18 +201,19 @@ async def remove_mcp(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> None:
     """Remove an MCP client from the session's workspace by name."""
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    await workspace.remove_mcp(mcp_name)
+    await workspace.remove_mcp(
+        mcp_name,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -255,18 +226,15 @@ async def list_skills(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> list[Skill]:
     """Return all skills available in the session's workspace."""
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    return await workspace.list_skills()
+    return await workspace.list_skills(agent_id=agent_id)
 
 
 @workspace_router.post(
@@ -279,8 +247,7 @@ async def add_skill(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> None:
     """Add a skill to the session's workspace from the given path.
 
@@ -289,14 +256,12 @@ async def add_skill(
     to send a folder, or ``POST /skill/from-library`` to install one
     the user already has.
     """
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    await workspace.add_skill(body.skill_path)
+    await workspace.add_skill(body.skill_path, agent_id=agent_id)
 
 
 @workspace_router.post(
@@ -314,8 +279,7 @@ async def upload_skill(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> None:
     """Install a skill from an uploaded folder.
 
@@ -326,41 +290,33 @@ async def upload_skill(
     """
     try:
         parsed = UploadManifest.model_validate_json(manifest)
-        _validate_manifest(parsed)
+        workspace_service.validate_manifest(parsed, len(files))
     except (ValidationError, SkillUploadError) as e:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             str(e),
         ) from e
 
-    if len(files) != len(parsed.entries):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"The manifest lists {len(parsed.entries)} files but "
-            f"{len(files)} were sent.",
-        )
-
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    async with _install_slots:
-        try:
-            # dir_name is unused: the tar members already carry the
-            # picked folder as their first path segment.
-            await workspace.add_skill_archive(
-                _tar_stream(parsed, files),
-                "tar",
-                "skill",
-            )
-        except (SkillUploadError, ValueError) as e:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                str(e),
-            ) from e
+    try:
+        # The name is unused: the tar members already carry the picked
+        # folder as their first path segment.
+        await workspace_service.install_skill(
+            workspace,
+            workspace_service.tar_stream(parsed, files),
+            "tar",
+            "skill",
+            agent_id=agent_id,
+        )
+    except (SkillUploadError, ValueError) as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            str(e),
+        ) from e
 
 
 @workspace_router.post(
@@ -373,7 +329,7 @@ async def add_skills_from_library(
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
     skill_hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
 ) -> AddFromLibraryResponse:
     """Put skills the user has already installed into this workspace.
@@ -382,12 +338,10 @@ async def add_skills_from_library(
     workspace; the server holds no copy in between. Adding is
     per-skill, and the response says which ones landed.
     """
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
 
     added: list[str] = []
@@ -404,17 +358,18 @@ async def add_skills_from_library(
             ] = f"Its hub {record.hub_id!r} is no longer registered."
             continue
         try:
-            async with _install_slots:
-                archive = await hub.download(
-                    user_id,
-                    record.card_id or record.name,
-                    record.version,
-                )
-                await workspace.add_skill_archive(
-                    archive.stream,
-                    archive.format,
-                    record.name,
-                )
+            archive = await hub.download(
+                user_id,
+                record.card_id or record.name,
+                record.version,
+            )
+            await workspace_service.install_skill(
+                workspace,
+                archive.stream,
+                archive.format,
+                record.name,
+                agent_id=agent_id,
+            )
         except Exception as e:  # pylint: disable=broad-except
             failed[record.name] = _describe_exception(e)
             continue
@@ -432,15 +387,225 @@ async def remove_skill(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> None:
     """Remove a skill from the session's workspace by name."""
-    workspace = await _resolve_workspace(
+    workspace = await workspace_service.resolve(
         user_id,
         agent_id,
         session_id,
-        storage,
-        workspace_manager,
     )
-    await workspace.remove_skill(skill_name)
+    await workspace.remove_skill(skill_name, agent_id=agent_id)
+
+
+# ---------------------------------------------------------------------------
+# File browsing endpoints
+# ---------------------------------------------------------------------------
+
+
+@workspace_router.get("/directories")
+async def list_workspace_directory(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(
+        default="",
+        description=(
+            "Absolute path, or one relative to the workspace root. "
+            "Empty lists the workspace root itself."
+        ),
+    ),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> DirectoryListing:
+    """List one directory level, reachable from a session's workspace.
+
+    Paths are not confined to the workspace root: for a sandboxed
+    backend the reachable filesystem is the sandbox, and for a local
+    one the caller is already trusted with the host.
+
+    The resolved absolute path comes back alongside the entries, so a
+    caller browsing with relative paths can still show where it is.
+    """
+    workspace = await workspace_service.resolve(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    backend = workspace.get_backend()
+    target = backend.abspath(path, cwd=workspace.workdir)
+
+    entry = await backend.stat(target)
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Directory not found.",
+        )
+    if not entry.is_dir:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path is a file, not a directory.",
+        )
+
+    # One call for the whole directory: asking per entry would be one
+    # round trip each on a sandboxed backend, times three attributes.
+    return DirectoryListing(
+        path=target,
+        entries=[
+            DirectoryEntry(
+                name=entry.name,
+                is_dir=entry.is_dir,
+                size_bytes=entry.size_bytes,
+                updated_at=entry.mtime,
+            )
+            for entry in await backend.scandir(target)
+        ],
+    )
+
+
+@workspace_router.get("/status")
+async def get_workspace_status(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> WorkspaceStatus:
+    """Report where a session is pointed, and the git state of that place.
+
+    The directory comes from the session's own ``cwd`` rather than a
+    query parameter: it is the session's anchor, and resolving a
+    relative one needs the workspace root the client cannot see.
+
+    Git is best-effort. A directory that is not a repository is the
+    normal case, not an error, and the sandboxed backends differ in how
+    they report a missing binary or an unreachable container — so every
+    failure collapses to ``git: null`` and the rest of the response is
+    still served.
+    """
+    return await workspace_service.read_status(
+        user_id,
+        agent_id,
+        session_id,
+    )
+
+
+@workspace_router.post("/files/download-token")
+async def create_download_token(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(..., description="The path the token will authorize."),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> DownloadTokenResponse:
+    """Mint a short-lived token for a browser-native download.
+
+    The browser writes the response straight to disk only when it
+    issues the request itself, and such a request carries no custom
+    header — hence a credential in the URL. Fetching with ``X-User-ID``
+    instead works but holds the whole file in the tab.
+
+    Minting depends on the normal identity, so whatever replaces
+    ``X-User-ID`` guards this too.
+
+    The session is resolved here only to fail early: the download is a
+    browser navigation, so an error there surfaces as a raw error page
+    rather than something the UI can show.
+    """
+    await workspace_service.resolve(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    # Signed verbatim, not resolved: the download verifies against the
+    # query string it receives, and resolving needs a user the token
+    # has not been read yet to supply.
+    token, expires_at = workspace_service.sign_download_token(
+        user_id,
+        path,
+    )
+    return DownloadTokenResponse(token=token, expires_at=expires_at)
+
+
+@workspace_router.get("/files")
+async def read_workspace_file(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(
+        ...,
+        description="Absolute path, or one relative to the workspace root.",
+    ),
+    download: bool = Query(
+        default=False,
+        description="Force a Content-Disposition attachment.",
+    ),
+    token: str
+    | None = Query(
+        default=None,
+        description=(
+            "A token from ``POST /workspace/files/download-token``, "
+            "accepted in place of the ``X-User-ID`` header so a browser "
+            "navigation can download the file directly."
+        ),
+    ),
+    x_user_id: str | None = Header(default=None),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> StreamingResponse:
+    """Stream one file out of a session's workspace.
+
+    The body is piped chunk by chunk rather than read whole: the API
+    process is shared, so one large download must not be able to
+    exhaust it for everyone else.
+    """
+    if token is not None:
+        try:
+            user_id = workspace_service.verify_download_token(token, path)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(e),
+            ) from e
+    elif x_user_id:
+        user_id = x_user_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-ID header or download token is required.",
+        )
+
+    workspace = await workspace_service.resolve(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    backend = workspace.get_backend()
+    target = backend.abspath(path, cwd=workspace.workdir)
+    basename = backend.basename(target) or "download"
+
+    entry = await backend.stat(target)
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found.",
+        )
+    if entry.is_dir:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path is a directory, not a file.",
+        )
+
+    headers: dict[str, str] = {}
+    # Lets the browser show real download progress instead of a
+    # spinner of unknown length; omitted when the backend cannot stat.
+    if entry.size_bytes is not None:
+        headers["Content-Length"] = str(entry.size_bytes)
+    if download:
+        headers[
+            "Content-Disposition"
+        ] = f"attachment; filename*=UTF-8''{quote(basename)}"
+
+    return StreamingResponse(
+        backend.read_stream(target),
+        media_type=(
+            mimetypes.guess_type(basename)[0] or "application/octet-stream"
+        ),
+        headers=headers,
+    )

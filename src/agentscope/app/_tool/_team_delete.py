@@ -110,6 +110,7 @@ This is irreversible.
             session_service = SessionService(
                 storage=self._storage,
                 message_bus=self._message_bus,
+                workspace_manager=self._workspace_manager,
             )
             await session_service.delete_team(self._user_id, team.id)
             return ToolChunk(

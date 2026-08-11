@@ -13,14 +13,16 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { cn } from '@/lib/utils';
 
-interface Props {
+interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	agents: AgentView[];
 	/** Currently selected agent id, or `null` when none is selected. */
 	value?: string | null;
 	onChange?: (agentId: string) => void;
 	/** Override the trigger label shown when no agent is selected. */
 	placeholder?: string;
+	className?: string;
 }
 
 /**
@@ -34,7 +36,7 @@ interface Props {
  * into "Yours" and "Shared with you" groups so the read-only
  * origin of the shared entries is unambiguous at a glance.
  */
-export function AgentSelect({ agents, value, onChange, placeholder }: Props) {
+export function AgentSelect({ agents, value, onChange, placeholder, className, ...props }: Props) {
 	const { t } = useTranslation();
 	const selected = agents.find((a) => a.id === value) ?? null;
 	const displayLabel = selected
@@ -72,10 +74,11 @@ export function AgentSelect({ agents, value, onChange, placeholder }: Props) {
 				<Button
 					variant="outline"
 					size="sm"
-					className="flex-1 min-w-0 justify-between gap-1"
+					className={cn('justify-between gap-1 font-normal', className)}
+					{...props}
 				>
 					<span className="truncate">{displayLabel}</span>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="min-w-56 max-h-72 overflow-y-auto">

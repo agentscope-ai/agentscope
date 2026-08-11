@@ -13,6 +13,7 @@
 	"dependencies": {
 		"@agentscope-ai/agentscope": "^0.0.15",
 		"@fontsource-variable/geist": "^5.2.8",
+		"@fontsource-variable/geist-mono": "^5.3.0",
 		"@shadcn/react": "^0.2.1",
 		"@streamdown/cjk": "^1.0.3",
 		"@streamdown/code": "^1.1.1",

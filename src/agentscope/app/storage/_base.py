@@ -8,6 +8,7 @@ from typing import Any, Self
 
 from ._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
@@ -371,6 +372,8 @@ class StorageBase(ABC):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -510,6 +513,23 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions derived from a given channel.
+
+        Args:
+            user_id (`str`): The owner user id.
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `list[SessionRecord]`: Sessions the channel spawned, ordered
+            by creation time (newest first).
+        """
+
+    @abstractmethod
     async def upsert_schedule(
         self,
         user_id: str,
@@ -581,6 +601,125 @@ class StorageBase(ABC):
         Returns:
             `list[ScheduleRecord]`: All schedule records in the store.
         """
+
+    # ------------------------------------------------------------------
+    # Channel persistence
+    #
+    # Optional capability: channels require the distributed message bus
+    # (locks / pub-sub / queues), so only bus-backed stores (Redis)
+    # implement these. Other backends inherit the NotImplementedError
+    # default.
+    # ------------------------------------------------------------------
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and refresh its indexes.
+
+        ``record.id`` is a globally unique UUID, so the record lives at a
+        single global key; ``record.user_id`` drives the per-user index
+        and ``platform_bot_id`` (extracted from credentials by the
+        caller) drives the uniqueness index.
+
+        Args:
+            record (`ChannelRecord`): The channel record to store.
+            platform_bot_id (`str`): The platform-side bot identifier,
+                used to maintain the dedup index.
+
+        Returns:
+            `str`: The id of the stored record.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def get_channel(
+        self,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a channel record by its global id.
+
+        This is the primary lookup, used both by the management API and
+        by the channel runtime (which only has a channel_id in hand).
+
+        Args:
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `ChannelRecord | None`: The record, or ``None`` if not found.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def list_channels(
+        self,
+        user_id: str,
+    ) -> list[ChannelRecord]:
+        """Return all channel records owned by the given user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[ChannelRecord]`: All channel records for the user.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Return every channel record across all users.
+
+        Used on startup / reconcile to restore channel instances.
+
+        Returns:
+            `list[ChannelRecord]`: All channel records in the store.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record and remove it from all indexes.
+
+        Args:
+            channel_id (`str`): The id of the channel to delete.
+            platform_bot_id (`str`): The bot identifier (re-extracted
+                from credentials by the caller) so the dedup index entry
+                can be removed.
+
+        Returns:
+            `bool`: ``True`` if deleted, ``False`` if not found.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
+
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel id currently bound to a platform bot, if any.
+
+        Used for uniqueness validation — no two channels may share the
+        same platform_bot_id.
+
+        Args:
+            platform_bot_id (`str`): The platform-side bot identifier.
+
+        Returns:
+            `str | None`: The bound channel id, or ``None``.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel support.",
+        )
 
     # ------------------------------------------------------------------
     # Message persistence

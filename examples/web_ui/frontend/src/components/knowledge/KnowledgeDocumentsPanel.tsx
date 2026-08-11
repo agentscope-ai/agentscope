@@ -387,8 +387,9 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 	return (
 		<div className="flex flex-col gap-y-4">
 			<div className="flex items-center justify-between">
-				<h3 className="text-sm font-semibold">
-					{t('knowledge.document.countLabel', { count: totalCount })}
+				<h3 className="flex items-center gap-x-2 text-[13.5px] font-medium text-foreground">
+					{t('knowledge.document.title')}
+					<span className="font-mono text-[11px] text-text-data">{totalCount}</span>
 				</h3>
 				<div className="flex items-center gap-x-2">
 					{hasFinishedLocalTasks && (
@@ -437,7 +438,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 							</EmptyDescription>
 						</EmptyHeader>
 						<EmptyContent>
-							<Button variant="outline" size="sm" onClick={onUploadClick}>
+							<Button size="sm" onClick={onUploadClick}>
 								<Plus className="size-3.5" />
 								{t('knowledge.document.uploadButton')}
 							</Button>

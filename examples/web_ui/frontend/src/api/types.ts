@@ -111,7 +111,7 @@ export interface AgentSchemaV2Response {
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule';
+export type SessionSource = 'user' | 'schedule' | 'channel';
 
 export interface SessionConfig {
 	name: string;
@@ -123,6 +123,12 @@ export interface SessionConfig {
 	/** Knowledge bases attached to this session + KB middleware parameters. */
 	knowledge_config: SessionKnowledgeConfig | null;
 	workspace_id: string;
+	/**
+	 * Directory the session is focused on — absolute, or relative to the
+	 * workspace root, and not confined to it. `null` means the root.
+	 * Purely a viewing anchor; it does not move where tools execute.
+	 */
+	cwd: string | null;
 }
 
 // TODO: update when Python side is finalised
@@ -133,6 +139,7 @@ export interface SessionRecord extends RecordBase {
 	agent_id: string;
 	source: SessionSource;
 	source_schedule_id: string | null;
+	source_channel_id: string | null;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called
@@ -189,6 +196,14 @@ export interface UpdateSessionRequest {
 	 */
 	knowledge_config?: SessionKnowledgeConfig | null;
 	permission_mode?: PermissionMode;
+	/**
+	 * New working directory — absolute or relative to the workspace
+	 * root, and not confined to it. PATCH semantics:
+	 *   - omit the field → leave unchanged
+	 *   - set to `null`  → reset to the workspace root
+	 *   - set to a value → focus that directory
+	 */
+	cwd?: string | null;
 }
 
 export interface SessionListResponse {
@@ -205,6 +220,68 @@ export interface SessionListResponse {
 export interface ScheduleSessionsResponse {
 	sessions: SessionRecord[];
 	total: number;
+}
+
+// ─── Workspace files ──────────────────────────────────────────────────────────
+
+/** One entry in a workspace directory listing. */
+export interface DirectoryEntry {
+	name: string;
+	is_dir: boolean;
+	/** Always null for a directory, and for a file the backend could not stat. */
+	size_bytes: number | null;
+	/** Last modification time as a Unix timestamp. */
+	updated_at: number | null;
+}
+
+/** One directory level, plus the path it actually resolved to. */
+export interface DirectoryListing {
+	/**
+	 * Absolute path of the directory that was listed. The only way to
+	 * learn where a relative request landed — the workspace root is
+	 * backend-dependent and unknowable client-side.
+	 */
+	path: string;
+	entries: DirectoryEntry[];
+}
+
+/** Git state of one directory. */
+export interface GitStatus {
+	/** `null` on a detached HEAD. */
+	branch: string | null;
+	/** Full commit SHA, or `null` when the repository has no commits. */
+	head: string | null;
+	/**
+	 * Commits ahead of the upstream. `null` means no upstream is
+	 * configured, which is a different state from being level with one.
+	 */
+	ahead: number | null;
+	behind: number | null;
+	/**
+	 * Lines changed relative to HEAD. Untracked files contribute
+	 * nothing — `git diff` does not see them — so a session that only
+	 * created files reports zero here and a non-zero `untracked`.
+	 */
+	insertions: number;
+	deletions: number;
+	/** File counts. */
+	staged: number;
+	unstaged: number;
+	untracked: number;
+	conflicted: number;
+}
+
+/** Where a session is pointed, and the git state of that place. */
+export interface WorkspaceStatus {
+	/** Absolute path of the workspace root; not derivable client-side. */
+	workdir: string;
+	/** Absolute path the session is focused on. Equals `workdir` when unset. */
+	cwd: string;
+	/**
+	 * `null` when there is nothing to report — not a repository, git
+	 * unavailable, timed out. The badge is hidden either way.
+	 */
+	git: GitStatus | null;
 }
 
 // ─── Team ─────────────────────────────────────────────────────────────────────
@@ -247,19 +324,36 @@ export interface TeamDetailResponse {
 }
 
 /**
+ * A session's unified status. `running` means a worker somewhere holds
+ * its run lease; the `awaiting_*` values mean nobody is running it but
+ * its stored context is parked on a pending tool call.
+ */
+export type SessionStatus = 'running' | 'idle' | 'awaiting_permission' | 'awaiting_external_result';
+
+/**
  * Per-session bundle returned by `GET /sessions/?agent_id=...`.
  *
- * Bundles three pieces of information so the chat UI can render a
- * session without follow-up requests: the persisted record (incl.
- * `state`), whether a chat run is active, and — when the session
+ * Bundles what the chat UI needs to render a session without follow-up
+ * requests: the persisted record, its status, and — when the session
  * participates in a team — the resolved team detail.
- *
- * Messages are intentionally separate (`GET /sessions/{id}/messages`)
- * since they paginate independently.
  */
 export interface SessionView {
+	/**
+	 * The record with the bulk of `state` stripped: `context`, `summary`
+	 * and `tool_context` arrive cleared, since they hold the model's
+	 * conversation and every file it has read. `permission_context` and
+	 * `tasks_context` survive — the panels seed from them. Messages come
+	 * from `GET /sessions/{id}/messages`.
+	 */
 	session: SessionRecord;
+	/**
+	 * @deprecated Use {@link status}. True only while a worker holds the
+	 * run lease, which a session parked on a confirmation prompt does
+	 * not — so this reads `false` for a session visibly waiting on you.
+	 */
 	is_running: boolean;
+	/** Exactly one applies at a time, so one indicator renders it. */
+	status: SessionStatus;
 	team: TeamDetailResponse | null;
 }
 
@@ -738,6 +832,12 @@ export interface EmbeddingModelCard {
 	parameter_overrides: Record<string, Record<string, unknown>>;
 }
 
+/** Response of `GET /embedding-model/` — the provider's full catalogue. */
+export interface ListEmbeddingModelResponse {
+	models: EmbeddingModelCard[];
+	total: number;
+}
+
 // ─── Knowledge Base ───────────────────────────────────────────────────────────
 
 /**
@@ -925,6 +1025,89 @@ export interface ListSupportedContentTypesResponse {
 	extensions: string[];
 }
 
+// ─── Channel ──────────────────────────────────────────────────────────────────
+
+// How inbound messages are grouped into agent sessions.
+export type SessionScope = 'per_chat' | 'per_chat_user';
+
+// One routing rule: match an inbound event, then pick the agent and how
+// its session is grouped. Rules are ordered; the first match wins and the
+// last must be a catch-all (match_value === '*').
+export interface ChannelBinding {
+	match_key: string;
+	match_value: string;
+	agent_id: string;
+	session_scope: SessionScope;
+}
+
+export interface RoutingConfig {
+	bindings: ChannelBinding[];
+}
+
+export interface SessionSettings {
+	chat_model_config: ChatModelConfig;
+	fallback_chat_model_config?: ChatModelConfig | null;
+	permission_mode: PermissionMode;
+}
+
+export interface ChannelRecord {
+	id: string;
+	channel_type: string;
+	name: string | null;
+	user_id: string;
+	platform_bot_id: string;
+	enabled: boolean;
+	platform_config: Record<string, unknown>;
+	routing: RoutingConfig;
+	session: SessionSettings;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreateChannelRequest {
+	channel_type: string;
+	name?: string | null;
+	credentials: Record<string, unknown>;
+	platform_config?: Record<string, unknown>;
+	routing: RoutingConfig;
+	session: SessionSettings;
+	enabled?: boolean;
+}
+
+export interface UpdateChannelRequest {
+	name?: string | null;
+	platform_config?: Record<string, unknown>;
+	routing?: RoutingConfig;
+	session?: SessionSettings;
+	enabled?: boolean;
+}
+
+export interface ChannelTypeSchema {
+	channel_type: string;
+	display_name: string;
+	description?: string;
+	icon_url?: string;
+	credentials_schema: Record<string, unknown>;
+	config_schema: Record<string, unknown>;
+	platform_bot_id_field?: string;
+}
+
+export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';
+
+export interface ChannelStatus {
+	state: ChannelState;
+	last_error: string;
+}
+
+export interface ChannelSessionsResponse {
+	sessions: SessionRecord[];
+	total: number;
+}
+
+export interface ChannelChatIdsResponse {
+	chats: { chat_id: string; name: string; source: string }[];
+}
+
 // ─── TTS ──────────────────────────────────────────────────────────────────────
 
 export interface TTSModelCard {
@@ -943,4 +1126,15 @@ export interface TTSModelCard {
 export interface ListTTSModelResponse {
 	models: TTSModelCard[];
 	total: number;
+}
+
+// ─── Health ───────────────────────────────────────────────────────────────────
+
+/** `disabled` means the deployment turned an optional feature off, not that it is down. */
+export type ComponentStatus = 'ok' | 'not_ready' | 'disabled';
+
+export interface HealthResponse {
+	status: 'ok' | 'not_ready';
+	version: string;
+	components: Record<string, ComponentStatus>;
 }

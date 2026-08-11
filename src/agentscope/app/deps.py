@@ -3,16 +3,22 @@
 from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
+from .channel import (
+    ChannelLifecycleDispatcher,
+    ChannelTypeRegistry,
+)
 from ._manager import (
     BackgroundTaskManager,
     ChatRunRegistry,
     SchedulerManager,
 )
 from ._service import (
+    ChannelService,
     ChatService,
     KnowledgeBaseService,
     ResourceAccessService,
     SessionService,
+    WorkspaceService,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .hub import MCPHubBase, SkillHubBase
@@ -114,6 +120,18 @@ async def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
 
 
+async def get_workspace_service(request: Request) -> WorkspaceService:
+    """Return the application-wide workspace service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `WorkspaceService`: The instance stored in ``app.state``.
+    """
+    return request.app.state.workspace_service
+
+
 async def get_chat_run_registry(request: Request) -> ChatRunRegistry:
     """Return the per-process chat-run registry.
 
@@ -163,6 +181,18 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
         `WorkspaceManagerBase`: The workspace manager stored in ``app.state``.
     """
     return request.app.state.workspace_manager
+
+
+async def get_download_secret(request: Request) -> str:
+    """Return the secret that signs file-download tokens.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `str`: The signing secret stored in ``app.state``.
+    """
+    return request.app.state.download_secret
 
 
 async def get_extra_agent_middlewares(
@@ -344,3 +374,45 @@ async def get_skill_hubs(request: Request) -> dict[str, SkillHubBase]:
             were passed to ``create_app``.
     """
     return getattr(request.app.state, "skill_hubs", {})
+
+
+async def get_channel_service(request: Request) -> ChannelService:
+    """Return the application-wide channel CRUD service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelService`: The service stored in ``app.state``.
+    """
+    return request.app.state.channel_service
+
+
+async def get_channel_dispatcher(
+    request: Request,
+) -> ChannelLifecycleDispatcher:
+    """Return this node's channel lifecycle dispatcher.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelLifecycleDispatcher`: The dispatcher stored in
+        ``app.state``, source of per-channel runtime status.
+    """
+    return request.app.state.channel_dispatcher
+
+
+async def get_channel_type_registry(
+    request: Request,
+) -> ChannelTypeRegistry:
+    """Return the registry of channel types allowed by this service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelTypeRegistry`: The registry built in ``create_app`` from
+        the ``channels`` list (empty when none were passed).
+    """
+    return request.app.state.channel_type_registry

@@ -1,8 +1,9 @@
 {
 	"common": {
 		"add": "添加",
-		"agent": "Agent",
+		"agent": "智能体",
 		"cancel": "取消",
+		"channel": "频道",
 		"chat": "聊天",
 		"close": "关闭",
 		"confirm": "确认",
@@ -11,12 +12,10 @@
 		"credential": "凭证",
 		"date": "日期",
 		"delete": "删除",
-		"deleting": "删除中…",
 		"disabled": "已禁用",
 		"edit": "编辑",
 		"error": "出错了",
 		"information": "信息",
-		"interrupted": "已中断",
 		"knowledge": "知识库",
 		"loading": "加载中...",
 		"shownCount": "已显示 {{count}} 个",
@@ -37,11 +36,9 @@
 		"settings": "设置",
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
-		"success": "成功",
 		"team": "团队",
 		"uploading": "上传中",
 		"leader": "队长",
-		"worker": "成员",
 		"time": "时间",
 		"yes": "是",
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
@@ -50,7 +47,11 @@
 		"mine": "我的",
 		"my-mcp": "已安装的 MCP",
 		"skill-hub": "技能中心",
-		"my-skill": "已安装的技能"
+		"my-skill": "已安装的技能",
+		"message": "消息",
+		"llm": "LLM",
+		"tts": "TTS",
+		"embedding": "向量"
 	},
 	"error": {
 		"description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -117,7 +118,8 @@
 			"team": "团队",
 			"team_message": "团队消息",
 			"schedule": "定时任务",
-			"system": "系统消息"
+			"system": "系统消息",
+			"channel": "频道"
 		},
 		"error": {
 			"title": "回复失败",
@@ -128,45 +130,43 @@
 			"upstream": "上游模型服务返回了错误。",
 			"connection": "无法连接模型服务 —— 网络错误或超时。",
 			"internal": "发生了未预期的内部错误。",
-			"setup": "会话准备失败 —— 请检查该 agent 的模型、工具和知识库配置。",
+			"setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
 		}
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",
-		"placeholder": "输入消息...",
-		"send": "发送",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
-		"noSessions": "暂无会话",
 		"greeting": "我们从哪儿开始？",
 		"agent": {
-			"selectPlaceholder": "选择 Agent",
-			"emptyTitle": "暂无 Agent",
-			"emptyDescription": "创建一个 Agent 开始使用。",
+			"selectPlaceholder": "选择智能体",
+			"emptyTitle": "暂无智能体",
+			"emptyDescription": "创建一个智能体开始使用。",
 			"groupYours": "我的",
 			"groupShared": "共享给我"
 		},
 		"session": {
 			"label": "会话",
 			"emptyTitle": "暂无会话",
-			"emptyNoAgent": "请先选择一个 Agent。",
-			"emptyHasAgent": "创建会话开始对话。"
+			"emptyNoAgent": "请先选择一个智能体。",
+			"emptyHasAgent": "创建会话开始对话。",
+			"today": "今天",
+			"earlier": "更早"
 		}
 	},
 	"dialog-agent-create": {
-		"title": "创建 Agent",
-		"description": "定义新 Agent 的身份与行为。",
-		"trigger": "创建 Agent"
+		"title": "创建智能体",
+		"description": "定义新智能体的身份与行为。"
 	},
 	"agent-form": {
 		"identity": {
-			"legend": "Agent 身份",
-			"description": "定义此 Agent 行为的名称和指令。",
+			"legend": "智能体身份",
+			"description": "定义此智能体行为的名称和指令。",
 			"name": {
 				"label": "名称",
-				"placeholder": "我的 Agent"
+				"placeholder": "我的智能体"
 			},
 			"system-prompt": {
 				"label": "系统提示词"
@@ -203,22 +203,22 @@
 		},
 		"invite-config": {
 			"legend": "邀请配置",
-			"description": "控制此 Agent 是否可被其他 Agent 通过 AgentInvite 邀请。",
+			"description": "控制此智能体是否可被其他智能体通过 AgentInvite 邀请。",
 			"invitable": {
 				"label": "允许被邀请"
 			},
 			"invite-description": {
 				"label": "邀请说明",
-				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
+				"placeholder": "简要描述此智能体的专长；允许被邀请时必填。"
 			}
 		}
 	},
 	"dialog-agent-edit": {
-		"title": "编辑 Agent",
-		"description": "更新此 Agent 的配置。"
+		"title": "编辑智能体",
+		"description": "更新此智能体的配置。"
 	},
 	"dialog-agent-delete": {
-		"entity": "Agent",
+		"entity": "智能体",
 		"confirm": "删除"
 	},
 	"dialog-session-delete": {
@@ -299,7 +299,6 @@
 	},
 	"credential": {
 		"noProviders": "暂无可用提供商",
-		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
 		"selectHintDescription": "从左侧选择一个凭证以查看详情。",
 		"availableModels": "可用模型",
@@ -310,17 +309,21 @@
 		"configured": "已配置",
 		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
-		"maxContext": "最大上下文",
-		"maxOutput": "最大输出",
-		"inputTypes": "输入模态",
-		"outputTypes": "输出模态",
-		"availableTTSModels": "语音合成模型"
+		"realtime": "实时",
+		"table": {
+			"model": "模型",
+			"context": "上下文",
+			"maxOutput": "最大输出",
+			"accepts": "输入",
+			"outputs": "输出",
+			"legend": "上下文与最大输出均以 token 计。REASONING 表示模型支持深度思考。",
+			"dimensions": "维度"
+		}
 	},
 	"knowledge": {
-		"subtitle": "管理 Agent 使用的知识库",
+		"subtitle": "管理智能体使用的知识库",
 		"selectHint": "未选择知识库",
 		"selectHintDescription": "从左侧选择一个知识库以查看详情。",
-		"deleteEntity": "知识库",
 		"list": {
 			"label": "知识库",
 			"emptyTitle": "暂无知识库",
@@ -328,24 +331,16 @@
 			"createButton": "创建知识库"
 		},
 		"document": {
-			"label": "文档",
 			"emptyTitle": "暂无文档",
 			"emptyDescription": "上传文档以索引到该知识库中。",
 			"uploadButton": "上传文档",
 			"uploadButtonShort": "上传",
-			"countLabel": "文档（{{count}}）",
-			"size": "大小",
-			"chunks": "分块",
 			"chunkCount_one": "{{count}} 个分块",
 			"chunkCount_other": "{{count}} 个分块",
-			"uploadedAt": "{{when}} 上传",
-			"deleteEntity": "文档",
 			"deleteConfirmTitle": "删除文档",
 			"deleteConfirmDescription": "确认删除 \"{{name}}\"？该操作将一并移除文档及其全部已索引分块，且不可撤销。",
 			"deleteError": "删除文档失败。",
-			"dropHint": "拖拽文件到此处上传",
 			"dropHintIdle": "或拖拽文件到此处",
-			"invalidFile": "\"{{name}}\" 添加失败。",
 			"unsupportedExtension": "\"{{name}}\" 已跳过——不支持该文件类型。",
 			"status": {
 				"queued": "排队中",
@@ -360,11 +355,11 @@
 			},
 			"actions": {
 				"cancel": "取消",
-				"retry": "重试",
 				"dismiss": "关闭",
 				"remove": "删除",
 				"clearFinished": "清除已完成"
-			}
+			},
+			"title": "文档"
 		},
 		"test": {
 			"button": "测试",
@@ -382,12 +377,10 @@
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
-		"fallbackPlaceholder": "兜底模型",
 		"loading": "加载中…",
 		"empty": {
 			"title": "暂无可用模型",
-			"description": "请先添加凭证。",
-			"addButton": "添加凭证"
+			"description": "请先添加凭证。"
 		},
 		"addCredential": "添加凭证",
 		"clear": "清除选择",
@@ -400,8 +393,7 @@
 			"title": "暂无可用的 Embedding 模型",
 			"description": "请先添加支持 Embedding 的凭证。"
 		},
-		"addCredential": "添加凭证",
-		"clear": "清除选择"
+		"addCredential": "添加凭证"
 	},
 	"dimension-select": {
 		"placeholder": "选择维度",
@@ -431,17 +423,17 @@
 		"skillDescription": "确定要将该技能从工作区中移除吗？"
 	},
 	"schedule": {
+		"subtitle": "为智能体设置定时或一次性的计划任务",
 		"calendar": "日历",
 		"createSchedule": {
-			"description": "为 Agent 设置定时或一次性的计划任务。",
+			"description": "为智能体设置定时或一次性的计划任务。",
 			"descriptionLabel": "描述",
 			"descriptionPlaceholder": "描述这个计划任务的用途...",
 			"namePlaceholder": "例如：每日报告",
 			"title": "创建日程"
 		},
 		"deleteSchedule": {
-			"entity": "日程",
-			"successToast": "日程已删除。"
+			"entity": "日程"
 		},
 		"endAt": "结束日期",
 		"end_at": "结束时间",
@@ -457,10 +449,8 @@
 		"more": "更多",
 		"nextMonth": "下个月",
 		"nextYear": "下一年",
-		"noExecutions": "暂无执行记录",
-		"noExecutionsDescription": "该日程尚未执行过。",
 		"noSchedules": "暂无日程",
-		"noSchedulesDescription": "创建日程以自动化 Agent 任务。",
+		"noSchedulesDescription": "创建日程以自动化智能体任务。",
 		"pickDate": "选择日期",
 		"permissionMode": "权限模式",
 		"timezone": "时区",
@@ -472,7 +462,6 @@
 		"previousMonth": "上个月",
 		"previousYear": "上一年",
 		"saturday": "周六",
-		"startAt": "开始时间",
 		"sunday": "周日",
 		"thursday": "周四",
 		"today": "今天",
@@ -500,6 +489,12 @@
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
 		"submit": "开始使用",
+		"checking": "连接中...",
+		"errorUnreachable": "无法连接到该服务器。请检查地址是否正确、服务是否已启动，以及是否允许跨域请求。",
+		"errorTimeout": "服务器已建立连接，但在超时时间内没有响应。可能负载过高或启动卡住了。",
+		"errorNotAgentScope": "地址可以访问，但它不是 AgentScope 服务。请检查地址，或升级尚未提供健康检查接口的旧版本后端。",
+		"errorUnauthorized": "服务器拒绝了该用户名，请填写有效的用户名。",
+		"errorNotReady": "服务器可以连接，但尚未就绪。以下子系统启动失败：",
 		"hint": "此应用仅提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
 	},
 	"tour": {
@@ -510,8 +505,8 @@
 		"skip": "跳过",
 		"step": "第 {{current}} / {{total}} 步",
 		"createAgent": {
-			"title": "创建 Agent",
-			"content": "先创建一个 Agent —— 与你对话的智能体。"
+			"title": "创建智能体",
+			"content": "先创建一个智能体 —— 与你对话的智能体。"
 		},
 		"createSession": {
 			"title": "创建会话",
@@ -531,11 +526,6 @@
 		}
 	},
 	"task-panel": {
-		"heading": "任务",
-		"noTasks": "暂无任务。",
-		"pending": "待处理",
-		"inProgress": "进行中",
-		"completed": "已完成",
 		"blockedBy": "依赖"
 	},
 	"panel": {
@@ -547,7 +537,6 @@
 			"emptyDescription": "智能体规划的任务会显示在这里。"
 		},
 		"mcp": {
-			"title": "MCP",
 			"description": "工作区中配置的 MCP 服务器。",
 			"searchPlaceholder": "在工作区中搜索 MCP",
 			"add": "添加 MCP",
@@ -587,8 +576,7 @@
 			"emptyTitle": "暂无知识库",
 			"emptyDescription": "请先在「知识库」页面创建一个。",
 			"parametersTitle": "检索配置",
-			"parametersDescription": "知识库检索参数设置",
-			"selectedCount": "已挂载 {{count}} 个"
+			"parametersDescription": "知识库检索参数设置"
 		},
 		"permission": {
 			"title": "权限",
@@ -607,14 +595,122 @@
 			"emptyTitle": "无结果",
 			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
 		},
-		"loading": "加载中…"
+		"loading": "加载中…",
+		"team": {
+			"membersHeading": "成员",
+			"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
+			"emptyTitle": "没有团队",
+			"emptyDescription": "当前会话不属于任何团队。agent 会用 TeamCreate 建立团队。",
+			"running": "运行中",
+			"idle": "空闲",
+			"missingSession": "（无会话）"
+		}
 	},
-	"team-sidebar": {
-		"membersHeading": "成员",
-		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
-		"running": "运行中",
-		"idle": "空闲",
-		"missingSession": "（无会话）"
+	"channel": {
+		"title": "频道",
+		"subtitle": "接入飞书、Discord 等外部平台，让智能体在群聊里工作",
+		"status": "状态",
+		"connected": "已连接",
+		"enable": "启用",
+		"disable": "停用",
+		"deleteEntity": "频道",
+		"routing": "路由",
+		"routingDesc": "将入站消息匹配到某个智能体和会话粒度。最后一条规则匹配其余所有消息。",
+		"sectionActive": "已接入",
+		"sectionAdd": "添加频道",
+		"rules": "{{count}} 条规则",
+		"empty": {
+			"title": "暂无频道",
+			"description": "创建一个频道，将智能体连接到飞书、钉钉等外部平台。"
+		},
+		"create": {
+			"title": "创建频道",
+			"titleFor": "接入 {{name}}",
+			"description": "将智能体连接到外部消息平台。",
+			"channelType": "平台",
+			"nameLabel": "名称",
+			"namePlaceholder": "如：客服值班",
+			"nameDesc": "便于区分同平台的多个频道",
+			"modelDesc": "新会话创建时的初始模型",
+			"permissionMode": "权限模式",
+			"permissionModeDesc": "新会话创建时的初始权限模式",
+			"showToolMessages": "显示工具消息",
+			"showToolMessagesDesc": "在频道中展示工具调用和返回消息。",
+			"showThinking": "显示思维过程",
+			"showThinkingDesc": "在频道中展示模型推理过程。"
+		},
+		"fields": {
+			"app_id": {
+				"title": "应用 ID",
+				"description": "飞书应用 ID"
+			},
+			"app_secret": {
+				"title": "应用密钥",
+				"description": "飞书应用密钥"
+			},
+			"bot_token": {
+				"title": "机器人令牌"
+			},
+			"application_id": {
+				"title": "应用 ID"
+			},
+			"only_at_reply": {
+				"title": "仅在被提及时回复",
+				"description": "在群聊中，仅当机器人被 @提及时回复"
+			},
+			"show_tool_process": {
+				"title": "显示工具过程",
+				"description": "在回复中显示工具调用和返回结果"
+			},
+			"show_thinking": {
+				"title": "显示思考过程",
+				"description": "在回复中显示模型的推理过程"
+			}
+		},
+		"edit": {
+			"title": "编辑频道",
+			"description": "修改路由、模型与回复设置。平台与凭据不可修改。"
+		},
+		"sessionScope": {
+			"per_chat": "按聊天",
+			"per_chat_user": "按聊天+用户"
+		},
+		"sessions": {
+			"title": "派生会话",
+			"empty": "还没有会话",
+			"openInChat": "在对话中打开"
+		},
+		"detail": {
+			"config": "配置",
+			"configDesc": "新会话创建时应用的初始配置",
+			"configItem": "配置项",
+			"configValue": "值",
+			"condition": "条件",
+			"created": "创建时间",
+			"deleteChannel": "删除频道",
+			"routingDesc": "入站消息如何匹配到智能体与会话粒度",
+			"sessionsDesc": "该频道派生出的会话",
+			"selectHint": "选择一个频道查看详情"
+		},
+		"state": {
+			"stopped": "已停止",
+			"connecting": "连接中",
+			"retrying": "重连中",
+			"connected": "已连接",
+			"failed": "连接失败"
+		},
+		"binding": {
+			"rule": "匹配规则",
+			"matchKey": "匹配字段",
+			"matchValue": "匹配值",
+			"matchValuePlaceholder": "如某个 chat_id",
+			"routeTo": "路由到",
+			"scope": "会话粒度",
+			"fallback": "兜底规则",
+			"fallbackDesc": "未命中上面任何规则的消息，都路由到这里",
+			"catchAll": "其余所有消息",
+			"addRule": "添加规则"
+		}
 	},
 	"mcp": {
 		"subtitle": "浏览并安装 MCP 服务",
@@ -669,5 +765,20 @@
 		"loadFailedTitle": "无法连接服务",
 		"loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
 		"retry": "重试"
+	},
+	"agent-menu": {
+		"settings": "设置",
+		"delete": "删除智能体"
+	},
+	"workdir": {
+		"title": "工作目录",
+		"description": "选择智能体的工作目录。",
+		"root": "工作区根目录",
+		"parent": "上一级",
+		"errorTitle": "无法列出该文件夹",
+		"pathPlaceholder": "输入或粘贴路径",
+		"empty": "此文件夹为空",
+		"pressEnter": "先按回车校验该路径",
+		"gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
 	}
 }
