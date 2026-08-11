@@ -937,7 +937,10 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
         skills = await self.workspace.list_skills()
         self.assertEqual(len(skills), 1)
         self.assertEqual(skills[0].name, "greeter")
-        self.assertEqual(skills[0].dir, f"{SANDBOX_WORKDIR}/skills/greeter")
+        self.assertEqual(
+            skills[0].dir,
+            f"{SANDBOX_WORKDIR}/skills/default/greeter",
+        )
 
         await self.workspace.remove_skill("greeter")
         self.assertListEqual(await self.workspace.list_skills(), [])

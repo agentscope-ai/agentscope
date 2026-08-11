@@ -28,6 +28,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     Gemini API does not support certain JSON Schema constructs. This
     function removes or rewrites the following:
 
+    - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
@@ -54,6 +55,9 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         return schema
 
     schema = dict(schema)
+
+    # Gemini's Schema model does not support the JSON Schema dialect marker.
+    schema.pop("$schema", None)
 
     # Gemini (and many third-party proxies) reject `null` as a standalone
     # functionDeclaration property type. Some MCP servers emit

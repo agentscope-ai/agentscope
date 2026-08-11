@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from ._base import StorageBase
 from ._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
@@ -96,6 +97,18 @@ class RedisStorage(StorageBase):
         schedule_global_index: str = "agentscope:schedules"
         schedule_session_index: str = (
             "agentscope:user:{user_id}:schedule:{schedule_id}:sessions"
+        )
+
+        # channel_id is a globally unique UUID, so the record lives at a
+        # single global key. Indexes: per-user (management list),
+        # all-channels (reconcile enumeration), bot-id (uniqueness /
+        # dedup).
+        channel: str = "agentscope:channel_record:{channel_id}"
+        channel_index: str = "agentscope:user:{user_id}:channels"
+        channel_all_index: str = "agentscope:channels"
+        channel_botid_index: str = "agentscope:channel_botid:{platform_bot_id}"
+        channel_session_index: str = (
+            "agentscope:user:{user_id}:channel:{channel_id}:sessions"
         )
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
@@ -861,6 +874,8 @@ class RedisStorage(StorageBase):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -893,6 +908,8 @@ class RedisStorage(StorageBase):
             config=config,
             source=source,
             source_schedule_id=source_schedule_id,
+            source_chat_id=source_chat_id,
+            source_channel_id=source_channel_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -916,6 +933,14 @@ class RedisStorage(StorageBase):
                 schedule_id=source_schedule_id,
             )
             await self._client.sadd(schedule_session_key, record.id)
+
+        if source_channel_id:
+            channel_session_key = self._key(
+                self.key_config.channel_session_index,
+                user_id=user_id,
+                channel_id=source_channel_id,
+            )
+            await self._client.sadd(channel_session_key, record.id)
 
         return record
 
@@ -1080,6 +1105,14 @@ class RedisStorage(StorageBase):
             )
             await self._client.srem(schedule_session_key, session_id)
 
+        if record.source_channel_id:
+            channel_session_key = self._key(
+                self.key_config.channel_session_index,
+                user_id=user_id,
+                channel_id=record.source_channel_id,
+            )
+            await self._client.srem(channel_session_key, session_id)
+
         return True
 
     async def list_sessions_by_schedule(
@@ -1094,6 +1127,32 @@ class RedisStorage(StorageBase):
             schedule_id=schedule_id,
         )
         ids = await self._client.smembers(schedule_session_key)
+        records = []
+        for session_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.session,
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
+            if raw:
+                records.append(SessionRecord.model_validate_json(raw))
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return records
+
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions derived from a given channel."""
+        channel_session_key = self._key(
+            self.key_config.channel_session_index,
+            user_id=user_id,
+            channel_id=channel_id,
+        )
+        ids = await self._client.smembers(channel_session_key)
         records = []
         for session_id in ids:
             raw = await self._client.get(
@@ -1232,6 +1291,124 @@ class RedisStorage(StorageBase):
             if raw:
                 records.append(ScheduleRecord.model_validate_json(raw))
         return records
+
+    # ------------------------------------------------------------------
+    # Channel persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and refresh its indexes."""
+        key = self._key(self.key_config.channel, channel_id=record.id)
+        index_key = self._key(
+            self.key_config.channel_index,
+            user_id=record.user_id,
+        )
+        botid_key = self._key(
+            self.key_config.channel_botid_index,
+            platform_bot_id=platform_bot_id,
+        )
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(index_key, record.id)
+        await self._client.sadd(self.key_config.channel_all_index, record.id)
+        await self._set_with_ttl(botid_key, record.id)
+        return record.id
+
+    async def get_channel(
+        self,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a channel record by its global id."""
+        raw = await self._client.get(
+            self._key(self.key_config.channel, channel_id=channel_id),
+        )
+        if not raw:
+            return None
+        return ChannelRecord.model_validate_json(raw)
+
+    async def list_channels(self, user_id: str) -> list[ChannelRecord]:
+        """Return all channel records owned by the given user.
+
+        Stale entries whose record key has expired are purged from the
+        user index (self-healing).
+        """
+        index_key = self._key(self.key_config.channel_index, user_id=user_id)
+        return await self._collect_channels(
+            index_key,
+            await self._client.smembers(index_key),
+        )
+
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Return every channel record across all users."""
+        index_key = self.key_config.channel_all_index
+        return await self._collect_channels(
+            index_key,
+            await self._client.smembers(index_key),
+        )
+
+    async def _collect_channels(
+        self,
+        index_key: str,
+        ids: "set[str]",
+    ) -> list[ChannelRecord]:
+        """Load channel records for ``ids``, purging stale index entries."""
+        records: list[ChannelRecord] = []
+        stale: list[str] = []
+        for channel_id in ids:
+            raw = await self._client.get(
+                self._key(self.key_config.channel, channel_id=channel_id),
+            )
+            if raw:
+                records.append(ChannelRecord.model_validate_json(raw))
+            else:
+                stale.append(channel_id)
+        if stale:
+            await self._client.srem(index_key, *stale)
+        return records
+
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record and clean up all indexes."""
+        key = self._key(self.key_config.channel, channel_id=channel_id)
+        raw = await self._client.get(key)
+        if not raw:
+            return False
+        record = ChannelRecord.model_validate_json(raw)
+
+        await self._client.delete(key)
+        await self._client.srem(
+            self._key(
+                self.key_config.channel_index,
+                user_id=record.user_id,
+            ),
+            channel_id,
+        )
+        await self._client.srem(self.key_config.channel_all_index, channel_id)
+        await self._client.delete(
+            self._key(
+                self.key_config.channel_botid_index,
+                platform_bot_id=platform_bot_id,
+            ),
+        )
+        return True
+
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel id bound to a platform bot, if any."""
+        return await self._client.get(
+            self._key(
+                self.key_config.channel_botid_index,
+                platform_bot_id=platform_bot_id,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Message persistence

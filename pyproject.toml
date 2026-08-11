@@ -75,6 +75,11 @@ storage-sql = [
 ]
 # S3-compatible blob store
 storage-s3 = ["aioboto3"]
+# ------------ Channel ------------
+channel = [
+    "lark-oapi>=1.4.0",
+    "discord.py>=2.3",
+]
 # ------------ Workspace (sandbox backends) ------------
 workspace-docker = ["aiodocker"]
 workspace-e2b = ["e2b"]
@@ -149,6 +154,7 @@ full = [
     "agentscope[storage-redis]",
     "agentscope[storage-sql]",
     "agentscope[storage-s3]",
+    "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
     "agentscope[rag]",

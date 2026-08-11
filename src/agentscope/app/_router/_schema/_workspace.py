@@ -70,6 +70,23 @@ class DirectoryEntry(BaseModel):
     )
 
 
+class DirectoryListing(BaseModel):
+    """One directory level, plus the path it actually resolved to."""
+
+    path: str = Field(
+        description=(
+            "Absolute path of the directory that was listed. Echoing "
+            "it back is what lets a caller that passed a relative path "
+            "(or none at all) show the user where they really are — "
+            "the workspace root is backend-dependent and otherwise "
+            "unknowable client-side."
+        ),
+    )
+    entries: list[DirectoryEntry] = Field(
+        description="The directory's immediate children, unsorted.",
+    )
+
+
 class DownloadTokenResponse(BaseModel):
     """A capability authorizing one download of one path."""
 

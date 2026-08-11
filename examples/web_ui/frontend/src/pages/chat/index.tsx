@@ -1,8 +1,10 @@
 import { format, isToday } from 'date-fns';
 import {
 	BotMessageSquare,
+	Cable,
 	CalendarClock,
 	Ellipsis,
+	type LucideIcon,
 	MessageSquareDashed,
 	Pencil,
 	Plus,
@@ -13,13 +15,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
-import type { SessionRecord } from '@/api';
+import type { SessionRecord, SessionSource } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
 import { AgentSelect } from '@/components/select/AgentSelect';
-import { TeamSidebar } from '@/components/team/TeamSidebar';
 import { ChatTourController } from '@/components/tour/ChatTourController';
 import { Button } from '@/components/ui/button';
 import {
@@ -75,6 +76,13 @@ import { useTranslation } from '@/i18n/useI18n.ts';
  *
  * @returns The chat page JSX.
  */
+// Icon per session origin, shown only when a sidebar mixes sources.
+const SOURCE_ICON: Record<SessionSource, LucideIcon> = {
+	user: BotMessageSquare,
+	schedule: CalendarClock,
+	channel: Cable,
+};
+
 const ChatPageInner = () => {
 	const navigate = useNavigate();
 	const {
@@ -106,7 +114,9 @@ const ChatPageInner = () => {
 
 	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
-	const hasScheduleSessions = sessions.some((v) => v.session.source === 'schedule');
+	// Show a per-origin icon only when sessions actually mix sources —
+	// a uniform list needs no disambiguation.
+	const showSourceIcons = new Set(sessions.map((v) => v.session.source)).size > 1;
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -204,7 +214,9 @@ const ChatPageInner = () => {
 			 * container, which would otherwise cover the app rail.
 			 */}
 			<Sidebar collapsible={isMobile ? 'offcanvas' : 'none'} className="rounded-[22px]">
-				<SidebarContent className="my-2">
+				{/* Scrolling moves down to the session list below, so the
+				    agent picker and the new-session button stay put. */}
+				<SidebarContent className="my-2 overflow-hidden">
 					<SidebarGroup className="px-2 py-0">
 						<SidebarGroupLabel className="justify-between">
 							{t('common.agent')}
@@ -256,14 +268,14 @@ const ChatPageInner = () => {
 							</DropdownMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
-					<SidebarGroup className="mt-5 px-2 py-0">
+					<SidebarGroup className="mt-5 min-h-0 flex-1 px-2 py-0">
 						<SidebarGroupLabel className="justify-between">
 							{t('chat.session.label')}
 							<span className="text-[10px] text-text-data font-mono">
 								{sessions.length}
 							</span>
 						</SidebarGroupLabel>
-						<SidebarGroupContent>
+						<SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
 							<SidebarGroup>
 								<SidebarMenu className="mb-2">
 									<Button id="tour-create-session" onClick={handleCreateSession}>
@@ -273,211 +285,208 @@ const ChatPageInner = () => {
 								</SidebarMenu>
 							</SidebarGroup>
 
-							{sessions.length === 0 ? (
-								<Empty className="border-none py-4 min-h-50">
-									<EmptyHeader>
-										<EmptyMedia variant="icon">
-											<MessageSquareDashed />
-										</EmptyMedia>
-										<EmptyTitle>{t('chat.session.emptyTitle')}</EmptyTitle>
-										<EmptyDescription>
-											{urlAgentId
-												? t('chat.session.emptyHasAgent')
-												: t('chat.session.emptyNoAgent')}
-										</EmptyDescription>
-									</EmptyHeader>
-								</Empty>
-							) : (
-								<>
-									<SidebarGroup>
-										<SidebarGroupLabel>
-											{t('chat.session.today')}
-										</SidebarGroupLabel>
-										<SidebarGroupContent>
-											<SidebarMenu>
-												{todaySessions.map((view) => {
-													const session = view.session;
-													return (
-														<SidebarMenuItem key={session.id}>
-															{/* Wider right gutter than the stock
+							<div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
+								{sessions.length === 0 ? (
+									<Empty className="border-none py-4 min-h-50">
+										<EmptyHeader>
+											<EmptyMedia variant="icon">
+												<MessageSquareDashed />
+											</EmptyMedia>
+											<EmptyTitle>{t('chat.session.emptyTitle')}</EmptyTitle>
+											<EmptyDescription>
+												{urlAgentId
+													? t('chat.session.emptyHasAgent')
+													: t('chat.session.emptyNoAgent')}
+											</EmptyDescription>
+										</EmptyHeader>
+									</Empty>
+								) : (
+									<>
+										<SidebarGroup>
+											<SidebarGroupLabel>
+												{t('chat.session.today')}
+											</SidebarGroupLabel>
+											<SidebarGroupContent>
+												<SidebarMenu>
+													{todaySessions.map((view) => {
+														const session = view.session;
+														const SourceIcon =
+															SOURCE_ICON[session.source] ??
+															BotMessageSquare;
+														return (
+															<SidebarMenuItem key={session.id}>
+																{/* Wider right gutter than the stock
 															    pr-8: the badge holds a mono timestamp. */}
-															<SidebarMenuButton
-																className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
-																isActive={
-																	urlSessionId === session.id
-																}
-																onClick={() => {
-																	navigate(
-																		`/chat/${urlAgentId}/${session.id}`,
-																	);
-																	setOpenMobile(false);
-																}}
-															>
-																{hasScheduleSessions &&
-																	(session.source ===
-																	'schedule' ? (
-																		<CalendarClock />
-																	) : (
-																		<BotMessageSquare />
-																	))}
-																<span className="truncate">
-																	{session.config.name ||
-																		session.id}
-																</span>
-															</SidebarMenuButton>
-															{/* Badge and action are mutually exclusive.
+																<SidebarMenuButton
+																	className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
+																	isActive={
+																		urlSessionId === session.id
+																	}
+																	onClick={() => {
+																		navigate(
+																			`/chat/${urlAgentId}/${session.id}`,
+																		);
+																		setOpenMobile(false);
+																	}}
+																>
+																	{showSourceIcons && (
+																		<SourceIcon />
+																	)}
+																	<span className="truncate">
+																		{session.config.name ||
+																			session.id}
+																	</span>
+																</SidebarMenuButton>
+																{/* Badge and action are mutually exclusive.
 															    Keyboard focus reveals the action, plain
 															    focus-within does not — otherwise clicking
 															    the row would pin it open. */}
-															<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
-																{format(
-																	new Date(
-																		view.session.created_at,
-																	),
-																	'HH:mm',
-																)}
-															</SidebarMenuBadge>
-															<DropdownMenu>
-																<DropdownMenuTrigger asChild>
-																	<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
-																		<Ellipsis />
-																	</SidebarMenuAction>
-																</DropdownMenuTrigger>
-																<DropdownMenuContent
-																	className="w-auto"
-																	side="right"
-																	align="start"
+																<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
+																	{format(
+																		new Date(
+																			view.session.created_at,
+																		),
+																		'HH:mm',
+																	)}
+																</SidebarMenuBadge>
+																<DropdownMenu>
+																	<DropdownMenuTrigger asChild>
+																		<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
+																			<Ellipsis />
+																		</SidebarMenuAction>
+																	</DropdownMenuTrigger>
+																	<DropdownMenuContent
+																		className="w-auto"
+																		side="right"
+																		align="start"
+																	>
+																		<DropdownMenuItem
+																			onClick={() => {
+																				setRenameSession(
+																					session,
+																				);
+																				setRenameOpen(true);
+																			}}
+																		>
+																			<Pencil />
+																			{t(
+																				'session-menu.rename',
+																			)}
+																		</DropdownMenuItem>
+																		<DropdownMenuItem
+																			variant="destructive"
+																			onClick={() =>
+																				requestDeleteSession(
+																					session,
+																				)
+																			}
+																		>
+																			<Trash2 />
+																			{t(
+																				'session-menu.delete',
+																			)}
+																		</DropdownMenuItem>
+																	</DropdownMenuContent>
+																</DropdownMenu>
+															</SidebarMenuItem>
+														);
+													})}
+												</SidebarMenu>
+											</SidebarGroupContent>
+										</SidebarGroup>
+										<SidebarGroup>
+											<SidebarGroupLabel>
+												{t('chat.session.earlier')}
+											</SidebarGroupLabel>
+											<SidebarGroupContent>
+												<SidebarMenu>
+													{earlierSessions.map((view) => {
+														const session = view.session;
+														const SourceIcon =
+															SOURCE_ICON[session.source] ??
+															BotMessageSquare;
+														return (
+															<SidebarMenuItem key={session.id}>
+																<SidebarMenuButton
+																	className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
+																	isActive={
+																		urlSessionId === session.id
+																	}
+																	onClick={() => {
+																		navigate(
+																			`/chat/${urlAgentId}/${session.id}`,
+																		);
+																		setOpenMobile(false);
+																	}}
 																>
-																	<DropdownMenuItem
-																		onClick={() => {
-																			setRenameSession(
-																				session,
-																			);
-																			setRenameOpen(true);
-																		}}
+																	{showSourceIcons && (
+																		<SourceIcon />
+																	)}
+																	<span className="truncate">
+																		{session.config.name ||
+																			session.id}
+																	</span>
+																</SidebarMenuButton>
+																<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
+																	{format(
+																		new Date(
+																			view.session.created_at,
+																		),
+																		'MMM dd',
+																	)}
+																</SidebarMenuBadge>
+																<DropdownMenu>
+																	<DropdownMenuTrigger asChild>
+																		<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
+																			<Ellipsis />
+																		</SidebarMenuAction>
+																	</DropdownMenuTrigger>
+																	<DropdownMenuContent
+																		className="w-auto"
+																		side="right"
+																		align="start"
 																	>
-																		<Pencil />
-																		{t('session-menu.rename')}
-																	</DropdownMenuItem>
-																	<DropdownMenuItem
-																		variant="destructive"
-																		onClick={() =>
-																			requestDeleteSession(
-																				session,
-																			)
-																		}
-																	>
-																		<Trash2 />
-																		{t('session-menu.delete')}
-																	</DropdownMenuItem>
-																</DropdownMenuContent>
-															</DropdownMenu>
-														</SidebarMenuItem>
-													);
-												})}
-											</SidebarMenu>
-										</SidebarGroupContent>
-									</SidebarGroup>
-									<SidebarGroup>
-										<SidebarGroupLabel>
-											{t('chat.session.earlier')}
-										</SidebarGroupLabel>
-										<SidebarGroupContent>
-											<SidebarMenu>
-												{earlierSessions.map((view) => {
-													const session = view.session;
-													return (
-														<SidebarMenuItem key={session.id}>
-															<SidebarMenuButton
-																className="group-has-data-[sidebar=menu-action]/menu-item:pr-16"
-																isActive={
-																	urlSessionId === session.id
-																}
-																onClick={() => {
-																	navigate(
-																		`/chat/${urlAgentId}/${session.id}`,
-																	);
-																	setOpenMobile(false);
-																}}
-															>
-																{hasScheduleSessions &&
-																	(session.source ===
-																	'schedule' ? (
-																		<CalendarClock />
-																	) : (
-																		<BotMessageSquare />
-																	))}
-																<span className="truncate">
-																	{session.config.name ||
-																		session.id}
-																</span>
-															</SidebarMenuButton>
-															<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
-																{format(
-																	new Date(
-																		view.session.created_at,
-																	),
-																	'MMM dd',
-																)}
-															</SidebarMenuBadge>
-															<DropdownMenu>
-																<DropdownMenuTrigger asChild>
-																	<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
-																		<Ellipsis />
-																	</SidebarMenuAction>
-																</DropdownMenuTrigger>
-																<DropdownMenuContent
-																	className="w-auto"
-																	side="right"
-																	align="start"
-																>
-																	<DropdownMenuItem
-																		onClick={() => {
-																			setRenameSession(
-																				session,
-																			);
-																			setRenameOpen(true);
-																		}}
-																	>
-																		<Pencil />
-																		{t('session-menu.rename')}
-																	</DropdownMenuItem>
-																	<DropdownMenuItem
-																		variant="destructive"
-																		onClick={() =>
-																			requestDeleteSession(
-																				session,
-																			)
-																		}
-																	>
-																		<Trash2 />
-																		{t('session-menu.delete')}
-																	</DropdownMenuItem>
-																</DropdownMenuContent>
-															</DropdownMenu>
-														</SidebarMenuItem>
-													);
-												})}
-											</SidebarMenu>
-										</SidebarGroupContent>
-									</SidebarGroup>
-								</>
-							)}
+																		<DropdownMenuItem
+																			onClick={() => {
+																				setRenameSession(
+																					session,
+																				);
+																				setRenameOpen(true);
+																			}}
+																		>
+																			<Pencil />
+																			{t(
+																				'session-menu.rename',
+																			)}
+																		</DropdownMenuItem>
+																		<DropdownMenuItem
+																			variant="destructive"
+																			onClick={() =>
+																				requestDeleteSession(
+																					session,
+																				)
+																			}
+																		>
+																			<Trash2 />
+																			{t(
+																				'session-menu.delete',
+																			)}
+																		</DropdownMenuItem>
+																	</DropdownMenuContent>
+																</DropdownMenu>
+															</SidebarMenuItem>
+														);
+													})}
+												</SidebarMenu>
+											</SidebarGroupContent>
+										</SidebarGroup>
+									</>
+								)}
+							</div>
 						</SidebarGroupContent>
 					</SidebarGroup>
 				</SidebarContent>
 			</Sidebar>
-			{/*
-			 * Team sidebar lives at the outer page level (not inside
-			 * ChatViewport) so navigating between leader and member
-			 * sessions does NOT unmount it. The team data comes from
-			 * the leader's session view, which is stable across that
-			 * navigation; only `currentSessionId` changes to drive
-			 * row highlighting.
-			 */}
-			{currentView?.team && effectiveSessionId && (
-				<TeamSidebar team={currentView.team} currentSessionId={effectiveSessionId} />
-			)}
 			<div className="flex flex-1 min-w-0">
 				<ChatViewport
 					agentId={effectiveAgentId}
@@ -520,7 +529,10 @@ const ChatPageInner = () => {
 				onOpenChange={setDeleteSessionOpen}
 				title={t('common.deleteTitle', {
 					entity: t('dialog-session-delete.entity'),
-					name: sessionToDelete?.config.name || sessionToDelete?.id || '',
+					name: (() => {
+						const raw = sessionToDelete?.config.name || sessionToDelete?.id || '';
+						return raw.length > 30 ? `${raw.slice(0, 30)}…` : raw;
+					})(),
 				})}
 				description={t('common.deleteDescription')}
 				confirmLabel={t('dialog-session-delete.confirm')}

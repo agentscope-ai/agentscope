@@ -1,6 +1,6 @@
 export * from './types';
 export { agentApi } from './agent';
-export { sessionApi } from './session';
+export { sessionApi, takeFreshlyCreated } from './session';
 export { credentialApi } from './credential';
 export { chatApi } from './chat';
 export { workspaceApi } from './workspace';
@@ -10,4 +10,5 @@ export { skillApi } from './skill';
 export { scheduleApi } from './schedule';
 export { embeddingModelApi, modelApi, ttsModelApi } from './model';
 export { knowledgeBaseApi } from './knowledgeBase';
+export { channelApi } from './channel';
 export { healthApi } from './health';

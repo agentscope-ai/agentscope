@@ -20,10 +20,7 @@ from agentscope.app._router._workspace import (
     list_workspace_directory,
     read_workspace_file,
 )
-from agentscope.app._service._download_token import (
-    sign_download_token,
-    verify_download_token,
-)
+from agentscope.app._service import WorkspaceService
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -250,38 +247,50 @@ async def _collect(response: object) -> bytes:
 class DownloadTokenTests(IsolatedAsyncioTestCase):
     """Unit tests for the capability token itself."""
 
+    def setUp(self) -> None:
+        """A service bound to the test secret; storage is never touched."""
+        self.service = WorkspaceService(None, None, SECRET)
+        self.other = WorkspaceService(None, None, "other-secret")
+
     def test_roundtrip_returns_the_user(self) -> None:
         """A freshly minted token verifies back to who it was for."""
-        token, expires_at = sign_download_token(SECRET, "alice", "/w/a.txt")
+        token, expires_at = self.service.sign_download_token(
+            "alice",
+            "/w/a.txt",
+        )
         self.assertGreater(expires_at, time.time())
         self.assertEqual(
-            verify_download_token(SECRET, token, "/w/a.txt"),
+            self.service.verify_download_token(token, "/w/a.txt"),
             "alice",
         )
 
     def test_token_does_not_cover_another_path(self) -> None:
         """The path is re-derived from the request, so replay fails."""
-        token, _ = sign_download_token(SECRET, "alice", "/w/a.txt")
+        token, _ = self.service.sign_download_token("alice", "/w/a.txt")
         with self.assertRaises(ValueError):
-            verify_download_token(SECRET, token, "/w/secret.txt")
+            self.service.verify_download_token(token, "/w/secret.txt")
 
     def test_another_secret_is_rejected(self) -> None:
         """A token minted elsewhere must not verify here."""
-        token, _ = sign_download_token("other-secret", "alice", "/w/a.txt")
+        token, _ = self.other.sign_download_token("alice", "/w/a.txt")
         with self.assertRaises(ValueError):
-            verify_download_token(SECRET, token, "/w/a.txt")
+            self.service.verify_download_token(token, "/w/a.txt")
 
     def test_expired_token_is_rejected(self) -> None:
         """A TTL that has already passed makes the token useless."""
-        token, _ = sign_download_token(SECRET, "alice", "/w/a.txt", ttl=-1)
+        token, _ = self.service.sign_download_token(
+            "alice",
+            "/w/a.txt",
+            ttl=-1,
+        )
         with self.assertRaises(ValueError):
-            verify_download_token(SECRET, token, "/w/a.txt")
+            self.service.verify_download_token(token, "/w/a.txt")
 
     def test_garbage_is_rejected(self) -> None:
         """Malformed input must raise, not crash with an index error."""
         for bad in ("", "not-a-token", "1.2", "x.y.z", "9999999999.YQ.YQ"):
             with self.assertRaises(ValueError):
-                verify_download_token(SECRET, bad, "/w/a.txt")
+                self.service.verify_download_token(bad, "/w/a.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +311,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
         self._workspace = _FakeWorkspace(self._backend)
         self._wm = _FakeWorkspaceManager(self._workspace)
         self._storage = _FakeStorage([_make_session()])
+        self._service = WorkspaceService(self._storage, self._wm, SECRET)
 
     # ------------------------------------------------------------------
     # directories
@@ -309,15 +319,15 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
 
     async def test_list_root(self) -> None:
         """The workspace root lists its seeded files and directories."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
+            workspace_service=self._service,
         )
-        by_name = {e.name: e for e in entries}
+        self.assertEqual(listing.path, "/workspace")
+        by_name = {e.name: e for e in listing.entries}
         self.assertEqual(sorted(by_name), ["notes.txt", "subdir"])
         self.assertFalse(by_name["notes.txt"].is_dir)
         self.assertEqual(by_name["notes.txt"].size_bytes, len(b"hello world"))
@@ -330,39 +340,36 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
 
     async def test_relative_path_resolves_against_workdir(self) -> None:
         """A relative path is still convenient, and still works."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="subdir",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
+            workspace_service=self._service,
         )
-        self.assertEqual([e.name for e in entries], ["report.md"])
+        self.assertEqual([e.name for e in listing.entries], ["report.md"])
 
     async def test_absolute_path_outside_workspace_is_allowed(self) -> None:
         """Browsing is not confined to the workspace root."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="/elsewhere",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
+            workspace_service=self._service,
         )
-        self.assertEqual([e.name for e in entries], ["outside.txt"])
+        self.assertEqual([e.name for e in listing.entries], ["outside.txt"])
 
     async def test_parent_traversal_is_allowed(self) -> None:
         """``..`` is an ordinary path component now, not an attack."""
-        entries = await list_workspace_directory(
+        listing = await list_workspace_directory(
             agent_id="a",
             session_id="s",
             path="../elsewhere",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
+            workspace_service=self._service,
         )
-        self.assertEqual([e.name for e in entries], ["outside.txt"])
+        self.assertEqual([e.name for e in listing.entries], ["outside.txt"])
 
     async def test_missing_session_raises_404(self) -> None:
         """An unknown session id must return a 404 HTTP error."""
@@ -372,8 +379,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
                 session_id="does-not-exist",
                 path="",
                 user_id="u",
-                storage=self._storage,
-                workspace_manager=self._wm,
+                workspace_service=self._service,
             )
         self.assertEqual(ctx.exception.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -385,8 +391,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
                 session_id="s",
                 path="missing-dir",
                 user_id="u",
-                storage=self._storage,
-                workspace_manager=self._wm,
+                workspace_service=self._service,
             )
         self.assertEqual(ctx.exception.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -398,8 +403,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
                 session_id="s",
                 path="notes.txt",
                 user_id="u",
-                storage=self._storage,
-                workspace_manager=self._wm,
+                workspace_service=self._service,
             )
         self.assertEqual(
             ctx.exception.status_code,
@@ -415,9 +419,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
         return await read_workspace_file(
             agent_id="a",
             session_id="s",
-            storage=self._storage,
-            workspace_manager=self._wm,
-            secret=SECRET,
+            workspace_service=self._service,
             **kwargs,
         )
 
@@ -519,9 +521,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             session_id="s",
             path="notes.txt",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
-            secret=SECRET,
+            workspace_service=self._service,
         )
         # Sent back exactly as minted — the token binds the query
         # string, since resolving it needs the user it has yet to yield.
@@ -540,9 +540,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             session_id="s",
             path="notes.txt",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
-            secret=SECRET,
+            workspace_service=self._service,
         )
         with self.assertRaises(HTTPException) as ctx:
             await self._read(
@@ -563,9 +561,7 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             session_id="s",
             path="notes.txt",
             user_id="u",
-            storage=self._storage,
-            workspace_manager=self._wm,
-            secret=SECRET,
+            workspace_service=self._service,
         )
         with self.assertRaises(HTTPException) as ctx:
             await self._read(
@@ -581,12 +577,17 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
 
     async def test_tampered_token_raises_401(self) -> None:
         """An edited signature must not pass."""
-        token, _ = sign_download_token(SECRET, "u", "notes.txt")
+        token, _ = self._service.sign_download_token("u", "notes.txt")
+        # Edit the signature's first character, not its last: a 32-byte
+        # digest ends on a base64 char carrying only 4 significant bits,
+        # so editing that one can decode back to the same digest.
+        expiry, user, signature = token.split(".")
+        tampered = ("A" if signature[0] != "A" else "B") + signature[1:]
         with self.assertRaises(HTTPException) as ctx:
             await self._read(
                 path="notes.txt",
                 download=True,
-                token=token[:-1] + ("A" if token[-1] != "A" else "B"),
+                token=f"{expiry}.{user}.{tampered}",
                 x_user_id=None,
             )
         self.assertEqual(

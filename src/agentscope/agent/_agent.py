@@ -7,6 +7,7 @@ import re
 
 from asyncio import Queue
 from copy import deepcopy
+from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
     Any,
@@ -969,15 +970,12 @@ class Agent:
                             if break_execution_for_hitl:
                                 break
 
-                        if break_execution_for_hitl:
-                            # Stop executing the next batches, and go back to
-                            # ``_next_action``, which parks the reply on the
-                            # awaiting tool calls. The unfinished round isn't
-                            # counted into ``cur_iter``
-                            continue
-
-                # Update iteration count after each round of reasoning-acting
-                self.state.cur_iter += 1
+                # One reasoning-acting round is over once every tool call it
+                # produced has a result. Reasoning that generated tool calls,
+                # or Acting that parked some of them on a user confirmation
+                # or an external execution, leaves the round unfinished
+                if not self.state.get_unfinished_tool_calls(self.name):
+                    self.state.cur_iter += 1
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
@@ -1676,6 +1674,39 @@ class Agent:
                         f"and should not contain tool calls, "
                         f"tool results or thinking blocks.",
                     )
+
+                # Handle the unsupported input data
+                supported = self.model.formatter.supported_input_media_types
+                for i, block in enumerate(msg.content):
+                    if not isinstance(block, DataBlock) or any(
+                        fnmatch(block.source.media_type, pattern)
+                        for pattern in supported
+                    ):
+                        continue
+
+                    # Convert unsupported input data block into a text block,
+                    # and offload it into the workspace
+                    url = ""
+                    if isinstance(block.source, URLSource):
+                        url = str(block.source.url)
+                    elif self.offloader is not None:
+                        saved = await self.offloader.offload_data_block(block)
+                        if isinstance(saved.source, URLSource):
+                            url = str(saved.source.url)
+
+                    name = f"named '{block.name}' " if block.name else ""
+                    if url:
+                        text = (
+                            f"<system-reminder>An attached file {name}is "
+                            f"saved into {url}.</system-reminder>"
+                        )
+                    else:
+                        text = (
+                            f"<system-reminder>An unsupported input file "
+                            f"{name}is attached with media type "
+                            f"'{block.source.media_type}'.</system-reminder>"
+                        )
+                    msg.content[i] = TextBlock(type="text", text=text)
 
                 self.state.context.append(msg)
 

@@ -1,6 +1,7 @@
 import {
 	BookText,
 	BotMessageSquare,
+	Cable,
 	Calendars,
 	Compass,
 	KeyRound,
@@ -9,10 +10,8 @@ import {
 	UserRound,
 } from 'lucide-react';
 import { useOnborda } from 'onborda';
-import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-import { getUserId } from '@/api/client';
 import AgentScope from '@/assets/images/agentscope_white.svg?react';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { CHAT_TOUR_NAME } from '@/components/tour/chatTourSteps';
@@ -35,8 +34,6 @@ export function AppSidebar() {
 	const location = useLocation();
 	const { t } = useTranslation();
 	const { startOnborda } = useOnborda();
-	// Read once: the username only changes via /setup, which remounts this.
-	const [initial] = useState(() => getUserId().trim().slice(0, 1).toUpperCase());
 
 	const handleStartTour = () => {
 		if (!location.pathname.startsWith('/chat')) {
@@ -89,6 +86,16 @@ export function AppSidebar() {
 									className="justify-center"
 								>
 									<Calendars />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.channel'), hidden: false }}
+									isActive={location.pathname === '/channel'}
+									onClick={() => navigate('/channel')}
+									className="px-2"
+								>
+									<Cable />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 						</SidebarMenu>
@@ -174,7 +181,7 @@ export function AppSidebar() {
 							onClick={() => navigate('/setup')}
 							className="justify-center"
 						>
-							{initial || <UserRound />}
+							<UserRound />
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 				</SidebarMenu>
