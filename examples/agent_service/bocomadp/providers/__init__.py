@@ -14,13 +14,12 @@ The :class:`ProviderManager` is injected into :class:`AgentBuilder`
 so every request gets the currently-active model without restart.
 """
 
-from .auto_refresh_ellm_model import AutoRefreshEllmChatModel
-from .ellm_key import fetch_ellm_key
+from .ellm_key import EllmKeyRefresher, fetch_ellm_key
 from .provider_manager import ProviderManager, ProviderEntry
 
 __all__ = [
     "ProviderManager",
     "ProviderEntry",
     "fetch_ellm_key",
-    "AutoRefreshEllmChatModel",
+    "EllmKeyRefresher",
 ]

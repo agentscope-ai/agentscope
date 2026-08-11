@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """ELLM key-refresh agent middleware.
 
-替换每次模型调用前的 ``current_model``：当模型是
-:class:`agentscope.model.EllmChatModel` 时，包装为
-:class:`bocomadp.providers.auto_refresh_ellm_model.AutoRefreshEllmChatModel`，
-使其在每次 ``_call_api`` 前惰性检查 apikey 过期并刷新（经
-``MessageBus.acquire_lock`` 并发防抖），再以 ``extra_headers``
-（``Authorization: Bearer <key>``）注入本次请求。
+每次模型调用前，通过 :class:`EllmKeyRefresher` 惰性检查/刷新 ELLM
+apikey（过期判定 + ``MessageBus.acquire_lock`` 并发防抖 + 失败回落），
+再用 ``EllmChatModel.set_api_key`` 把新鲜 key 注入到当前模型实例的
+请求头（``Authorization: Bearer <key>``），并从凭证记录同步
+``inject_think_tag`` 开关——不换类、不重建 client，模型调用链保持不变。
 
 挂载方式（bocomadp main.py）::
 
@@ -47,14 +46,21 @@ except ImportError:  # pragma: no cover — offline syntax fallback
 
 MiddlewareBase._is_agent_middleware = True  # type: ignore[attr-defined]
 
+from bocomadp.providers.ellm_chat_model import EllmChatModel  # noqa: E402
+
 
 class EllmKeyRefreshMiddleware(MiddlewareBase):
-    """将 ELLM 基类模型替换为 AutoRefresh 模型（仅当模型是 EllmChatModel）。"""
+    """每次模型调用前把刷新后的 ELLM apikey 注入模型请求头。
+
+    - 非 :class:`EllmChatModel` 模型直接透传，不做任何处理；
+    - :class:`EllmChatModel` 模型：``EllmKeyRefresher`` 惰性刷新 →
+      ``set_api_key`` 注入 → 同步 ``inject_think_tag`` 开关。
+    """
 
     def __init__(self, storage: Any, message_bus: Any, user_id: str) -> None:
-        self._storage = storage
-        self._message_bus = message_bus
-        self._user_id = user_id
+        from bocomadp.providers.ellm_key import EllmKeyRefresher
+
+        self._refresher = EllmKeyRefresher(storage, message_bus, user_id)
 
     async def on_model_call(
         self,
@@ -63,45 +69,28 @@ class EllmKeyRefreshMiddleware(MiddlewareBase):
         next_handler: Any,
     ) -> Any:
         current_model = input_kwargs.get("current_model")
-        refreshed = await self._build_refreshed_model(current_model)
-        return await next_handler(
-            **{**input_kwargs, "current_model": refreshed},
-        )
 
-    async def _build_refreshed_model(self, model: Any) -> Any:
-        from agentscope.model import EllmChatModel
+        if isinstance(current_model, EllmChatModel):
+            credential_id = getattr(
+                getattr(current_model, "credential", None),
+                "id",
+                None,
+            )
+            if credential_id:
+                key, record = await self._refresher.ensure_fresh_key(
+                    credential_id,
+                )
+                current_model.set_api_key(key)
+                current_model.inject_think_tag = bool(
+                    record.data.get("inject_think_tag", False),
+                )
+                logger.debug(
+                    "injected refreshed ELLM key (user=%s, credential=%s)",
+                    self._refresher.user_id,
+                    credential_id,
+                )
 
-        if not isinstance(model, EllmChatModel):
-            return model
-
-        from bocomadp.providers.auto_refresh_ellm_model import (
-            AutoRefreshEllmChatModel,
-        )
-
-        if isinstance(model, AutoRefreshEllmChatModel):
-            return model
-
-        logger.info(
-            "wrapping EllmChatModel with AutoRefreshEllmChatModel "
-            "(user=%s, credential=%s)",
-            self._user_id,
-            getattr(getattr(model, "credential", None), "id", "?"),
-        )
-        refreshed = AutoRefreshEllmChatModel(
-            storage=self._storage,
-            message_bus=self._message_bus,
-            user_id=self._user_id,
-            credential_id=model.credential.id,
-            credential=model.credential,
-            model=model.model,
-            parameters=model.parameters,
-            stream=model.stream,
-        )
-        # 复用 base 模型的 openai client（其 base_url 指向 ELLM 网关），
-        # 避免 AutoRefresh 构造时新建一个指向同一网关的 client。
-        if getattr(model, "client", None) is not None:
-            refreshed.client = model.client
-        return refreshed
+        return await next_handler(**input_kwargs)
 
 
 def build_ellm_refresh_middleware(

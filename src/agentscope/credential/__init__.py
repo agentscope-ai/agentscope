@@ -5,7 +5,6 @@ from ._base import CredentialBase
 from ._anthropic import AnthropicCredential
 from ._dashscope import DashScopeCredential
 from ._deepseek import DeepSeekCredential
-from ._ellm import EllmCredential
 from ._gemini import GeminiCredential
 from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
@@ -19,7 +18,6 @@ __all__ = [
     "AnthropicCredential",
     "DashScopeCredential",
     "DeepSeekCredential",
-    "EllmCredential",
     "GeminiCredential",
     "MoonshotCredential",
     "OllamaCredential",

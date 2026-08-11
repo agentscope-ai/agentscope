@@ -42,7 +42,10 @@ from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus, RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import AsyncSQLAlchemyStorage, RedisStorage
-from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.app.workspace_manager import (
+    IsolationPolicy,
+    LocalWorkspaceManager,
+)
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.rag import QdrantStore
 
@@ -54,7 +57,6 @@ from bocomadp.config import (
     load_models_from_yaml,
     build_model_instance,
 )
-# from bocomadp.credential import BocomEllmCredential
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
@@ -75,6 +77,7 @@ from bocomadp.routers.models import models_router
 from bocomadp.routers.platform_health import platform_health_router
 from bocomadp.routers.skill_router import skill_router
 from bocomadp.routers.stats import stats_router
+from bocomadp.routers.workspace_files import workspace_files_router
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
 # 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与本项目
@@ -283,6 +286,7 @@ else:
     message_bus = InMemoryMessageBus()
     workspace_manager = LocalWorkspaceManager(
         basedir=str(config.workspace_dir),
+        isolation=IsolationPolicy.PER_SESSION,
         default_mcps=build_default_mcps(),
     )
 
@@ -338,8 +342,6 @@ app = create_app(
         ExternalSkillHub(),
     ],
     custom_subagent_templates=load_subagent_templates(),
-    # 注册 BOCOM ELLM credential（扩展核心 EllmCredential 的 key-service 字段）
-    # extra_credentials=[BocomEllmCredential],
     # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
     # + ELLM key 刷新中间件（每次模型调用前惰性刷新 apikey）。
     extra_agent_middlewares=_build_agent_middlewares_with_ellm,
@@ -371,6 +373,8 @@ app.include_router(models_router)
 app.include_router(platform_health_router)
 # 外部 skill hub（目录查询 / 我的上传 / 下载安装）
 app.include_router(skill_router)
+# 工作区文件列表 / 下载（/workspace/files、/workspace/files/download）
+app.include_router(workspace_files_router)
 # 按凭证查询模型（含单模型绑定过滤）
 app.include_router(credential_model_router)
 
