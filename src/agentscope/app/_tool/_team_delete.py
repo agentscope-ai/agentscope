@@ -2,7 +2,7 @@
 """The TeamDelete tool — dissolves the team led by the current session."""
 
 from ._team_tool_base import _TeamToolBase
-from ...message import TextBlock, ToolResultState
+from ...message import TextBlock
 from ...tool import ToolChunk, ParamsBase
 
 
@@ -64,45 +64,21 @@ This is irreversible.
                 self._session_id,
             )
             if session is None or session.team_id is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "TeamDelete: this session is not in "
-                                "any team."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
+                return self._error(
+                    "TeamDelete: this session is not in any team.",
                 )
             team = await self._storage.get_team(
                 self._user_id,
                 session.team_id,
             )
             if team is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "TeamDelete: team "
-                                f"{session.team_id} no longer exists."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
+                return self._error(
+                    "TeamDelete: team " f"{session.team_id} no longer exists.",
                 )
             if team.session_id != self._session_id:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "TeamDelete: only the team leader "
-                                "can dissolve the team; this session "
-                                "is a worker."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
+                return self._error(
+                    "TeamDelete: only the team leader can dissolve "
+                    "the team; this session is a worker.",
                 )
 
             # Local import to avoid a circular dependency between
@@ -127,7 +103,4 @@ This is irreversible.
                 ],
             )
         except Exception as e:  # pylint: disable=broad-except
-            return ToolChunk(
-                content=[TextBlock(text=f"TeamDelete failed: {e}")],
-                state=ToolResultState.ERROR,
-            )
+            return self._error(f"TeamDelete failed: {e}")

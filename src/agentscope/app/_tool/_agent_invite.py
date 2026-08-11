@@ -29,7 +29,7 @@ from ..message_bus import MessageBusKeys
 from .._bus_ops import enqueue_run_trigger
 from ..storage import SessionConfig, TeamMember
 from ..storage._utils import _ensure_team_members
-from ...message import HintBlock, TextBlock, ToolResultState
+from ...message import HintBlock, TextBlock
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 from ..._utils._common import _generate_id
@@ -109,8 +109,9 @@ by asking it to list or stat a specific path). Skip this handshake for \
 tasks where only message content matters.
 - ``TeamSay`` is the primary communication channel between you and the \
 invited agent.
-- ``TeamDelete`` does NOT delete the invited agent — only the \
-team-scoped session is cleaned up. If you invite the same agent into \
+- ``AgentKick`` removes only this member's team-scoped session, and \
+``TeamDelete`` does the same for every invited member. Neither tool \
+deletes the underlying invited agent. If you invite the same agent into \
 multiple teams over time, it may retain long-term memory or files from \
 earlier collaborations with you.
 
@@ -241,7 +242,7 @@ class AgentInvite(_TeamToolBase):
                 target,
             )
             if resolve_err is not None:
-                return _error(resolve_err)
+                return self._error(resolve_err)
             assert invited is not None  # narrows for mypy
 
             session = await self._storage.get_session(
@@ -250,7 +251,7 @@ class AgentInvite(_TeamToolBase):
                 self._session_id,
             )
             if session is None or session.team_id is None:
-                return _error(
+                return self._error(
                     "AgentInvite: this session is not in any team — "
                     "call TeamCreate first.",
                 )
@@ -259,12 +260,12 @@ class AgentInvite(_TeamToolBase):
                 session.team_id,
             )
             if team is None:
-                return _error(
+                return self._error(
                     f"AgentInvite: team {session.team_id} no longer "
                     f"exists.",
                 )
             if team.session_id != self._session_id:
-                return _error(
+                return self._error(
                     "AgentInvite: only the team leader can invite "
                     "members; this session is a worker.",
                 )
@@ -282,7 +283,7 @@ class AgentInvite(_TeamToolBase):
                     fresh.data.invite_config.invite_description or ""
                 ).strip()
             ):
-                return _error(
+                return self._error(
                     f"AgentInvite: agent {invited.data.name!r} is no "
                     f"longer invitable.",
                 )
@@ -295,7 +296,7 @@ class AgentInvite(_TeamToolBase):
                 team,
             )
             if any(m.agent_id == invited.id for m in existing_members):
-                return _error(
+                return self._error(
                     f"AgentInvite: agent {invited.data.name!r} is "
                     f"already a member of team "
                     f"{team.data.name!r}.",
@@ -310,7 +311,7 @@ class AgentInvite(_TeamToolBase):
                 team.session_id,
             )
             if leader_session is None:
-                return _error(
+                return self._error(
                     f"AgentInvite: leader session {team.session_id} "
                     f"for team {team.id} is missing — team is in an "
                     f"inconsistent state.",
@@ -456,10 +457,7 @@ class AgentInvite(_TeamToolBase):
                 ],
             )
         except Exception as e:  # pylint: disable=broad-except
-            return ToolChunk(
-                content=[TextBlock(text=f"AgentInvite failed: {e}")],
-                state=ToolResultState.ERROR,
-            )
+            return self._error(f"AgentInvite failed: {e}")
 
 
 def _resolve_target(
@@ -529,17 +527,4 @@ def _resolve_target(
     return None, (
         f"AgentInvite: no invitable agent matches target {target!r}. "
         f"Available: {available}."
-    )
-
-
-def _error(text: str) -> ToolChunk:
-    """Build an ``ERROR``-state :class:`ToolChunk` with a text block.
-
-    Not moved to :mod:`_team_tool_base` because that shape is specific
-    to :class:`AgentInvite`'s branchy validation path — the other team
-    tools currently inline the same pattern.
-    """
-    return ToolChunk(
-        content=[TextBlock(text=text)],
-        state=ToolResultState.ERROR,
     )

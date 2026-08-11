@@ -1196,6 +1196,55 @@ class TestTeamSay(_TeamToolsTestBase):
             ],
         )
 
+    async def test_rename_collision_keeps_leader_and_worker_routable(
+        self,
+    ) -> None:
+        """A leader renamed onto a worker name does not overwrite it."""
+        self.leader_agent.data.name = "w1"
+        await self.storage.upsert_agent(self.user_id, self.leader_agent)
+        worker_id = self.worker_ids[0]
+        worker_session_id = self.worker_sessions[worker_id]
+        sender_id = self.worker_ids[1]
+        sender_session_id = self.worker_sessions[sender_id]
+
+        worker_tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=sender_session_id,
+            agent_id=sender_id,
+            role="worker",
+        )
+        leader_result = await worker_tool(content="to leader", to="w1")
+        self.assertEqual(leader_result.state.value, "running")
+        leader_inbox = await self.bus.inbox_drain(
+            self.leader_session.id,
+            max_count=10,
+        )
+        self.assertEqual(len(leader_inbox), 1)
+
+        leader_tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            role="leader",
+        )
+        worker_target = f"w1@{worker_id[:8]}"
+        worker_result = await leader_tool(
+            content="to worker",
+            to=worker_target,
+        )
+        self.assertEqual(worker_result.state.value, "running")
+        worker_inbox = await self.bus.inbox_drain(
+            worker_session_id,
+            max_count=10,
+        )
+        self.assertEqual(len(worker_inbox), 1)
+
 
 class TestTeamDelete(_TeamToolsTestBase):
     """``TeamDelete`` dissolves the team and clears the leader's
@@ -1416,6 +1465,21 @@ class TestAgentKickCreated(_TeamToolsTestBase):
 
         team = await self.storage.get_team(self.user_id, self.team.id)
         self.assertEqual(len(team.data.members), 2)
+
+    async def test_kicks_member_after_leader_rename_collision(self) -> None:
+        """A mutable leader name cannot make a member unkickable."""
+        self.leader_agent.data.name = "w1"
+        await self.storage.upsert_agent(self.user_id, self.leader_agent)
+
+        chunk = await self._tool()(target="w1")
+
+        self.assertEqual(chunk.state.value, "running")
+        self.assertIsNone(
+            await self.storage.get_agent(self.user_id, self.w1.agent_id),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, self.w2.agent_id),
+        )
 
     async def test_rejects_worker_caller(self) -> None:
         """Runtime authorization rejects a worker-bound tool."""
@@ -2197,16 +2261,25 @@ class TestTeamDeleteMixedMembers(_AgentInviteTestBase):
             member for member in team.data.members if member.role == "invited"
         )
 
-        chunk = await TeamDelete(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
-        )()
+        with patch.object(
+            self.storage,
+            "upsert_team",
+            wraps=self.storage.upsert_team,
+        ) as upsert_team:
+            chunk = await TeamDelete(
+                storage=self.storage,
+                message_bus=self.bus,
+                workspace_manager=self.workspace_manager,
+                user_id=self.user_id,
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            )()
 
         self.assertEqual(chunk.state.value, "running")
+        # The created agent's defensive roster scrub is the only write.
+        # The invited member is not reconciled into a team that is about
+        # to be deleted.
+        self.assertEqual(upsert_team.await_count, 1)
         self.assertIsNone(await self.storage.get_team(self.user_id, team.id))
         self.assertIsNone(
             await self.storage.get_agent(self.user_id, created.agent_id),

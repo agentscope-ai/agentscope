@@ -212,10 +212,9 @@ class TeamSay(_TeamToolBase):
             # borrowed agent whose name collides with an already-created
             # member (or the leader) remains addressable.
             #
-            # Uniqueness of the resulting display strings within a team
-            # is preserved by the AgentCreate name check (which rejects
-            # ``@``) and by AgentInvite's one-borrow-per-agent-per-team
-            # rule.
+            # The shared directory qualifies renamed members with a
+            # stable handle when a display name collides with the leader
+            # or another member, so no entry is silently overwritten.
             leader_agent = await self._storage.get_agent(
                 self._user_id,
                 leader_session.agent_id,
@@ -232,6 +231,7 @@ class TeamSay(_TeamToolBase):
                 self._storage,
                 self._user_id,
                 team,
+                reserved_names={leader_name},
             )
             for display, member in member_directory.items():
                 directory[display] = (
