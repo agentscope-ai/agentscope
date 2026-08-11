@@ -8,7 +8,7 @@
 单源化配置体系（``config.yaml`` 为唯一配置载体）：
 
 1. :class:`AppConfig`（pydantic-settings，config.yaml 主源 + ``BOCOMADP_`` env 覆盖）：
-   - 框架级 —— 日志 / 服务 / Redis / 三大注册表开关 / runtime / providers
+   - 框架级 —— 日志 / 服务 / Redis / 三大注册表开关 / providers
    - 全局根节点 —— ``app_name`` / ``workspace_dir``
 2. :class:`AuditConfig`（dataclass + ``from_yaml``，config.yaml 的 ``audit`` 节点，热加载）：
    - 审计留痕配置（``audit`` 节点）
@@ -28,6 +28,7 @@ from .audit_config import AuditConfig, get_audit_config
 from .uploads_config import UploadConfig, VIRTUAL_PATH_PREFIX, get_upload_config
 from .app_config import (
     AppConfig,
+    AgentEntry,
     CheckpointsConfig,
     GovernanceConfig,
     HooksConfig,
@@ -39,13 +40,13 @@ from .app_config import (
     ModelEntry,
     ProviderConfig,
     RedisConfig,
-    RuntimeConfig,
     ServiceConfig,
     TokenUsageConfig,
     ToolsConfig,
     build_model_instance,
     get_app_config,
     is_trace_correlation_enabled,
+    load_agents_from_yaml,
     load_models_from_yaml,
 )
 
@@ -69,6 +70,7 @@ __all__ = [
     "get_upload_config",
     # app_config.py —— 单源化配置（config.yaml 主源 + env 覆盖）
     "AppConfig",
+    "AgentEntry",
     "CheckpointsConfig",
     "GovernanceConfig",
     "HooksConfig",
@@ -80,12 +82,12 @@ __all__ = [
     "ModelEntry",
     "ProviderConfig",
     "RedisConfig",
-    "RuntimeConfig",
     "ServiceConfig",
     "TokenUsageConfig",
     "ToolsConfig",
     "build_model_instance",
     "get_app_config",
     "is_trace_correlation_enabled",
+    "load_agents_from_yaml",
     "load_models_from_yaml",
 ]

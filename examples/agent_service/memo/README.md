@@ -4,13 +4,13 @@
 
 ## 核心特性
 
-- **8 阶段请求编排**（`runtime/`）：PRE_DISPATCH → POST_DISPATCH → PRE_AGENT_BUILD → POST_AGENT_BUILD → PRE_EXECUTE → POST_RESPONSE → ON_ERROR → FINALLY，每阶段可插拔钩子
-- **SSE 事件信封**（`runtime/envelope.py`）：流式对话状态机，心跳保活
+- **DeerFlow 风格 SSE**（`deerflow/`）：`/api/threads/{tid}/runs/*` 四端点（stream / wait / join / cancel），事件/数据/id 帧 + 心跳 + Last-Event-ID 断线续传，执行引擎复用原生 `ChatService`
+- **SSE 协议与翻译**（`deerflow/protocol.py` + `formatter.py`）：AgentScope 事件 → deer-flow 事件（metadata/messages/custom/error/end）
 - **多模型路由**（`providers/`）：ProviderManager 注册 / 切换 / 列表，配合 `/api/models` 路由
 - **自动注册机制**：工具、中间件、MCP 三类组件均支持 `builtin + custom/` 自动扫描，新增组件只需放文件，重启即生效，无需改 `main.py`
 - **日志三件套**（`logging/`）：ContextVar trace_id 关联、TraceContextFilter、JsonTraceFormatter、ASGI TraceMiddleware
 - **自定义 ASGI 中间件**（`middleware/`）：访问日志、全局错误处理
-- **自定义路由**（`routers/`）：健康检查、SSE 对话、Agent 管理、模型列表、统计示例
+- **自定义路由**（`routers/`）：健康检查、Agent 管理、模型列表、统计示例（SSE 对话见 deerflow/）
 - **子智能体模板**（`agents/`）：researcher / coder，可通过 `custom_subagent_templates` 扩展
 - **企业扩展能力**（bocomadp）：审计留痕、企业内部工具、平台健康检查
 
@@ -31,13 +31,13 @@ examples/agent_service/
 │   │   ├── logging_config.py            # TraceContextFilter + JsonTraceFormatter
 │   │   └── trace_middleware.py          # ASGI TraceMiddleware (X-Trace-Id)
 │   │
-│   ├── runtime/                         # 8 阶段请求编排引擎
-│   │   ├── phases.py                    # 8 阶段枚举
-│   │   ├── hooks.py                     # 生命周期钩子注册表
-│   │   ├── envelope.py                  # SSE 事件信封状态机
-│   │   ├── executor.py                  # 心跳包裹的 Agent 执行器
-│   │   ├── builder.py                   # 每请求动态组装 Agent
-│   │   └── runtime.py                   # 8 阶段编排器主入口
+│   ├── deerflow/                        # DeerFlow 风格 SSE（替代旧 runtime）
+│   │   ├── protocol.py                   # 帧序列化（event/data/id + 心跳 + end 哨兵）
+│   │   ├── formatter.py                  # AgentScope 事件 → deer-flow 事件翻译
+│   │   ├── bridge.py                     # MessageBus 回放 + 订阅（断线续传）
+│   │   ├── runs.py                       # RunManager：run 状态机 / 延迟清理
+│   │   ├── deps.py                       # FastAPI 依赖注入
+│   │   └── routers/deerflow_chat.py      # 4 端点（stream / wait / join / cancel）
 │   │
 │   ├── providers/                       # 多模型路由
 │   │   └── provider_manager.py          # ProviderManager
@@ -64,8 +64,6 @@ examples/agent_service/
 │   │   └── custom/                      # 你的产品 MCP 放这里
 │   │
 │   ├── routers/                         # 自定义路由
-│   │   ├── chat_sse.py                  # SSE 流式对话
-│   │   ├── agent_manage.py              # 多 Agent CRUD
 │   │   ├── models.py                    # 模型列表 + 切换
 │   │   ├── health.py                    # 健康检查 (/healthz /readyz)
 │   │   ├── platform_health.py           # 平台健康检查 GET /platform/health
@@ -263,9 +261,10 @@ pnpm install && pnpm dev
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/api/chat/run` | POST | SSE 流式对话 |
-| `/api/chat/stop` | POST | 停止对话 |
-| `/api/agents` | GET / POST | Agent 列表 / 创建 |
+| `/api/threads/{tid}/runs/stream` | POST | 创建 run + SSE 流式（deer-flow 协议，含 Content-Location 头） |
+| `/api/threads/{tid}/runs/wait` | POST | 创建 run + 阻塞至完成 |
+| `/api/threads/{tid}/runs/{rid}/stream` | GET | join 已有 run（回放 + Last-Event-ID 续传） |
+| `/api/threads/{tid}/runs/{rid}/cancel` | POST | 取消 run（映射原生 interrupt） |
 | `/api/models` | GET | 模型列表 |
 | `/api/models/active` | POST | 切换活跃模型 |
 | `/healthz` | GET | 存活检查 |
@@ -273,6 +272,7 @@ pnpm install && pnpm dev
 | `/platform/health` | GET | 平台健康检查（bocomadp） |
 
 > 上述路由叠加在 `create_app` 自动注册的 12 个内置路由之上。
+> 已删除：`/api/chat/run` + `/api/chat/stop`（旧 Runtime 8 阶段编排 + Envelope 协议，2026-08 下线）
 
 ---
 
@@ -364,19 +364,22 @@ app.include_router(orders_router)
 
 1. **配置加载** — `get_app_config()` 读 config.yaml + `.env` + `BOCOMADP_*` 环境变量
 2. **日志初始化** — `configure_logging(config)`
-3. **框架模块初始化** — ToolRegistry → MiddlewareRegistry → McpRegistry → ProviderManager → HookRegistry → Runtime
+3. **框架模块初始化** — ToolRegistry → MiddlewareRegistry → McpRegistry → ProviderManager → RunManager → BusBridge
 4. **模型注册** — `load_models_from_yaml("config.yaml")` 自动注册到 ProviderManager
 5. **构建 App** — `create_app()` 自动注册 12 个内置路由
 6. **注入 ASGI 中间件** — Trace → AccessLog → Error → CORS
-7. **挂载自定义路由** — health / stats / chat_sse / agent_manage / models / platform_health
+7. **挂载自定义路由** — health / stats / deerflow / models / platform_health
 8. **企业扩展接入** — `extra_agent_middlewares`（审计）、`extra_agent_tools`（企业工具）
 
-### 8 阶段运行时
+### DeerFlow 风格 SSE 链路
 
 ```
-PRE_DISPATCH      → POST_DISPATCH     → PRE_AGENT_BUILD   →
-POST_AGENT_BUILD  → PRE_EXECUTE       → [AgentExecutor]    →
-POST_RESPONSE     → ON_ERROR          → FINALLY
+POST /api/threads/{tid}/runs/stream
+  → RunManager 记账（409 并发拒绝）→ 原生 ChatService.run(run_id=...) 后台任务
+  → BusBridge 订阅 MessageBus（Redis Stream 回放 + pub/sub live）
+  → Formatter 翻译 → protocol 帧序列化（event/data/id + 心跳 + end 哨兵）
+GET  /api/threads/{tid}/runs/{rid}/stream  → join（Last-Event-ID 断线续传）
+POST /api/threads/{tid}/runs/{rid}/cancel  → 原生 session 级 interrupt
 ```
 
 ---

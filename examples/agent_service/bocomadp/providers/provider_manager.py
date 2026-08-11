@@ -110,8 +110,25 @@ class ProviderManager:
         )
         return True
 
-    def get_model(self) -> Any:
-        """Return the active provider's model instance."""
+    def get_model(self, provider_id: str = "") -> Any:
+        """Return the model for *provider_id*, or the active provider's model.
+
+        Args:
+            provider_id: 场景绑定的 provider；为空时回退当前 active
+                provider（保持原有调用兼容）。
+
+        Returns:
+            ``ChatModelBase`` 实例；provider 不存在且无 active 时返回
+            ``None``。
+        """
+        if provider_id:
+            entry = self._providers.get(provider_id)
+            if entry is not None:
+                return entry.model
+            logger.warning(
+                "get_model: provider %s not found, fallback to active",
+                provider_id,
+            )
         for entry in self._providers.values():
             if entry.is_active:
                 return entry.model

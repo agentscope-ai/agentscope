@@ -40,6 +40,8 @@ async def publish_session_event(
     bus: "MessageBus",
     session_id: str,
     event: dict,
+    *,
+    run_id: str | None = None,
 ) -> str:
     """Append event to replay log + fan out live.
 
@@ -50,18 +52,28 @@ async def publish_session_event(
             The session this event belongs to.
         event (`dict`):
             JSON-serializable event payload.
+        run_id (`str | None`, optional):
+            Optional run identifier attached to the payload (both the
+            replay log entry and the live broadcast). When ``None`` the
+            field is omitted entirely, keeping the wire format identical
+            to before for callers that do not opt in. Consumers (e.g. the
+            deer-flow bridge) use it to filter a session's stream down to
+            one run.
 
     Returns:
         `str`:
             The replay-log entry id assigned by the backend.
     """
     key = MessageBusKeys.session_events(session_id)
+    payload = {**event}
+    if run_id is not None:
+        payload["run_id"] = run_id
     entry_id = await bus.log_append(
         key,
-        event,
+        payload,
         max_len=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
     )
-    await bus.publish(key, {**event, "_entry_id": entry_id})
+    await bus.publish(key, {**payload, "_entry_id": entry_id})
     return entry_id
 
 

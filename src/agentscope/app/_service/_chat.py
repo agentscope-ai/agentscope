@@ -181,6 +181,7 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -220,9 +221,20 @@ class ChatService:
                 - ``UserInterruptEvent``: abort a parked reply — the
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
+            run_id (`str | None`, optional):
+                Run identifier attached to every event this run
+                publishes (replay log + live broadcast). Generated
+                when ``None``, so every run gets a stable id.
         """
+        run_id = run_id or _generate_id()
         try:
-            await self._run_impl(user_id, session_id, agent_id, input_msg)
+            await self._run_impl(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+                run_id,
+            )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -238,6 +250,7 @@ class ChatService:
         session_id: str,
         reply_msg: Msg,
         error: Exception,
+        run_id: str,
     ) -> None:
         """Close a reply that died mid-stream, and say why.
 
@@ -278,6 +291,7 @@ class ChatService:
             self._message_bus,
             session_id,
             end_event.model_dump(mode="json"),
+            run_id=run_id,
         )
         logger.exception(
             "Reply failed for session %r; reported to the client as %s.",
@@ -291,6 +305,7 @@ class ChatService:
         session_id: str,
         agent_id: str,
         error: Exception,
+        run_id: str,
     ) -> None:
         """Tell the client about a failure that reached no reply.
 
@@ -345,6 +360,7 @@ class ChatService:
                     self._message_bus,
                     session_id,
                     event.model_dump(mode="json"),
+                    run_id=run_id,
                 )
             await self._storage.upsert_message(
                 user_id,
@@ -484,6 +500,7 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        run_id: str,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -719,7 +736,7 @@ class ChatService:
                 MessageBusKeys.session_lock(session_id),
                 ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
             ):
-                await self._report_failure(user_id, session_id, agent_id, e)
+                await self._report_failure(user_id, session_id, agent_id, e, run_id)
             return
 
         # --------------------------------------------------------------------
@@ -766,6 +783,7 @@ class ChatService:
                                 self._message_bus,
                                 session_id,
                                 event.model_dump(mode="json"),
+                                run_id=run_id,
                             )
                             await self._project_event(
                                 user_id,
@@ -813,6 +831,7 @@ class ChatService:
                                 self._message_bus,
                                 session_id,
                                 event.model_dump(mode="json"),
+                                run_id=run_id,
                             )
                             await self._project_event(
                                 user_id,
@@ -839,9 +858,10 @@ class ChatService:
                         session_id,
                         agent_id,
                         e,
+                        run_id,
                     )
                 else:
-                    await self._close_failed_reply(session_id, reply_msg, e)
+                    await self._close_failed_reply(session_id, reply_msg, e, run_id)
 
             finally:
                 # All persistence in a single coroutine, shielded from
@@ -862,7 +882,11 @@ class ChatService:
                         session_id=session_id,
                         state=agent.state,
                     )
-                    await self._message_bus.log_trim(events_key)
+                    # 不裁剪事件日志：log_trim 会清空整个 session 的事件流，
+                    # 摧毁 deer-flow bridge 的 replay 依赖——run 结束后 join
+                    # 回放为空，live 阶段只剩心跳帧，SSE 连接永不关闭。
+                    # 日志滚动裁剪由 log_append 的 max_len 完成；session
+                    # 删除时 _purge_session_bus 兜底清理。
 
                 persist_task = asyncio.create_task(_persist())
                 try:

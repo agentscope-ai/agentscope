@@ -10,11 +10,11 @@
    - :class:`ToolRegistry`         — custom tools
    - :class:`MiddlewareRegistry`   — agent middlewares
    - :class:`ProviderManager`      — multi-model routing
-   - :class:`HookRegistry`         — 8-phase lifecycle hooks
-   - :class:`Runtime`              — 8-phase orchestrator
+   - :class:`RunManager`           — deerflow run bookkeeping
+   - :class:`BusBridge`            — deerflow SSE bridge over MessageBus
 4. Build the AgentScope app via :func:`create_app` (12 built-in routers).
 5. Inject ASGI middlewares via ``extra_middlewares``.
-6. Mount custom routers (chat SSE, agent manage, models, health, stats).
+6. Mount custom routers (deerflow SSE, models, health, stats).
 7. Register sub-agent templates via ``custom_subagent_templates``.
 
 企业扩展能力（bocomadp）：
@@ -57,6 +57,7 @@ from bocomadp.credential import ELLMCredential  # noqa: F401 — import 即注�
 from bocomadp.config import (
     get_app_config,
     is_trace_correlation_enabled,
+    load_agents_from_yaml,
     load_models_from_yaml,
     build_model_instance,
 )
@@ -70,12 +71,12 @@ from bocomadp.middleware.factory import build_enterprise_middlewares
 from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
 from bocomadp.providers import ProviderManager
-from bocomadp.routers.agent_manage import (
-    AgentConfigRequest,
-    MultiAgentManager,
-    agent_manage_router,
-)
+from bocomadp.deerflow import BusBridge, RunManager
+from bocomadp.deerflow.routers.auth_stub import auth_stub_router
+from bocomadp.deerflow.routers.deerflow_chat import deerflow_router
+from bocomadp.deerflow.routers.threads import threads_router
 from bocomadp.routers.uploads import uploads_router
+from bocomadp.routers.channels import channels_router
 from bocomadp.routers.credential_model import credential_model_router
 from bocomadp.routers.health import health_router
 from bocomadp.routers.models import models_router
@@ -92,10 +93,9 @@ from bocomadp.routers.agent_tools import (
 from bocomadp.toolkit_whitelist import patch_get_toolkit
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
-# 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与本项目
-# chat_sse_router(POST /chat/run、/chat/stop) 路径不同，互不冲突。
+# 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与
+# deerflow_router(POST /api/threads/...) 路径不同，互不冲突。
 from bocomadp.mcp import McpRegistry
-from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
 from bocomadp.skills.bocom_skill_hub import BocomSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools, init_factory_tools
@@ -245,10 +245,6 @@ if config.providers.enabled:
                 exc_info=True,
             )
 
-hook_registry = HookRegistry()
-
-multi_agent_manager = MultiAgentManager()
-
 # ── 内置智能体：智能体工厂（agent-creator） ──
 # 专门用于对话式创建/修改智能体，不需要 K8s 沙箱，
 # 工具通过 AgentBuilder 在运行时按 agent_id 注入。
@@ -267,6 +263,11 @@ _AGENT_CREATOR_SYSTEM_PROMPT = (
     "- 修改已有智能体时先查看当前配置，保留用户确认过的核心逻辑\n"
     "- 以 _ 开头的系统内置智能体不可删除\n"
 )
+
+# 场景种子（config.yaml 的 agents 段）不再灌入 MultiAgentManager ——
+# chat / deerflow 按 agent_id 从框架 StorageBase 解析配置，因此种子注册
+# 已迁移到 lifespan 的 ``_seed_agents_from_yaml``（storage 就绪后幂等
+# upsert，与 ``_register_builtin_agents`` 同构）。
 
 # ---------------------------------------------------------------------------
 # 3. MCP 服务器 + Agent 工具工厂
@@ -422,6 +423,12 @@ async def build_agent_middlewares(
 storage = AsyncSQLAlchemyStorage(
     url=config.db.url,
     create_tables=config.db.create_tables,
+    # 连接池健康参数：pre_ping 探测陈旧连接自动重建，recycle 早于
+    # 防火墙/NAT 空闲超时回收，避免 asyncpg connection is closed
+    engine_kwargs={
+        "pool_pre_ping": config.db.pool_pre_ping,
+        "pool_recycle": config.db.pool_recycle,
+    },
 )
 
 
@@ -545,15 +552,6 @@ storage = _BuiltinAgentStorageProxy(storage)
 
 # ── 初始化工厂工具（注入 ToolRegistry / McpRegistry）──
 init_factory_tools(tool_registry, mcp_registry)
-
-runtime = Runtime(
-    hook_registry=hook_registry,
-    tool_registry=tool_registry,
-    middleware_registry=middleware_registry,
-    provider_manager=provider_manager,
-    storage=storage,
-    heartbeat_interval=config.runtime.heartbeat_interval_seconds,
-)
 
 logger.info(
     "framework modules initialized: "
@@ -772,6 +770,57 @@ async def _register_builtin_agents() -> None:
     ]
 
 
+async def _seed_agents_from_yaml() -> None:
+    """Seed scenario agents from config.yaml into framework storage.
+
+    config.yaml 的 agents 段（场景种子）注册到框架 StorageBase 的
+    ``user_id="default"`` 下（幂等：已存在则跳过）。chat / deerflow
+    路由按 agent_id 从 storage 解析配置，因此种子场景对所有用户可见
+    （``_build_context`` 与 ``_BuiltinAgentStorageProxy`` 均有 default
+    用户 fallback）。
+
+    框架 AgentData 没有模型绑定与技能白名单字段：
+    - ``model_provider`` / ``model_name``：忽略，chat 沿用全局 active
+      provider（ProviderManager）
+    - ``enabled_tools``：仅在首次创建时写入工具白名单（与 storage
+      记录同生命周期，已存在的 agent 不覆盖，避免重启清掉用户手动配置）
+    - ``enabled_skills``：暂无技能白名单落地机制，忽略
+    """
+    from agentscope.app.storage import AgentData, AgentRecord
+    from agentscope.agent import ContextConfig as _ContextConfig
+    from agentscope.agent import ReActConfig as _ReActConfig
+    from bocomadp.routers.agent_tools import (
+        _persist_whitelists,
+        _tool_whitelists,
+    )
+
+    whitelist_dirty = False
+    for _entry in load_agents_from_yaml():
+        existing = await storage.get_agent("default", _entry.agent_id)
+        if existing is not None:
+            continue
+        record = AgentRecord(
+            id=_entry.agent_id,
+            user_id="default",
+            data=AgentData(
+                name=_entry.name or _entry.agent_id,
+                system_prompt=_entry.system_prompt,
+                context_config=_ContextConfig(),
+                react_config=_ReActConfig(max_iters=_entry.max_iters),
+            ),
+        )
+        await storage.upsert_agent("default", record)
+        if _entry.enabled_tools:
+            _tool_whitelists[_entry.agent_id] = list(_entry.enabled_tools)
+            whitelist_dirty = True
+        logger.info(
+            "agent seeded from config.yaml into storage: %s",
+            _entry.agent_id,
+        )
+    if whitelist_dirty:
+        _persist_whitelists()
+
+
 _original_lifespan = app.router.lifespan_context
 
 
@@ -781,6 +830,7 @@ async def _lifespan_with_builtin_agents(app):
         # 恢复持久化的工具白名单（内存存储重启会丢）
         load_tool_whitelists()
         await _register_builtin_agents()
+        await _seed_agents_from_yaml()
         # 框架 get_toolkit 全量注入 Task/Team/workspace/middleware 工具，
         # 在首次 chat run 前包一层，按每智能体白名单过滤所有工具来源。
         patch_get_toolkit()
@@ -793,13 +843,15 @@ app.router.lifespan_context = _lifespan_with_builtin_agents
 # ---------------------------------------------------------------------------
 # 6. 将框架模块挂载到 app.state，供路由层访问
 # ---------------------------------------------------------------------------
-app.state.runtime = runtime
 app.state.provider_manager = provider_manager
-app.state.multi_agent_manager = multi_agent_manager
 app.state.tool_registry = tool_registry
 app.state.mcp_registry = mcp_registry
 app.state.middleware_registry = middleware_registry
-app.state.hook_registry = hook_registry
+# deerflow 路由单例：RunManager 记账（原生 ChatRunRegistry 为 lifespan
+# 单例，请求时由路由层注入，复用其 409 语义含原生 /chat/ 占用感知）；
+# BusBridge 封装同一 MessageBus。
+app.state.run_manager = RunManager()
+app.state.bus_bridge = BusBridge(message_bus)
 
 # ---------------------------------------------------------------------------
 # 7. 在 12 个内置路由之上挂载自定义路由
@@ -808,9 +860,14 @@ app.include_router(health_router)
 app.include_router(stats_router)
 app.include_router(session_usage_router)
 app.include_router(agent_tools_router)
-# chat_sse_router 暂时不用，改用框架内置 POST /chat/
+app.include_router(deerflow_router)
+# deer-flow 前端认证桩（/api/v1/auth/me、/api/v1/auth/setup-status 固定用户）
+app.include_router(auth_stub_router)
+# deer-flow 渠道兼容占位路由（providers/connections 恒空，前端优雅降级）
+app.include_router(channels_router)
+# deerflow threads 管理端点（create/search/state/history，对话闭环最小集）
+app.include_router(threads_router)
 app.include_router(uploads_router)
-app.include_router(agent_manage_router)
 app.include_router(models_router)
 app.include_router(platform_health_router)
 # 外部 skill hub（目录查询 / 我的上传 / 下载安装）
