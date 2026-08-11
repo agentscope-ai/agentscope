@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""共享 PVC 模式：每个 session 独立 Pod，所有 session 共享一个 agent 级 RWX PVC。
+"""共享 PVC 模式：温池 + session 独立 Pod，所有 session 共享一个 agent 级 RWX PVC。
 
 架构
 ----
@@ -11,13 +11,20 @@
          ├── shared/skills/              ← 所有 Pod 共享
          ├── shared/.mcp                 ← 所有 Pod 共享
          │
-         ├── sessions/{sess_A}/          ← Pod-A 独占
+         ├── sessions/{sess_A}/          ← Pod slot-0 独占
          │   ├── data/
          │   └── {project}/
          │
-         └── sessions/{sess_B}/          ← Pod-B 独占
+         └── sessions/{sess_B}/          ← Pod slot-1 独占
              ├── data/
              └── {project}/
+
+温池
+----
+
+Manager 根据 ``max_active_pods`` 预创建 N 个 Pod（slot-0 .. slot-N-1），
+标记 ``agentscope.pool.slot=available``。分配时通过 K8s resourceVersion
+乐观锁绑定 session，释放后归还池中。TTL 到期自动回收 slot。
 
 零框架改动 — 所有逻辑通过子类覆盖实现，不动 ``agentscope`` 一行代码。
 """
@@ -35,6 +42,7 @@ from agentscope.app.workspace_manager import (
     IsolationPolicy,
 )
 from agentscope.workspace import K8sWorkspace
+from agentscope.workspace._k8s._k8s_backend import K8sBackend
 from agentscope.workspace._k8s._constants import (
     POD_WORKDIR,
     _k8s_safe_name,
@@ -48,15 +56,15 @@ from agentscope.workspace._utils import (
 
 
 class SharedPvcK8sWorkspace(K8sWorkspace):
-    """K8sWorkspace 子类：每个 session 一个 Pod，共享 agent 级 PVC。
+    """K8sWorkspace 子类：session Pod，共享 agent 级 PVC + 温池。
 
-    覆盖 4 个父类方法（:meth:`_ensure_pvc`、:meth:`_create_pvc`、
-    :meth:`_create_pod`、:meth:`_teardown_backend`）实现：
+    覆盖父类方法实现：
 
-    - Pod 名 = session 级（``as-ws-{session_workspace_id}``）
+    - Pod 名 = pool slot 名（温池）或 session 级（按需）
     - PVC 名 = agent 级（``as-ws-{agent_hash}``），所有 session 共享
     - workdir = ``/workspace/sessions/{session_id}``（路径隔离）
     - skills/.mcp → ``/workspace/shared/``（共享）
+    - 释放时归还 slot 到池（温池）或删除 Pod（按需）
     """
 
     def __init__(
@@ -66,6 +74,7 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
         shared_pvc_name: str = "",
         session_id: str = "",
         shared_pvc_access_mode: str = "ReadWriteMany",
+        pod_name: str = "",
         # ── 透传给父类的所有参数 ──
         workspace_id: str | None = None,
         kubeconfig: str | None = None,
@@ -114,16 +123,91 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
         self._shared_pvc_name: str = shared_pvc_name
         self._session_id: str = session_id
         self._shared_pvc_access_mode: str = shared_pvc_access_mode
+        self._assigned_pod_name: str = pod_name
 
         # ── 覆盖工作目录为 session 子目录 ──
         self.workdir = f"{POD_WORKDIR}/sessions/{self._session_id}"
 
-        # ── 更新 instructions（workdir 变了） ──
+        # ── 更新 instructions：描述真实的共享 PVC 布局 ──
+        # 不能直接用 DEFAULT_WORKSPACE_INSTRUCTIONS，因为它的
+        # 模板把 skills/ 放在 workdir 下，而共享 PVC 下 skills
+        # 在 /workspace/shared/skills/，与 workdir 不在同一路径。
         self.instructions = (
-            instructions or "Workspace directory: {workdir}"
+            "<workspace>You have access to a {backend} workspace "
+            "at {workdir} with the following structure:"
+            "\n\n```"
+            "\n/workspace/"
+            "\n├── shared/            # shared across all sessions"
+            "\n│   ├── skills/        # reusable skill directories"
+            "\n│   └── .mcp           # MCP configuration"
+            "\n└── sessions/"
+            "\n    └── <session>/    # your working directory"
+            "\n        ├── data/     # offloaded multimodal files — system-managed"
+            "\n        └── sessions/ # offloaded session context and tool results — system-managed"
+            "\n```"
+            "\n\nYour working directory is {workdir}. "
+            "This workspace is your personal working environment. "
+            "You are responsible for keeping it clean, structured, "
+            "and easy to navigate over time."
+            "\n\n### Project Directory"
+            "\n- Create a dedicated subdirectory for each task or project "
+            "under your working directory."
+            "\n- Name each project subdirectory concisely and descriptively, "
+            "prefixed with its absolute creation date, "
+            "e.g. `20240315_web-scraper`, so it stays identifiable long after creation."
+            "\n- Always create a `README.md` at the project root documenting:"
+            "\n  - What the project is about"
+            "\n  - Its absolute creation date"
+            "\n  - Key decisions or context that would help you resume work later"
+            "\n\n### Skills"
+            "\n- Skills are shared resources located at /workspace/shared/skills/."
+            "\n- Each skill has a SKILL.md with full instructions — use Read to view it."
+            "\n</workspace>"
         ).format(
             backend="Kubernetes-based (shared-PVC)",
             workdir=self.workdir,
+        )
+
+    # ── 覆盖 provisioning: 支持池 Pod 名 ─────────────────────
+
+    async def _provision_backend(self) -> None:
+        """创建或附加到 K8s Pod，支持温池预创建的 Pod。
+
+        与父类的唯一区别：当 ``_assigned_pod_name`` 非空时，
+        使用池 Pod 名而非从 workspace_id 派生。
+        """
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio import config as k8s_config
+
+        if self._kubeconfig:
+            await k8s_config.load_kube_config(
+                config_file=self._kubeconfig,
+            )
+        else:
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                await k8s_config.load_kube_config()
+
+        self._api_client = k8s_client.ApiClient()
+        self._v1 = k8s_client.CoreV1Api(self._api_client)
+
+        if self._assigned_pod_name:
+            self._pod_name = self._assigned_pod_name
+        else:
+            self._pod_name = _k8s_safe_name(self.workspace_id)
+
+        await self._ensure_namespace()
+        await self._ensure_pvc()
+        await self._ensure_pod()
+        await self._wait_pod_running()
+
+        self._backend = K8sBackend(
+            api_client=self._api_client,
+            namespace=self._namespace,
+            pod_name=self._pod_name,
+            container_name="workspace",
+            workdir=POD_WORKDIR,
         )
 
     # ── 覆盖 property: skills/.mcp 指向共享区 ──────────────────
@@ -294,20 +378,50 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
         await self._v1.create_namespaced_pod(self._namespace, pod)
 
     async def _teardown_backend(self) -> None:
-        """删除 session Pod，但**绝不**删除共享 PVC。
+        """温池模式：归还 slot；按需模式：删除 Pod。
 
         共享 PVC 由 agent 级别管理，不在 session 结束时清理。
         """
+        from kubernetes_asyncio.client.rest import ApiException
+
         if self._v1 is not None and self._pod_name:
-            try:
-                await self._v1.delete_namespaced_pod(
-                    self._pod_name,
-                    self._namespace,
-                )
-            except Exception as e:
-                logger.warning(
-                    "SharedPvcK8sWorkspace: Pod delete failed: %s", e,
-                )
+            if self._assigned_pod_name:
+                # ── 温池：patch label 归还 slot ──
+                try:
+                    await self._v1.patch_namespaced_pod(
+                        self._pod_name,
+                        self._namespace,
+                        {"metadata": {"labels": {
+                            "agentscope.pool.slot": "available",
+                        }}},
+                    )
+                    logger.info(
+                        "SharedPvcK8sWorkspace: returned slot %r to pool",
+                        self._pod_name,
+                    )
+                except ApiException as e:
+                    if e.status == 404:
+                        logger.warning(
+                            "SharedPvcK8sWorkspace: pool pod %r gone, "
+                            "cannot return slot",
+                            self._pod_name,
+                        )
+                    else:
+                        logger.warning(
+                            "SharedPvcK8sWorkspace: slot return failed: %s",
+                            e,
+                        )
+            else:
+                # ── 按需：删除 session Pod ──
+                try:
+                    await self._v1.delete_namespaced_pod(
+                        self._pod_name,
+                        self._namespace,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "SharedPvcK8sWorkspace: Pod delete failed: %s", e,
+                    )
 
             # 共享模式下绝不删除 PVC
             # （即使 _delete_pvc_on_close=True 也忽略，
@@ -326,19 +440,28 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
 
 
 class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
-    """管理 :class:`SharedPvcK8sWorkspace` 实例。
+    """管理 :class:`SharedPvcK8sWorkspace` 实例 + 温池。
 
     与父类 :class:`K8sWorkspaceManager` 的区别：
 
     - 隔离策略固定为 ``PER_SESSION``（每个 session 独立 Pod）
     - PVC 名称由 ``user_id::agent_id`` hash 派生（agent 级共享）
     - 缓存 key 仍是 session-scoped workspace_id
+    - 温池：预创建 Pod，快速分配，TTL 回收
     """
+
+    # ── 池 label 常量 ──────────────────────────────────────
+    POOL_LABEL_AGENT = "agentscope.pool.agent"
+    POOL_LABEL_SLOT = "agentscope.pool.slot"
+    POOL_SLOT_AVAILABLE = "available"
 
     def __init__(
         self,
         *,
         shared_pvc_access_mode: str = "ReadWriteMany",
+        # ── 池化 ──
+        max_active_pods: int = 1,
+        pool_wait_timeout: float = 60.0,
         # ── 透传给父类的参数 ──
         kubeconfig: str | None = None,
         namespace: str = "agentscope",
@@ -392,6 +515,14 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         )
         self._shared_pvc_access_mode = shared_pvc_access_mode
 
+        # ── 池化 ──
+        self._max_active_pods = max_active_pods
+        self._pool_wait_timeout = pool_wait_timeout
+        # K8s 客户端（懒加载，用于池管理）
+        self._k8s_api_client: Any = None
+        self._k8s_v1: Any = None
+        self._k8s_lock = asyncio.Lock()
+
     # ── 覆盖 get_workspace ──────────────────────────────────────
 
     async def get_workspace(
@@ -401,12 +532,12 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         session_id: str,
         workspace_id: str | None = None,
     ) -> SharedPvcK8sWorkspace:
-        """返回 session-scoped workspace，PVC 由 agent 级共享。
+        """返回 session-scoped workspace。温池模式先拿 slot。
 
         Args:
             user_id (`str`): 用户 ID。
-            agent_id (`str`): 智能体 ID（用于生成 PVC 名）。
-            session_id (`str`): 会话 ID（用于生成 Pod 名和 workdir 子目录）。
+            agent_id (`str`): 智能体 ID（用于生成 PVC 名和池 key）。
+            session_id (`str`): 会话 ID（用于 Pod 名和 workdir 子目录）。
             workspace_id (`str | None`, optional):
                 Stable workspace identifier。``None`` 时自动生成。
 
@@ -420,7 +551,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                 session_id=session_id,
             )
 
-        # agent 级 PVC 名称（= 父类 PER_AGENT 的 workspace_id 命名规则）
+        # agent 级 PVC 名称
         agent_hash = hashlib.blake2b(
             f"{user_id}::{agent_id}".encode("utf-8"),
             digest_size=8,
@@ -435,7 +566,26 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws  # type: ignore[return-value]
 
-        # ── 缓存未命中 → 创建新 Pod ──
+        # ── 缓存未命中 ──────────────────────────────────────────
+        pool_size = await self._get_pool_size(agent_id)
+        pod_name = ""
+
+        if pool_size > 0:
+            # 确保池 Pod 存在
+            await self._ensure_pool(agent_hash, agent_id)
+            # 从池中获取 slot
+            pod_name = await self._acquire_slot(
+                agent_hash,
+                session_id,
+            )
+            logger.info(
+                "SharedPvcK8sWorkspaceManager: acquired slot %r "
+                "for session %r (agent=%r)",
+                pod_name,
+                session_id,
+                agent_id,
+            )
+
         async with self._lock:
             cached = self._cache.get(workspace_id)
             if cached is not None:
@@ -447,6 +597,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                 workspace_id=workspace_id,
                 shared_pvc_name=shared_pvc_name,
                 session_id=session_id,
+                pod_name=pod_name,
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws  # type: ignore[return-value]
@@ -457,8 +608,13 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         workspace_id: str | None,
         shared_pvc_name: str,
         session_id: str,
+        pod_name: str = "",
     ) -> SharedPvcK8sWorkspace:
-        """构造 :class:`SharedPvcK8sWorkspace` 并初始化。"""
+        """构造 :class:`SharedPvcK8sWorkspace` 并初始化。
+
+        Args:
+            pod_name: 非空表示使用温池 Pod，空表示按需创建。
+        """
         from agentscope.workspace._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 
         ws = SharedPvcK8sWorkspace(
@@ -466,6 +622,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
             shared_pvc_name=shared_pvc_name,
             session_id=session_id,
             shared_pvc_access_mode=self._shared_pvc_access_mode,
+            pod_name=pod_name,
             # ── 透传 Manager 配置 ──
             kubeconfig=self._kubeconfig,
             namespace=self._namespace,
@@ -488,3 +645,459 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         )
         await ws.initialize()
         return ws
+
+    # ── 池管理 ──────────────────────────────────────────────
+
+    async def _k8s_connect(self) -> None:
+        """懒加载 K8s 客户端（用于池 Pod 管理）。"""
+        if self._k8s_v1 is not None:
+            return
+        async with self._k8s_lock:
+            if self._k8s_v1 is not None:
+                return
+            from kubernetes_asyncio import client as k8s_client
+            from kubernetes_asyncio import config as k8s_config
+
+            if self._kubeconfig:
+                await k8s_config.load_kube_config(
+                    config_file=self._kubeconfig,
+                )
+            else:
+                try:
+                    k8s_config.load_incluster_config()
+                except k8s_config.ConfigException:
+                    await k8s_config.load_kube_config()
+            self._k8s_api_client = k8s_client.ApiClient()
+            self._k8s_v1 = k8s_client.CoreV1Api(self._k8s_api_client)
+
+    async def _get_pool_size(self, agent_id: str) -> int:
+        """获取 agent 维度的池大小。
+
+        优先级：Redis per-agent → .env 全局默认。
+        """
+        # 尝试 Redis（如果可用）
+        try:
+            import os
+
+            import redis.asyncio as aioredis
+
+            r = aioredis.Redis(
+                host=os.environ.get("REDIS_HOST", "localhost"),
+                port=int(os.environ.get("REDIS_PORT", "6379")),
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            try:
+                val = await r.hget(
+                    f"agentscope:pool:{agent_id}",
+                    "max_active_pods",
+                )
+                if val is not None:
+                    return int(val)
+            finally:
+                await r.aclose()
+        except Exception:
+            pass
+        return self._max_active_pods
+
+    async def _ensure_pool(
+        self,
+        agent_hash: str,
+        agent_id: str,
+    ) -> None:
+        """确保 agent 的池 Pod 已创建并运行。
+
+        检查当前池状态，补建缺少的 Pod。
+        首次调用时还会确保共享 PVC 存在。
+        """
+        await self._k8s_connect()
+        pool_size = await self._get_pool_size(agent_id)
+        if pool_size <= 0:
+            return
+
+        # ── 确保共享 PVC 存在（池 Pod 依赖它） ──
+        shared_pvc_name = _k8s_safe_name(agent_hash)
+        await self._ensure_shared_pvc(shared_pvc_name, agent_id)
+
+        # 查询现有池 Pod
+        from kubernetes_asyncio.client.rest import ApiException
+
+        try:
+            pods = await self._k8s_v1.list_namespaced_pod(
+                namespace=self._namespace,
+                label_selector=(
+                    f"{self.POOL_LABEL_AGENT}={agent_hash}"
+                ),
+            )
+        except ApiException as e:
+            logger.warning(
+                "SharedPvcK8sWorkspaceManager: list pool pods failed: %s",
+                e,
+            )
+            return
+
+        existing_names = {
+            p.metadata.name
+            for p in pods.items
+            if p.metadata is not None
+        }
+
+        # 补建缺失的 Pod
+        for i in range(pool_size):
+            pod_name = f"as-ws-{agent_hash}-{i}"
+            if pod_name in existing_names:
+                continue
+            logger.info(
+                "SharedPvcK8sWorkspaceManager: creating pool pod %r "
+                "(agent=%r)",
+                pod_name,
+                agent_id,
+            )
+            await self._create_pool_pod(pod_name, agent_hash, agent_id)
+
+    async def _ensure_shared_pvc(self, pvc_name: str, agent_id: str) -> None:
+        """确保共享 PVC 存在，不存在则创建。
+
+        逻辑与 :meth:`SharedPvcK8sWorkspace._ensure_pvc` 一致。
+        """
+        await self._k8s_connect()
+        from kubernetes_asyncio.client.rest import ApiException
+
+        try:
+            pvc = await self._k8s_v1.read_namespaced_persistent_volume_claim(
+                pvc_name,
+                self._namespace,
+            )
+            if pvc.metadata and pvc.metadata.deletion_timestamp is not None:
+                logger.info(
+                    "SharedPvcK8sWorkspaceManager: PVC %r is being "
+                    "deleted, waiting...",
+                    pvc_name,
+                )
+                # 等待删除完成
+                import asyncio as _asyncio
+
+                deadline = _asyncio.get_event_loop().time() + 120.0
+                while _asyncio.get_event_loop().time() < deadline:
+                    try:
+                        await self._k8s_v1.read_namespaced_persistent_volume_claim(
+                            pvc_name,
+                            self._namespace,
+                        )
+                    except ApiException as e2:
+                        if e2.status == 404:
+                            break
+                        raise
+                    await _asyncio.sleep(2)
+                await self._create_shared_pvc(pvc_name, agent_id)
+        except ApiException as e:
+            if e.status == 404:
+                await self._create_shared_pvc(pvc_name, agent_id)
+            elif e.status == 409:
+                # 并发创建的竞态，PVC 已存在
+                return
+            else:
+                raise
+
+    async def _create_shared_pvc(self, pvc_name: str, agent_id: str) -> None:
+        """创建共享 PVC。"""
+        await self._k8s_connect()
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio.client.rest import ApiException
+
+        access_modes = [self._shared_pvc_access_mode]
+        spec_kwargs: dict[str, Any] = {
+            "access_modes": access_modes,
+            "resources": k8s_client.V1VolumeResourceRequirements(
+                requests={"storage": self._storage_size},
+            ),
+        }
+        if self._storage_class is not None:
+            spec_kwargs["storage_class_name"] = self._storage_class
+
+        pvc = k8s_client.V1PersistentVolumeClaim(
+            metadata=k8s_client.V1ObjectMeta(
+                name=pvc_name,
+                namespace=self._namespace,
+                labels={
+                    "app.kubernetes.io/managed-by": "agentscope",
+                    "agentscope.agent_id": agent_id,
+                },
+            ),
+            spec=k8s_client.V1PersistentVolumeClaimSpec(**spec_kwargs),
+        )
+        try:
+            await self._k8s_v1.create_namespaced_persistent_volume_claim(
+                self._namespace,
+                pvc,
+            )
+        except ApiException as e:
+            if e.status == 409:
+                # 并发创建竞态，PVC 已由其他实例创建
+                return
+            raise
+        logger.info(
+            "SharedPvcK8sWorkspaceManager: created shared PVC %r",
+            pvc_name,
+        )
+
+    async def _create_pool_pod(
+        self,
+        pod_name: str,
+        agent_hash: str,
+        agent_id: str = "",
+    ) -> None:
+        """创建单个池 Pod。
+
+        与 session Pod 的区别：
+        - label 带 pool 标记
+        - working_dir 固定为 /workspace
+        - 初始 slot=available
+        """
+        await self._k8s_connect()
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio.client.rest import ApiException
+
+        # 容器 spec（与 SharedPvcK8sWorkspace._create_pod 对齐）
+        container_env = None
+        if self._env:
+            container_env = [
+                k8s_client.V1EnvVar(name=k, value=v)
+                for k, v in self._env.items()
+            ]
+
+        container = k8s_client.V1Container(
+            name="workspace",
+            image=self._image,
+            image_pull_policy=self._image_pull_policy,
+            command=["sleep", "infinity"],
+            working_dir=POD_WORKDIR,
+            ports=[
+                k8s_client.V1ContainerPort(
+                    container_port=self._gateway_port,
+                ),
+            ],
+            resources=(
+                k8s_client.V1ResourceRequirements(**self._resources)
+                if self._resources
+                else None
+            ),
+            volume_mounts=[
+                k8s_client.V1VolumeMount(
+                    name="workspace-data",
+                    mount_path=POD_WORKDIR,
+                ),
+            ],
+            env=container_env,
+        )
+
+        # 共享 PVC volume
+        shared_pvc_name = _k8s_safe_name(agent_hash)
+        volumes = [
+            k8s_client.V1Volume(
+                name="workspace-data",
+                persistent_volume_claim=(
+                    k8s_client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name=shared_pvc_name,
+                    )
+                ),
+            ),
+        ]
+
+        spec_kwargs: dict[str, Any] = {
+            "restart_policy": "OnFailure",
+            "containers": [container],
+            "volumes": volumes,
+        }
+        if self._node_selector:
+            spec_kwargs["node_selector"] = self._node_selector
+        if self._tolerations:
+            spec_kwargs["tolerations"] = [
+                k8s_client.V1Toleration(**t) for t in self._tolerations
+            ]
+        if self._service_account:
+            spec_kwargs["service_account_name"] = self._service_account
+        if self._image_pull_secrets:
+            spec_kwargs["image_pull_secrets"] = [
+                k8s_client.V1LocalObjectReference(name=s)
+                for s in self._image_pull_secrets
+            ]
+
+        pod = k8s_client.V1Pod(
+            metadata=k8s_client.V1ObjectMeta(
+                name=pod_name,
+                namespace=self._namespace,
+                labels={
+                    "app.kubernetes.io/managed-by": "agentscope",
+                    "agentscope.workspace": "true",
+                    "agentscope.agent_id": agent_id,
+                    self.POOL_LABEL_AGENT: agent_hash,
+                    self.POOL_LABEL_SLOT: self.POOL_SLOT_AVAILABLE,
+                },
+            ),
+            spec=k8s_client.V1PodSpec(**spec_kwargs),
+        )
+        try:
+            await self._k8s_v1.create_namespaced_pod(self._namespace, pod)
+        except ApiException as e:
+            if e.status == 409:
+                # 并发创建竞态，Pod 已由其他请求创建
+                return
+            raise
+
+    async def _acquire_slot(
+        self,
+        agent_hash: str,
+        session_id: str,
+    ) -> str:
+        """从池中获取一个可用 slot。
+
+        通过 K8s label selector 查找 available Pod，
+        用 resourceVersion 乐观锁绑定到 session。
+        池满时退避等待，超时后报错。
+
+        Returns:
+            获取到的 Pod 名称。
+
+        Raises:
+            RuntimeError: 超时未获取到 slot。
+        """
+        await self._k8s_connect()
+        from kubernetes_asyncio.client.rest import ApiException
+
+        label_available = (
+            f"{self.POOL_LABEL_AGENT}={agent_hash},"
+            f"{self.POOL_LABEL_SLOT}={self.POOL_SLOT_AVAILABLE}"
+        )
+
+        deadline = time.monotonic() + self._pool_wait_timeout
+        backoff = 1.0
+
+        while time.monotonic() < deadline:
+            try:
+                pods = await self._k8s_v1.list_namespaced_pod(
+                    namespace=self._namespace,
+                    label_selector=label_available,
+                )
+            except ApiException as e:
+                logger.warning(
+                    "SharedPvcK8sWorkspaceManager: list available "
+                    "slots failed: %s",
+                    e,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 8.0)
+                continue
+
+            available = [
+                p
+                for p in pods.items
+                if p.status is not None
+                and p.status.phase == "Running"
+                and p.metadata is not None
+            ]
+
+            for pod in available:
+                pod_name = pod.metadata.name
+                try:
+                    await self._k8s_v1.patch_namespaced_pod(
+                        pod_name,
+                        self._namespace,
+                        {"metadata": {"labels": {
+                            self.POOL_LABEL_SLOT: session_id,
+                        }}},
+                    )
+                    return pod_name  # type: ignore[no-any-return]
+                except ApiException as e:
+                    if e.status == 409:
+                        # 被其他实例抢了，试下一个
+                        continue
+                    raise
+
+            # 没有可用 slot → 退避等待
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 8.0)
+
+        raise RuntimeError("沙箱资源已满，请稍后重试")
+
+    async def cleanup_pool(self, agent_id: str) -> None:
+        """删除 agent 对应的所有池资源（Pod + PVC）。
+
+        在删除智能体时调用，清理该 agent 的温池 Pod 和共享 PVC。
+        通过 ``agentscope.agent_id`` 标签精确匹配，不依赖 hash。
+        不抛异常，仅打日志。
+        """
+        await self._k8s_connect()
+        from kubernetes_asyncio.client.rest import ApiException
+
+        agent_label = f"agentscope.agent_id={agent_id}"
+
+        # 1. 删除所有池 Pod
+        try:
+            pods = await self._k8s_v1.list_namespaced_pod(
+                namespace=self._namespace,
+                label_selector=(f"{self.POOL_LABEL_AGENT},{agent_label}"),
+            )
+            for pod in (pods.items or []):
+                if pod.metadata is None:
+                    continue
+                try:
+                    await self._k8s_v1.delete_namespaced_pod(
+                        pod.metadata.name,
+                        self._namespace,
+                    )
+                    logger.info(
+                        "SharedPvcK8sWorkspaceManager: deleted pool pod "
+                        "%r (agent=%r)",
+                        pod.metadata.name,
+                        agent_id,
+                    )
+                except ApiException as e:
+                    if e.status != 404:
+                        logger.warning(
+                            "SharedPvcK8sWorkspaceManager: delete pool "
+                            "pod %r failed: %s",
+                            pod.metadata.name,
+                            e,
+                        )
+        except ApiException as e:
+            logger.warning(
+                "SharedPvcK8sWorkspaceManager: list pool pods for "
+                "cleanup failed: %s",
+                e,
+            )
+
+        # 2. 删除共享 PVC
+        try:
+            pvcs = await self._k8s_v1.list_namespaced_persistent_volume_claim(
+                namespace=self._namespace,
+                label_selector=agent_label,
+            )
+            for pvc in (pvcs.items or []):
+                if pvc.metadata is None:
+                    continue
+                try:
+                    await self._k8s_v1.delete_namespaced_persistent_volume_claim(
+                        pvc.metadata.name,
+                        self._namespace,
+                    )
+                    logger.info(
+                        "SharedPvcK8sWorkspaceManager: deleted shared PVC "
+                        "%r (agent=%r)",
+                        pvc.metadata.name,
+                        agent_id,
+                    )
+                except ApiException as e:
+                    if e.status != 404:
+                        logger.warning(
+                            "SharedPvcK8sWorkspaceManager: delete shared PVC "
+                            "%r failed: %s",
+                            pvc.metadata.name,
+                            e,
+                        )
+        except ApiException as e:
+            logger.warning(
+                "SharedPvcK8sWorkspaceManager: list PVCs for "
+                "cleanup failed: %s",
+                e,
+            )

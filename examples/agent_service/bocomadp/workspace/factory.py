@@ -76,6 +76,8 @@ def build_k8s_workspace_manager() -> (
             # ── TTL 缓存 ──
             ttl=cfg.ttl,
             sweep_interval=cfg.sweep_interval,
+            # ── 限流 ──
+            max_active_pods=cfg.max_active_pods,
         )
 
     if cfg.shared_pvc_enabled:
@@ -95,6 +97,9 @@ def build_k8s_workspace_manager() -> (
             # ── TTL 缓存 ──
             ttl=cfg.ttl,
             sweep_interval=cfg.sweep_interval,
+            # ── 池化 ──
+            max_active_pods=cfg.max_active_pods,
+            pool_wait_timeout=cfg.pool_wait_timeout,
         )
 
     return K8sWorkspaceManager(
