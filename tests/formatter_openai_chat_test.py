@@ -4,7 +4,7 @@ OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agentscope.formatter import (
     OpenAIChatFormatter,
@@ -347,6 +347,83 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_base64_mpeg_audio(self) -> None:
+        """Standard MP3 MIME type is normalized to OpenAI's format."""
+        fmt = OpenAIChatFormatter(input_types=["audio/mpeg"])
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=Base64Source(
+                                data="bXAzIGRhdGE=",
+                                media_type="audio/mpeg",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "bXAzIGRhdGE=",
+                                "format": "mp3",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    @patch("agentscope.formatter._openai_formatter.requests.get")
+    async def test_chat_formatter_audio_url_without_extension(
+        self,
+        mock_get: MagicMock,
+    ) -> None:
+        """Audio URL format is derived from MIME type, not URL suffix."""
+        mock_get.return_value.content = b"wav data"
+        fmt = OpenAIChatFormatter()
+        audio_url = "https://example.com/download?token=abc"
+
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url=audio_url,
+                                media_type="audio/wav",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        mock_get.assert_called_once_with(audio_url, timeout=30)
+        mock_get.return_value.raise_for_status.assert_called_once_with()
+        self.assertEqual(
+            res[0]["content"][0],
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": "d2F2IGRhdGE=",
+                    "format": "wav",
+                },
+            },
         )
 
     async def test_chat_formatter_thinking_dropped(self) -> None:

@@ -4,7 +4,6 @@ import base64
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from pydantic import Field
@@ -22,6 +21,13 @@ from ..message import (
     HintBlock,
     ThinkingBlock,
 )
+
+
+_OPENAI_AUDIO_FORMATS = {
+    "audio/wav": "wav",
+    "audio/mp3": "mp3",
+    "audio/mpeg": "mp3",
+}
 
 
 class _OpenAIFormatterBase(FormatterBase, ABC):
@@ -124,7 +130,9 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         """Convert an audio source to OpenAI input_audio format.
 
         Local ``file://`` URLs are read from disk. Remote URLs are downloaded.
-        Only ``wav`` and ``mp3`` formats are supported by the OpenAI API.
+        The OpenAI format is derived from the source media type, so URLs do
+        not need a filename extension. Only ``wav`` and ``mp3`` formats are
+        supported by the OpenAI API.
 
         Args:
             source (`URLSource | Base64Source`):
@@ -134,56 +142,46 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             `dict[str, Any]`:
                 A dictionary with ``"type": "input_audio"`` in OpenAI format.
         """
+        if not isinstance(source, (URLSource, Base64Source)):
+            raise TypeError(f"Unsupported audio source type: {type(source)}.")
+
+        media_type = source.media_type.partition(";")[0].strip().lower()
+        audio_format = _OPENAI_AUDIO_FORMATS.get(media_type)
+        if audio_format is None:
+            supported_types = ", ".join(_OPENAI_AUDIO_FORMATS)
+            raise TypeError(
+                f"Unsupported audio media type: {source.media_type}, "
+                f"only {supported_types} are supported.",
+            )
+
         if isinstance(source, Base64Source):
-            media_type = source.media_type
-            if media_type not in ["audio/wav", "audio/mp3"]:
-                raise TypeError(
-                    f"Unsupported audio media type: {media_type}, "
-                    "only audio/wav and audio/mp3 are supported.",
-                )
             return {
                 "type": "input_audio",
                 "input_audio": {
                     "data": source.data,
-                    "format": media_type.split("/")[-1],
+                    "format": audio_format,
                 },
             }
 
-        if isinstance(source, URLSource):
-            url_str = str(source.url)
-            if url_str.startswith("file://"):
-                # Local file
-                local_path = url_str.removeprefix("file://")
-                extension = local_path.rsplit(".", 1)[-1].lower()
-                if extension not in ["wav", "mp3"]:
-                    raise TypeError(
-                        f"Unsupported audio file extension: {extension}, "
-                        "wav and mp3 are supported.",
-                    )
-                with open(local_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
-            else:
-                # Remote URL — download and encode
-                parsed = urlparse(url_str)
-                extension = parsed.path.rsplit(".", 1)[-1].lower()
-                if extension not in ["wav", "mp3"]:
-                    raise TypeError(
-                        f"Unsupported audio file extension: {extension}, "
-                        "wav and mp3 are supported.",
-                    )
-                response = requests.get(url_str, timeout=30)
-                response.raise_for_status()
-                data = base64.b64encode(response.content).decode("utf-8")
+        url_str = str(source.url)
+        if url_str.startswith("file://"):
+            # Local file
+            local_path = url_str.removeprefix("file://")
+            with open(local_path, "rb") as f:
+                data = base64.b64encode(f.read()).decode("utf-8")
+        else:
+            # Remote URL — download and encode
+            response = requests.get(url_str, timeout=30)
+            response.raise_for_status()
+            data = base64.b64encode(response.content).decode("utf-8")
 
-            return {
-                "type": "input_audio",
-                "input_audio": {
-                    "data": data,
-                    "format": extension,
-                },
-            }
-
-        raise TypeError(f"Unsupported audio source type: {type(source)}.")
+        return {
+            "type": "input_audio",
+            "input_audio": {
+                "data": data,
+                "format": audio_format,
+            },
+        }
 
 
 class OpenAIChatFormatter(_OpenAIFormatterBase):
