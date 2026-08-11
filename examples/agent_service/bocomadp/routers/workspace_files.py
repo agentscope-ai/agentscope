@@ -136,14 +136,15 @@ def resolve_workspace_path(workdir: str, virtual_path: str, backend) -> str:
 async def _stat_size(backend, path: str) -> int | None:
     """返回 ``path`` 的大小（字节），不可 stat 时返回 None。
 
-    内联替代框架 ``BackendBase.stat_size``（该实现即将随 src 回退删除）：
-    Local 后端直接 ``os.stat``（无子进程）；远程后端走 ``wc -c``。
+    统一通过 ``backend.exec_shell`` 在沙箱执行 ``wc -c`` 获取大小：
+    - 远程后端（K8s/Docker/E2B 等）：命令在沙箱内执行，路径在沙箱内
+      存在；不可在宿主机 ``os.stat``（``_path_module is os.path`` 在
+      POSIX 上对 ``posixpath`` 后端恒真，会误判为本地后端）。
+    - 本地后端：``exec_shell`` 即 ``create_subprocess_exec`` 子进程，
+      语义与直接 ``os.stat`` 等价。
+
+    内联替代框架 ``BackendBase.stat_size``（该实现即将随 src 回退删除）。
     """
-    if getattr(backend, "_path_module", None) is os.path:
-        try:
-            return os.stat(path).st_size
-        except (OSError, FileNotFoundError):
-            return None
     result = await backend.exec_shell(["wc", "-c", path])
     if not result.ok():
         return None
