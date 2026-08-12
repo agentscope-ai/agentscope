@@ -66,6 +66,7 @@ from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
 from bocomadp.providers import ProviderManager
 from bocomadp.routers.agent_manage import (
+    AgentConfigRequest,
     MultiAgentManager,
     agent_manage_router,
 )
@@ -87,7 +88,7 @@ from bocomadp.routers.agent_tools import agent_tools_router
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
-from bocomadp.tools import ToolRegistry, build_enterprise_tools
+from bocomadp.tools import ToolRegistry, build_enterprise_tools, init_factory_tools
 from bocomadp.uploads.manager import cleanup_stale_upload_staging_files
 
 # K8s 沙箱工作区（纯配置驱动，零框架侵入）
@@ -195,6 +196,50 @@ if config.providers.enabled:
 hook_registry = HookRegistry()
 
 multi_agent_manager = MultiAgentManager()
+
+# ── 内置智能体：智能体工厂（agent-creator） ──
+# 专门用于对话式创建/修改智能体，不需要 K8s 沙箱，
+# 工具通过 AgentBuilder 在运行时按 agent_id 注入。
+_AGENT_CREATOR_ID = "_agent-creator"
+_AGENT_CREATOR_SYSTEM_PROMPT = (
+    "你是智能体工厂，专门通过对话帮助用户创建和修改智能体配置。"
+    "\n\n## 你的能力\n"
+    "你可以：\n"
+    "- 通过对话了解用户需求，设计合适的 system prompt 和工具组合\n"
+    "- 调用 create_agent 创建新智能体\n"
+    "- 调用 update_agent 修改已有智能体\n"
+    "- 调用 delete_agent 删除智能体\n"
+    "- 调用 list_agents 查看所有智能体\n"
+    "- 调用 get_agent 查看指定智能体的完整配置\n"
+    "- 调用 list_tools_for_agent 查看系统中可用的工具\n"
+    "\n## 工作原则\n"
+    "- 在创建智能体之前，先充分了解用户的需求和场景\n"
+    "- 设计 system prompt 时遵循角色定义优先、行为边界明确的原则\n"
+    "- 工具选择遵循最小权限原则：只选任务必需的\n"
+    "- 你可以查看 Skill Viewer 获取更详细的智能体设计指引"
+)
+if not multi_agent_manager.get_agent(_AGENT_CREATOR_ID):
+    multi_agent_manager.create_agent(
+        AgentConfigRequest(
+            agent_id=_AGENT_CREATOR_ID,
+            name="智能体工厂",
+            system_prompt=_AGENT_CREATOR_SYSTEM_PROMPT,
+            enabled_tools=[
+                "create_agent",
+                "update_agent",
+                "delete_agent",
+                "list_agents",
+                "get_agent",
+                "list_tools_for_agent",
+            ],
+            max_iters=30,
+            requires_sandbox=False,
+        ),
+    )
+    logger.info("built-in agent registered: %s", _AGENT_CREATOR_ID)
+
+# ── 初始化工厂工具（注入 MultiAgentManager / ToolRegistry / McpRegistry）──
+init_factory_tools(multi_agent_manager, tool_registry, mcp_registry)
 
 runtime = Runtime(
     hook_registry=hook_registry,

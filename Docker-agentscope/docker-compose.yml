@@ -27,6 +27,7 @@ services:
     #   context: ..
     #   dockerfile: examples/agent_service/Dockerfile
     image: agentscope-service:latest
+    command: ["python", "main.py"]
     ports: ["8000:8000"]
     env_file: .env
     environment:
