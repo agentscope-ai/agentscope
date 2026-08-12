@@ -23,6 +23,8 @@ from .stats import stats_router
 from .uploads import uploads_router
 from .credential_model import credential_model_router
 from .oss_download import oss_download_router
+from .session_usage import session_usage_router
+from .agent_tools import agent_tools_router
 
 __all__ = [
     "chat_sse_router",
@@ -34,4 +36,6 @@ __all__ = [
     "uploads_router",
     "credential_model_router",
     "oss_download_router",
+    "session_usage_router",
+    "agent_tools_router",
 ]
