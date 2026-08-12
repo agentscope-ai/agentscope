@@ -513,7 +513,8 @@ class CustomEvent(EventBase):
             Identifies the kind of notification. Well-known values:
 
             - ``"state_updated"`` — agent state (tasks / permission)
-              changed during a tool call.
+              changed during a tool call. Its ``value`` is partial:
+              absent fields are unchanged.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
 
