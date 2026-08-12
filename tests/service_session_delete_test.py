@@ -18,7 +18,7 @@ from agentscope.app.workspace_manager import WorkspaceManagerBase
 
 
 class _Storage:
-    """Small storage double exposing the team graph to the service."""
+    """Small stateful storage double for the service deletion cascade."""
 
     def __init__(
         self,
@@ -27,7 +27,9 @@ class _Storage:
     ) -> None:
         self.sessions = {session.id: session for session in sessions}
         self.team = team
-        self.deleted: list[tuple[str, str, str]] = []
+        self.deleted_sessions: list[tuple[str, str, str]] = []
+        self.deleted_agents: list[tuple[str, str]] = []
+        self.deleted_teams: list[tuple[str, str]] = []
 
     async def get_session(
         self,
@@ -45,6 +47,18 @@ class _Storage:
             return None
         return session
 
+    async def list_sessions(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> list[SessionRecord]:
+        """Return the agent's remaining sessions."""
+        return [
+            session
+            for session in self.sessions.values()
+            if session.user_id == user_id and session.agent_id == agent_id
+        ]
+
     async def get_team(
         self,
         user_id: str,
@@ -59,29 +73,70 @@ class _Storage:
             return None
         return self.team
 
+    async def upsert_team(
+        self,
+        user_id: str,
+        team: TeamRecord,
+    ) -> TeamRecord:
+        """Persist roster changes made while deleting a created agent."""
+        assert team.user_id == user_id
+        self.team = team
+        return team
+
     async def delete_session(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
     ) -> bool:
-        """Record the storage-level leader deletion."""
-        self.deleted.append((user_id, agent_id, session_id))
-        return session_id in self.sessions
+        """Delete an exact session and record the call."""
+        self.deleted_sessions.append((user_id, agent_id, session_id))
+        session = await self.get_session(user_id, agent_id, session_id)
+        if session is None:
+            return False
+        del self.sessions[session_id]
+        return True
+
+    async def list_schedules(self, user_id: str) -> list[Any]:
+        """This focused double has no schedules."""
+        del user_id
+        return []
+
+    async def delete_agent(self, user_id: str, agent_id: str) -> bool:
+        """Record the final agent-record deletion."""
+        self.deleted_agents.append((user_id, agent_id))
+        return True
+
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        """Delete the team and detach its surviving leader."""
+        self.deleted_teams.append((user_id, team_id))
+        team = await self.get_team(user_id, team_id)
+        if team is None:
+            return False
+        leader = self.sessions.get(team.session_id)
+        if leader is not None:
+            leader.team_id = None
+        self.team = None
+        return True
 
 
 class _Workspace:
-    """Record session scopes purged from one logical workspace."""
+    """Record session and agent scopes purged from one workspace."""
 
     def __init__(self, fail_session_id: str | None = None) -> None:
         self.fail_session_id = fail_session_id
-        self.purged: list[tuple[str, str]] = []
+        self.purged_sessions: list[tuple[str, str]] = []
+        self.purged_agents: list[str] = []
 
     async def purge_session(self, *, agent_id: str, session_id: str) -> None:
         """Record a purge and optionally simulate a backend failure."""
-        self.purged.append((agent_id, session_id))
+        self.purged_sessions.append((agent_id, session_id))
         if session_id == self.fail_session_id:
             raise RuntimeError("workspace unavailable")
+
+    async def purge_agent(self, *, agent_id: str) -> None:
+        """Record deletion of an agent-scoped skill partition."""
+        self.purged_agents.append(agent_id)
 
 
 class _WorkspaceManager(WorkspaceManagerBase):
@@ -129,6 +184,7 @@ class _SessionService(SessionService):
         )
         self.cancelled: list[str] = []
         self.bus_purged: list[str] = []
+        self.events: list[tuple[str, str]] = []
 
     async def cancel_session_run(
         self,
@@ -140,6 +196,10 @@ class _SessionService(SessionService):
         self.cancelled.append(session_id)
         return True
 
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        self.events.append(("delete_team", team_id))
+        return await super().delete_team(user_id, team_id)
+
     async def _purge_session_bus(self, session_id: str) -> None:
         self.bus_purged.append(session_id)
 
@@ -149,7 +209,8 @@ class _SessionService(SessionService):
         agent_id: str,
         session_id: str,
     ) -> None:
-        del user_id, agent_id, session_id
+        del user_id, agent_id
+        self.events.append(("purge_hitl", session_id))
 
 
 def _session(
@@ -194,28 +255,28 @@ def _team(
 
 
 class TestSessionServiceWorkspacePurge(IsolatedAsyncioTestCase):
-    """Workspace cleanup must mirror storage's team cascade."""
+    """Workspace cleanup must mirror the role-aware team cascade."""
 
     async def test_deleting_regular_session_purges_its_scope(self) -> None:
         """A non-team session keeps the existing single-purge behavior."""
-        leader = _session("leader-agent", "leader-session", "leader-ws")
-        storage = _Storage([leader])
+        session = _session("agent", "session", "workspace")
+        storage = _Storage([session])
         manager = _WorkspaceManager()
 
         deleted = await _SessionService(storage, manager).delete_session(
             "user",
-            leader.agent_id,
-            leader.id,
+            session.agent_id,
+            session.id,
         )
 
         self.assertTrue(deleted)
         self.assertEqual(
-            manager.workspaces["leader-ws"].purged,
-            [(leader.agent_id, leader.id)],
+            manager.workspaces["workspace"].purged_sessions,
+            [(session.agent_id, session.id)],
         )
 
-    async def test_deleting_leader_purges_created_worker(self) -> None:
-        """A created worker's session scope is purged with its leader."""
+    async def test_created_worker_purges_both_scopes(self) -> None:
+        """A created worker drops both session and skill partitions."""
         leader = _session(
             "leader-agent",
             "leader-session",
@@ -237,16 +298,19 @@ class TestSessionServiceWorkspacePurge(IsolatedAsyncioTestCase):
 
         await service.delete_session("user", leader.agent_id, leader.id)
 
-        self.assertCountEqual(service.bus_purged, [leader.id, worker.id])
+        workspace = manager.workspaces["shared-ws"]
         self.assertEqual(
-            manager.workspaces["shared-ws"].purged,
+            workspace.purged_sessions,
             [
-                (leader.agent_id, leader.id),
                 (worker.agent_id, worker.id),
+                (leader.agent_id, leader.id),
             ],
         )
+        self.assertEqual(workspace.purged_agents, [worker.agent_id])
+        self.assertEqual(storage.deleted_agents, [("user", worker.agent_id)])
+        self.assertCountEqual(service.bus_purged, [leader.id, worker.id])
 
-    async def test_invited_agent_keeps_ordinary_session_scope(self) -> None:
+    async def test_invited_agent_keeps_other_scopes(self) -> None:
         """Only an invited agent's borrowed team session is purged."""
         leader = _session(
             "leader-agent",
@@ -273,61 +337,65 @@ class TestSessionServiceWorkspacePurge(IsolatedAsyncioTestCase):
             leader.id,
         )
 
+        workspace = manager.workspaces["invited-ws"]
         self.assertEqual(
-            manager.workspaces["invited-ws"].purged,
+            workspace.purged_sessions,
             [(borrowed.agent_id, borrowed.id)],
         )
-        self.assertNotIn(
-            (ordinary.agent_id, ordinary.id),
-            manager.workspaces["invited-ws"].purged,
-        )
+        self.assertEqual(workspace.purged_agents, [])
+        self.assertIn(ordinary.id, storage.sessions)
+        self.assertNotIn(borrowed.id, storage.sessions)
+        self.assertEqual(storage.deleted_agents, [])
 
-    async def test_shared_workspace_purges_every_session_scope(self) -> None:
-        """A shared workspace still receives one purge per session."""
+    async def test_hitl_is_purged_before_leader_team_deletion(self) -> None:
+        """Role lookup remains available to HITL cleanup."""
         leader = _session(
             "leader-agent",
             "leader-session",
-            "shared-ws",
+            "workspace",
             team_id="team",
         )
-        worker_a = _session(
-            "worker-a",
-            "worker-a-session",
-            "shared-ws",
-            team_id="team",
+        storage = _Storage([leader], _team(leader, []))
+        service = _SessionService(storage, _WorkspaceManager())
+
+        await service.delete_session("user", leader.agent_id, leader.id)
+
+        self.assertEqual(
+            service.events[:2],
+            [("purge_hitl", leader.id), ("delete_team", "team")],
         )
-        worker_b = _session(
-            "worker-b",
-            "worker-b-session",
-            "shared-ws",
+
+    async def test_delete_team_skips_leader_in_corrupt_roster(self) -> None:
+        """A leader listed as its own member cannot recurse."""
+        leader = _session(
+            "leader-agent",
+            "leader-session",
+            "workspace",
             team_id="team",
         )
         storage = _Storage(
-            [leader, worker_a, worker_b],
-            _team(
-                leader,
-                [(worker_a, "created"), (worker_b, "created")],
-            ),
+            [leader],
+            _team(leader, [(leader, "created")]),
         )
         manager = _WorkspaceManager()
+        service = _SessionService(storage, manager)
 
-        await _SessionService(storage, manager).delete_session(
+        deleted = await service.delete_session(
             "user",
             leader.agent_id,
             leader.id,
         )
 
+        self.assertTrue(deleted)
+        self.assertEqual(storage.deleted_teams, [("user", "team")])
+        self.assertEqual(storage.deleted_agents, [])
         self.assertEqual(
-            manager.workspaces["shared-ws"].purged,
-            [
-                (leader.agent_id, leader.id),
-                (worker_a.agent_id, worker_a.id),
-                (worker_b.agent_id, worker_b.id),
-            ],
+            manager.workspaces["workspace"].purged_sessions,
+            [(leader.agent_id, leader.id)],
         )
 
-    async def test_workspace_failure_does_not_skip_later_targets(self) -> None:
-        """One failed purge does not prevent later session cleanup."""
+    async def test_session_purge_failure_still_purges_agent(self) -> None:
+        """Best-effort session cleanup does not skip the agent partition."""
         leader = _session(
             "leader-agent",
             "leader-session",
@@ -344,7 +412,7 @@ class TestSessionServiceWorkspacePurge(IsolatedAsyncioTestCase):
             [leader, worker],
             _team(leader, [(worker, "created")]),
         )
-        manager = _WorkspaceManager(failing_session_id=leader.id)
+        manager = _WorkspaceManager(failing_session_id=worker.id)
 
         await _SessionService(storage, manager).delete_session(
             "user",
@@ -352,10 +420,6 @@ class TestSessionServiceWorkspacePurge(IsolatedAsyncioTestCase):
             leader.id,
         )
 
-        self.assertEqual(
-            manager.workspaces["shared-ws"].purged,
-            [
-                (leader.agent_id, leader.id),
-                (worker.agent_id, worker.id),
-            ],
-        )
+        workspace = manager.workspaces["shared-ws"]
+        self.assertEqual(workspace.purged_agents, [worker.agent_id])
+        self.assertIn((leader.agent_id, leader.id), workspace.purged_sessions)

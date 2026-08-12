@@ -543,6 +543,44 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_delete_team_skips_leader_in_corrupt_roster(self) -> None:
+        """A leader listed as its own member is not recursively deleted."""
+        leader_agent = _agent_record("user-1", "leader")
+        await self.storage.upsert_agent("user-1", leader_agent)
+        leader = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=leader_agent.id,
+            config=_session_config(),
+        )
+        team = TeamRecord(
+            user_id="user-1",
+            session_id=leader.id,
+            data=TeamData(
+                name="corrupt-team",
+                members=[
+                    TeamMember(
+                        owner_id="user-1",
+                        agent_id=leader_agent.id,
+                        session_id=leader.id,
+                        role="created",
+                    ),
+                ],
+            ),
+        )
+        await self.storage.upsert_team("user-1", team)
+
+        self.assertTrue(await self.storage.delete_team("user-1", team.id))
+        self.assertIsNotNone(
+            await self.storage.get_agent("user-1", leader_agent.id),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                "user-1",
+                leader_agent.id,
+                leader.id,
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Knowledge base + documents + lease CAS
     # ------------------------------------------------------------------
