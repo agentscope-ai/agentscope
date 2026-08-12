@@ -135,15 +135,14 @@ The SDK layer — compose an agent from a rich set of building blocks:
 | [**Memory**](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory) | Agentic memory with switchable backends (ReMe, Mem0) |
 | [**Workspace / Sandbox**](https://docs.agentscope.io/latest/en/building-blocks/workspace/overview) | Isolated tool & code execution — local, Docker, Apple Container, Bubblewrap, E2B, OpenSandbox, Daytona, K8s |
 
-Start your first agent with AgentScope 2.0:
+Start your first agent with AgentScope 2.0 in console:
 
 ```python
 from agentscope.agent import Agent
+from agentscope.console import launch_console
 from agentscope.tool import Toolkit, Bash, Grep, Glob, Read, Write, Edit
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.message import UserMsg
-from agentscope.event import EventType
 
 import os, asyncio
 
@@ -170,21 +169,9 @@ async def main() -> None:
         ),
     )
 
-    async for evt in agent.reply_stream(UserMsg("Tony", "Hi, Friday!")):
-        # Handle the event stream, e.g., print the message, update UI, etc.
-        match evt.type:
-            case EventType.REPLY_START:
-                ...
-            case EventType.MODEL_CALL_START:
-                ...
-            case EventType.TEXT_BLOCK_START:
-                ...
-            case EventType.TEXT_BLOCK_DELTA:
-                ...
-            case EventType.TEXT_BLOCK_END:
-                ...
-
-            # Handle other event types
+    # Chat with the agent in the terminal — streamed output, tool-call
+    # confirmation and Ctrl+C interruption are all handled for you
+    await launch_console(agent)
 
 asyncio.run(main())
 ```

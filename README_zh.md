@@ -135,15 +135,14 @@ SDK 层 —— 用一整套丰富的构建模块组合出你的智能体：
 | [**记忆**](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory) | Agentic Memory，可切换后端（ReMe、Mem0） |
 | [**工作空间 / 沙箱**](https://docs.agentscope.io/latest/zh/building-blocks/workspace/overview) | 隔离工具与代码执行 —— local、Docker、Apple Container、Bubblewrap、E2B、OpenSandbox、Daytona、K8s |
 
-使用 AgentScope 2.0，启动你的第一个智能体：
+使用 AgentScope 2.0，在终端中启动你的第一个智能体：
 
 ```python
 from agentscope.agent import Agent
+from agentscope.console import launch_console
 from agentscope.tool import Toolkit, Bash, Grep, Glob, Read, Write, Edit
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.message import UserMsg
-from agentscope.event import EventType
 
 import os, asyncio
 
@@ -170,21 +169,9 @@ async def main() -> None:
         ),
     )
 
-    async for evt in agent.reply_stream(UserMsg("Tony", "Hi, Friday!")):
-        # 处理事件流，例如打印消息、更新 UI 等
-        match evt.type:
-            case EventType.REPLY_START:
-                ...
-            case EventType.MODEL_CALL_START:
-                ...
-            case EventType.TEXT_BLOCK_START:
-                ...
-            case EventType.TEXT_BLOCK_DELTA:
-                ...
-            case EventType.TEXT_BLOCK_END:
-                ...
-
-            # 处理其他事件类型
+    # 在终端中与智能体对话 —— 流式输出、工具调用确认、
+    # Ctrl+C 中断均已内置处理
+    await launch_console(agent)
 
 asyncio.run(main())
 ```

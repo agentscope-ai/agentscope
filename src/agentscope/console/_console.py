@@ -2,7 +2,6 @@
 """The interactive console entry for trying an agent in the terminal."""
 import asyncio
 import signal
-from typing import TypeAlias
 
 from ._renderer import ConsoleRenderer, Verbosity
 from ..agent import Agent
@@ -14,13 +13,11 @@ from ..event import (
 )
 from ..message import Msg, UserMsg
 
-_AgentInput: TypeAlias = Msg | UserConfirmResultEvent | UserInterruptEvent
-
 
 async def _run_reply(
     agent: Agent,
     renderer: ConsoleRenderer,
-    inputs: _AgentInput,
+    inputs: Msg | UserConfirmResultEvent | UserInterruptEvent,
 ) -> RequireUserConfirmEvent | None:
     """Consume one ``reply_stream`` call, rendering every event.
 
@@ -97,6 +94,7 @@ async def _confirm(
 
 async def launch_console(
     agent: Agent,
+    user_name: str = "user",
     verbosity: Verbosity = "default",
     max_tool_result_lines: int | None = 20,
 ) -> None:
@@ -118,6 +116,9 @@ async def launch_console(
     Args:
         agent (`Agent`):
             The agent to interact with.
+        user_name (`str`, defaults to `"user"`):
+            The name attached to the user's input messages, also used
+            as the input prompt.
         verbosity (`Verbosity`, defaults to `"default"`):
             - `"quiet"`: only the streamed reply text and errors.
             - `"default"`: plus thinking, tool calls/results, hint
@@ -139,7 +140,9 @@ async def launch_console(
 
     while True:
         try:
-            query = (await asyncio.to_thread(input, "\nuser> ")).strip()
+            query = (
+                await asyncio.to_thread(input, f"\n{user_name}> ")
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             break
         if query in ("exit", "quit"):
@@ -147,7 +150,10 @@ async def launch_console(
         if not query:
             continue
 
-        inputs: _AgentInput = UserMsg(name="user", content=query)
+        inputs: Msg | UserConfirmResultEvent | UserInterruptEvent = UserMsg(
+            name=user_name,
+            content=query,
+        )
         while True:
             pending = await _run_reply(agent, renderer, inputs)
             if pending is None:
