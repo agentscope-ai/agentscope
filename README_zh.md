@@ -72,6 +72,7 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-08] `功能`:** 支持终端控制台 —— 通过 `launch_console` 在终端中体验与调试智能体，无需启动 Web 服务。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
 - **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
 - **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
 - **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
@@ -81,7 +82,6 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 - **[2026-07] `集成`:** 集成 ReMe 长期记忆。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 - **[2026-06] `功能`:** 支持 Agentic Memory。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 - **[2026-06] `功能`:** 支持分布式 & 多租户 & 多会话 RAG 服务。 [文档](https://docs.agentscope.io/latest/en/deploy/agent-team)
-- **[2026-06] `功能`:** 支持多模态 RAG。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/rag) | [文档](https://docs.agentscope.io/latest/en/building-blocks/rag)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
