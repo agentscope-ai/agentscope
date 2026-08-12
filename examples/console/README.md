@@ -6,7 +6,7 @@ service or writing any UI code.
 
 ## What the demo shows
 
-`demo.py` assembles a full-featured agent and hands it to
+`main.py` assembles a full-featured agent and hands it to
 `launch_console`:
 
 - **Model**: `DashScopeChatModel` (default `qwen3.7-max`), streaming.
@@ -28,9 +28,9 @@ service or writing any UI code.
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-python demo.py                        # interactive chat
-python demo.py --verbosity debug      # plus lifecycle events
-python demo.py --verbosity quiet      # only the reply text
+python main.py                        # interactive chat
+python main.py --verbosity debug      # plus lifecycle events
+python main.py --verbosity quiet      # only the reply text
 ```
 
 Things worth trying:

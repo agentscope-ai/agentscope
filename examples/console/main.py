@@ -10,7 +10,8 @@ rendering, tool-call confirmation, Ctrl+C interruption — is handled
 by ``launch_console``. Run with::
 
     export DASHSCOPE_API_KEY=sk-...
-    python demo.py [--model qwen3.7-max] [--verbosity default]
+    python main.py [--model qwen3.7-max] [--verbosity default] \
+        [--workdir ./workspace]
 """
 import argparse
 import asyncio
@@ -34,6 +35,14 @@ async def main() -> None:
         choices=["quiet", "default", "debug"],
         default="default",
     )
+    parser.add_argument(
+        "--workdir",
+        default=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "workspace",
+        ),
+        help="The workspace root directory.",
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("DASHSCOPE_API_KEY")
@@ -43,11 +52,7 @@ async def main() -> None:
             "running this demo.",
         )
 
-    workdir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "workspace",
-    )
-    async with LocalWorkspace(workdir=workdir) as workspace:
+    async with LocalWorkspace(workdir=args.workdir) as workspace:
         agent = Agent(
             name="Friday",
             system_prompt=(
@@ -72,6 +77,9 @@ async def main() -> None:
                     backend=workspace.get_backend(),
                 ),
             ],
+            # Offload compressed context and oversized tool results
+            # into the workspace
+            offloader=workspace,
         )
         await launch_console(agent, verbosity=args.verbosity)
 
