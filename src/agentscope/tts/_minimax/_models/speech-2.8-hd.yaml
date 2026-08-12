@@ -1,0 +1,14 @@
+name: speech-2.8-hd
+label: MiniMax Speech 2.8 HD
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+  - audio/wav
+  - audio/flac
+  - audio/pcm
+
+parameter_overrides: {}
