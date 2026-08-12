@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from ..tts import TTSModelBase
 
 
-class MiniMaxCredential(CredentialBase):
+class MiniMaxCredential(CredentialBase):  # pylint: disable=abstract-method
     """The credential for MiniMax APIs."""
 
     model_config = ConfigDict(
