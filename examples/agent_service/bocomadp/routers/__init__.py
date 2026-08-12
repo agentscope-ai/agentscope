@@ -22,6 +22,7 @@ from .platform_health import platform_health_router
 from .stats import stats_router
 from .uploads import uploads_router
 from .credential_model import credential_model_router
+from .oss_download import oss_download_router
 
 __all__ = [
     "chat_sse_router",
@@ -32,4 +33,5 @@ __all__ = [
     "stats_router",
     "uploads_router",
     "credential_model_router",
+    "oss_download_router",
 ]
