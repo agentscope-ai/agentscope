@@ -172,8 +172,8 @@ class AgentBuilder:
     def _build_prompt(self, ctx: Any) -> str:
         """Default system prompt when no agent config is set."""
         return (
-            "You are a helpful AI assistant. "
-            "Use the available tools to answer user questions."
+            "你是一个乐于助人的AI助手。\n"
+            "请使用可用的工具来回答用户的问题。"
         )
 
     @staticmethod

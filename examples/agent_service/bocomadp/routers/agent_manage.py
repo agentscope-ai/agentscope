@@ -40,7 +40,7 @@ class AgentConfigRequest(BaseModel):
     agent_id: str = Field(description="Unique agent identifier")
     name: str = Field(default="", description="Display name")
     system_prompt: str = Field(
-        default="You are a helpful AI assistant.",
+        default="你是一个乐于助人的AI助手。",
         description="System prompt for the agent",
     )
     model_provider: str = Field(
@@ -87,7 +87,7 @@ class MultiAgentManager:
         default = AgentConfigResponse(
             agent_id="default",
             name="Default Agent",
-            system_prompt="You are a helpful AI assistant.",
+            system_prompt="你是一个乐于助人的AI助手。",
             model_provider="",
             model_name="",
             max_iters=20,
