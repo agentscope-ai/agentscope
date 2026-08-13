@@ -28,8 +28,7 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     Entries stay claimed until :meth:`ack` — called once the run has
     persisted its state — so a run that dies mid-turn hands them back
     rather than swallowing them. The session lock makes this the only
-    consumer of the inbox, so claims are taken with no idle threshold:
-    anything still held belongs to a run that is gone.
+    consumer of the inbox, so nothing competes for them meanwhile.
 
     Args:
         message_bus (`MessageBus`):
@@ -60,27 +59,26 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         self._key = MessageBusKeys.inbox(session_id)
         self._consumer = f"session:{session_id}"
         self._max_count = max_count
+        self._pending: list[tuple[str, dict]] = []
         self._claimed: set[str] = set()
 
-    async def has_pending(self) -> bool:
-        """Whether anything is waiting, without consuming it.
+    async def claim(self) -> bool:
+        """Claim what is waiting, for the next step to inject.
 
-        Claimed entries stay claimed and are injected by the next
-        :meth:`on_reasoning`, so a run woken with nothing to deliver
-        can return before spending a model call.
+        Lets a run woken with an empty inbox return before spending a
+        model call, without a second read: whatever is claimed here is
+        injected by the first :meth:`on_reasoning`.
 
         Returns:
             `bool`:
-                ``True`` when the inbox holds at least one entry.
+                ``True`` when the inbox held at least one entry.
         """
-        return bool(
-            await self._bus.queue_claim(
-                self._key,
-                consumer=self._consumer,
-                max_count=1,
-                min_idle_secs=0,
-            ),
+        self._pending = await self._bus.queue_claim(
+            self._key,
+            consumer=self._consumer,
+            max_count=self._max_count,
         )
+        return bool(self._pending)
 
     async def ack(self) -> None:
         """Release the claimed entries, once their content is durable."""
@@ -116,13 +114,14 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 One ``HintBlockEvent`` per drained inbox entry,
                 followed by events from downstream.
         """
-        entries = await self._bus.queue_claim(
+        entries = self._pending + await self._bus.queue_claim(
             self._key,
             consumer=self._consumer,
             max_count=self._max_count,
-            min_idle_secs=0,
         )
-        # Re-claiming what this run already holds must not inject twice.
+        self._pending = []
+        # A long turn can outlast the idle threshold and re-claim what
+        # this run already holds; injecting it twice would not do.
         fresh = [(i, p) for i, p in entries if i not in self._claimed]
         self._claimed.update(entry_id for entry_id, _p in entries)
 
