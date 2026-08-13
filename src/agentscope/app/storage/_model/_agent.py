@@ -122,8 +122,9 @@ class AgentData(BaseModel):
     team_config: "TeamConfig | None" = Field(
         default=None,
         description=(
-            "Expert-team configuration. Presence (with member_ids) marks "
-            "this agent as a team leader. Members are referenced by "
+            "Expert-team configuration. Presence (non-None) marks this "
+            "agent as a team leader (an empty shell with no members is "
+            "still classified as a team). Members are referenced by "
             "parent_agent_id, not stored inline."
         ),
         title="Team Config",

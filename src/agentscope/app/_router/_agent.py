@@ -276,6 +276,11 @@ async def create_agent(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=exc.errors(),
         ) from exc
+    if body.is_team and parent_id is None:
+        # Create an empty team "shell" so the agent is already classified
+        # as an expert-team leader in listings (is_team=true) before any
+        # member exists. Members can be added later via the team endpoints.
+        data.team_config = TeamConfig()
     record = AgentRecord(user_id=user_id, data=data)
     agent_id = await storage.upsert_agent(user_id, record)
 
@@ -553,7 +558,10 @@ async def get_team_config(
     return TeamConfigResponse(
         agent_id=agent.id,
         name=agent.data.name,
-        is_team=bool(cfg.member_ids),
+        # "is_team" here is the same semantic as in ``AgentView``:
+        # a non-None ``team_config`` marks the agent as a team leader
+        # (so an empty shell is still classified as a team).
+        is_team=agent.data.team_config is not None,
         collaboration_mode=cfg.collaboration_mode,
         max_members=cfg.max_members,
         handoff_relations=cfg.handoff_relations,
