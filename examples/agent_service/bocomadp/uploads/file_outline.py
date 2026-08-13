@@ -28,6 +28,20 @@ def create_outline(
     except (OSError, UnicodeDecodeError):
         return ""
 
+
+def create_outline_text(
+    text: str,
+    max_chars: int = 1500,
+    with_headings: bool = True,
+) -> str:
+    """从 markdown 文本字符串生成大纲（沙箱模式：`.md` 已固化在 DB 中）。
+
+    逻辑与 :func:`create_outline` 一致，但输入是内存字符串，
+    避免中间件同步读取沙箱内文件。
+    """
+    if not text:
+        return ""
+
     if with_headings and _HEADING_RE.search(text):
         headings = _HEADING_RE.findall(text)
         lines = [
@@ -35,13 +49,11 @@ def create_outline(
             for h, title in headings
         ]
         outline = "\n".join(lines)
-        # 标题很少时，补一段内容预览
         if len(headings) <= 3:
             preview = text[:max_chars].strip()
             outline = f"{outline}\n\n预览：\n{preview}"
         return outline.strip()
 
-    # 非结构化文本：取前 N 字符
     preview = text[:max_chars].strip()
     if len(text) > max_chars:
         preview += "\n…(内容已截断，使用工具读取全文)"

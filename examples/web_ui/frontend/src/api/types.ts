@@ -359,13 +359,13 @@ export interface ChatRequest {
 	 * Optional uploaded-file references. When present, the backend's
 	 * `UploadsMiddleware` injects each file's converted outline (plus a
 	 * virtual path) into the human message. Files are uploaded beforehand
-	 * via `POST /api/uploads/files` and referenced by `virtual_path`.
+	 * via `POST /api/files/upload` and referenced by `virtual_path`.
 	 */
 	files?: ChatFileRef[];
 }
 
 /**
- * A reference to a file previously uploaded through `POST /api/uploads/files`.
+ * A reference to a file previously uploaded through `POST /api/files/upload`.
  * Mirrors the `files` field of `POST /api/chat/run` on the BocomADP backend.
  */
 export interface ChatFileRef {
