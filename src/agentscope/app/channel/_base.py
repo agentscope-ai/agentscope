@@ -335,6 +335,13 @@ class ChannelBase(ABC):
     """Brand icon URL for the management UI; empty falls back to a
     generated avatar."""
 
+    supports_scheduled_tools: bool = False
+    """Whether this adapter exposes tools to unattended scheduled runs.
+
+    This is deliberately opt-in. Scheduled tools use an unconnected REST
+    client, so adapters must also provide an explicit scheduled-tool list.
+    """
+
     class Credentials(BaseModel):
         """Secret connection fields (app id, tokens, ...). Subclasses
         override with their own fields; mark a field secret with
@@ -652,6 +659,18 @@ class ChannelBase(ABC):
             message naming what the operator has to fix.
         """
         return None
+
+    async def list_scheduled_tools(  # pylint: disable=unused-argument
+        self,
+        workspace: "WorkspaceBase",
+    ) -> list["ToolBase"]:
+        """Tools explicitly authorised for an unattended scheduled run.
+
+        The default is empty even when :meth:`list_tools` is implemented;
+        adapters must opt in so ordinary interactive permission semantics are
+        not silently reused for an unattended execution.
+        """
+        return []
 
     def _split_long_message(self, text: str) -> list[str]:
         """Split text into chunks within the platform length limit.
