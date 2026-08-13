@@ -30,6 +30,8 @@ from ._model import (
     UserRecord,
     TeamMember,
     InviteConfig,
+    TeamConfig,
+    HandoffRelation,
 )
 
 if TYPE_CHECKING:
@@ -89,4 +91,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "TeamConfig",
+    "HandoffRelation",
 ]

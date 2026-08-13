@@ -108,6 +108,110 @@ class AgentData(BaseModel):
         title="Invite Config",
     )
 
+    parent_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "When set, this agent is a member of the expert team led by "
+            "the referenced agent. Plain (non-team) agents leave this None. "
+            "Used to (a) hide members from the default agent list and "
+            "(b) cascade-delete members when the leader is deleted."
+        ),
+        title="Parent Agent ID",
+    )
+
+    team_config: "TeamConfig | None" = Field(
+        default=None,
+        description=(
+            "Expert-team configuration. Presence (with member_ids) marks "
+            "this agent as a team leader. Members are referenced by "
+            "parent_agent_id, not stored inline."
+        ),
+        title="Team Config",
+    )
+
+
+class HandoffRelation(BaseModel):
+    """A single directed handoff edge in an expert team.
+
+    Declares that :attr:`from_agent_id` may route a sub-task to
+    :attr:`to_agent_id`. Stored on the team leader's
+    :class:`TeamConfig` and injected into the leader's system prompt so
+    the LLM follows the configured collaboration order (free-handoff mode).
+    In workflow mode it is a strong ordering hint (reserved; not yet
+    enforced by the engine).
+    """
+
+    from_agent_id: str = Field(
+        description=(
+            "Agent that initiates the handoff. Usually the team leader, "
+            "or another team member in a chained workflow."
+        ),
+        title="From Agent",
+    )
+    to_agent_id: str = Field(
+        description="Agent that receives the handed-off sub-task.",
+        title="To Agent",
+    )
+    description: str | None = Field(
+        default=None,
+        description=(
+            "Optional human-readable note about what kind of work flows "
+            "along this edge (e.g. 'architecture draft -> stress test')."
+        ),
+        title="Description",
+        json_schema_extra={"format": "textarea"},
+    )
+
+
+class TeamConfig(BaseModel):
+    """Persistent expert-team configuration for a leader agent.
+
+    A leader agent becomes an "expert team" (distinguishable from a plain
+    agent via :attr:`AgentView.is_team`) simply by carrying a non-empty
+    :attr:`member_ids`. Members are ordinary :class:`AgentRecord` rows
+    pointing back at the leader via ``parent_agent_id``.
+
+    The config is consulted at session start: members are surfaced to the
+    leader LLM (via an injected briefing in the system prompt) so it spawns
+    exactly the configured team instead of inventing one.
+    """
+
+    collaboration_mode: Literal["free_handoff", "workflow"] = Field(
+        default="free_handoff",
+        description=(
+            "How the leader coordinates members. 'free_handoff': the LLM "
+            "decides handoffs guided by the system-prompt briefing and "
+            "handoff_relations. 'workflow': a fixed ordered handoff chain "
+            "(reserved; currently behaves like free_handoff)."
+        ),
+        title="Collaboration Mode",
+    )
+    member_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Agent IDs that make up this expert team. Each may be a "
+            "member created under this leader (parent_agent_id == leader) "
+            "or an external agent invited by reference. Max "
+            ":attr:`max_members`."
+        ),
+        title="Member IDs",
+    )
+    handoff_relations: list[HandoffRelation] = Field(
+        default_factory=list,
+        description=(
+            "Directed handoff edges defining the collaboration order "
+            "between the leader and members (and member-to-member in a "
+            "workflow). Injected into the leader system prompt; not yet "
+            "hard-enforced by the engine."
+        ),
+        title="Handoff Relations",
+    )
+    max_members: int = Field(
+        default=10,
+        description="Maximum number of members allowed in this team.",
+        title="Max Members",
+    )
+
 
 class AgentRecord(_RecordBase):
     """The agent ORM model."""
@@ -128,3 +232,9 @@ class AgentRecord(_RecordBase):
 
     data: AgentData
     """The agent data"""
+
+
+# Ensure types referenced across modules are fully built before they are
+# consumed by FastAPI/Pydantic TypeAdapter in ``_router/_agent.py``.
+HandoffRelation.model_rebuild()
+TeamConfig.model_rebuild()

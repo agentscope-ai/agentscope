@@ -7,7 +7,9 @@ session via the shared
 primitive. See :class:`~agentscope.app._types.EventProjector`.
 """
 from ._subagent_hitl import SubagentHitlProjector
+from ._worker_failure_notifier import WorkerFailureNotifier
 
 __all__ = [
     "SubagentHitlProjector",
+    "WorkerFailureNotifier",
 ]

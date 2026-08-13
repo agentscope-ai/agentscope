@@ -33,6 +33,15 @@ class CreateAgentRequest(BaseModel):
             "``invitable ⇒ non-empty description`` invariant."
         ),
     )
+    parent_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "When set, this new agent is created as a member of the "
+            "expert team led by the referenced agent. The leader's "
+            "team_config.member_ids is updated to include the new agent "
+            "automatically. Leave None to create a plain agent."
+        ),
+    )
 
 
 class CreateAgentResponse(BaseModel):

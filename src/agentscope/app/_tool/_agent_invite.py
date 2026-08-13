@@ -309,13 +309,31 @@ class AgentInvite(_TeamToolBase):
                 )
             invited = fresh
 
-            # Duplicate-borrow guard — one team, one borrow per agent.
+            # Duplicate-borrow guard — one team, one LIVE borrow per
+            # agent. A ``role="created"`` roster entry is a legacy
+            # placeholder migrated from ``member_ids`` that points at
+            # the member's PRIMARY session (which can carry stale team
+            # state and pollutes the user's main chat) — it does NOT
+            # count as a live borrow and is replaced below by the fresh
+            # team-scoped ``role="invited"`` session. Only an existing
+            # ``role="invited"`` entry blocks re-inviting.
             existing_members = await _ensure_team_members(
                 self._storage,
                 self._user_id,
                 team,
             )
-            if any(m.agent_id == invited.id for m in existing_members):
+            placeholder = next(
+                (
+                    m
+                    for m in existing_members
+                    if m.agent_id == invited.id and m.role == "created"
+                ),
+                None,
+            )
+            if any(
+                m.agent_id == invited.id and m.role == "invited"
+                for m in existing_members
+            ):
                 return _error(
                     f"AgentInvite: agent {invited.data.name!r} is "
                     f"already a member of team "
@@ -423,8 +441,30 @@ class AgentInvite(_TeamToolBase):
                 team.id,
             )
 
+            if (
+                placeholder is not None
+                and placeholder.session_id != borrowed.id
+            ):
+                # Detach the placeholder's PRIMARY session — it was
+                # migrated in as a ``created`` member referencing the
+                # user's main chat; after it is superseded by the proper
+                # invited session it must not stay team-bound, otherwise
+                # that session keeps resolving as a team worker while no
+                # longer being listed in the roster.
+                await self._storage.set_session_team_id(
+                    self._user_id,
+                    placeholder.session_id,
+                    None,
+                )
+
             team.data.members = [
-                *existing_members,
+                *[
+                    m
+                    for m in existing_members
+                    if not (
+                        m.agent_id == invited.id and m.role == "created"
+                    )
+                ],
                 TeamMember(
                     owner_id=self._user_id,
                     agent_id=invited.id,
