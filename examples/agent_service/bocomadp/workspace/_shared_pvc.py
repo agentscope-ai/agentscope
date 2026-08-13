@@ -64,6 +64,11 @@ DEFAULT_USER_SCRATCH_DIR = "scratch"
 #: Workspace-relative directory for final deliverables.
 DEFAULT_USER_OUTPUTS_DIR = "outputs"
 
+#: Workspace-relative directory for user-uploaded files (sandbox-safe,
+#: inside workdir so that dual-PVC session PVC and shared-PVC
+#: ``/workspace/sessions/{id}`` both isolate uploads per session).
+DEFAULT_USER_UPLOADS_DIR = "uploads"
+
 
 class SharedPvcK8sWorkspace(K8sWorkspace):
     """K8sWorkspace 子类：session Pod，共享 agent 级 PVC + 温池。
@@ -222,14 +227,23 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
             DEFAULT_USER_OUTPUTS_DIR,
         )
 
+    @property
+    def _user_uploads_dir(self) -> str:
+        """``${workdir}/user-data/uploads`` — user-uploaded files."""
+        return self.get_backend().join_path(
+            self._user_data_dir,
+            DEFAULT_USER_UPLOADS_DIR,
+        )
+
     async def _ensure_workspace_layout(self) -> None:
         """Create the standard workspace directories plus user-data/.
 
         The parent layout covers ``data/``, ``skills/``, ``sessions/``
         and the gateway home; on top of that this session workspace
-        guarantees ``user-data/scratch/`` and ``user-data/outputs/``
-        exist so the model always has a writable working area and a
-        destination for final deliverables.
+        guarantees ``user-data/scratch/``, ``user-data/outputs/`` and
+        ``user-data/uploads/`` exist so the model always has a writable
+        working area, a destination for final deliverables and a home
+        for user-uploaded files (used by the upload endpoint).
         """
         await super()._ensure_workspace_layout()
         backend = self.get_backend()
@@ -240,6 +254,7 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
                 self._user_data_dir,
                 self._user_workspace_dir,
                 self._user_outputs_dir,
+                self._user_uploads_dir,
             ],
             cwd="/",
         )

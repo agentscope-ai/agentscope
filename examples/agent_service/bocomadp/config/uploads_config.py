@@ -1,13 +1,26 @@
 # -*- coding: utf-8 -*-
 """上传相关配置（对应 deer-flow sandbox_uploads_dir / 限制项）。
 
-配置来源：config.yaml 的 ``uploads:`` 段（新增业务节点，需加入
-``app_config._BUSINESS_KEYS`` 白名单，避免 fail-fast 拼写校验）。
+方案 A：上传路径协议与下载同源
 
-路径策略：上传文件**直接放在 workspace 内**，真实路径为
-``{workspace_dir}/{agent_id}/uploads/...``。agent 的通用文件工具
-（read/grep/glob/bash）基于 workdir（即 ``{workspace_dir}/{agent_id}``）扫描时，
-可直接看到用户上传的文件，避免「文件找不到 / 列目录找不到」的问题。
+==============================
+
+上传文件与文件下载（``routers/workspace_files.py``）采用**完全一致的路径范式**，
+即 workdir 相对路径、并以 ``/workspace`` 为虚拟前缀：
+
+- 上传目录位于会话工作区内部，相对路径为
+  ``{workdir}/user-data/uploads/...``；
+- 虚拟路径 = ``/workspace/user-data/uploads/{stored_name}``，**不再编码**
+  ``agent_id/user_id/session_id``（这些由 workdir 本身隔离）；
+- ``workdir`` 由 ``workspace_manager.get_workspace()`` 解析——双 PVC 模式下
+  是 session 级 PVC（RWO，session 间物理隔离），共享 PVC 模式下是
+  ``/workspace/sessions/{session_id}``（子目录隔离）；
+- 所有落盘 / 读取都走 ``workspace.get_backend()``（在沙箱内执行），
+  **绝不在宿主机直接 ``Path.mkdir`` / ``os.open``**（沙箱 PVC 在宿主机不可见）；
+  本地模式（``ADP_K8S_ENABLED=false``）同样走 ``LocalWorkspaceManager`` +
+  backend，落盘到宿主机 workdir，session 隔离由 workdir 保证，无 host 特判。
+
+因此「不同 session 上传文件隔离」由沙箱布局天然保证，无需额外逻辑。
 """
 from __future__ import annotations
 
@@ -17,9 +30,11 @@ from pydantic import BaseModel, Field
 
 from bocomadp.config.base import BASE_DIR, expand_env_vars, load_config_yaml, resolve_path
 
-VIRTUAL_PATH_PREFIX = "virtual://uploads"
+# 虚拟路径前缀：与沙箱下载路径 /workspace/... 对齐（方案 A）。
+# 上传虚拟路径 = /workspace/user-data/uploads/{stored_name}
+VIRTUAL_PATH_PREFIX = "/workspace"
 
-# 上传目录相对每个 agent workdir 的子目录名
+# 上传目录相对每个 agent workdir 的子目录名（位于 user-data 之下）
 UPLOAD_SUBDIR = "uploads"
 
 
@@ -30,8 +45,9 @@ class UploadConfig(BaseModel):
     base_dir: str | Path = Field(
         default="uploads",
         description=(
-            "上传目录名（位于每个 agent 的 workspace workdir 之下）。"
-            "最终真实路径为 {workspace_dir}/{agent_id}/{base_dir}/..."
+            "上传目录名（位于每个 session workdir 的 user-data 之下）。"
+            "沙箱模式真实路径为 {workdir}/user-data/{base_dir}/..."
+            "本地模式真实路径为 {workspace_dir}/{agent_id}/{base_dir}/..."
         ),
     )
     max_file_size_mb: float = Field(
@@ -73,20 +89,3 @@ def get_upload_config() -> UploadConfig:
         return UploadConfig(**data)
     return UploadConfig()
 
-
-def get_workspace_dir() -> Path:
-    """返回 workspace 根目录（与 AppConfig.workspace_dir 一致）。"""
-    from bocomadp.config.app_config import get_app_config
-
-    return Path(get_app_config().workspace_dir)
-
-
-def get_agent_upload_root(agent_id: str) -> Path:
-    """返回某 agent 的上传根目录：``{workspace_dir}/{agent_id}/uploads``。
-
-    该目录位于 agent 的 workspace workdir 之下，agent 的通用文件工具
-    （read/grep/glob/bash）基于 workdir 扫描时可直接看到上传文件。
-    """
-    root = get_workspace_dir() / agent_id / UPLOAD_SUBDIR
-    root.mkdir(parents=True, exist_ok=True)
-    return root
