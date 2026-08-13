@@ -27,7 +27,7 @@ from agentscope.app.message_bus import MessageBus
 from agentscope.message import ToolResultState
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the dispatcher.
 
     Only the cancel-broadcast channel is exercised here; the other
@@ -52,12 +52,34 @@ class _FakeBus(MessageBus):
     ) -> str:
         return "n/a"
 
-    async def queue_drain(
+    async def queue_claim(
         self,
         key: str,
+        *,
+        consumer: str,
         max_count: int = 100,
+        min_idle_secs: float = 60.0,
     ) -> list[tuple[str, dict]]:
+        """This fake never queues anything."""
         return []
+
+    async def queue_ack(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """No-op; :meth:`queue_claim` already removed the entries."""
+
+    async def queue_release(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """No-op; :meth:`queue_claim` already removed the entries."""
 
     async def queue_delete(self, key: str) -> None:
         return None

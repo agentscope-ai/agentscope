@@ -49,6 +49,123 @@ def _make_bus(
     return _FakeBus()
 
 
+class TestWorkQueue(IsolatedAsyncioTestCase):
+    """Mode A — ``queue_claim`` / ``queue_ack`` / ``queue_release``."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def _push(self, *values: int) -> None:
+        """Push one payload per value."""
+        for value in values:
+            await self.bus.queue_push("k", {"i": value})
+
+    async def test_concurrent_claims_are_disjoint(self) -> None:
+        """Two consumers on one key never receive the same entry."""
+        await self._push(1, 2, 3, 4)
+
+        first = await self.bus.queue_claim("k", consumer="c1", max_count=2)
+        second = await self.bus.queue_claim("k", consumer="c2", max_count=2)
+
+        self.assertEqual([p["i"] for _i, p in first], [1, 2])
+        self.assertEqual([p["i"] for _i, p in second], [3, 4])
+
+    async def test_claimed_entry_is_hidden_until_idle(self) -> None:
+        """A claim holds an entry; only idling past the threshold hands
+        it to somebody else."""
+        await self._push(1)
+        claimed = await self.bus.queue_claim("k", consumer="c1")
+        self.assertEqual(len(claimed), 1)
+
+        # Still held: a fresh claim with a long threshold sees nothing.
+        self.assertEqual(
+            await self.bus.queue_claim("k", consumer="c2", min_idle_secs=60),
+            [],
+        )
+        # Idle past the threshold: taken over, same id and payload.
+        taken = await self.bus.queue_claim(
+            "k",
+            consumer="c2",
+            min_idle_secs=0,
+        )
+        self.assertEqual(taken, claimed)
+
+    async def test_ack_removes_entry_for_good(self) -> None:
+        """An acked entry is gone for every consumer."""
+        await self._push(1)
+        claimed = await self.bus.queue_claim("k", consumer="c1")
+        await self.bus.queue_ack(
+            "k",
+            consumer="c1",
+            entry_ids=[i for i, _p in claimed],
+        )
+
+        self.assertEqual(
+            await self.bus.queue_claim("k", consumer="c2", min_idle_secs=0),
+            [],
+        )
+
+    async def test_release_makes_entry_claimable_immediately(self) -> None:
+        """Releasing skips the idle wait, keeping id and payload."""
+        await self._push(1)
+        claimed = await self.bus.queue_claim("k", consumer="c1")
+        ids = [i for i, _p in claimed]
+        await self.bus.queue_release("k", consumer="c1", entry_ids=ids)
+
+        # A long threshold would still hide a merely-claimed entry.
+        taken = await self.bus.queue_claim(
+            "k",
+            consumer="c2",
+            min_idle_secs=60,
+        )
+        self.assertEqual(taken, claimed)
+
+    async def test_release_preserves_arrival_order(self) -> None:
+        """Released entries come back in their original order."""
+        await self._push(1, 2, 3)
+        claimed = await self.bus.queue_claim("k", consumer="c1", max_count=3)
+        await self.bus.queue_release(
+            "k",
+            consumer="c1",
+            entry_ids=[i for i, _p in claimed],
+        )
+
+        taken = await self.bus.queue_claim(
+            "k",
+            consumer="c2",
+            max_count=3,
+            min_idle_secs=60,
+        )
+        self.assertEqual([p["i"] for _i, p in taken], [1, 2, 3])
+
+    async def test_ack_of_unknown_ids_is_ignored(self) -> None:
+        """Acking twice, or acking nonsense, raises nothing."""
+        await self._push(1)
+        claimed = await self.bus.queue_claim("k", consumer="c1")
+        ids = [i for i, _p in claimed]
+
+        await self.bus.queue_ack("k", consumer="c1", entry_ids=ids)
+        await self.bus.queue_ack("k", consumer="c1", entry_ids=ids)
+        await self.bus.queue_ack("k", consumer="c1", entry_ids=["0-0"])
+
+    async def test_delete_drops_claimed_entries_too(self) -> None:
+        """Deleting a queue takes its in-flight entries with it."""
+        await self._push(1, 2)
+        await self.bus.queue_claim("k", consumer="c1", max_count=1)
+        await self.bus.queue_delete("k")
+
+        self.assertEqual(
+            await self.bus.queue_claim("k", consumer="c2", min_idle_secs=0),
+            [],
+        )
+
+
 class TestQueuePrimitive(IsolatedAsyncioTestCase):
     """Mode A — ``queue_push`` + ``queue_drain`` semantics."""
 

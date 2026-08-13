@@ -29,7 +29,7 @@ from agentscope.app._service import IndexTaskConsumer
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the consumer.
 
     Implements the primitives the consumer actually uses
@@ -61,15 +61,36 @@ class _FakeBus(MessageBus):
         self.queues.setdefault(key, []).append((entry_id, payload))
         return entry_id
 
-    async def queue_drain(
+    async def queue_claim(
         self,
         key: str,
         *,
-        max_count: int,
+        consumer: str,
+        max_count: int = 100,
+        min_idle_secs: float = 60.0,
     ) -> list[tuple[str, dict]]:
+        """Take entries; this fake deletes on claim, so ack is a no-op."""
         entries = self.queues.get(key, [])[:max_count]
         self.queues[key] = self.queues.get(key, [])[max_count:]
         return entries
+
+    async def queue_ack(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """No-op; :meth:`queue_claim` already removed the entries."""
+
+    async def queue_release(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """No-op; :meth:`queue_claim` already removed the entries."""
 
     async def queue_delete(self, key: str) -> None:
         self.queues.pop(key, None)

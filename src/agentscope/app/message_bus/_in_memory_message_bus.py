@@ -27,7 +27,9 @@ from typing import Callable, Self
 from ._base import MessageBus
 
 
-class InMemoryMessageBus(MessageBus):
+class InMemoryMessageBus(
+    MessageBus,
+):  # pylint: disable=too-many-public-methods
     """In-memory implementation of :class:`MessageBus`.
 
     Mapping of bus modes to in-memory structures:
@@ -58,12 +60,18 @@ class InMemoryMessageBus(MessageBus):
         # Global auto-increment counter for entry ids.
         self._seq: int = 0
 
-        # Mode A — drain queues: key -> [(entry_id, payload), ...]
-        # (entry_id, payload, expire_at | None) — expire_at is monotonic.
+        # Mode A — available entries: key -> [(id, payload, expire_at)]
         self._queues: dict[
             str,
             list[tuple[str, dict, float | None]],
         ] = defaultdict(list)
+
+        # Mode A — claimed entries: key -> {id: (payload, consumer, at)}
+        # Insertion order is arrival order, so reclaim keeps it.
+        self._pending: dict[
+            str,
+            dict[str, tuple[dict, str, float]],
+        ] = defaultdict(dict)
 
         # Mode C — replay logs: key -> [(entry_id, payload), ...]
         self._logs: dict[str, list[tuple[str, dict]]] = defaultdict(list)
@@ -156,42 +164,110 @@ class InMemoryMessageBus(MessageBus):
         queue.append((entry_id, payload, expire_at))
         return entry_id
 
-    async def queue_drain(
+    async def queue_claim(
         self,
         key: str,
+        *,
+        consumer: str,
         max_count: int = 100,
+        min_idle_secs: float = MessageBus.DEFAULT_CLAIM_MIN_IDLE_SECS,
     ) -> list[tuple[str, dict]]:
-        """Drain up to ``max_count`` entries from the queue at ``key``.
-
-        Returned entries are removed from the internal list.
+        """Claim entries, taking over idle ones before fresh ones.
 
         Args:
             key (`str`):
                 Queue identifier.
+            consumer (`str`):
+                Identifier the claimed entries are held against.
             max_count (`int`, defaults to ``100``):
                 Maximum entries to return.
+            min_idle_secs (`float`, optional):
+                Idle threshold before an entry may be taken over.
 
         Returns:
             `list[tuple[str, dict]]`:
                 ``(entry_id, payload)`` pairs in arrival order.
         """
-        q = self._queues.get(key)
-        if not q:
-            return []
         now = time.monotonic()
-        alive = [e for e in q if e[2] is None or e[2] > now]
-        drained = alive[:max_count]
-        self._queues[key] = alive[max_count:]
-        return [(entry_id, payload) for entry_id, payload, _ in drained]
+        pending = self._pending[key]
+        claimed: list[tuple[str, dict]] = []
+
+        for entry_id, (payload, _holder, since) in list(pending.items()):
+            if len(claimed) >= max_count:
+                break
+            if now - since >= min_idle_secs:
+                pending[entry_id] = (payload, consumer, now)
+                claimed.append((entry_id, payload))
+
+        available = self._queues.get(key)
+        if available and len(claimed) < max_count:
+            alive = [e for e in available if e[2] is None or e[2] > now]
+            fresh = alive[: max_count - len(claimed)]
+            self._queues[key] = alive[len(fresh) :]
+            for entry_id, payload, _expire_at in fresh:
+                pending[entry_id] = (payload, consumer, now)
+                claimed.append((entry_id, payload))
+
+        return claimed
+
+    async def queue_ack(  # pylint: disable=unused-argument
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Delete claimed entries. Unknown ids are ignored.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            consumer (`str`):
+                The consumer that claimed the entries.
+            entry_ids (`list[str]`):
+                Ids returned by :meth:`queue_claim`.
+        """
+        pending = self._pending.get(key)
+        if not pending:
+            return
+        for entry_id in entry_ids:
+            pending.pop(entry_id, None)
+
+    async def queue_release(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Hand claimed entries back, keeping their id and position.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            consumer (`str`):
+                The consumer that claimed the entries.
+            entry_ids (`list[str]`):
+                Ids returned by :meth:`queue_claim`.
+        """
+        pending = self._pending.get(key)
+        if not pending:
+            return
+        for entry_id in entry_ids:
+            held = pending.get(entry_id)
+            if held is not None:
+                # Infinitely idle, so the next claim takes it over.
+                pending[entry_id] = (held[0], consumer, float("-inf"))
 
     async def queue_delete(self, key: str) -> None:
-        """Delete the drain queue at ``key``.
+        """Delete the queue at ``key``, claimed entries included.
 
         Args:
             key (`str`):
                 Queue identifier.
         """
         self._queues.pop(key, None)
+        self._pending.pop(key, None)
 
     # ------------------------------------------------------------------
     # Mode C — replay log

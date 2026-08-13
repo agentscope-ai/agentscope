@@ -7,7 +7,15 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
+from typing_extensions import deprecated
+
 from ._base import MessageBus
+
+# One consumer group per queue key; consumers compete inside it.
+_CONSUMER_GROUP = "agentscope"
+
+# Idle time stamped on released entries so the next claim takes them over.
+_RELEASE_IDLE_MS = 10**9
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -16,7 +24,7 @@ else:
     Redis = Any
 
 
-class RedisMessageBus(MessageBus):
+class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     """Redis-backed implementation of :class:`MessageBus`.
 
     Mapping of bus modes to Redis primitives:
@@ -85,6 +93,7 @@ class RedisMessageBus(MessageBus):
         # Populated in __aenter__; None until the context is entered.
         self._client: Redis | None = None
         self._owned_pool: ConnectionPool | None = None
+        self._groups: set[str] = set()
 
     async def __aenter__(self) -> Self:
         """Create the connection pool and Redis client.
@@ -225,46 +234,175 @@ class RedisMessageBus(MessageBus):
             await self._client.expire(key, ttl_secs)
         return entry_id
 
+    async def queue_claim(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        max_count: int = 100,
+        min_idle_secs: float = MessageBus.DEFAULT_CLAIM_MIN_IDLE_SECS,
+    ) -> list[tuple[str, dict]]:
+        """Claim entries via the stream's consumer group.
+
+        ``XAUTOCLAIM`` first takes over entries idle past the
+        threshold, then ``XREADGROUP`` tops the batch up with
+        never-delivered ones. Both are single commands, so two
+        consumers never receive the same entry.
+
+        Args:
+            key (`str`):
+                Stream key for the queue.
+            consumer (`str`):
+                Consumer name within the group.
+            max_count (`int`, defaults to ``100``):
+                Maximum entries to return.
+            min_idle_secs (`float`, optional):
+                Idle threshold before an entry may be taken over.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                ``(entry_id, payload)`` pairs in arrival order.
+        """
+        if key not in self._groups:
+            try:
+                # id="0" so entries predating the group stay visible.
+                await self._client.xgroup_create(
+                    key,
+                    _CONSUMER_GROUP,
+                    id="0",
+                    mkstream=True,
+                )
+            except Exception as e:  # pylint: disable=broad-except
+                if "BUSYGROUP" not in str(e):
+                    raise
+            self._groups.add(key)
+
+        reclaimed = await self._client.xautoclaim(
+            key,
+            _CONSUMER_GROUP,
+            consumer,
+            min_idle_time=int(min_idle_secs * 1000),
+            start_id="0-0",
+            count=max_count,
+        )
+        raw: list = list(reclaimed[1])
+
+        if len(raw) < max_count:
+            fresh = await self._client.xreadgroup(
+                _CONSUMER_GROUP,
+                consumer,
+                {key: ">"},
+                count=max_count - len(raw),
+            )
+            for _stream, entries in fresh or []:
+                raw.extend(entries)
+
+        claimed: list[tuple[str, dict]] = []
+        for entry_id, fields in raw:
+            payload = (fields or {}).get("payload")
+            if payload is not None:
+                claimed.append((entry_id, json.loads(payload)))
+        return claimed
+
+    async def queue_ack(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Acknowledge and delete claimed entries in one transaction.
+
+        Args:
+            key (`str`):
+                Stream key for the queue.
+            consumer (`str`):
+                The consumer that claimed the entries. Unused —
+                acknowledgement is group-wide, as in ``XACK``.
+            entry_ids (`list[str]`):
+                Ids returned by :meth:`queue_claim`.
+        """
+        if not entry_ids:
+            return
+        # MULTI/EXEC: no other client observes the entry acknowledged but
+        # not yet deleted, nor deleted but still pending.
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.xack(key, _CONSUMER_GROUP, *entry_ids)
+            pipe.xdel(key, *entry_ids)
+            await pipe.execute()
+
+    async def queue_release(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Hand claimed entries back by forcing them idle.
+
+        ``XCLAIM ... IDLE`` sets the idle time explicitly, so the
+        entries immediately qualify for the next claim's takeover
+        while keeping their ids and order.
+
+        Args:
+            key (`str`):
+                Stream key for the queue.
+            consumer (`str`):
+                The consumer that claimed the entries.
+            entry_ids (`list[str]`):
+                Ids returned by :meth:`queue_claim`.
+        """
+        if not entry_ids:
+            return
+        await self._client.xclaim(
+            key,
+            _CONSUMER_GROUP,
+            consumer,
+            min_idle_time=0,
+            message_ids=entry_ids,
+            idle=_RELEASE_IDLE_MS,
+            justid=True,
+        )
+
+    @deprecated(
+        "At-most-once; superseded by queue_claim / queue_ack / "
+        "queue_release.",
+    )
     async def queue_drain(
         self,
         key: str,
         max_count: int = 100,
     ) -> list[tuple[str, dict]]:
-        """Drain up to ``max_count`` entries from the queue at ``key``.
+        """Take entries and delete them immediately (at-most-once).
 
-        Implementation: ``XRANGE`` followed by ``XDEL`` of the
-        returned ids, so the operation is destructive in a single
-        round-trip pair. Entries that arrive between ``XRANGE`` and
-        ``XDEL`` are not affected.
+        Overrides the base implementation, which would route through
+        the consumer group: ``XREADGROUP`` leaves entries in the stream,
+        so during a rolling deploy an older process's ``XRANGE`` would
+        still see — and ``XDEL`` — entries a newer one is holding. Two
+        separate storage paths keep a migrating queue safe.
 
         Args:
             key (`str`):
-                Stream key for the drain queue.
+                Stream key for the queue.
             max_count (`int`, defaults to ``100``):
                 Maximum entries to return in one call.
 
         Returns:
             `list[tuple[str, dict]]`:
-                ``(entry_id, payload)`` pairs in arrival order. Empty
-                list when the queue is empty or absent.
+                ``(entry_id, payload)`` pairs in arrival order.
         """
         entries = await self._client.xrange(key, count=max_count)
         if not entries:
             return []
 
-        results: list[tuple[str, dict]] = []
-        ids_to_delete: list[str] = []
+        drained: list[tuple[str, dict]] = []
         for entry_id, fields in entries:
-            ids_to_delete.append(entry_id)
-            raw = fields.get("payload")
-            if raw is None:
-                continue
-            results.append((entry_id, json.loads(raw)))
+            payload = (fields or {}).get("payload")
+            if payload is not None:
+                drained.append((entry_id, json.loads(payload)))
 
-        if ids_to_delete:
-            await self._client.xdel(key, *ids_to_delete)
-
-        return results
+        await self._client.xdel(key, *[eid for eid, _f in entries])
+        return drained
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -275,6 +413,7 @@ class RedisMessageBus(MessageBus):
                 when the key does not exist.
         """
         await self._client.delete(key)
+        self._groups.discard(key)
 
     # ------------------------------------------------------------------
     # Mode C — replay log

@@ -16,16 +16,20 @@ onto the right mode plus a key naming convention they own.
 Three orthogonal modes are exposed:
 
 ============================  ===========================================
-Mode A — drain queue          Mode C — replay log
+Mode A — work queue           Mode C — replay log
 ``queue_push`` /              ``log_append`` /
-``queue_drain``               ``log_read`` / ``log_trim``
+``queue_claim`` /             ``log_read`` / ``log_trim``
+``queue_ack`` / ``queue_release``
 
-Single-consumer, ack-on-read. Multi-consumer, externally bounded.
-Each entry returned at most       Each reader tracks its own cursor;
-once; storage drops it the        entries persist until trimmed,
-moment it is read. TTL bounds     ``max_len`` truncates from the head,
-orphaned data when the consumer   or TTL expires the whole key.
-disappears.
+Competing consumers,              Multi-consumer, externally bounded.
+at-least-once. A claim holds      Each reader tracks its own cursor;
+an entry without deleting it;     entries persist until trimmed,
+it is deleted on ack, handed      ``max_len`` truncates from the head,
+back on release, and taken        or TTL expires the whole key.
+over by another consumer if
+its holder goes idle — so a
+consumer that dies mid-flight
+loses nothing.
 ============================  ===========================================
 
 Mode D — transient broadcast: ``publish`` / ``subscribe``. Fire-and-forget
@@ -33,12 +37,14 @@ pub/sub; only currently-subscribed listeners receive a payload, no
 history. Use for wake-up signals where missed-while-offline is fine.
 
 Counted broadcast (one entry consumed by N distinct readers) is
-intentionally not exposed as a primitive: in practice it requires
-consumer-group coordination (Redis Streams' XREADGROUP/XACK semantics)
-and adds substantial state. Producers wanting "fan out to N members"
-should fan out at write time — push one entry per recipient inbox using
-Mode A. The bus stays simple; deduplication is the producer's
-responsibility.
+intentionally not exposed as a primitive. Producers wanting "fan out to
+N members" should fan out at write time — push one entry per recipient
+inbox using Mode A.
+
+Because Mode A is at-least-once, **every consumer must be idempotent**:
+redelivery after a crash is normal operation, not an error path. The
+bus guarantees an entry is not lost; making a repeat harmless is the
+consumer's job.
 """
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
@@ -48,6 +54,10 @@ from typing import Any, Callable, Self
 from typing_extensions import deprecated
 
 from ._keys import MessageBusKeys
+
+# Consumer name for the default queue_drain, which acks straight after
+# claiming so entries never linger under it.
+_LEGACY_DRAIN_CONSUMER = "legacy-drain"
 
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
@@ -88,8 +98,14 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     async def aclose(self) -> None:
         """Release underlying transport resources. Default is a no-op."""
 
+    DEFAULT_CLAIM_MIN_IDLE_SECS: float = 60.0
+    """Default idle threshold before a claimed entry may be taken over by
+    another consumer. Comfortably above a claim-to-ack window that holds a
+    single durable write, and short enough that a crashed consumer's work
+    resumes promptly."""
+
     # ------------------------------------------------------------------
-    # Mode A — drain queue (single consumer, ack-on-read)
+    # Mode A — work queue (competing consumers, claim / ack / release)
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -100,12 +116,16 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         *,
         ttl_secs: int | None = None,
     ) -> str:
-        """Append ``payload`` to the drain queue at ``key``.
+        """Append ``payload`` to the work queue at ``key``.
 
-        Drain queues are single-consumer, ack-on-read: a subsequent
-        :meth:`queue_drain` returns each entry exactly once and then
-        deletes it. ``ttl_secs`` bounds the queue's lifetime so a key
-        whose consumer disappears does not accumulate entries forever.
+        The entry becomes available to :meth:`queue_claim`, which hands
+        it to exactly one consumer at a time until that consumer acks
+        or releases it.
+
+        .. warning:: ``ttl_secs`` expires the **whole key**, taking
+            unconsumed entries with it. Only use it for queues whose
+            payloads are genuinely disposable once stale; a queue
+            carrying work that must not be lost should leave it unset.
 
         Args:
             key (`str`):
@@ -128,30 +148,100 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
-    async def queue_drain(
+    async def queue_claim(
         self,
         key: str,
+        *,
+        consumer: str,
         max_count: int = 100,
+        min_idle_secs: float = DEFAULT_CLAIM_MIN_IDLE_SECS,
     ) -> list[tuple[str, dict]]:
-        """Drain up to ``max_count`` entries from the queue at ``key``.
+        """Take up to ``max_count`` entries and hold them as *claimed*.
 
-        Returned entries are removed from the queue in the same
-        operation, so a subsequent call returns only entries that
-        arrived after this one. Safe under the single-consumer-per-key
-        invariant.
+        A claim hands an entry to exactly one consumer without deleting
+        it: :meth:`queue_ack` deletes it, :meth:`queue_release` hands it
+        back, and an entry left idle for ``min_idle_secs`` is taken over
+        by whoever claims next — so a consumer dying mid-flight loses
+        nothing. Concurrent claims on one key return disjoint entries.
+
+        Recovering idle entries happens here rather than in a separate
+        sweep, so no periodic task is required to make it work.
+
+        .. note:: Redelivery is normal under at-least-once, so every
+            consumer must be idempotent. Hold claims briefly — the
+            intended shape is "claim, one durable write, ack", with the
+            real work happening after the ack.
 
         Args:
             key (`str`):
                 Queue identifier.
+            consumer (`str`):
+                Stable per-process identifier the entries are held
+                against, e.g. ``f"{hostname}:{pid}"``.
             max_count (`int`, defaults to ``100``):
-                Maximum number of entries to return in one call.
-                Older entries are returned first; remaining entries
-                stay in the queue for the next call.
+                Maximum entries to return, recovered and fresh together.
+            min_idle_secs (`float`, optional):
+                Idle threshold before another consumer may take an entry
+                over. Keep it above the claim-to-ack window.
 
         Returns:
             `list[tuple[str, dict]]`:
-                ``(entry_id, payload)`` pairs in arrival order. Empty
-                list when the queue is empty.
+                ``(entry_id, payload)`` pairs in arrival order.
+        """
+
+    @abstractmethod
+    async def queue_ack(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Confirm claimed entries as handled and delete them.
+
+        Atomic across the given ids, and safe to retry — unknown or
+        already-acked ids are ignored.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            consumer (`str`):
+                The consumer that claimed the entries.
+            entry_ids (`list[str]`):
+                Ids returned by :meth:`queue_claim`.
+        """
+
+    @abstractmethod
+    async def queue_release(
+        self,
+        key: str,
+        *,
+        consumer: str,
+        entry_ids: list[str],
+    ) -> None:
+        """Hand claimed entries back without having handled them.
+
+        The failure-path counterpart to :meth:`queue_ack`: the entries
+        become claimable again immediately instead of waiting out
+        ``min_idle_secs``, keeping their ids and order. Purely an
+        optimisation — an abandoned entry is recovered either way::
+
+            entries = await bus.queue_claim(key, consumer=me)
+            ids = [i for i, _ in entries]
+            try:
+                await persist(entries)
+                await bus.queue_ack(key, consumer=me, entry_ids=ids)
+            except Exception:
+                await bus.queue_release(key, consumer=me, entry_ids=ids)
+                raise
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            consumer (`str`):
+                The consumer that claimed the entries.
+            entry_ids (`list[str]`):
+                Ids returned by :meth:`queue_claim`.
         """
 
     @abstractmethod
@@ -854,3 +944,46 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             tid = payload.get("task_id")
             if isinstance(tid, str):
                 yield tid
+
+    # ------------------------------------------------------------------
+    # Deprecated — superseded by Mode A's claim / ack / release
+    # ------------------------------------------------------------------
+
+    @deprecated(
+        "queue_drain is at-most-once: an entry is deleted on read, so a "
+        "consumer that dies before finishing loses it. Use queue_claim "
+        "and queue_ack, releasing on failure with queue_release.",
+    )
+    async def queue_drain(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Take entries and delete them immediately (at-most-once).
+
+        Not abstract: implementations being written now should not have
+        to supply a method nobody should call. Override it only to keep
+        an existing storage layout working while its consumers migrate.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of entries to return in one call.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                ``(entry_id, payload)`` pairs in arrival order.
+        """
+        entries = await self.queue_claim(
+            key,
+            consumer=_LEGACY_DRAIN_CONSUMER,
+            max_count=max_count,
+        )
+        if entries:
+            await self.queue_ack(
+                key,
+                consumer=_LEGACY_DRAIN_CONSUMER,
+                entry_ids=[entry_id for entry_id, _payload in entries],
+            )
+        return entries
