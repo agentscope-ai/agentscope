@@ -429,65 +429,6 @@ class TestInboxAndWakeupHelpers(IsolatedAsyncioTestCase):
         await self._stack.aclose()
         await self.fr.aclose()
 
-    async def test_inbox_push_drain_round_trip(self) -> None:
-        """``inbox_push`` payloads are returned by ``inbox_drain`` in
-        push order, exactly once."""
-        sid = "s-inbox"
-        await self.bus.inbox_push(sid, {"hint": "a"})
-        await self.bus.inbox_push(sid, {"hint": "b"})
-        entries = await self.bus.inbox_drain(sid, max_count=10)
-        self.assertEqual(
-            [p["hint"] for _id, p in entries],
-            ["a", "b"],
-        )
-        self.assertEqual(
-            await self.bus.inbox_drain(sid, max_count=10),
-            [],
-        )
-
-    async def test_enqueue_wakeup_signals_and_queues(self) -> None:
-        """``enqueue_wakeup`` puts the payload on the durable queue and
-        fires the signal channel; a subscriber and a ``dequeue_wakeups``
-        call both see it."""
-        ready = asyncio.Event()
-        received: list[dict] = []
-
-        async def _signal_consumer() -> None:
-            async for payload in self.bus.subscribe_wakeup_signal(
-                on_ready=ready.set,
-            ):
-                received.append(payload)
-                break
-
-        task = asyncio.create_task(_signal_consumer())
-        await asyncio.wait_for(ready.wait(), timeout=2.0)
-
-        await self.bus.enqueue_wakeup(
-            user_id="u",
-            session_id="s",
-            agent_id="a",
-        )
-        await asyncio.wait_for(task, timeout=2.0)
-
-        # Signal fired.
-        self.assertEqual(len(received), 1)
-
-        # Queue holds the structured entry. ``enqueue_wakeup`` is the
-        # idle-wake shortcut, so the entry carries ``kind="wake"`` and a
-        # null input alongside the routing fields.
-        entries = await self.bus.dequeue_wakeups(max_count=10)
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(
-            entries[0],
-            {
-                "user_id": "u",
-                "session_id": "s",
-                "agent_id": "a",
-                "kind": "wake",
-                "input": None,
-            },
-        )
-
 
 class TestRegistryPrimitive(IsolatedAsyncioTestCase):
     """Mode F — ``registry_*`` hash-keyed namespace operations."""

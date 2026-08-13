@@ -800,6 +800,12 @@ optional):
             lock_key,
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
+            # A wake-up only ever means "something is in the inbox", so
+            # an empty one has nothing to reason about — returning here
+            # keeps a duplicate trigger from costing a model call.
+            if input_msg is None and not await inbox.claim():
+                return
+
             # Channel-bound run: signal the output forwarder so the reply
             # is streamed back to the platform chat. Covers scheduled /
             # background wakes, not just inbound channel messages.
@@ -816,12 +822,6 @@ optional):
                     user_id=user_id,
                     agent_id=agent_id,
                 )
-            # A wake-up only ever means "something is in the inbox", so
-            # an empty one has nothing to reason about — returning here
-            # keeps a duplicate trigger from costing a model call.
-            if input_msg is None and not await inbox.claim():
-                return
-
             reply_msg: Msg | None = None
             try:
                 if input_msg is None or isinstance(

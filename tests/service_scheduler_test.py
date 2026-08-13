@@ -23,6 +23,7 @@ import fakeredis.aioredis
 
 from utils import AnyString
 
+from agentscope.app.message_bus import MessageBusKeys
 from agentscope.app._manager import SchedulerManager
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
@@ -151,7 +152,10 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
         )
 
         # Inbox has the wrapped HintBlock.
-        inbox = await self.bus.inbox_drain(session.id, max_count=10)
+        inbox = await self.bus.queue_claim(
+            MessageBusKeys.inbox(session.id),
+            consumer="test",
+        )
         self.assertEqual(len(inbox), 1)
         hint = inbox[0][1]
         self.assertDictEqual(
@@ -171,7 +175,13 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
         self.assertIn("please summarise the news", hint["hint"])
 
         # A wakeup is enqueued for that session.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = [
+            p
+            for _i, p in await self.bus.queue_claim(
+                MessageBusKeys.wakeup_queue(),
+                consumer="test",
+            )
+        ]
         self.assertEqual(len(wakeups), 1)
         self.assertEqual(
             wakeups[0],
@@ -200,7 +210,13 @@ class TestSchedulerFireDisabled(_SchedulerFireTestBase):
             record.agent_id,
         )
         self.assertEqual(sessions, [])
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = [
+            p
+            for _i, p in await self.bus.queue_claim(
+                MessageBusKeys.wakeup_queue(),
+                consumer="test",
+            )
+        ]
         self.assertEqual(wakeups, [])
 
 
@@ -223,11 +239,20 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
         self.assertEqual([s.id for s in sessions], [f"{record.id}_stateful"])
 
         # That single session has two HintBlocks in its inbox.
-        inbox = await self.bus.inbox_drain(sessions[0].id, max_count=10)
+        inbox = await self.bus.queue_claim(
+            MessageBusKeys.inbox(sessions[0].id),
+            consumer="test",
+        )
         self.assertEqual(len(inbox), 2)
 
         # Two wakeups, both pointing at the same session.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = [
+            p
+            for _i, p in await self.bus.queue_claim(
+                MessageBusKeys.wakeup_queue(),
+                consumer="test",
+            )
+        ]
         self.assertEqual(
             wakeups,
             [

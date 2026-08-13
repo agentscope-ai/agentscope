@@ -610,8 +610,6 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     _SESSION_CANCEL_KEY = "agentscope:session:cancel"
     _SESSION_RUN_TTL_SECS = 600
     _SESSION_REPLAY_MAX_LEN = 1000
-    _INBOX_KEY = "agentscope:inbox:{sid}"
-    _WAKEUP_QUEUE_KEY = "agentscope:wakeups"
     _WAKEUP_SIGNAL_KEY = "agentscope:wakeup_signal"
     _BG_TASKS_KEY = "agentscope:bg_tasks:{sid}"
     _BG_TASKS_TTL_SECS = 86400
@@ -735,7 +733,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     async def session_purge(self, session_id: str) -> None:
         """Delete all per-session bus state."""
         await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
-        await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
+        await self.queue_delete(MessageBusKeys.inbox(session_id))
         await self.registry_drop(self._BG_TASKS_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------
@@ -752,13 +750,13 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> str:
         """Push a message to a session's inbox."""
         return await self.queue_push(
-            self._INBOX_KEY.format(sid=session_id),
+            MessageBusKeys.inbox(session_id),
             msg,
             ttl_secs=ttl_secs,
         )
 
     @deprecated(
-        "Use queue_drain(MessageBusKeys.inbox(sid), ...) directly.",
+        "Use queue_claim + queue_ack on MessageBusKeys.inbox(sid).",
     )
     async def inbox_drain(
         self,
@@ -766,12 +764,19 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         max_count: int = 100,
     ) -> list[tuple[str, dict]]:
         """Drain pending inbox messages for a session."""
-        return await self.queue_drain(
-            self._INBOX_KEY.format(sid=session_id),
+        key = MessageBusKeys.inbox(session_id)
+        entries = await self.queue_claim(
+            key,
+            consumer=_LEGACY_DRAIN_CONSUMER,
             max_count=max_count,
         )
-
-    # Wakeup ----------------------------------------------------------
+        if entries:
+            await self.queue_ack(
+                key,
+                consumer=_LEGACY_DRAIN_CONSUMER,
+                entry_ids=[entry_id for entry_id, _p in entries],
+            )
+        return entries
 
     @deprecated(
         "Use enqueue_run_trigger(bus, ...) from "
@@ -785,7 +790,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> None:
         """Enqueue an idle-session wake-up."""
         await self.queue_push(
-            self._WAKEUP_QUEUE_KEY,
+            MessageBusKeys.wakeup_queue(),
             {
                 "user_id": user_id,
                 "session_id": session_id,
@@ -811,7 +816,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> None:
         """Enqueue a typed run trigger."""
         await self.queue_push(
-            self._WAKEUP_QUEUE_KEY,
+            MessageBusKeys.wakeup_queue(),
             {
                 "user_id": user_id,
                 "session_id": session_id,
@@ -823,17 +828,25 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         await self.publish(self._WAKEUP_SIGNAL_KEY, {})
 
     @deprecated(
-        "Use queue_drain(MessageBusKeys.wakeup_queue(), ...) directly.",
+        "Use queue_claim + queue_ack on MessageBusKeys.wakeup_queue().",
     )
     async def dequeue_wakeups(
         self,
         max_count: int = 64,
     ) -> list[dict]:
         """Drain pending run-trigger entries."""
-        entries = await self.queue_drain(
-            self._WAKEUP_QUEUE_KEY,
+        key = MessageBusKeys.wakeup_queue()
+        entries = await self.queue_claim(
+            key,
+            consumer=_LEGACY_DRAIN_CONSUMER,
             max_count=max_count,
         )
+        if entries:
+            await self.queue_ack(
+                key,
+                consumer=_LEGACY_DRAIN_CONSUMER,
+                entry_ids=[entry_id for entry_id, _p in entries],
+            )
         return [payload for _entry_id, payload in entries]
 
     @deprecated(

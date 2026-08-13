@@ -149,7 +149,9 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # Session inbox
     # ------------------------------------------------------------------
 
-    _INBOX = "agentscope:inbox:{sid}"
+    # ``:v2`` keeps claim/ack away from the drain-based keys an older
+    # build is still reading, which would double-deliver.
+    _INBOX = "agentscope:inbox:v2:{sid}"
 
     @classmethod
     def inbox(cls, session_id: str) -> str:
@@ -160,7 +162,8 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # Run trigger queue (wakeup / resume)
     # ------------------------------------------------------------------
 
-    _WAKEUP_QUEUE = "agentscope:wakeups"
+    # Versioned for the same reason as the inbox key above.
+    _WAKEUP_QUEUE = "agentscope:wakeups:v2"
     _WAKEUP_SIGNAL = "agentscope:wakeup_signal"
 
     @classmethod

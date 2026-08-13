@@ -197,12 +197,27 @@ class WakeupDispatcher:
 
         deferred: list[str] = []
         for entry_id, payload in entries:
-            handled = True
+            try:
+                user_id = payload["user_id"]
+                session_id = payload["session_id"]
+                agent_id = payload["agent_id"]
+            except (KeyError, TypeError):
+                logger.warning(
+                    "WakeupDispatcher: dropping malformed trigger entry %r",
+                    payload,
+                )
+                await self._bus.queue_ack(
+                    key,
+                    consumer=self._consumer,
+                    entry_ids=[entry_id],
+                )
+                continue
+
             try:
                 handled = await self._dispatch_one(
-                    user_id=payload["user_id"],
-                    session_id=payload["session_id"],
-                    agent_id=payload["agent_id"],
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
                     # Entries from older producers omit ``kind``.
                     kind=payload.get(
                         "kind",
@@ -210,11 +225,16 @@ class WakeupDispatcher:
                     ),
                     raw_input=payload.get("input"),
                 )
-            except (KeyError, TypeError):
-                logger.warning(
-                    "WakeupDispatcher: dropping malformed trigger entry %r",
-                    payload,
+            except Exception:  # pylint: disable=broad-except
+                # Hand it back rather than let one bad entry strand the
+                # rest of the batch on its idle timeout.
+                logger.exception(
+                    "WakeupDispatcher: dispatching %s for session %s failed",
+                    payload.get("kind"),
+                    session_id,
                 )
+                handled = False
+
             if handled:
                 await self._bus.queue_ack(
                     key,

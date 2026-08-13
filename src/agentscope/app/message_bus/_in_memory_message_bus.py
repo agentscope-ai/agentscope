@@ -66,11 +66,11 @@ class InMemoryMessageBus(
             list[tuple[str, dict, float | None]],
         ] = defaultdict(list)
 
-        # Mode A — claimed entries: key -> {id: (payload, consumer, at)}
+        # Mode A — claimed: key -> {id: (payload, consumer, at, expire_at)}
         # Insertion order is arrival order, so reclaim keeps it.
         self._pending: dict[
             str,
-            dict[str, tuple[dict, str, float]],
+            dict[str, tuple[dict, str, float, float | None]],
         ] = defaultdict(dict)
 
         # Mode C — replay logs: key -> [(entry_id, payload), ...]
@@ -192,11 +192,15 @@ class InMemoryMessageBus(
         pending = self._pending[key]
         claimed: list[tuple[str, dict]] = []
 
-        for entry_id, (payload, _holder, since) in list(pending.items()):
+        for entry_id, held in list(pending.items()):
+            payload, _holder, since, expire_at = held
+            if expire_at is not None and expire_at <= now:
+                del pending[entry_id]
+                continue
             if len(claimed) >= max_count:
                 break
             if now - since >= min_idle_secs:
-                pending[entry_id] = (payload, consumer, now)
+                pending[entry_id] = (payload, consumer, now, expire_at)
                 claimed.append((entry_id, payload))
 
         available = self._queues.get(key)
@@ -204,8 +208,8 @@ class InMemoryMessageBus(
             alive = [e for e in available if e[2] is None or e[2] > now]
             fresh = alive[: max_count - len(claimed)]
             self._queues[key] = alive[len(fresh) :]
-            for entry_id, payload, _expire_at in fresh:
-                pending[entry_id] = (payload, consumer, now)
+            for entry_id, payload, expire_at in fresh:
+                pending[entry_id] = (payload, consumer, now, expire_at)
                 claimed.append((entry_id, payload))
 
         return claimed
@@ -257,7 +261,7 @@ class InMemoryMessageBus(
             held = pending.get(entry_id)
             if held is not None:
                 # Infinitely idle, so the next claim takes it over.
-                pending[entry_id] = (held[0], consumer, float("-inf"))
+                pending[entry_id] = (held[0], consumer, float("-inf"), held[3])
 
     async def queue_delete(self, key: str) -> None:
         """Delete the queue at ``key``, claimed entries included.

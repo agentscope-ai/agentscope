@@ -130,6 +130,16 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             pool = self._owned_pool
 
         self._client = aioredis.Redis(connection_pool=pool)
+
+        version = (await self._client.info("server")).get("redis_version", "")
+        if tuple(int(p) for p in version.split(".")[:2] if p.isdigit()) < (
+            6,
+            2,
+        ):
+            raise RuntimeError(
+                f"RedisMessageBus needs Redis 6.2+ for XAUTOCLAIM, "
+                f"but the server reports {version or 'an unknown version'}.",
+            )
         return self
 
     async def aclose(self) -> None:
@@ -263,39 +273,55 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             `list[tuple[str, dict]]`:
                 ``(entry_id, payload)`` pairs in arrival order.
         """
-        if key not in self._groups:
+        # Reading must not conjure a stream: a session that never gets
+        # an inbox entry should leave nothing behind.
+        if not await self._client.exists(key):
+            return []
+
+        raw: list = []
+        for attempt in (0, 1):
+            if key not in self._groups:
+                try:
+                    # id="0" so entries predating the group stay visible.
+                    await self._client.xgroup_create(
+                        key,
+                        _CONSUMER_GROUP,
+                        id="0",
+                        mkstream=True,
+                    )
+                except Exception as e:  # pylint: disable=broad-except
+                    if "BUSYGROUP" not in str(e):
+                        raise
+                self._groups.add(key)
+
             try:
-                # id="0" so entries predating the group stay visible.
-                await self._client.xgroup_create(
+                reclaimed = await self._client.xautoclaim(
                     key,
                     _CONSUMER_GROUP,
-                    id="0",
-                    mkstream=True,
+                    consumer,
+                    min_idle_time=int(min_idle_secs * 1000),
+                    start_id="0-0",
+                    count=max_count,
                 )
+                raw = list(reclaimed[1])
+
+                if len(raw) < max_count:
+                    fresh = await self._client.xreadgroup(
+                        _CONSUMER_GROUP,
+                        consumer,
+                        {key: ">"},
+                        count=max_count - len(raw),
+                    )
+                    for _stream, entries in fresh or []:
+                        raw.extend(entries)
+                break
             except Exception as e:  # pylint: disable=broad-except
-                if "BUSYGROUP" not in str(e):
+                # The group can vanish under us — an eviction, a flush,
+                # a failover to an empty replica, another process
+                # deleting the key. Rebuild it and try once more.
+                if "NOGROUP" not in str(e) or attempt:
                     raise
-            self._groups.add(key)
-
-        reclaimed = await self._client.xautoclaim(
-            key,
-            _CONSUMER_GROUP,
-            consumer,
-            min_idle_time=int(min_idle_secs * 1000),
-            start_id="0-0",
-            count=max_count,
-        )
-        raw: list = list(reclaimed[1])
-
-        if len(raw) < max_count:
-            fresh = await self._client.xreadgroup(
-                _CONSUMER_GROUP,
-                consumer,
-                {key: ">"},
-                count=max_count - len(raw),
-            )
-            for _stream, entries in fresh or []:
-                raw.extend(entries)
+                self._groups.discard(key)
 
         claimed: list[tuple[str, dict]] = []
         for entry_id, fields in raw:
@@ -326,10 +352,16 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             return
         # MULTI/EXEC: no other client observes the entry acknowledged but
         # not yet deleted, nor deleted but still pending.
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.xack(key, _CONSUMER_GROUP, *entry_ids)
-            pipe.xdel(key, *entry_ids)
-            await pipe.execute()
+        try:
+            async with self._client.pipeline(transaction=True) as pipe:
+                pipe.xack(key, _CONSUMER_GROUP, *entry_ids)
+                pipe.xdel(key, *entry_ids)
+                await pipe.execute()
+        except Exception as e:  # pylint: disable=broad-except
+            # No group means no pending entries to settle.
+            if "NOGROUP" not in str(e):
+                raise
+            self._groups.discard(key)
 
     async def queue_release(
         self,
@@ -354,15 +386,21 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         if not entry_ids:
             return
-        await self._client.xclaim(
-            key,
-            _CONSUMER_GROUP,
-            consumer,
-            min_idle_time=0,
-            message_ids=entry_ids,
-            idle=_RELEASE_IDLE_MS,
-            justid=True,
-        )
+        try:
+            await self._client.xclaim(
+                key,
+                _CONSUMER_GROUP,
+                consumer,
+                min_idle_time=0,
+                message_ids=entry_ids,
+                idle=_RELEASE_IDLE_MS,
+                justid=True,
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            # No group means no pending entries to settle.
+            if "NOGROUP" not in str(e):
+                raise
+            self._groups.discard(key)
 
     @deprecated(
         "At-most-once; superseded by queue_claim / queue_ack / "

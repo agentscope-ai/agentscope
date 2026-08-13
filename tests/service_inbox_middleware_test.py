@@ -25,7 +25,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.app.middleware import InboxMiddleware
 from agentscope.message import (
     AssistantMsg,
@@ -244,7 +244,7 @@ def _push_hint(
 ) -> None:
     """Push a :class:`HintBlock` into the per-session inbox key the
     middleware will drain."""
-    key = MessageBus._INBOX_KEY.format(sid=sid)
+    key = MessageBusKeys.inbox(sid)
     # asyncio.run on the bus would be overkill — `_queues` is a plain
     # dict, mutate it directly.
     bus._queues.setdefault(key, []).append(

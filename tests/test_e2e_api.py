@@ -43,11 +43,18 @@ _thread = None
 
 
 async def _check_redis() -> bool:
-    """Check if Redis is reachable at localhost:6379."""
+    """Whether a Redis new enough for the bus is reachable locally.
+
+    The message bus claims work with ``XAUTOCLAIM``, which arrived in
+    6.2, so an older server cannot serve these tests at all.
+    """
     redis_client = aioredis.Redis(host="localhost", port=6379)
     try:
-        await redis_client.ping()
-        return True
+        info = await redis_client.info("server")
+        version = info.get("redis_version", "")
+        return tuple(
+            int(part) for part in version.split(".")[:2] if part.isdigit()
+        ) >= (6, 2)
     except Exception:
         return False
     finally:

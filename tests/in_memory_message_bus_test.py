@@ -12,6 +12,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
 
+from agentscope.app.message_bus import MessageBusKeys
 from agentscope.app.message_bus import InMemoryMessageBus
 
 
@@ -510,54 +511,15 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
         self.assertFalse(await self.bus.session_is_running(sid))
 
     async def test_inbox_round_trip(self) -> None:
-        """``inbox_push`` + ``inbox_drain`` FIFO semantics."""
+        """The session inbox key round-trips in arrival order."""
         sid = "s-inbox"
-        await self.bus.inbox_push(sid, {"hint": "a"})
-        await self.bus.inbox_push(sid, {"hint": "b"})
-        entries = await self.bus.inbox_drain(sid, max_count=10)
+        key = MessageBusKeys.inbox(sid)
+        await self.bus.queue_push(key, {"hint": "a"})
+        await self.bus.queue_push(key, {"hint": "b"})
+        entries = await self.bus.queue_claim(key, consumer="c")
         self.assertEqual(
             [p["hint"] for _id, p in entries],
             ["a", "b"],
-        )
-        self.assertEqual(
-            await self.bus.inbox_drain(sid, max_count=10),
-            [],
-        )
-
-    async def test_enqueue_wakeup_round_trip(self) -> None:
-        """``enqueue_wakeup`` → ``dequeue_wakeups`` round-trip."""
-        ready = asyncio.Event()
-        received: list[dict] = []
-
-        async def _signal_consumer() -> None:
-            async for payload in self.bus.subscribe_wakeup_signal(
-                on_ready=ready.set,
-            ):
-                received.append(payload)
-                break
-
-        task = asyncio.create_task(_signal_consumer())
-        await asyncio.wait_for(ready.wait(), timeout=2.0)
-
-        await self.bus.enqueue_wakeup(
-            user_id="u",
-            session_id="s",
-            agent_id="a",
-        )
-        await asyncio.wait_for(task, timeout=2.0)
-        self.assertEqual(len(received), 1)
-
-        entries = await self.bus.dequeue_wakeups(max_count=10)
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(
-            entries[0],
-            {
-                "user_id": "u",
-                "session_id": "s",
-                "agent_id": "a",
-                "kind": "wake",
-                "input": None,
-            },
         )
 
     async def test_bg_task_round_trip(self) -> None:
@@ -586,14 +548,17 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
         bg_tasks in one call."""
         sid = "s-purge"
         await self.bus.session_publish_event(sid, {"e": 1})
-        await self.bus.inbox_push(sid, {"m": 1})
+        await self.bus.queue_push(MessageBusKeys.inbox(sid), {"m": 1})
         await self.bus.bg_task_register(sid, "t1", "{}")
 
         await self.bus.session_purge(sid)
 
         self.assertEqual(await self.bus.session_read_events(sid), [])
         self.assertEqual(
-            await self.bus.inbox_drain(sid, max_count=10),
+            await self.bus.queue_claim(
+                MessageBusKeys.inbox(sid),
+                consumer="c",
+            ),
             [],
         )
         self.assertEqual(await self.bus.bg_task_list(sid), {})
