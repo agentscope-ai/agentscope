@@ -486,6 +486,14 @@
 	"schedule": {
 		"subtitle": "为智能体设置定时或一次性的计划任务",
 		"calendar": "日历",
+		"channelSelector": {
+			"description": "选择频道即授权该无人值守任务无需再次确认即可使用其主动发送工具；其他工具仍遵循权限模式。",
+			"empty": "暂无支持定时发送的频道",
+			"label": "频道",
+			"loadError": "频道加载失败",
+			"none": "不使用频道",
+			"triggerLabel": "选择定时任务使用的频道"
+		},
 		"createSchedule": {
 			"description": "为智能体设置定时或一次性的计划任务。",
 			"descriptionLabel": "描述",

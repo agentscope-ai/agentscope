@@ -37,7 +37,9 @@ automatically. Never use this tool for the current conversation.
 ## How to Use
 Obtain ``receive_id`` first: a group's via ``ListChats``, a person's via \
 ``ListChatMembers``. Pass ``receive_id`` and ``receive_id_type`` exactly as \
-returned. Sending requires the user's confirmation."""
+returned. Sending normally requires the user's confirmation; an unattended \
+schedule that explicitly selects this channel is already authorised to send \
+text messages."""
     is_read_only: bool = False
     input_schema: dict = _SendMessageParams.model_json_schema()
 
