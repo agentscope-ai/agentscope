@@ -14,7 +14,7 @@ from ...permission import (
 from .._response import ToolChunk
 from .._base import ToolBase, ToolMiddlewareBase
 from ...exception import DeveloperOrientedException
-from ...message import TextBlock
+from ...message import TextBlock, ToolResultState
 from ...state import AgentState
 
 
@@ -99,8 +99,28 @@ class ResetTools(ToolBase):
                 "Error: ResetTools requires state to be provided.",
             )
 
-        # Deactivate all tool groups first
-        _agent_state.tool_context.activated_groups.clear()
+        # First verify the existance of the given group names
+        unexist_groups: list[str] = []
+        cur_groups: list[str] = [
+            _.name for _ in self.groups if _.name != "basic"
+        ]
+        for key in kwargs:
+            if key not in cur_groups:
+                unexist_groups.append(key)
+
+        if unexist_groups:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            "Invalid group name(s): "
+                            f"{', '.join(unexist_groups)}. The current "
+                            f"available groups are: {', '.join(cur_groups)}"
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+            )
 
         to_activate = []
         for key, value in kwargs.items():
@@ -108,15 +128,18 @@ class ResetTools(ToolBase):
                 return ToolChunk(
                     content=[
                         TextBlock(
-                            text=f"Invalid arguments: the argument {key} "
+                            text=f"Invalid arguments: the argument '{key}' "
                             f"should be a bool value, but got {type(value)}.",
                         ),
                     ],
+                    state=ToolResultState.ERROR,
                 )
 
             if value:
                 to_activate.append(key)
 
+        # Reset the activated groups after validation
+        _agent_state.tool_context.activated_groups.clear()
         _agent_state.tool_context.activated_groups.extend(to_activate)
 
         template = Template(self.response_template)
@@ -127,4 +150,5 @@ class ResetTools(ToolBase):
                     text=template.render(groups=activated_groups),
                 ),
             ],
+            state=ToolResultState.SUCCESS,
         )

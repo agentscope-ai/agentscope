@@ -384,7 +384,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
             launch_cmd = (
                 f"exec {shlex.quote(self._gateway_python)} -I -u "
                 f"{shlex.quote(self._gateway_script)} "
-                f"--config {shlex.quote(self._mcp_file)} "
                 f"--port {gateway_port} "
                 f"--auth-token {shlex.quote(self._gateway_token)} "
                 f"--instance-nonce {shlex.quote(self._gateway_nonce)} "
@@ -410,8 +409,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
             await self._stop_gateway_process()
         else:  # pragma: no cover - loop always breaks or raises
             await self._raise_gateway_timeout(health_timeout)
-
-        self._mcps = list(await self._gateway.list_mcps())
 
     async def _bootstrap_is_ready(self) -> bool:
         """Check whether persisted user-space bootstrap artifacts work."""

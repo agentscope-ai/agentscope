@@ -464,6 +464,8 @@ class WorkspaceService:
         stream: AsyncIterator[bytes],
         archive_format: Literal["zip", "tar", "tar.gz"],
         name: str,
+        *,
+        agent_id: str | None = None,
     ) -> None:
         """Pipe a skill archive into a workspace, one install at a time.
 
@@ -476,9 +478,16 @@ class WorkspaceService:
             archive_format (`Literal["zip", "tar", "tar.gz"]`): How the
                 stream is packed.
             name (`str`): The skill's name, for the backend's logging.
+            agent_id (`str | None`, optional): The agent taking
+                ownership. ``None`` installs into the shared partition.
         """
         async with self._install_slots:
-            await workspace.add_skill_archive(stream, archive_format, name)
+            await workspace.add_skill_archive(
+                stream,
+                archive_format,
+                name,
+                agent_id=agent_id,
+            )
 
     @staticmethod
     async def tar_stream(

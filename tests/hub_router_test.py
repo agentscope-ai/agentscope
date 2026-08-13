@@ -94,6 +94,36 @@ class FakeMCPHub(MCPHubBase):
                     "headers": {"Authorization": "Bearer ${api_key}"},
                 },
             ),
+            "gitlab": MCPCard(
+                hub_id="fake",
+                name="gitlab",
+                auth="inputs",
+                is_stateful=True,
+                inputs_schema={
+                    "type": "object",
+                    "properties": {
+                        "api_key": {
+                            "type": "string",
+                            "writeOnly": True,
+                            "format": "password",
+                        },
+                        "base_url": {
+                            "type": "string",
+                            "default": "https://gitlab.com/api/v4",
+                        },
+                    },
+                    "required": ["api_key"],
+                },
+                config_template={
+                    "type": "stdio_mcp",
+                    "command": "uvx",
+                    "args": ["gitlab-mcp"],
+                    "env": {
+                        "GITLAB_TOKEN": "${api_key}",
+                        "GITLAB_API_URL": "${base_url}",
+                    },
+                },
+            ),
         }
 
     async def list_mcps(
@@ -243,7 +273,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         ).json()
 
         names = [c["name"] for c in body["cards"]]
-        self.assertEqual(sorted(names), ["echo", "notion", "tagged"])
+        self.assertEqual(sorted(names), ["echo", "gitlab", "notion", "tagged"])
         notion = next(c for c in body["cards"] if c["name"] == "notion")
         prop = notion["inputs_schema"]["properties"]["api_key"]
         self.assertTrue(prop["writeOnly"])
@@ -437,6 +467,38 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         record = await storage.get_mcp("alice", mcp_id)
         self.assertEqual(record.values, {"api_key": "old"})
         self.assertEqual(record.client.name, "notion-2")
+
+    async def test_rekey_preserves_custom_non_secret_value(self) -> None:
+        """Editing one input must not replace another with its schema
+        default."""
+        mcp_id = self._install_mcp(
+            "gitlab",
+            values={
+                "api_key": "old",
+                "base_url": "https://gitlab.internal/api/v4",
+            },
+        ).json()["id"]
+
+        response = self._client.patch(
+            f"/mcp/{mcp_id}",
+            json={"values": {"api_key": "new"}},
+            headers=HEADERS,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        storage = self._client.app.state.storage
+        record = await storage.get_mcp("alice", mcp_id)
+        self.assertEqual(
+            record.values,
+            {
+                "api_key": "new",
+                "base_url": "https://gitlab.internal/api/v4",
+            },
+        )
+        self.assertEqual(
+            record.client.mcp_config.env["GITLAB_API_URL"],
+            "https://gitlab.internal/api/v4",
+        )
 
     def test_rename_keeps_the_config(self) -> None:
         """Renaming touches the name, not the rendered config."""

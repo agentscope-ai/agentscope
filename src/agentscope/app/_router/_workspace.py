@@ -63,7 +63,10 @@ async def list_mcps(
         agent_id,
         session_id,
     )
-    clients = await workspace.list_mcps()
+    clients = await workspace.list_mcps(
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     results = []
     for client in clients:
@@ -115,7 +118,13 @@ async def add_mcp(
         agent_id,
         session_id,
     )
-    await workspace.add_mcp(mcp)
+    try:
+        await workspace.add_mcp(mcp, agent_id=agent_id, session_id=session_id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
 
     if await storage.get_mcp_by_name(user_id, mcp.name) is None:
         # No hub_id or card_id — this one has no card behind it, which
@@ -151,7 +160,13 @@ async def add_mcps_from_library(
         agent_id,
         session_id,
     )
-    present = {client.name for client in await workspace.list_mcps()}
+    present = {
+        client.name
+        for client in await workspace.list_mcps(
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+    }
 
     added: list[str] = []
     failed: dict[str, str] = {}
@@ -164,7 +179,11 @@ async def add_mcps_from_library(
             # Already there: not an error, just nothing to do.
             continue
         try:
-            await workspace.add_mcp(record.client)
+            await workspace.add_mcp(
+                record.client,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
         except Exception as e:
             failed[record.client.name] = _describe_exception(e)
             continue
@@ -190,7 +209,11 @@ async def remove_mcp(
         agent_id,
         session_id,
     )
-    await workspace.remove_mcp(mcp_name)
+    await workspace.remove_mcp(
+        mcp_name,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +234,7 @@ async def list_skills(
         agent_id,
         session_id,
     )
-    return await workspace.list_skills()
+    return await workspace.list_skills(agent_id=agent_id)
 
 
 @workspace_router.post(
@@ -238,7 +261,7 @@ async def add_skill(
         agent_id,
         session_id,
     )
-    await workspace.add_skill(body.skill_path)
+    await workspace.add_skill(body.skill_path, agent_id=agent_id)
 
 
 @workspace_router.post(
@@ -287,6 +310,7 @@ async def upload_skill(
             workspace_service.tar_stream(parsed, files),
             "tar",
             "skill",
+            agent_id=agent_id,
         )
     except (SkillUploadError, ValueError) as e:
         raise HTTPException(
@@ -344,6 +368,7 @@ async def add_skills_from_library(
                 archive.stream,
                 archive.format,
                 record.name,
+                agent_id=agent_id,
             )
         except Exception as e:  # pylint: disable=broad-except
             failed[record.name] = _describe_exception(e)
@@ -370,7 +395,7 @@ async def remove_skill(
         agent_id,
         session_id,
     )
-    await workspace.remove_skill(skill_name)
+    await workspace.remove_skill(skill_name, agent_id=agent_id)
 
 
 # ---------------------------------------------------------------------------
