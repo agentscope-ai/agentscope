@@ -31,6 +31,8 @@ Run::
 """
 import logging
 import os
+from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from fastapi.middleware import Middleware
@@ -66,10 +68,10 @@ from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
 from bocomadp.providers import ProviderManager
 from bocomadp.routers.agent_manage import (
+    AgentConfigRequest,
     MultiAgentManager,
     agent_manage_router,
 )
-from bocomadp.routers.chat_sse import chat_sse_router
 from bocomadp.routers.uploads import uploads_router
 from bocomadp.routers.credential_model import credential_model_router
 from bocomadp.routers.health import health_router
@@ -80,6 +82,10 @@ from bocomadp.routers.stats import stats_router
 from bocomadp.routers.workspace_files import workspace_files_router
 from bocomadp.routers.session_usage import session_usage_router
 from bocomadp.routers.agent_tools import agent_tools_router
+from bocomadp.routers.agent_tools import (
+    load_tool_whitelists,
+)
+from bocomadp.toolkit_whitelist import patch_get_toolkit
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
 # 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与本项目
@@ -88,11 +94,15 @@ from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
 from bocomadp.skills.bocom_skill_hub import BocomSkillHub
-from bocomadp.tools import ToolRegistry, build_enterprise_tools
+from bocomadp.tools import ToolRegistry, build_enterprise_tools, init_factory_tools
 from bocomadp.uploads.manager import cleanup_stale_upload_staging_files
 
 # K8s 沙箱工作区（纯配置驱动，零框架侵入）
-from bocomadp.workspace import build_k8s_workspace_manager, is_k8s_enabled
+from bocomadp.workspace import (
+    build_k8s_workspace_manager,
+    is_k8s_enabled,
+    WhitelistWorkspaceManager,
+)
 
 # 在 agentscope 子模块被 import 之前完成 setup_logger，
 # 以便它们使用的 ``as`` logger 自动拥有文件 handler。
@@ -197,23 +207,23 @@ hook_registry = HookRegistry()
 
 multi_agent_manager = MultiAgentManager()
 
-runtime = Runtime(
-    hook_registry=hook_registry,
-    tool_registry=tool_registry,
-    middleware_registry=middleware_registry,
-    provider_manager=provider_manager,
-    multi_agent_manager=multi_agent_manager,
-    heartbeat_interval=config.runtime.heartbeat_interval_seconds,
-)
-
-logger.info(
-    "framework modules initialized: "
-    "tools=%d middlewares=%d providers=%d agents=%d mcps=%d",
-    len(tool_registry.list_tools()),
-    len(middleware_registry.list_middlewares()),
-    len(provider_manager.list_providers()),
-    len(multi_agent_manager.list_agents()),
-    len(mcp_registry.list_mcps()),
+# ── 内置智能体：智能体工厂（agent-creator） ──
+# 专门用于对话式创建/修改智能体，不需要 K8s 沙箱，
+# 工具通过 AgentBuilder 在运行时按 agent_id 注入。
+# 注意：实际注册在下方 storage 创建之后进行。
+_AGENT_CREATOR_ID = "_agent-creator"
+_AGENT_CREATOR_SYSTEM_PROMPT = (
+    "你是智能体工厂，通过对话帮助用户创建和修改智能体配置。\n"
+    "\n## 工作流程\n"
+    "1. 需求澄清：了解智能体的目标、使用者、所需能力与行为约束\n"
+    "2. 方案设计：给出角色定义、system prompt 草案、工具与技能组合建议\n"
+    "3. 用户确认：确认后再落地，不替用户做假设\n"
+    "4. 完成告知：告知智能体 ID 与使用方式\n"
+    "\n## 注意点\n"
+    "- 具体有哪些能力可用、如何操作，见 agent-factory 技能文档\n"
+    "- 工具与技能选择遵循最小权限原则，只给任务必需的能力\n"
+    "- 修改已有智能体时先查看当前配置，保留用户确认过的核心逻辑\n"
+    "- 以 _ 开头的系统内置智能体不可删除\n"
 )
 
 # ---------------------------------------------------------------------------
@@ -227,19 +237,123 @@ def build_default_mcps() -> list:
     return mcp_registry.list_mcps()
 
 
+# 会话维度的 guwp token 存储：
+# 同一会话内 userId / token 恒定，正常消息路径每轮把请求头里的 token
+# 刷新写入 Redis（TTL 7 天，活跃会话每消息自动续期）；resume 路径
+# （WakeupDispatcher 后台 spawn，无请求上下文）回读。
+# 本地模式（InMemoryMessageBus）退化为进程内 dict。
+_session_tokens: dict[str, str] = {}
+
+_SESSION_TOKEN_TTL_SECS = 7 * 24 * 3600
+
+
+def _redis_client():
+    """Return the async Redis client, or None in local mode."""
+    if isinstance(message_bus, RedisMessageBus):
+        try:
+            return message_bus.get_client()
+        except Exception:
+            return None
+    return None
+
+
+async def _resolve_session_token(session_id: str) -> str:
+    """Resolve the guwp token for one chat run.
+
+    Context value wins (fresh from the request header); it is also
+    persisted keyed by ``session_id`` so the resume path can read it
+    back. Empty context → return the last persisted value.
+    """
+    from bocomadp.tools.agent_factory_tools import _current_token
+
+    token = _current_token.get()
+    is_redis_mode = isinstance(message_bus, RedisMessageBus)
+    client = _redis_client()
+    key = f"bocomadp:guwp_token:{session_id}"
+    try:
+        if token:
+            if client is not None:
+                await client.set(key, token, ex=_SESSION_TOKEN_TTL_SECS)
+            elif not is_redis_mode:
+                _session_tokens[session_id] = token
+            return token
+
+        if client is not None:
+            cached = await client.get(key)
+            token = cached.decode("utf-8") if cached else ""
+        elif not is_redis_mode:
+            token = _session_tokens.get(session_id, "")
+    except Exception:
+        logger.exception("session token resolve failed for %s", session_id)
+    return token
+
+
 # 通用工具构建入口（AgentScope ``AgentToolFactory``）：
 # 合并「ToolRegistry 自动扫描的内置/自定义工具」+「主动 build 的企业工具」，
-# 同时供 Runtime 层的 ``AgentBuilder`` 注入使用（AgentBuilder 侧取 registry 部分）。
-# 企业工具采用主动 build（tools/enterprise.py），不依赖 custom/ 被动扫描。
+# 同时为 agent-creator 注入工厂工具。
 async def build_agent_tools(
     user_id: str,
     agent_id: str,
     session_id: str,
 ):
+    # Set user_id context var so agent-factory tools know the caller.
+    from bocomadp.tools.agent_factory_tools import (
+        _current_user_id,
+        _current_token,
+        _current_session_id,
+    )
+    _current_user_id.set(user_id)
+    _current_session_id.set(session_id)
+
+    # Session-scoped token: fresh value from the request context wins
+    # and refreshes the store; the resume path falls back to the store.
+    _current_token.set(await _resolve_session_token(session_id))
+
     tools = tool_registry.list_tools()
     tools.extend(
         await build_enterprise_tools(user_id, agent_id, session_id),
     )
+
+    # Inject factory tools for the built-in agent-creator
+    if agent_id == "_agent-creator":
+        from bocomadp.tools.agent_factory_tools import (
+            create_agent,
+            update_agent,
+            delete_agent,
+            list_agents,
+            get_agent,
+            list_tools_for_agent,
+            set_agent_tools,
+            list_available_skills,
+            enable_skill_for_agent,
+        )
+        tools.extend([
+            create_agent,
+            update_agent,
+            delete_agent,
+            list_agents,
+            get_agent,
+            list_tools_for_agent,
+            set_agent_tools,
+            list_available_skills,
+            enable_skill_for_agent,
+        ])
+
+    # Apply the per-agent tool whitelist managed by agent_tools_router
+    # (PUT/DELETE /api/agents/{id}/tools/{name}):
+    #   empty  -> every tool above stays available
+    #   non-empty -> only the listed tool names survive
+    # This makes the tool config APIs effective at runtime (for agents
+    # created by the agent-creator) and enforces least privilege for
+    # the agent-creator itself (only its 9 factory tools remain).
+    from bocomadp.routers.agent_tools import _tool_whitelists
+    whitelist = _tool_whitelists.get(agent_id, [])
+    if whitelist:
+        allowed = set(whitelist)
+        tools = [
+            t for t in tools if getattr(t, "name", "") in allowed
+        ]
+
     return tools
 
 
@@ -268,6 +382,146 @@ storage = AsyncSQLAlchemyStorage(
     create_tables=config.db.create_tables,
 )
 
+
+class _BuiltinAgentStorageProxy:
+    """Storage proxy: fall back to user_id="default" for built-in agents.
+
+    The built-in agent-creator is registered under ``user_id="default"``.
+    Framework lookup paths (``ResourceAccessService.resolve_agent`` etc.)
+    only query the caller's own user id, so without this proxy the
+    built-in agent is invisible to every non-default user (404 on
+    sessions/chat/agent views). ``Runtime._build_context`` already
+    applies the same fallback; this proxy extends it to the framework
+    HTTP API paths.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    @staticmethod
+    def _shared_agent(user_id: str, agent_id: str) -> bool:
+        """Built-in factory agent is shared: non-default users may
+        access the ``default`` user's sessions for it (the web UI
+        creates those sessions while logged out, then the user logs
+        in and gets 404 'session not found' — see get_session)."""
+        return user_id != "default" and agent_id == _AGENT_CREATOR_ID
+
+    async def get_agent(self, user_id: str, agent_id: str) -> Any:
+        record = await self._inner.get_agent(user_id, agent_id)
+        if record is not None or user_id == "default":
+            return record
+        return await self._inner.get_agent("default", agent_id)
+
+    async def get_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> Any:
+        """Owner-scoped lookup with a fallback to the shared
+        ``default`` sessions of the built-in factory agent.
+
+        The frontend can create agent-creator sessions before the
+        user logs in (``X-User-ID: default``); once logged in as a
+        real user those sessions 404 on every read (messages / mcp /
+        skill / chat) and the UI shows 'session preparation failed'.
+        """
+        record = await self._inner.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if record is not None or not self._shared_agent(user_id, agent_id):
+            return record
+        return await self._inner.get_session(
+            "default",
+            agent_id,
+            session_id,
+        )
+
+    async def list_sessions(self, user_id: str, agent_id: str) -> list:
+        """Merge the shared ``default`` sessions for the factory agent
+        so they keep showing in the caller's session list."""
+        sessions = await self._inner.list_sessions(user_id, agent_id)
+        if not self._shared_agent(user_id, agent_id):
+            return sessions
+        shared = await self._inner.list_sessions("default", agent_id)
+        seen = {s.id for s in sessions}
+        return sessions + [s for s in shared if s.id not in seen]
+
+    async def delete_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> bool:
+        """Delete the caller's session; fall back to the shared
+        ``default`` session when the caller only has the fallback."""
+        ok = await self._inner.delete_session(user_id, agent_id, session_id)
+        if ok or not self._shared_agent(user_id, agent_id):
+            return ok
+        return await self._inner.delete_session("default", agent_id, session_id)
+
+    async def delete_agent(self, user_id: str, agent_id: str) -> bool:
+        """Delete via framework storage, then drop the per-agent tool
+        whitelist so the persisted whitelist file keeps no orphans.
+
+        The framework's ``DELETE /agent/{id}`` (and team cascades)
+        all funnel through this storage call; the bocomadp-only
+        ``/agents`` router is unused by the product.
+        """
+        ok = await self._inner.delete_agent(user_id, agent_id)
+        if ok:
+            try:
+                from bocomadp.routers.agent_tools import (
+                    _persist_whitelists,
+                    _tool_whitelists,
+                )
+
+                if _tool_whitelists.pop(agent_id, None) is not None:
+                    _persist_whitelists()
+            except Exception:  # 白名单清理失败不影响删除结果
+                logger.warning(
+                    "failed to drop tool whitelist for %s",
+                    agent_id,
+                    exc_info=True,
+                )
+        return ok
+
+    async def __aenter__(self) -> "_BuiltinAgentStorageProxy":
+        await self._inner.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc: object) -> Any:
+        return await self._inner.__aexit__(*exc)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+
+storage = _BuiltinAgentStorageProxy(storage)
+
+# ── 初始化工厂工具（注入 ToolRegistry / McpRegistry）──
+init_factory_tools(tool_registry, mcp_registry)
+
+runtime = Runtime(
+    hook_registry=hook_registry,
+    tool_registry=tool_registry,
+    middleware_registry=middleware_registry,
+    provider_manager=provider_manager,
+    storage=storage,
+    heartbeat_interval=config.runtime.heartbeat_interval_seconds,
+)
+
+logger.info(
+    "framework modules initialized: "
+    "tools=%d middlewares=%d providers=%d mcps=%d",
+    len(tool_registry.list_tools()),
+    len(middleware_registry.list_middlewares()),
+    len(provider_manager.list_providers()),
+    len(mcp_registry.list_mcps()),
+)
+
 vector_store = QdrantStore(location=":memory:")
 
 # ── K8s 沙箱 vs 本地工作区 ──
@@ -275,7 +529,7 @@ vector_store = QdrantStore(location=":memory:")
 # 本地开发可设置 ADP_K8S_ENABLED=false 退回到 LocalWorkspaceManager。
 if is_k8s_enabled():
     # -- K8s 沙箱模式 —— 每个智能体的代码执行在独立的 K8s Pod 中运行。
-    # -- 双 PVC 模式下 skills/.mcp 共享（agent PVC），session 数据隔离。
+    # -- 共享 PVC 模式下 skills/.mcp 存储在 agent 级 PVC，session 数据子目录隔离。
     from agentscope.app.message_bus import RedisMessageBus
 
     workspace_manager = build_k8s_workspace_manager()
@@ -293,6 +547,11 @@ else:
         default_mcps=build_default_mcps(),
     )
 
+# 包装工作区管理器：框架把 MCP 从 workspace.list_mcps() 直接注入
+# （不经过 extra_agent_tools），因此只能在 get_workspace 这一层按
+# per-agent 白名单过滤（PUT/DELETE /api/agents/{id}/tools/{name}）。
+workspace_manager = WhitelistWorkspaceManager(workspace_manager)
+
 runtime.workspace_manager = workspace_manager
 
 # ---------------------------------------------------------------------------
@@ -301,9 +560,37 @@ runtime.workspace_manager = workspace_manager
 trace_enabled = is_trace_correlation_enabled(config)
 
 
+class TokenCaptureMiddleware:
+    """Capture the ``guwpToken`` request header into a ContextVar.
+
+    Pure ASGI middleware: the ContextVar is set in the request task
+    itself, so the framework's ``ChatRunRegistry.spawn`` (which uses
+    ``asyncio.create_task``) copies it into the chat-run background
+    task, making the token available to agent-factory tools during
+    the run.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            token = ""
+            for key, value in scope.get("headers") or []:
+                if key.lower() == b"guwptoken":
+                    token = value.decode("utf-8", errors="replace")
+                    break
+            from bocomadp.tools.agent_factory_tools import _current_token
+            _current_token.set(token)
+        await self.app(scope, receive, send)
+
+
 def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
     """构建 ASGI 中间件栈（由内到外）。"""
     return [
+        # 最内层：捕获 guwpToken 到 ContextVar，随请求上下文透传给
+        # 框架 chat-run 后台任务（agent-creator 工厂工具使用）。
+        Middleware(TokenCaptureMiddleware),
         Middleware(TraceMiddleware, enabled=trace_enabled),
         Middleware(AccessLogMiddleware, skip_paths=("/healthz", "/readyz")),
         Middleware(ErrorHandlingMiddleware),
@@ -355,6 +642,77 @@ app = create_app(
     extra_middlewares=build_asgi_middlewares(trace_enabled),
 )
 
+
+# ── 注册内置智能体：智能体工厂（agent-creator）到框架 StorageBase ──
+# 使用 user_id="default" 创建；runtime._build_context 中对所有用户
+# fallback 查询 default 用户，确保每个用户都能与 agent-creator 对话。
+# 注意：框架 create_app 用 lifespan 创建 app（FastAPI(lifespan=...)），
+# @app.on_event("startup") 注册的处理器会被 Starlette 静默忽略，因此
+# 包装框架的 lifespan 上下文：框架资源全部就绪后、开始服务前执行注册。
+async def _register_builtin_agents() -> None:
+    """Ensure the agent-creator exists in framework persistent storage."""
+    from agentscope.app.storage import AgentData, AgentRecord
+    from agentscope.agent import ContextConfig as _ContextConfig
+    from agentscope.agent import ReActConfig as _ReActConfig
+    from bocomadp.routers.agent_tools import _tool_whitelists
+
+    existing = await storage.get_agent("default", _AGENT_CREATOR_ID)
+    if existing is not None:
+        logger.info(
+            "agent-creator already in framework storage: %s",
+            _AGENT_CREATOR_ID,
+        )
+    else:
+        record = AgentRecord(
+            id=_AGENT_CREATOR_ID,
+            user_id="default",
+            data=AgentData(
+                name="智能体工厂",
+                system_prompt=_AGENT_CREATOR_SYSTEM_PROMPT,
+                context_config=_ContextConfig(),
+                react_config=_ReActConfig(max_iters=30),
+            ),
+        )
+        await storage.upsert_agent("default", record)
+        logger.info(
+            "built-in agent registered in framework storage: %s",
+            _AGENT_CREATOR_ID,
+        )
+
+    # Init tool whitelist — only factory tools for agent-creator.
+    # Idempotent: re-applied on every startup (not just first
+    # registration) because the in-memory store is lost on restart.
+    _tool_whitelists[_AGENT_CREATOR_ID] = [
+        "create_agent",
+        "update_agent",
+        "delete_agent",
+        "list_agents",
+        "get_agent",
+        "list_tools_for_agent",
+        "set_agent_tools",
+        "list_available_skills",
+        "enable_skill_for_agent",
+    ]
+
+
+_original_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def _lifespan_with_builtin_agents(app):
+    async with _original_lifespan(app):
+        # 恢复持久化的工具白名单（内存存储重启会丢）
+        load_tool_whitelists()
+        await _register_builtin_agents()
+        # 框架 get_toolkit 全量注入 Task/Team/workspace/middleware 工具，
+        # 在首次 chat run 前包一层，按每智能体白名单过滤所有工具来源。
+        patch_get_toolkit()
+        yield
+
+
+app.router.lifespan_context = _lifespan_with_builtin_agents
+
+
 # ---------------------------------------------------------------------------
 # 6. 将框架模块挂载到 app.state，供路由层访问
 # ---------------------------------------------------------------------------
@@ -373,7 +731,7 @@ app.include_router(health_router)
 app.include_router(stats_router)
 app.include_router(session_usage_router)
 app.include_router(agent_tools_router)
-app.include_router(chat_sse_router)
+# chat_sse_router 暂时不用，改用框架内置 POST /chat/
 app.include_router(uploads_router)
 app.include_router(agent_manage_router)
 app.include_router(models_router)

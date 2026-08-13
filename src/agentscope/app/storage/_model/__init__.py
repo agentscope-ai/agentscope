@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 """Storage models for persisted resources."""
 
-from ._agent import AgentRecord, AgentData, InviteConfig
+from ._agent import (
+    AgentRecord,
+    AgentData,
+    InviteConfig,
+    TeamConfig,
+    HandoffRelation,
+)
 from ._credential import CredentialRecord
 from ._knowledge_base import KnowledgeBaseData, KnowledgeBaseRecord
 from ._knowledge_document import (
@@ -50,4 +56,6 @@ __all__ = [
     "TeamMember",
     "UserRecord",
     "InviteConfig",
+    "TeamConfig",
+    "HandoffRelation",
 ]

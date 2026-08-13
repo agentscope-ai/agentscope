@@ -33,6 +33,25 @@ class CreateAgentRequest(BaseModel):
             "``invitable ⇒ non-empty description`` invariant."
         ),
     )
+    parent_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "When set, this new agent is created as a member of the "
+            "expert team led by the referenced agent. The leader's "
+            "team_config.member_ids is updated to include the new agent "
+            "automatically. Leave None to create a plain agent."
+        ),
+    )
+    is_team: bool = Field(
+        default=False,
+        description=(
+            "When True (and ``parent_agent_id`` is None), the new agent is "
+            "created as an expert-team leader with an empty ``team_config`` "
+            "so it is already classified as a team in listings even before "
+            "any member references it. Ignored when ``parent_agent_id`` is "
+            "set (a member cannot also be a leader)."
+        ),
+    )
 
 
 class CreateAgentResponse(BaseModel):

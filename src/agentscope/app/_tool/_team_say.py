@@ -101,6 +101,7 @@ class TeamSay(_TeamToolBase):
         self,
         *args: Any,
         role: str = "leader",
+        allowed_handoff_targets: set[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialise with role-specific description.
@@ -109,6 +110,11 @@ class TeamSay(_TeamToolBase):
             role (`str`, defaults to ``"leader"``):
                 Either ``"leader"`` or ``"worker"``. Determines which
                 description the agent sees for this tool.
+            allowed_handoff_targets (`set[str] | None`, optional):
+                When not ``None``, enforces strict workflow handoff:
+                ``TeamSay`` will only deliver to agent_ids in this set.
+                Used by the toolkit layer to hard-enforce
+                ``handoff_relations`` in ``workflow`` collaboration mode.
             *args:
                 Forwarded to :class:`_TeamToolBase.__init__`.
             **kwargs:
@@ -118,6 +124,7 @@ class TeamSay(_TeamToolBase):
         self.description = (
             _LEADER_DESCRIPTION if role == "leader" else _WORKER_DESCRIPTION
         )
+        self._allowed_handoff_targets = allowed_handoff_targets
 
     async def __call__(
         self,
@@ -265,7 +272,7 @@ class TeamSay(_TeamToolBase):
                 )
 
             if to is None:
-                recipients: list[tuple[str, str]] = [
+                all_recipients = [
                     (sid, aid)
                     for sid, aid in directory.values()
                     if sid != self._session_id
@@ -299,7 +306,44 @@ class TeamSay(_TeamToolBase):
                         ],
                         state=ToolResultState.ERROR,
                     )
-                recipients = [(target_session_id, target_agent_id)]
+                all_recipients = [(target_session_id, target_agent_id)]
+
+            # ----------------------------------------------------------------
+            # Strict-workflow handoff enforcement.
+            # When ``allowed_handoff_targets`` is set (i.e. the leader's
+            # team operates in ``workflow`` mode with configured
+            # ``handoff_relations``), discard recipients that are not in
+            # the permitted set and fail the call if all recipients are
+            # blocked.
+            # ----------------------------------------------------------------
+            recipients: list[tuple[str, str]]
+            if self._allowed_handoff_targets is not None:
+                recipients = [
+                    (sid, aid)
+                    for sid, aid in all_recipients
+                    if aid in self._allowed_handoff_targets
+                ]
+                if not recipients:
+                    allowed_names = [
+                        n for n, sid_aid in directory.items()
+                        if sid_aid[1] in self._allowed_handoff_targets
+                    ]
+                    return ToolChunk(
+                        content=[
+                            TextBlock(
+                                text=(
+                                    "TeamSay: strict workflow mode — you "
+                                    "may only communicate with these team "
+                                    f"members: {allowed_names}. "
+                                    "Use TeamSay to hand off to the next "
+                                    "member in the configured order."
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.ERROR,
+                    )
+            else:
+                recipients = all_recipients
 
             # Resolve sender display name once.
             sender_agent = await self._storage.get_agent(

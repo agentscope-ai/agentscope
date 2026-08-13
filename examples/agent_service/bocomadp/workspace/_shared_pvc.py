@@ -64,6 +64,11 @@ DEFAULT_USER_SCRATCH_DIR = "scratch"
 #: Workspace-relative directory for final deliverables.
 DEFAULT_USER_OUTPUTS_DIR = "outputs"
 
+#: Workspace-relative directory for user-uploaded files (sandbox-safe,
+#: inside workdir so that dual-PVC session PVC and shared-PVC
+#: ``/workspace/sessions/{id}`` both isolate uploads per session).
+DEFAULT_USER_UPLOADS_DIR = "uploads"
+
 
 class SharedPvcK8sWorkspace(K8sWorkspace):
     """K8sWorkspace 子类：session Pod，共享 agent 级 PVC + 温池。
@@ -156,6 +161,7 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
             "\n        ├── sessions/  # offloaded session context and tool results — system-managed"
             "\n        └── user-data/ # user working directory"
             "\n            ├── scratch/   # working directory for temporary files"
+            "\n            ├── uploads/    # user-uploaded files — auto-converted to .md"
             "\n            └── outputs/    # final deliverables — write finished files here, never ask"
             "\n```"
             "\n\nYour working directory is {workdir}. "
@@ -175,6 +181,18 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
             "\n- Prefer relative paths (e.g. `hello.txt`, "
             "`../outputs/report.md`) over hard-coded absolute paths in "
             "scripts and commands."
+            "\n\n### Uploaded Files"
+            "\n- Files the user uploads are automatically converted to "
+            "Markdown; the conversion result is the same-name `.md` next "
+            "to the original in `user-data/uploads/` "
+            "(e.g. `report.xlsx` → `report.md`)."
+            "\n- To analyse an uploaded file, ALWAYS read its `.md` "
+            "version first — never parse the raw binary "
+            "(`.xlsx`/`.docx`/`.pdf`/...) yourself, and never `pip install` "
+            "packages just to read it."
+            "\n- If no `.md` exists for the uploaded file, convert it "
+            "using the packages already available in the current "
+            "environment — never `pip install` new ones."
             "\n\n### Project Directory"
             "\n- Create a dedicated subdirectory for each task or project "
             "under your working directory."
@@ -217,14 +235,23 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
             DEFAULT_USER_OUTPUTS_DIR,
         )
 
+    @property
+    def _user_uploads_dir(self) -> str:
+        """``${workdir}/user-data/uploads`` — user-uploaded files."""
+        return self.get_backend().join_path(
+            self._user_data_dir,
+            DEFAULT_USER_UPLOADS_DIR,
+        )
+
     async def _ensure_workspace_layout(self) -> None:
         """Create the standard workspace directories plus user-data/.
 
         The parent layout covers ``data/``, ``skills/``, ``sessions/``
         and the gateway home; on top of that this session workspace
-        guarantees ``user-data/scratch/`` and ``user-data/outputs/``
-        exist so the model always has a writable working area and a
-        destination for final deliverables.
+        guarantees ``user-data/scratch/``, ``user-data/outputs/`` and
+        ``user-data/uploads/`` exist so the model always has a writable
+        working area, a destination for final deliverables and a home
+        for user-uploaded files (used by the upload endpoint).
         """
         await super()._ensure_workspace_layout()
         backend = self.get_backend()
@@ -235,6 +262,7 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
                 self._user_data_dir,
                 self._user_workspace_dir,
                 self._user_outputs_dir,
+                self._user_uploads_dir,
             ],
             cwd="/",
         )

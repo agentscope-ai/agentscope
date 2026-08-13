@@ -2,12 +2,13 @@ import { buildApiUrl, getUserId, ApiError } from './client';
 
 //
 // API client for the BocomADP file-upload capability
-// (backend: bocomadp/routers/uploads.py, prefix /api/uploads).
+// (backend: bocomadp/routers/uploads.py, prefix /files).
+// The /api prefix is added by buildApiUrl and stripped by the nginx gateway.
 //
-// Two flows:
-//   1. sync upload   POST /api/uploads/files            (file <= streaming threshold)
-//   2. stream upload POST /api/uploads/files/streaming  (file > threshold, chunked)
-// Plus listing / delete / download / limits.
+// Endpoints:
+//   1. sync upload POST /api/files/upload          (multipart: file, agent_id, session_id)
+//   2. limits      GET  /api/files/limits          (upload capability / thresholds)
+// Plus listing / delete / download.
 //
 
 export interface UploadLimits {
@@ -95,95 +96,53 @@ async function parseError(res: Response): Promise<ApiError> {
 
 export const uploadsApi = {
 	async limits(): Promise<UploadLimits> {
-		const res = await fetch(buildApiUrl('/uploads/limits'));
+		const res = await fetch(buildApiUrl('/files/limits'));
 		if (!res.ok) throw await parseError(res);
 		return (await res.json()) as UploadLimits;
 	},
 
-	async list(sessionId: string): Promise<UploadedFile[]> {
-		const url = buildApiUrl('/uploads/files');
-		url.searchParams.set('user_id', getUserId());
+	async list(agentId: string, sessionId: string): Promise<UploadedFile[]> {
+		const url = buildApiUrl('/files/uploads');
+		url.searchParams.set('agent_id', agentId);
 		url.searchParams.set('session_id', sessionId);
-		const res = await fetch(url);
+		const res = await fetch(url, { headers: { 'X-User-ID': getUserId() } });
 		if (!res.ok) throw await parseError(res);
-		return (await res.json()) as UploadedFile[];
+		const body = (await res.json()) as { files: UploadedFile[] };
+		return body.files;
 	},
 
-	async delete(sessionId: string, filename: string): Promise<void> {
-		const url = buildApiUrl('/uploads/files');
-		url.searchParams.set('user_id', getUserId());
+	async delete(agentId: string, sessionId: string, filename: string): Promise<void> {
+		const url = buildApiUrl('/files/upload');
+		url.searchParams.set('agent_id', agentId);
 		url.searchParams.set('session_id', sessionId);
 		url.searchParams.set('filename', filename);
-		const res = await fetch(url, { method: 'DELETE' });
+		const res = await fetch(url, {
+			method: 'DELETE',
+			headers: { 'X-User-ID': getUserId() },
+		});
 		if (!res.ok) throw await parseError(res);
 	},
 
 	/** Upload a file to the server, returning its virtual path ref. */
 	async upload(
-		sessionId: string,
-		file: File,
-		onProgress?: (loaded: number, total: number) => void,
-	): Promise<UploadedFile> {
-		const lim = await this.limits().catch(() => null);
-		const threshold = (lim?.streaming_threshold_mb ?? 10) * 1024 * 1024;
-
-		if (file.size > threshold) {
-			return this.uploadStreaming(sessionId, file, threshold, onProgress);
-		}
-		return this.uploadSync(sessionId, file, onProgress);
-	},
-
-	async uploadSync(
+		agentId: string,
 		sessionId: string,
 		file: File,
 		onProgress?: (loaded: number, total: number) => void,
 	): Promise<UploadedFile> {
 		const fd = new FormData();
 		fd.append('file', file);
-		fd.append('user_id', getUserId());
+		fd.append('agent_id', agentId);
 		fd.append('session_id', sessionId);
 
-		const res = await fetch(buildApiUrl('/uploads/files'), {
+		const res = await fetch(buildApiUrl('/files/upload'), {
 			method: 'POST',
+			headers: { 'X-User-ID': getUserId() },
 			body: fd,
 		});
 		if (!res.ok) throw await parseError(res);
 		onProgress?.(file.size, file.size);
 		return (await res.json()) as UploadedFile;
 	},
-
-	async uploadStreaming(
-		sessionId: string,
-		file: File,
-		threshold: number,
-		onProgress?: (loaded: number, total: number) => void,
-	): Promise<UploadedFile> {
-		const CHUNK = 5 * 1024 * 1024;
-		const total = Math.ceil(file.size / CHUNK);
-		let loaded = 0;
-		let last: UploadedFile | null = null;
-
-		for (let i = 0; i < total; i++) {
-			const blob = file.slice(i * CHUNK, (i + 1) * CHUNK);
-			const fd = new FormData();
-			fd.append('file', new Blob([blob]), file.name);
-			fd.append('user_id', getUserId());
-			fd.append('session_id', sessionId);
-
-			const res = await fetch(buildApiUrl('/uploads/files/streaming'), {
-				method: 'POST',
-				headers: {
-					'X-Chunk-Index': String(i),
-					'X-Chunk-Total': String(total),
-				},
-				body: fd,
-			});
-			if (!res.ok) throw await parseError(res);
-			loaded += blob.size;
-			onProgress?.(loaded, file.size);
-			last = (await res.json()) as UploadedFile;
-		}
-		if (!last) throw new ApiError(500, 'streaming upload returned no result');
-		return last;
-	},
 };
+

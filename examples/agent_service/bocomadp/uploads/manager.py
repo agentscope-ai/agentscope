@@ -1,255 +1,238 @@
 # -*- coding: utf-8 -*-
-"""上传文件落盘与路径隔离核心（移植自 deer-flow backend/.../uploads/manager.py）。
+"""文件上传核心：路径隔离 / 虚拟路径协议 / backend 落盘。
 
-职责：
-- 解析虚拟路径 virtual://uploads/{agent_id}/{user_id}/sessions/{session_id}/{filename} ↔ 真实路径
-- 越权 / 路径穿越校验（防 ``..`` 逃逸）
-- 文件名归一化（只取 basename）、冲突加 ``_N`` 后缀
-- 原子落盘（先写 ``.part`` 再 ``os.replace``）、``O_NOFOLLOW`` 防软链接逃逸
-- 启动时清理遗留 ``.part``（crash recovery）
+设计要点（沙箱感知，与 ``routers/workspace_files.py`` 下载逻辑同源）
 
-设计要点：
-- 上传根目录位于 workspace 内：``{workspace_dir}/{agent_id}/uploads``
-  （见 ``bocomadp.config.uploads_config.get_agent_upload_root``），
-  agent 通用文件工具基于 workdir 扫描时可直接看到上传文件。
-- 隔离层级：{root}/{user_id}/sessions/{session_id}/files/
+================================================================
+
+1. 上传目录一律位于 **会话 workdir 内** 的 ``user-data/uploads``：
+
+   - 沙箱模式（``workspace_manager`` 非 ``None``）：
+     ``workdir`` 由 ``workspace_manager.get_workspace()`` 解析，
+     双 PVC 模式 = session 级 PVC（RWO，session 间物理隔离），
+     共享 PVC 模式 = ``/workspace/sessions/{session_id}``（子目录隔离）。
+     所有读写经 ``workspace.get_backend()``（沙箱内执行）。
+   - 本地模式（``ADP_K8S_ENABLED=false`` 的 ``LocalWorkspaceManager``）：
+     同样走 ``backend.write_file``，落盘到宿主机 workdir 的
+     ``user-data/uploads``（session 隔离由 workdir 保证），**无 host 特判**。
+     方案 A 下所有模式统一以 workdir 相对路径 ``user-data/uploads`` 落盘，
+     不再回退到历史 ``{workspace_dir}/{agent_id}/uploads`` 结构。
+
+2. 不同 session 的隔离由沙箱布局天然保证，本模块不再做任何跨 session
+   路径拼接。
+
+3. 虚拟路径协议与下载同源，采用 **workdir 相对路径** 范式，不再编码
+   ``agent_id/user_id/session_id``（这些由 workdir 本身隔离）：
+
+       /workspace/user-data/uploads/{stored_name}
+
+   这样可直接被 Agent 自身的文件工具（相对 workdir 解析）读取，与
+   ``GET /files/{path}`` 下载逻辑保持一致的 ``/workspace/...`` 前缀。
+
+4. 原始文件与同名 ``.md`` 共存于上传目录；``.md`` 由接口层在上传时
+   转换（host 侧第三方库）后随原始文件一并写入沙箱。
+
+注：本文件**不**直接持有 workspace_manager / storage —— 这些由路由层
+注入并负责解析 workdir + 取得 backend，再调用本模块的纯函数式 IO 助手。
+这样保持 manager 无框架依赖、可单测。
 """
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
 from bocomadp.config.uploads_config import (
     VIRTUAL_PATH_PREFIX,
-    get_agent_upload_root,
     get_upload_config,
 )
-
-# ---------------------------------------------------------------------------
-# 常量 / 白名单
-# ---------------------------------------------------------------------------
-_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9._@-]+$")
-_PART_SUFFIX = ".part"
-_VIRTUAL_RE = re.compile(
-    r"^virtual://uploads/(?P<agent_id>[^/]+)/(?P<user_id>[^/]+)/sessions/(?P<session_id>[^/]+)/(?P<filename>.+)$",
+from bocomadp.workspace._shared_pvc import (
+    DEFAULT_USER_DATA_DIR,
+    DEFAULT_USER_UPLOADS_DIR,
 )
 
 
+# ---------------------------------------------------------------------------
+# 异常
+# ---------------------------------------------------------------------------
 class UploadError(Exception):
-    """上传/解析相关错误，路由层捕获后转 HTTP 响应。"""
+    """上传相关通用异常。"""
 
 
-def is_image(filename: str, content_type: str | None = None) -> bool:
-    """判断是否为图片（接口层应拒绝图片上传）。
+class PathTraversalError(UploadError):
+    """路径穿越 / 越权访问。"""
 
-    与原 Plan「图片除外」一致：图片走多模态通道，不进上传落盘流程。
-    """
-    image_exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".svg"}
-    if content_type and content_type.startswith("image/"):
-        return True
-    return Path(filename).suffix.lower() in image_exts
+
+class FileSizeExceeded(UploadError):
+    """文件大小超限。"""
+
+
+class TooManyFiles(UploadError):
+    """单会话文件数超限。"""
 
 
 # ---------------------------------------------------------------------------
-# 路径隔离 / 校验
+# 文件名安全
 # ---------------------------------------------------------------------------
-def _check_id(name: str, label: str) -> None:
-    """校验 user_id / session_id：仅做路径注入防护，放宽字符白名单。
+def normalize_filename(name: str) -> str:
+    """把任意客户端文件名归一化为安全的存储名（保留扩展名）。
 
-    早期版本用 ``^[a-zA-Z0-9._-]+$`` 白名单，会拒绝邮箱、中文等合法
-    user_id（如 ``wangjinchao602@qq.com``），导致上传直接 500。这里改为只
-    拦截真正危险的输入（空值、路径分隔符、``..`` 穿越），允许邮箱/中文/UUID 等。
+    - 去除目录分隔符、空字节、控制字符；
+    - 用 ``_`` 替换空格与不可打印字符；
+    - 限制长度（``UploadConfig.max_filename_length``）；
+    - 保住最后一个合法扩展名。
     """
-    if not name:
-        raise UploadError(f"invalid {label}: empty")
-    # 拒绝路径分隔符与 '..' 穿越
-    if "/" in name or "\\" in name or ".." in name or name in (".",):
-        raise UploadError(f"invalid {label}: {name!r}")
-
-
-def get_session_upload_dir(
-    user_id: str,
-    session_id: str,
-    agent_id: str = "default",
-) -> Path:
-    """返回 {root}/{user_id}/sessions/{session_id}/files/ 并确保存在。
-
-    ``root`` = ``{workspace_dir}/{agent_id}/uploads``（位于 agent workdir 下）。
-    """
-    _check_id(user_id, "user_id")
-    _check_id(session_id, "session_id")
-    d = (
-        get_agent_upload_root(agent_id)
-        / user_id
-        / "sessions"
-        / session_id
-        / "files"
-    )
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _session_root(user_id: str, session_id: str, agent_id: str = "default") -> Path:
-    return get_agent_upload_root(agent_id) / user_id / "sessions" / session_id
-
-
-def validate_path_traversal(path: Path) -> None:
-    """确保解析出的真实路径仍落在 session files 目录内。"""
-    # 由调用方在 resolve 后显式比较；此处提供通用校验
-    if ".." in path.parts:
-        raise UploadError("path traversal detected (..)")
-
-
-def normalize_filename(filename: str, max_len: int | None = None) -> str:
-    """只取 basename，拒绝路径分隔符与超长名。"""
     cfg = get_upload_config()
-    max_len = max_len or cfg.max_filename_length
-    name = Path(filename).name  # 丢弃任何目录成分
-    if not name or name in (".", ".."):
-        raise UploadError(f"invalid filename: {filename!r}")
-    if len(name) > max_len:
-        stem, suffix = Path(name).stem, Path(name).suffix
-        keep = max_len - len(suffix)
-        if keep <= 0:
-            raise UploadError(f"filename too long: {filename!r}")
-        name = stem[:keep] + suffix
+    name = (name or "file").strip().replace("\x00", "")
+    # 去掉路径成分，只取 basename
+    name = name.replace("\\", "/").rsplit("/", 1)[-1]
+    # 替换空白与控制字符
+    allowed = []
+    for ch in name:
+        if ch in ("/", "\\", "\x00"):
+            continue
+        if ord(ch) < 32 or ord(ch) == 127:
+            continue
+        allowed.append(ch)
+    name = "".join(allowed).strip().strip(".")
+    if not name:
+        name = "file"
+
+    stem, dot, ext = name.rpartition(".")
+    if dot:
+        stem = stem[: cfg.max_filename_length - len(ext) - 1]
+        name = f"{stem}.{ext}"
+    else:
+        name = name[: cfg.max_filename_length]
     return name
 
 
-def claim_unique_filename(directory: Path, filename: str) -> Path:
-    """返回目录内不冲突的目标路径（冲突自动加 ``_1/_2`` 后缀）。"""
-    target = directory / filename
+def validate_path_traversal(filename: str) -> None:
+    """校验存储文件名不含路径穿越成分。"""
+    if not filename:
+        raise PathTraversalError("empty filename")
+    if "/" in filename or "\\" in filename or "\x00" in filename:
+        raise PathTraversalError(f"invalid filename: {filename!r}")
+    if filename in (".", ".."):
+        raise PathTraversalError(f"invalid filename: {filename!r}")
+
+
+def claim_unique_filename(base_dir: Path, filename: str) -> Path:
+    """在给定 host 目录内申请一个不冲突的文件路径。
+
+    用于流式上传的中间态 staging（host 侧临时目录，见
+    ``_STAGING_ROOT``），避免并发上传覆盖同一文件名；与最终落盘的
+    workdir ``user-data/uploads`` 命名空间相互独立。
+    """
+    target = base_dir / filename
     if not target.exists():
         return target
-    stem, suffix = Path(filename).stem, Path(filename).suffix
+    stem, dot, ext = filename.rpartition(".")
+    suffix = dot + ext if dot else ""
+    base_stem = stem or filename
     i = 1
     while True:
-        candidate = directory / f"{stem}_{i}{suffix}"
+        candidate = base_dir / f"{base_stem}__{i}{suffix}"
         if not candidate.exists():
             return candidate
         i += 1
 
 
-def _assert_within_session(
-    path: Path,
-    user_id: str,
-    session_id: str,
-    agent_id: str = "default",
-) -> Path:
-    """解析后断言真实路径在对应 session files 目录内。"""
-    root = _session_root(user_id, session_id, agent_id)
-    files_dir = root / "files"
-    resolved = path.resolve()
-    files_dir_resolved = files_dir.resolve()
-    try:
-        resolved.relative_to(files_dir_resolved)
-    except ValueError:
-        raise UploadError(
-            "resolved path escapes session upload directory",
-        )
-    return resolved
-
-
-def resolve_upload_path(virtual_path: str) -> Path:
-    """把 virtual://uploads/{agent_id}/{user_id}/sessions/{session_id}/{filename}
-    解析为受校验的真实文件路径。
-
-    Returns:
-        已解析且经过越权校验的真实路径（可能尚不存在，由调用方决定）。
-    """
-    m = _VIRTUAL_RE.match(virtual_path.strip())
-    if not m:
-        raise UploadError(f"invalid virtual upload path: {virtual_path!r}")
-    agent_id = m.group("agent_id")
-    user_id = m.group("user_id")
-    session_id = m.group("session_id")
-    filename_raw = m.group("filename")
-    # 显式拒绝 filename 段内的路径穿越意图（normalize 虽会丢弃目录，
-    # 但应尽早拦截越权意图）。
-    if ".." in filename_raw or filename_raw.startswith("/"):
-        raise UploadError(f"invalid filename segment: {filename_raw!r}")
-    filename = normalize_filename(filename_raw)
-    _check_id(agent_id, "agent_id")
-    _check_id(user_id, "user_id")
-    _check_id(session_id, "session_id")
-    files_dir = get_session_upload_dir(user_id, session_id, agent_id)
-    raw = files_dir / filename
-    return _assert_within_session(raw, user_id, session_id, agent_id)
-
-
-def to_virtual_path(
-    user_id: str,
-    session_id: str,
-    filename: str,
-    agent_id: str = "default",
-) -> str:
-    """构造虚拟路径（供 list / 下载 / 中间件注入使用）。"""
-    return (
-        f"{VIRTUAL_PATH_PREFIX}/{agent_id}/{user_id}/sessions/{session_id}/"
-        f"{normalize_filename(filename)}"
-    )
+def is_image(content_type: str | None, filename: str) -> bool:
+    """判断是否为图片（接口层据此拒绝 / 标记）。"""
+    if content_type and content_type.startswith("image/"):
+        return True
+    return filename.lower().rsplit(".", 1)[-1] in {
+        "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tiff",
+    }
 
 
 # ---------------------------------------------------------------------------
-# 原子落盘
+# 虚拟路径协议（与 builtin 工具 / 中间件 / 下载逻辑兼容）
 # ---------------------------------------------------------------------------
-def open_upload_file_no_symlink(path: Path):
-    """以 O_NOFOLLOW 打开目标文件，拒绝软链接逃逸。"""
-    if path.is_symlink():
-        raise UploadError(f"symlink not allowed: {path.name}")
-    # os.open 不跟随符号链接 (O_NOFOLLOW)；目录攻击无法通过此句柄创建
-    return os.fdopen(
-        os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600),
-        "wb",
-    )
+# 方案 A：虚拟路径与下载同源，采用 workdir 相对范式，不编码 agent/user/session
+# （这些由 workdir 本身隔离）：
+#     /workspace/user-data/uploads/{stored_name}
+_PVC_UPLOADS_PREFIX = f"{VIRTUAL_PATH_PREFIX}/{DEFAULT_USER_DATA_DIR}/{DEFAULT_USER_UPLOADS_DIR}"
 
 
-def atomic_write_file(directory: Path, filename: str, data: bytes) -> Path:
-    """原子写入：先写 .part 再 os.replace，避免读到半成品。
+def to_virtual_path(stored_name: str) -> str:
+    """构造虚拟路径：``/workspace/user-data/uploads/{stored_name}``。
 
-    Returns:
-        最终落盘的真实路径。
+    与下载逻辑（``GET /files/{path}``，前缀 ``/workspace``）保持一致的范式，
+    可直接被 Agent 自身的文件工具（相对 workdir 解析）读取。不再编码
+    ``agent_id/user_id/session_id``，因为 workdir 已天然隔离不同会话。
     """
-    if len(data) > get_upload_config().max_file_size_bytes:
-        raise UploadError("file exceeds max_file_size")
-    fname = normalize_filename(filename)
-    target = claim_unique_filename(directory, fname)
-    part = Path(str(target) + _PART_SUFFIX)
-    try:
-        with open_upload_file_no_symlink(part) as f:
-            f.write(data)
-        os.replace(part, target)  # 原子替换
-    except BaseException:
-        if part.exists():
-            part.unlink(missing_ok=True)
-        raise
-    return target
+    validate_path_traversal(stored_name)
+    return f"{_PVC_UPLOADS_PREFIX}/{stored_name}"
 
 
-def cleanup_stale_upload_staging_files() -> int:
-    """启动时清理遗留的 .part 文件（crash recovery）。
+def to_upload_rel_path(stored_name: str) -> str:
+    """返回上传文件相对于 workdir 的路径：``user-data/uploads/{stored_name}``。
 
-    上传根目录位于 workspace 内（每个 agent 一个 root），这里遍历
-    workspace 下所有 agent 的 uploads 子目录进行清理。
-
-    Returns:
-        清理的文件数量。
+    路由层落盘 / builtin 工具读取沙箱文件时共用，避免重复拼接常量。
     """
-    from bocomadp.config.uploads_config import (
-        UPLOAD_SUBDIR,
-        get_workspace_dir,
-    )
+    validate_path_traversal(stored_name)
+    return f"{DEFAULT_USER_DATA_DIR}/{DEFAULT_USER_UPLOADS_DIR}/{stored_name}"
 
-    ws_root = get_workspace_dir()
-    if not ws_root.exists():
+
+def resolve_upload_parts(virtual_path: str) -> tuple[str, str, str]:
+    """从虚拟路径反解 ``(user_id, session_id, filename)``。
+
+    .. warning::
+       方案 A 下虚拟路径 ``/workspace/user-data/uploads/{stored_name}`` 已**不再
+       编码** ``user_id/session_id``。本函数仅用于兼容「从虚拟路径取文件名」的
+       场景，返回的 user_id / session_id 恒为空串，调用方应改用路由参数或
+       ``get_by_session_file`` 按 ``(user_id, session_id, stored_name)`` 定位。
+
+    Raises:
+        `UploadError`: 格式非法时。
+    """
+    vp = (virtual_path or "").strip()
+    if not vp.startswith(f"{_PVC_UPLOADS_PREFIX}/"):
+        raise UploadError(f"invalid virtual path: {virtual_path!r}")
+    filename = vp[len(_PVC_UPLOADS_PREFIX) + 1 :]
+    validate_path_traversal(filename)
+    return "", "", filename
+
+
+# ---------------------------------------------------------------------------
+# staging 清理（host 侧，仅流式上传中间态用；本模块保留供调用方按需清理）
+# ---------------------------------------------------------------------------
+import tempfile  # noqa: E402
+
+_STAGING_ROOT = Path(tempfile.gettempdir()) / "as_uploads_staging"
+
+
+def cleanup_stale_upload_staging_files(max_age_seconds: int = 3600) -> int:
+    """清理超过阈值的 host 侧 staging 临时文件（流式上传中间态）。"""
+    if not _STAGING_ROOT.exists():
         return 0
-    count = 0
-    # workspace/{agent_id}/uploads/**/*.part
-    for part in ws_root.glob(f"*/{UPLOAD_SUBDIR}/**/*{_PART_SUFFIX}"):
+    import time
+
+    now = time.time()
+    removed = 0
+    for p in _STAGING_ROOT.iterdir():
         try:
-            part.unlink(missing_ok=True)
-            count += 1
+            if now - p.stat().st_mtime > max_age_seconds:
+                p.unlink()
+                removed += 1
         except OSError:
             continue
-    return count
+    return removed
+
+
+__all__ = [
+    "UploadError",
+    "PathTraversalError",
+    "FileSizeExceeded",
+    "TooManyFiles",
+    "VIRTUAL_PATH_PREFIX",
+    "normalize_filename",
+    "validate_path_traversal",
+    "claim_unique_filename",
+    "is_image",
+    "to_virtual_path",
+    "to_upload_rel_path",
+    "resolve_upload_parts",
+    "cleanup_stale_upload_staging_files",
+]

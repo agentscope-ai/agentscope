@@ -29,7 +29,7 @@ from ..storage import (
 
 
 class AgentView(AgentRecord):
-    """Agent record + viewer-relative ``editable``.
+    """Agent record + viewer-relative ``editable`` + team markers.
 
     Subclasses :class:`AgentRecord` so the wire format is a strict
     superset of the historical response (one extra top-level field);
@@ -39,6 +39,25 @@ class AgentView(AgentRecord):
     editable: bool = Field(
         description=(
             "Whether the current viewer may PATCH/DELETE this agent."
+        ),
+    )
+    is_team: bool = Field(
+        default=False,
+        description=(
+            "True when this agent is an expert-team leader — i.e. its "
+            "team_config is present. Members may be empty until they are "
+            "created, so a leader created with is_team=true is already "
+            "classified as a team. Lets the frontend distinguish team "
+            "leaders from plain agents in the shared agent list."
+        ),
+    )
+    parent_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "When set, this agent is a member of the expert team led by "
+            "the referenced agent. Plain (non-team) agents leave this None. "
+            "Exposed directly on the view for convenient client-side "
+            "filtering of team members."
         ),
     )
 
@@ -185,6 +204,7 @@ class ResourceAccessService:
         self,
         viewer_id: str,
         kind: ResourceKind,
+        parent_agent_id: str | None = None,
     ) -> list[BaseModel]:
         """List resources of ``kind`` visible to ``viewer_id``.
 
@@ -194,6 +214,13 @@ class ResourceAccessService:
         viewer have their ``data`` payload masked in the view;
         :meth:`resolve_credential` should be used when the raw payload
         is required for runtime provider calls.
+
+        Args:
+            parent_agent_id: When set (AGENT kind only), limits results to
+                members of the referenced team leader. When ``None`` (the
+                default), team members are hidden so the top-level agent
+                list stays clean — call again with this id to fetch a
+                team's members.
         """
         if kind is ResourceKind.CREDENTIAL:
             own = await self._storage.list_credentials(viewer_id)
@@ -202,6 +229,16 @@ class ResourceAccessService:
                 record
                 for record in await self._storage.list_agents(viewer_id)
                 if record.source != "team"
+                and (
+                    (
+                        parent_agent_id is None
+                        and record.data.parent_agent_id is None
+                    )
+                    or (
+                        parent_agent_id is not None
+                        and record.data.parent_agent_id == parent_agent_id
+                    )
+                )
             ]
         else:
             own = await self._storage.list_knowledge_bases(viewer_id)
@@ -492,8 +529,18 @@ class ResourceAccessService:
             payload["editable"] = editable
             return CredentialView.model_validate(payload)
         if isinstance(record, AgentRecord):
+            team_cfg = record.data.team_config
+            # A non-None team_config marks the agent as an expert-team
+            # leader ("shell counts as a team"), so a leader created with
+            # is_team=true but no members yet is still classified as a team.
+            is_team = team_cfg is not None
             return AgentView.model_validate(
-                {**record.model_dump(), "editable": editable},
+                {
+                    **record.model_dump(),
+                    "editable": editable,
+                    "is_team": is_team,
+                    "parent_agent_id": record.data.parent_agent_id,
+                },
             )
         return KnowledgeBaseView.model_validate(
             {**record.model_dump(), "editable": editable},

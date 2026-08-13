@@ -220,7 +220,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			onStateUpdated: handleStateUpdated,
 		});
 	const { uploaded: uploadedFiles, queueUpload, takeRefs, remove: removeUploaded } =
-		useChatUpload(sessionId);
+		useChatUpload(agentId, sessionId);
 
 	// Wrap `send` so queued server-processed uploads are attached as `files`.
 	const sendWithUploads = useCallback(
