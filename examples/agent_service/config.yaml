@@ -67,7 +67,7 @@ mcp:
 
 # ---------- 模型 Provider（启动时自动注册到 ProviderManager） ----------
 providers:
-  enabled: false
+  enabled: true
   config_file: null        # null 表示使用本文件（config.yaml）；可指向其他 YAML
 
 models:

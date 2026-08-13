@@ -80,7 +80,12 @@ class AgentBuilder:
 
         cfg = getattr(ctx, "agent_config", None)
         agent_id = getattr(ctx, "agent_id", "") or "default"
-        requires_sandbox = getattr(cfg, "requires_sandbox", True)
+        # Framework agents default to sandbox, but the built-in
+        # agent-creator runs without one (host skills + factory tools).
+        requires_sandbox = (
+            False if agent_id == "_agent-creator"
+            else getattr(cfg, "requires_sandbox", True)
+        )
 
         # Resolve tools (apply whitelist across all sources)
         whitelist: list[str] = getattr(cfg, "enabled_tools", None) or []
@@ -248,6 +253,9 @@ class AgentBuilder:
                 list_agents,
                 get_agent,
                 list_tools_for_agent,
+                set_agent_tools,
+                list_available_skills,
+                enable_skill_for_agent,
             )
 
             return [
@@ -257,6 +265,9 @@ class AgentBuilder:
                 list_agents,
                 get_agent,
                 list_tools_for_agent,
+                set_agent_tools,
+                list_available_skills,
+                enable_skill_for_agent,
             ]
         except ImportError:
             logger.warning(

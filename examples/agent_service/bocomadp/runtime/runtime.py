@@ -57,8 +57,8 @@ class Runtime:
         tool_registry: Any = None,
         middleware_registry: Any = None,
         provider_manager: Any = None,
-        multi_agent_manager: Any = None,
         workspace_manager: Any = None,
+        storage: Any = None,
         heartbeat_interval: float = 15.0,
     ) -> None:
         self.workspace = workspace
@@ -67,8 +67,8 @@ class Runtime:
         self.tool_registry = tool_registry
         self.middleware_registry = middleware_registry
         self.provider_manager = provider_manager
-        self.multi_agent_manager = multi_agent_manager
         self.workspace_manager = workspace_manager
+        self._storage = storage
         self._heartbeat_interval = heartbeat_interval
         # Track active executors for cancel support
         self._active_executors: dict[str, AgentExecutor] = {}
@@ -79,7 +79,7 @@ class Runtime:
     ) -> AsyncGenerator[dict, None]:
         """8-phase lifecycle orchestration."""
         request = self._normalize(request)
-        ctx = self._build_context(request)
+        ctx = await self._build_context(request)
         hooks = self.hook_registry
 
         envelope = Envelope(session_id=ctx.session_id)
@@ -206,8 +206,13 @@ class Runtime:
             return _RequestDict(request)
         return request
 
-    def _build_context(self, request: Any) -> HookContext:
-        """Build the per-request HookContext from the normalized request."""
+    async def _build_context(self, request: Any) -> HookContext:
+        """Build the per-request HookContext from the normalized request.
+
+        Resolves agent config from framework StorageBase so agents
+        created via the built-in ``/agent`` API participate in builder
+        assembly.
+        """
         session_id = getattr(request, "session_id", "") or ""
         agent_id = getattr(request, "agent_id", "") or "default"
         user_id = getattr(request, "user_id", "") or "default"
@@ -215,10 +220,26 @@ class Runtime:
         if not input_msgs:
             input_msgs = getattr(request, "input", []) or []
 
-        # Look up agent config from MultiAgentManager if wired
+        # Look up agent config from framework StorageBase.
+        # Fallback to user_id="default" so the built-in agent-creator
+        # (registered under "default") is accessible to all users.
         agent_config = None
-        if self.multi_agent_manager is not None:
-            agent_config = self.multi_agent_manager.get_agent(agent_id)
+        if self._storage is not None:
+            for _uid in (user_id, "default"):
+                if _uid == user_id == "default":
+                    continue  # avoid duplicate lookup
+                try:
+                    record = await self._storage.get_agent(_uid, agent_id)
+                    if record is not None:
+                        agent_config = _FrameworkAgentAdapter(record)
+                        break
+                except Exception:
+                    logger.debug(
+                        "runtime: storage lookup failed for %s/%s",
+                        _uid,
+                        agent_id,
+                        exc_info=True,
+                    )
 
         return HookContext(
             request=request,
@@ -245,6 +266,41 @@ class _RequestDict:
         if name not in data:
             raise AttributeError(name)
         return data[name]
+
+
+class _FrameworkAgentAdapter:
+    """Wraps a framework :class:`AgentRecord` to expose the fields our
+    :class:`AgentBuilder` expects (``system_prompt``, ``max_iters``,
+    ``enabled_tools``, ``requires_sandbox``).
+
+    For framework agents ``enabled_tools`` lives in the shared
+    ``_tool_whitelists`` dict managed by ``agent_tools.py``.
+    """
+
+    __slots__ = ("agent_id", "name", "system_prompt",
+                 "max_iters", "requires_sandbox", "enabled_tools",
+                 "model_provider", "model_name")
+
+    def __init__(self, record: Any) -> None:
+        data = record.data
+        self.agent_id = record.agent_id or ""
+        self.name = data.name or ""
+        self.system_prompt = data.system_prompt or ""
+        self.max_iters = (
+            data.react_config.max_iters
+            if data.react_config
+            else 20
+        )
+        self.requires_sandbox = True
+        self.model_provider = ""
+        self.model_name = ""
+
+        # enabled_tools from the shared agent_tools store
+        try:
+            from bocomadp.routers.agent_tools import _get_enabled_tools
+            self.enabled_tools = _get_enabled_tools(self.agent_id)
+        except ImportError:
+            self.enabled_tools = []
 
 
 __all__ = ["Runtime"]

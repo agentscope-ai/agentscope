@@ -74,6 +74,11 @@ async def run_chat(
             media_type="text/event-stream",
         )
 
+    # Share user_id with agent-factory tools (so they can call
+    # framework /agent API with the correct X-User-ID header).
+    from bocomadp.tools.agent_factory_tools import _current_user_id
+    _current_user_id.set(body.user_id)
+
     # Build a simple request object for the Runtime
     req = _SimpleRequest(
         session_id=body.session_id,
