@@ -85,6 +85,7 @@ def _make_record(
     enabled: bool = True,
     stateful: bool = False,
     description: str = "run nightly summary",
+    channel_id: str | None = None,
 ) -> ScheduleRecord:
     """Build a minimal :class:`ScheduleRecord` for the trigger test."""
     return ScheduleRecord(
@@ -104,6 +105,7 @@ def _make_record(
             ),
             stateful=stateful,
             permission_mode=PermissionMode.DONT_ASK,
+            channel_id=channel_id,
         ),
     )
 
@@ -138,7 +140,10 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
     async def test_fire_pushes_hint_and_wakeup(self) -> None:
         """A fire creates a session, pushes the wrapped HintBlock to its
         inbox, and enqueues one wakeup pointing at that session."""
-        record = _make_record(description="please summarise the news")
+        record = _make_record(
+            description="please summarise the news",
+            channel_id="channel-1",
+        )
         trigger = self.manager._build_trigger(record)
         await trigger()
 
