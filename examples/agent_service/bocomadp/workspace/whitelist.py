@@ -4,7 +4,7 @@
 The framework injects MCPs straight from ``workspace.list_mcps()``
 (see ``agentscope.app._service._toolkit.get_toolkit``), bypassing
 ``extra_agent_tools`` entirely — so the whitelist maintained by
-``agent_tools_router`` (PUT/DELETE ``/api/agents/{id}/tools/{name}``)
+``agent_tools_router`` (PUT/DELETE ``/agents/{id}/tools/{name}``)
 cannot filter MCPs at the ``extra_factory`` layer the way it filters
 project tools.
 

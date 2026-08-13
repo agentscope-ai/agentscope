@@ -13,7 +13,7 @@ caller-supplied ``extra_factory``:
 - middleware-provided tools
 
 The per-agent whitelist maintained by ``agent_tools_router``
-(PUT/DELETE ``/api/agents/{id}/tools/{name}``) previously only filtered
+(PUT/DELETE ``/agents/{id}/tools/{name}``) previously only filtered
 the ``extra_factory`` source and ``list_mcps`` — so an agent created
 with ``enabled_tools=["get_current_time"]`` still saw every other tool
 at runtime (and could call them), which defeats least privilege.

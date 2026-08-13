@@ -339,7 +339,7 @@ async def build_agent_tools(
         ])
 
     # Apply the per-agent tool whitelist managed by agent_tools_router
-    # (PUT/DELETE /api/agents/{id}/tools/{name}):
+    # (PUT/DELETE /agents/{id}/tools/{name}):
     #   empty  -> every tool above stays available
     #   non-empty -> only the listed tool names survive
     # This makes the tool config APIs effective at runtime (for agents
@@ -554,7 +554,7 @@ else:
 
 # 包装工作区管理器：框架把 MCP 从 workspace.list_mcps() 直接注入
 # （不经过 extra_agent_tools），因此只能在 get_workspace 这一层按
-# per-agent 白名单过滤（PUT/DELETE /api/agents/{id}/tools/{name}）。
+# per-agent 白名单过滤（PUT/DELETE /agents/{id}/tools/{name}）。
 workspace_manager = WhitelistWorkspaceManager(workspace_manager)
 
 runtime.workspace_manager = workspace_manager
