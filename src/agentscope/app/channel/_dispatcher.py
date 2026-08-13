@@ -233,6 +233,8 @@ class ChannelLifecycleDispatcher:
     async def _drain_outbound(self) -> None:
         """Forward every queued output signal this node can serve."""
         try:
+            # At-most-once on purpose: a lost job costs a forward, and
+            # the reply itself is still in the session's replay log.
             jobs = await self._bus.queue_drain(
                 MessageBusKeys.channel_outbound_queue(),
             )

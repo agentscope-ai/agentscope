@@ -265,7 +265,7 @@ class TestInboxMiddlewareEmptyInbox(IsolatedAsyncioTestCase):
             reply_id=uuid.uuid4().hex,
             context=[],
         )
-        mw = InboxMiddleware(bus)
+        mw = InboxMiddleware(bus, "s")
 
         out = await _drain(
             mw.on_reasoning(agent, {}, _noop_next_handler),
@@ -297,7 +297,7 @@ class TestInboxMiddlewareInjection(IsolatedAsyncioTestCase):
         )
         hint = HintBlock(hint="poke", source="tester")
         _push_hint(bus, "s", hint)
-        mw = InboxMiddleware(bus)
+        mw = InboxMiddleware(bus, "s")
 
         events = await _drain(
             mw.on_reasoning(agent, {}, _noop_next_handler),
@@ -371,7 +371,7 @@ class TestInboxMiddlewareInjection(IsolatedAsyncioTestCase):
         )
         hint = HintBlock(hint="hi", source="x")
         _push_hint(bus, "s", hint)
-        mw = InboxMiddleware(bus)
+        mw = InboxMiddleware(bus, "s")
 
         await _drain(mw.on_reasoning(agent, {}, _noop_next_handler))
 
@@ -414,7 +414,7 @@ class TestInboxMiddlewareInjection(IsolatedAsyncioTestCase):
         )
         hint = HintBlock(hint="hi", source="x")
         _push_hint(bus, "s", hint)
-        mw = InboxMiddleware(bus)
+        mw = InboxMiddleware(bus, "s")
 
         await _drain(mw.on_reasoning(agent, {}, _noop_next_handler))
 
@@ -463,7 +463,7 @@ class TestInboxMiddlewareYieldsHintBlockEvents(IsolatedAsyncioTestCase):
         h2 = HintBlock(hint="b", source="bob")
         _push_hint(bus, "s", h1)
         _push_hint(bus, "s", h2)
-        mw = InboxMiddleware(bus)
+        mw = InboxMiddleware(bus, "s")
 
         events = await _drain(
             mw.on_reasoning(agent, {}, _noop_next_handler),
@@ -511,7 +511,7 @@ class TestInboxMiddlewareDelegatesDownstream(IsolatedAsyncioTestCase):
         )
         hint = HintBlock(hint="hi", source="x")
         _push_hint(bus, "s", hint)
-        mw = InboxMiddleware(bus)
+        mw = InboxMiddleware(bus, "s")
 
         async def downstream(**_k: Any) -> AsyncGenerator[str, None]:
             yield "ds-1"

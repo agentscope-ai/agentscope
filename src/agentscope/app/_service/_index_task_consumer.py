@@ -151,6 +151,8 @@ class IndexTaskConsumer:
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of task entries and dispatch each one."""
         try:
+            # At-most-once on purpose: a lost task is rebuilt from the
+            # document's own status by the index sweeper.
             entries = await self._bus.queue_drain(
                 MessageBusKeys.index_tasks_queue(),
                 max_count=self._max_batch,

@@ -60,6 +60,7 @@ class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
         self._channels: dict[str, asyncio.Queue] = {}
         self._next = 0
         self._locks: set[str] = set()
+        self.claimed: dict[str, dict] = {}
 
     def _channel(self, key: str) -> asyncio.Queue:
         return self._channels.setdefault(key, asyncio.Queue())
@@ -85,9 +86,10 @@ class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
         max_count: int = 100,
         min_idle_secs: float = 60.0,
     ) -> list[tuple[str, dict]]:
-        """Take entries; this fake deletes on claim, so ack is a no-op."""
+        """Hold entries until they are acked or released."""
         entries = self.queues.get(key, [])[:max_count]
         self.queues[key] = self.queues.get(key, [])[max_count:]
+        self.claimed.update(dict(entries))
         return entries
 
     async def queue_ack(
@@ -97,7 +99,9 @@ class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
         consumer: str,
         entry_ids: list[str],
     ) -> None:
-        """No-op; :meth:`queue_claim` already removed the entries."""
+        """Drop held entries for good."""
+        for entry_id in entry_ids:
+            self.claimed.pop(entry_id, None)
 
     async def queue_release(
         self,
@@ -106,7 +110,13 @@ class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
         consumer: str,
         entry_ids: list[str],
     ) -> None:
-        """No-op; :meth:`queue_claim` already removed the entries."""
+        """Put held entries back at the head of the queue."""
+        restored = [
+            (entry_id, self.claimed.pop(entry_id))
+            for entry_id in entry_ids
+            if entry_id in self.claimed
+        ]
+        self.queues[key] = restored + self.queues.get(key, [])
 
     async def queue_delete(self, key: str) -> None:
         self.queues.pop(key, None)

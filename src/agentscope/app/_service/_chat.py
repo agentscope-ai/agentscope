@@ -18,12 +18,9 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException
 
 from .._bus_ops import (
-    abandon_inbox_consumer,
     enqueue_channel_output,
     enqueue_run_trigger,
-    has_pending_inbox_or_release,
     publish_session_event,
-    register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
@@ -582,8 +579,9 @@ optional):
             # (any process) wakes an idle session — no in-process retrigger
             # plumbing is needed here.
             # -----------------------------------------------------------------
+            inbox = InboxMiddleware(self._message_bus, session_id)
             middlewares: list = [
-                InboxMiddleware(self._message_bus),
+                inbox,
                 StateChangeMiddleware(
                     message_bus=self._message_bus,
                     session_id=session_id,
@@ -818,10 +816,14 @@ optional):
                     user_id=user_id,
                     agent_id=agent_id,
                 )
+            # A wake-up only ever means "something is in the inbox", so
+            # an empty one has nothing to reason about — returning here
+            # keeps a duplicate trigger from costing a model call.
+            if input_msg is None and not await inbox.has_pending():
+                return
+
             reply_msg: Msg | None = None
             reply_msgs: list[Msg] = []
-            released = False
-            await register_inbox_consumer(self._message_bus, session_id)
             try:
                 while True:
                     reply_msg = None
@@ -989,9 +991,6 @@ optional):
                                 e,
                             )
 
-                        # A failed turn stops the run; whatever is still
-                        # queued is handed to a fresh one by the
-                        # ``released`` cleanup below.
                         if reply_msg is not None:
                             reply_msgs.append(reply_msg)
                         break
@@ -999,33 +998,14 @@ optional):
                     if reply_msg is not None:
                         reply_msgs.append(reply_msg)
 
-                    # Still holding the session lock: anything that
-                    # landed in the inbox after this turn's last drain
-                    # is this run's to handle — no producer will have
-                    # woken the session while it was registered as the
-                    # consumer.
-                    if not await has_pending_inbox_or_release(
-                        self._message_bus,
-                        session_id,
-                    ):
-                        released = True
+                    # Anything that landed after this turn's last claim
+                    # is still this run's to handle while it holds the
+                    # session lock.
+                    if not await inbox.has_pending():
                         break
                     input_msg = None
 
             finally:
-                # An interrupt unwinds past the loop's own exit check, so
-                # the run may still be registered as the inbox consumer.
-                # Hand the registration back and wake the session when
-                # payloads are still queued, otherwise they would wait
-                # for an unrelated trigger.
-                if not released:
-                    await abandon_inbox_consumer(
-                        self._message_bus,
-                        user_id=user_id,
-                        session_id=session_id,
-                        agent_id=agent_id,
-                    )
-
                 # The last turn's reply is only in ``reply_msgs`` when the
                 # loop reached its own bookkeeping — an interrupt lands
                 # here instead, so add it now.
@@ -1053,6 +1033,9 @@ optional):
                         state=agent.state,
                     )
                     await self._message_bus.log_trim(events_key)
+                    # The hints are in the saved state now, so the
+                    # inbox may forget them.
+                    await inbox.ack()
 
                 persist_task = asyncio.create_task(_persist())
                 try:

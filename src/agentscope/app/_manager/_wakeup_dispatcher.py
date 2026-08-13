@@ -28,6 +28,8 @@ All bus keys live on the :class:`MessageBus` base class (see
 no hard-coded key strings.
 """
 import asyncio
+import os
+import socket
 from typing import TYPE_CHECKING, Self
 
 from pydantic import TypeAdapter
@@ -42,7 +44,7 @@ from ...event import (
 from ...message import Msg
 from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
 from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger, publish_session_event
+from .._bus_ops import publish_session_event
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -56,10 +58,10 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
     UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
 )
 
-# Delay before re-queuing a trigger whose target session still holds
-# its run lock. Short enough to feel instant to the user, long enough
-# to avoid a hot re-enqueue loop while the lock is held.
-_RESUME_RETRY_BACKOFF_SECS = 0.1
+# Delay before nudging dispatchers to retry a released trigger. Short
+# enough to feel instant, long enough to avoid a hot re-drain loop while
+# a session lock is held.
+_REDRAIN_BACKOFF_SECS = 0.1
 
 
 class WakeupDispatcher:
@@ -105,9 +107,9 @@ class WakeupDispatcher:
         self._chat_service = chat_service
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
-        # Detached backoff timers for deferred ``resume`` re-enqueues.
-        # Held so they are not garbage-collected mid-sleep and can be
-        # cancelled on shutdown.
+        self._consumer = f"{socket.gethostname()}:{os.getpid()}"
+        # Detached backoff timers for re-drain nudges. Held so they are
+        # not garbage-collected mid-sleep and cancelled on shutdown.
         self._retry_tasks: set[asyncio.Task] = set()
 
     async def __aenter__(self) -> Self:
@@ -176,37 +178,59 @@ class WakeupDispatcher:
             )
 
     async def _drain_and_dispatch(self) -> None:
-        """Read up to a batch of trigger entries and dispatch each."""
+        """Claim a batch of trigger entries and dispatch each.
+
+        An entry is acknowledged once its run has been spawned, and
+        released when it could not be — so a trigger outlives the
+        process that picked it up.
+        """
+        key = MessageBusKeys.wakeup_queue()
         try:
-            raw_entries = await self._bus.queue_drain(
-                MessageBusKeys.wakeup_queue(),
+            entries = await self._bus.queue_claim(
+                key,
+                consumer=self._consumer,
                 max_count=64,
             )
-            entries = [payload for _, payload in raw_entries]
         except Exception:  # pylint: disable=broad-except
-            logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
+            logger.exception("WakeupDispatcher: claiming triggers failed.")
             return
 
-        for payload in entries:
+        deferred: list[str] = []
+        for entry_id, payload in entries:
+            handled = True
             try:
-                user_id = payload["user_id"]
-                session_id = payload["session_id"]
-                agent_id = payload["agent_id"]
+                handled = await self._dispatch_one(
+                    user_id=payload["user_id"],
+                    session_id=payload["session_id"],
+                    agent_id=payload["agent_id"],
+                    # Entries from older producers omit ``kind``.
+                    kind=payload.get(
+                        "kind",
+                        MessageBusKeys.WAKEUP_KIND_WAKE,
+                    ),
+                    raw_input=payload.get("input"),
+                )
             except (KeyError, TypeError):
                 logger.warning(
-                    "WakeupDispatcher: skipping malformed trigger entry %r",
+                    "WakeupDispatcher: dropping malformed trigger entry %r",
                     payload,
                 )
-                continue
-            # Entries from older producers omit ``kind`` — treat as wake.
-            kind = payload.get("kind", MessageBusKeys.WAKEUP_KIND_WAKE)
-            await self._dispatch_one(
-                user_id=user_id,
-                session_id=session_id,
-                agent_id=agent_id,
-                kind=kind,
-                raw_input=payload.get("input"),
+            if handled:
+                await self._bus.queue_ack(
+                    key,
+                    consumer=self._consumer,
+                    entry_ids=[entry_id],
+                )
+            else:
+                deferred.append(entry_id)
+
+        if deferred:
+            await self._bus.queue_release(
+                key,
+                consumer=self._consumer,
+                entry_ids=deferred,
             )
+            self._schedule_redrain()
 
     async def _dispatch_one(
         self,
@@ -215,7 +239,7 @@ class WakeupDispatcher:
         agent_id: str,
         kind: str,
         raw_input: dict | None,
-    ) -> None:
+    ) -> bool:
         """Dispatch a single trigger entry by its ``kind``.
 
         Args:
@@ -230,6 +254,11 @@ class WakeupDispatcher:
             raw_input (`dict | None`):
                 Serialised input event for ``resume`` triggers, else
                 ``None``.
+
+        Returns:
+            `bool`:
+                ``True`` when the trigger is done with, ``False`` when
+                it must be handed back for a later attempt.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
         is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
@@ -255,7 +284,7 @@ class WakeupDispatcher:
                     kind,
                     session_id,
                 )
-                return
+                return True
             try:
                 input_msg = (
                     Msg.model_validate(raw_input)
@@ -270,27 +299,17 @@ class WakeupDispatcher:
                     session_id,
                     raw_input,
                 )
-                return
+                return True
 
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
             # The session is busy, so nothing can be spawned right now:
-            # re-queue after a short backoff rather than dropping.
-            #
-            # ``wake`` needs this as much as the input-carrying kinds. A
-            # producer only enqueues one after finding no registered
-            # inbox consumer, which a finished run gives up *before* it
-            # releases the session lock — so a held lock is no evidence
-            # that anyone is still going to drain the inbox.
-            self._schedule_retry(
-                user_id,
-                session_id,
-                agent_id,
-                kind,
-                input_msg,
-            )
-            return
+            # re-queue after a short backoff rather than dropping. A run
+            # that has already taken its last look at the inbox still
+            # holds the lock while it persists, so a held lock is no
+            # evidence that anyone will consume what was just pushed.
+            return False
 
         # Orphan guard: the queue is unaware of session lifecycle. A
         # trigger enqueued before the session was deleted (e.g. by a
@@ -326,7 +345,7 @@ class WakeupDispatcher:
                     ),
                 ).model_dump(mode="json"),
             )
-            return
+            return True
 
         try:
             self._registry.spawn(
@@ -339,76 +358,29 @@ class WakeupDispatcher:
                 session_id=session_id,
                 name=f"{kind}-run:{session_id}",
             )
+            return True
         except RuntimeError:
             # A local run was registered between the running-check and
-            # the spawn. Re-queue so neither the carried input nor a
-            # queued inbox payload is stranded — that run may already be
-            # past its last drain.
-            self._schedule_retry(
-                user_id,
-                session_id,
-                agent_id,
-                kind,
-                input_msg,
-            )
+            # the spawn; hand the trigger back for a later attempt.
+            return False
 
-    def _schedule_retry(
-        self,
-        user_id: str,
-        session_id: str,
-        agent_id: str,
-        kind: str,
-        input_msg: UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | Msg
-        | None,
-    ) -> None:
-        """Re-enqueue an input-carrying (``resume``/``message``) trigger
-        after a short backoff.
+    def _schedule_redrain(self) -> None:
+        """Nudge dispatchers to drain again after a short backoff.
 
-        Spawns a detached timer that sleeps, then re-enqueues the trigger
-        (which re-fires the signal, re-driving the drain). This keeps the
-        input alive across the window where the running turn still holds
-        the session lock, without a hot re-enqueue loop.
-
-        Args:
-            user_id (`str`):
-                The owning user id.
-            session_id (`str`):
-                The session to trigger.
-            agent_id (`str`):
-                The agent that owns the session.
-            kind (`str`):
-                The trigger kind to re-enqueue (``resume`` / ``message``).
-            input_msg:
-                The parsed input to redeliver.
+        Released entries stay in the queue, so this only has to make
+        somebody look again — nothing is carried in memory, and a
+        dispatcher dying mid-backoff costs a retry, not a trigger.
         """
 
-        async def _retry() -> None:
+        async def _redrain() -> None:
             try:
-                await asyncio.sleep(_RESUME_RETRY_BACKOFF_SECS)
-                await enqueue_run_trigger(
-                    self._bus,
-                    user_id=user_id,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    kind=kind,  # type: ignore[arg-type]  # resume | message
-                    inputs=input_msg,
-                )
+                await asyncio.sleep(_REDRAIN_BACKOFF_SECS)
+                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
             except asyncio.CancelledError:
                 pass
             except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "WakeupDispatcher: failed to re-enqueue %s trigger "
-                    "for session %s.",
-                    kind,
-                    session_id,
-                )
+                logger.exception("WakeupDispatcher: re-drain nudge failed.")
 
-        task = asyncio.create_task(
-            _retry(),
-            name=f"{kind}-retry:{session_id}",
-        )
+        task = asyncio.create_task(_redrain(), name="wakeup-redrain")
         self._retry_tasks.add(task)
         task.add_done_callback(self._retry_tasks.discard)

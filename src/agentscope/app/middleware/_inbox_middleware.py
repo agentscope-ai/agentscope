@@ -22,25 +22,28 @@ from ...middleware import MiddlewareBase
 
 
 class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
-    """Drain the session's inbox and inject HintBlocks before each
+    """Claim the session's inbox and inject HintBlocks before each
     reasoning step.
 
-    Each entry in the inbox is a serialised
-    :class:`~agentscope.message.HintBlock`. The middleware
-    deserializes them, appends to the last assistant message in
-    ``agent.state.context``, and yields a one-shot ``HintBlockEvent``
-    for each so the front-end sees them.
+    Entries stay claimed until :meth:`ack` — called once the run has
+    persisted its state — so a run that dies mid-turn hands them back
+    rather than swallowing them. The session lock makes this the only
+    consumer of the inbox, so claims are taken with no idle threshold:
+    anything still held belongs to a run that is gone.
 
     Args:
         message_bus (`MessageBus`):
             The application message bus to read from.
+        session_id (`str`):
+            The session whose inbox is consumed.
         max_count (`int`, defaults to ``100``):
-            Maximum number of entries drained per reasoning step.
+            Maximum number of entries claimed per reasoning step.
     """
 
     def __init__(
         self,
         message_bus: MessageBus,
+        session_id: str,
         max_count: int = 100,
     ) -> None:
         """Initialise the middleware.
@@ -48,11 +51,46 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         Args:
             message_bus (`MessageBus`):
                 The application-level message bus.
+            session_id (`str`):
+                The session whose inbox is consumed.
             max_count (`int`, defaults to ``100``):
-                Maximum entries drained per reasoning step.
+                Maximum entries claimed per reasoning step.
         """
         self._bus = message_bus
+        self._key = MessageBusKeys.inbox(session_id)
+        self._consumer = f"session:{session_id}"
         self._max_count = max_count
+        self._claimed: set[str] = set()
+
+    async def has_pending(self) -> bool:
+        """Whether anything is waiting, without consuming it.
+
+        Claimed entries stay claimed and are injected by the next
+        :meth:`on_reasoning`, so a run woken with nothing to deliver
+        can return before spending a model call.
+
+        Returns:
+            `bool`:
+                ``True`` when the inbox holds at least one entry.
+        """
+        return bool(
+            await self._bus.queue_claim(
+                self._key,
+                consumer=self._consumer,
+                max_count=1,
+                min_idle_secs=0,
+            ),
+        )
+
+    async def ack(self) -> None:
+        """Release the claimed entries, once their content is durable."""
+        if self._claimed:
+            await self._bus.queue_ack(
+                self._key,
+                consumer=self._consumer,
+                entry_ids=list(self._claimed),
+            )
+            self._claimed.clear()
 
     async def on_reasoning(  # type: ignore[override]
         self,
@@ -78,15 +116,20 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 One ``HintBlockEvent`` per drained inbox entry,
                 followed by events from downstream.
         """
-        entries = await self._bus.queue_drain(
-            MessageBusKeys.inbox(agent.state.session_id),
+        entries = await self._bus.queue_claim(
+            self._key,
+            consumer=self._consumer,
             max_count=self._max_count,
+            min_idle_secs=0,
         )
+        # Re-claiming what this run already holds must not inject twice.
+        fresh = [(i, p) for i, p in entries if i not in self._claimed]
+        self._claimed.update(entry_id for entry_id, _p in entries)
 
-        if entries:
+        if fresh:
             hint_blocks = [
                 HintBlock.model_validate(payload)
-                for _entry_id, payload in entries
+                for _entry_id, payload in fresh
             ]
 
             logger.info(

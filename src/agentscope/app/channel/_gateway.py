@@ -210,6 +210,8 @@ class ChannelGateway:
                         ttl_secs=_MEDIA_BUFFER_TTL_SECS,
                     )
             return None
+        # At-most-once on purpose: the buffer is a best-effort window
+        # over media the user just sent, and it already expires by TTL.
         entries = await self._bus.queue_drain(key, max_count=_MEDIA_BUFFER_MAX)
         buffered = [DataBlock.model_validate(p) for _id, p in entries]
         return [*buffered, *event.content]
