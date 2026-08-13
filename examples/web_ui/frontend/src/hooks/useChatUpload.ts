@@ -11,7 +11,10 @@ import { uploadsApi, type ChatFileRef, type UploadedFile } from '@/api/uploads';
  * types it uploads and stores a virtual-path ref, for other types (images,
  * plain text) it returns `null` so the caller falls back to inline blocks.
  */
-export function useChatUpload(sessionId: string | undefined) {
+export function useChatUpload(
+	agentId: string | null | undefined,
+	sessionId: string | null | undefined,
+) {
 	const [uploaded, setUploaded] = useState<UploadedFile[]>([]);
 	const [uploading, setUploading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -20,11 +23,11 @@ export function useChatUpload(sessionId: string | undefined) {
 
 	const queueUpload = useCallback(
 		async (file: File): Promise<ChatFileRef | null> => {
-			if (!sessionId) return null;
+			if (!agentId || !sessionId) return null;
 			setUploading(true);
 			setError(null);
 			try {
-				const meta = await uploadsApi.upload(sessionId, file);
+				const meta = await uploadsApi.upload(agentId, sessionId, file);
 				const ref: ChatFileRef = {
 					filename: meta.filename,
 					filetype: file.type || 'application/octet-stream',
@@ -48,7 +51,7 @@ export function useChatUpload(sessionId: string | undefined) {
 				setUploading(false);
 			}
 		},
-		[sessionId],
+		[agentId, sessionId],
 	);
 
 	/** Consume and clear the queued refs (called right before a chat send). */
@@ -61,9 +64,9 @@ export function useChatUpload(sessionId: string | undefined) {
 
 	const remove = useCallback(
 		async (filename: string) => {
-			if (!sessionId) return;
+			if (!agentId || !sessionId) return;
 			try {
-				await uploadsApi.delete(sessionId, filename);
+				await uploadsApi.delete(agentId, sessionId, filename);
 			} catch {
 				/* best-effort */
 			}
@@ -77,7 +80,7 @@ export function useChatUpload(sessionId: string | undefined) {
 				return next;
 			});
 		},
-		[sessionId],
+		[agentId, sessionId],
 	);
 
 	return { uploaded, uploading, error, queueUpload, takeRefs, remove };

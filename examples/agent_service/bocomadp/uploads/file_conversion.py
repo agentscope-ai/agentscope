@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """上传文件格式转换（移植自 deer-flow utils/file_conversion.py）。
 
-统一把可文本化的文件转换为 **Markdown (.md)**，与原始文件同目录共存。
-其余格式标记为「不支持」，不落盘（调用方负责拒绝）。
+统一把可文本化的文件转换为 **Markdown (.md)** 文本。与历史版本不同，
+本模块不再直接落盘——转换在 **host 侧**（第三方库）完成，返回 markdown
+文本字符串，由上层（routers/uploads.py）经 ``workspace.get_backend()``
+写入沙箱；该设计使上传逻辑沙箱感知（双 PVC / 共享 PVC 下 session 隔离）。
 
 支持：
 - 文本/代码类（txt/md/csv/json/xml/log/各类源码） -> 复制为同名 .md
@@ -11,14 +13,14 @@
 - PPT  (.pptx/.ppt) -> .md (python-pptx)
 - Excel (.xlsx/.xls) -> .md 表格 (openpyxl/pandas)
 - HTML -> .md (html2text)
-不支持：图片(已在接口层拒绝)、压缩包、二进制等 -> raise UnsupportedFileType
+不支持：图片、压缩包、二进制等 -> 由调用方按需拒绝。
 """
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
+import io
 
 from .manager import UploadError
+
 
 # 扩展名 -> (类别) 映射
 _TEXT_EXTS = {
@@ -39,80 +41,83 @@ class UnsupportedFileType(UploadError):
     """文件类型不在支持范围内。"""
 
 
-def convert_file(real_path: Path) -> dict:
-    """把上传文件转换为 .md。
+def is_supported_format(filename: str) -> bool:
+    """判断文件名是否可转换为 .md。"""
+    ext = f".{_split_ext(filename)}"  # 补点后与下方带点扩展名集合比较
+    return any(
+        ext in group
+        for group in (
+            _TEXT_EXTS, _PDF_EXTS, _WORD_EXTS, _PPT_EXTS, _EXCEL_EXTS, _HTML_EXTS,
+        )
+    )
+
+
+def _split_ext(filename: str) -> str:
+    name = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+    return name.lower().rsplit(".", 1)[-1] if "." in name else ""
+
+
+def convert_file_bytes(
+    filename: str,
+    data: bytes,
+    content_type: str | None = None,
+) -> tuple[str, str]:
+    """把上传文件的字节内容转换为 markdown 文本（host 侧执行）。
 
     Args:
-        real_path: 已落盘的源文件真实路径。
+        filename: 客户端原始文件名（含扩展名）。
+        data: 已读取的文件字节。
+        content_type: 可选 MIME 类型（当前仅作候选判定，未强制）。
 
     Returns:
-        dict: {
-            "converted": bool,
-            "target": str,            # .md 路径（converted=False 时为 ""）
-            "format": str,            # 源格式类别
-            "error": str | None,
-        }
+        ``(format, markdown_text)``；无法转换时抛
+        `UnsupportedFileType` 或具体转换错误（调用方捕获后不阻断上传）。
     """
-    real_path = Path(real_path)
-    ext = real_path.suffix.lower()
-    md_path = real_path.with_suffix(".md")
+    ext = f".{_split_ext(filename)}"
+    if ext in _TEXT_EXTS:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("utf-8", errors="ignore")
+        return "text", text
 
-    try:
-        if ext in _TEXT_EXTS:
-            # 文本类：原样复制为 .md（保持可读）
-            shutil.copyfile(real_path, md_path)
-            return {"converted": True, "target": str(md_path), "format": "text", "error": None}
+    if ext in _PDF_EXTS:
+        return "pdf", _convert_pdf(data)
+    if ext in _WORD_EXTS:
+        return "word", _convert_docx(data)
+    if ext in _PPT_EXTS:
+        return "ppt", _convert_pptx(data)
+    if ext in _EXCEL_EXTS:
+        return "excel", _convert_excel(data)
+    if ext in _HTML_EXTS:
+        return "html", _convert_html(data)
 
-        if ext in _PDF_EXTS:
-            _convert_pdf(real_path, md_path)
-            return {"converted": True, "target": str(md_path), "format": "pdf", "error": None}
-
-        if ext in _WORD_EXTS:
-            _convert_docx(real_path, md_path)
-            return {"converted": True, "target": str(md_path), "format": "word", "error": None}
-
-        if ext in _PPT_EXTS:
-            _convert_pptx(real_path, md_path)
-            return {"converted": True, "target": str(md_path), "format": "ppt", "error": None}
-
-        if ext in _EXCEL_EXTS:
-            _convert_excel(real_path, md_path)
-            return {"converted": True, "target": str(md_path), "format": "excel", "error": None}
-
-        if ext in _HTML_EXTS:
-            _convert_html(real_path, md_path)
-            return {"converted": True, "target": str(md_path), "format": "html", "error": None}
-
-        raise UnsupportedFileType(f"unsupported file type: {ext}")
-
-    except UnsupportedFileType:
-        return {"converted": False, "target": "", "format": ext.lstrip("."), "error": "unsupported"}
-    except Exception as exc:  # 转换失败不阻断上传
-        return {"converted": False, "target": "", "format": ext.lstrip("."), "error": str(exc)}
+    raise UnsupportedFileType(f"unsupported file type: {ext}")
 
 
 # ---------------------------------------------------------------------------
 # 具体格式转换实现（按需 import 第三方库，缺失则标记不支持）
+# 统一签名：(src: bytes) -> md_text: str
 # ---------------------------------------------------------------------------
-def _convert_pdf(src: Path, dst: Path) -> None:
+def _convert_pdf(src: bytes) -> str:
     try:
         import pdfplumber  # type: ignore
     except ImportError as e:
         raise UnsupportedFileType("pdfplumber not installed") from e
     parts: list[str] = []
-    with pdfplumber.open(str(src)) as pdf:
+    with pdfplumber.open(io.BytesIO(src)) as pdf:
         for i, page in enumerate(pdf.pages, 1):
             text = page.extract_text() or ""
             parts.append(f"## 第 {i} 页\n\n{text}")
-    dst.write_text("\n\n".join(parts), encoding="utf-8")
+    return "\n\n".join(parts)
 
 
-def _convert_docx(src: Path, dst: Path) -> None:
+def _convert_docx(src: bytes) -> str:
     try:
         from docx import Document  # type: ignore
     except ImportError as e:
         raise UnsupportedFileType("python-docx not installed") from e
-    doc = Document(str(src))
+    doc = Document(io.BytesIO(src))
     lines: list[str] = []
     for para in doc.paragraphs:
         style = (para.style.name or "") if para.style else ""
@@ -124,15 +129,15 @@ def _convert_docx(src: Path, dst: Path) -> None:
             lines.append(f"{'#' * min(int(level), 6)} {text}")
         else:
             lines.append(text)
-    dst.write_text("\n\n".join(lines), encoding="utf-8")
+    return "\n\n".join(lines)
 
 
-def _convert_pptx(src: Path, dst: Path) -> None:
+def _convert_pptx(src: bytes) -> str:
     try:
         from pptx import Presentation  # type: ignore
     except ImportError as e:
         raise UnsupportedFileType("python-pptx not installed") from e
-    prs = Presentation(str(src))
+    prs = Presentation(io.BytesIO(src))
     lines: list[str] = []
     for i, slide in enumerate(prs.slides, 1):
         lines.append(f"## Slide {i}")
@@ -142,15 +147,15 @@ def _convert_pptx(src: Path, dst: Path) -> None:
                     t = "".join(r.text for r in p.runs).strip()
                     if t:
                         lines.append(t)
-    dst.write_text("\n\n".join(lines), encoding="utf-8")
+    return "\n\n".join(lines)
 
 
-def _convert_excel(src: Path, dst: Path) -> None:
+def _convert_excel(src: bytes) -> str:
     try:
         import openpyxl  # type: ignore
     except ImportError as e:
         raise UnsupportedFileType("openpyxl not installed") from e
-    wb = openpyxl.load_workbook(str(src), read_only=True, data_only=True)
+    wb = openpyxl.load_workbook(io.BytesIO(src), read_only=True, data_only=True)
     lines: list[str] = []
     for ws in wb.worksheets:
         lines.append(f"## Sheet: {ws.title}")
@@ -164,15 +169,15 @@ def _convert_excel(src: Path, dst: Path) -> None:
             cells = [str(c) if c is not None else "" for c in row]
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
-    dst.write_text("\n".join(lines), encoding="utf-8")
+    return "\n".join(lines)
 
 
-def _convert_html(src: Path, dst: Path) -> None:
+def _convert_html(src: bytes) -> str:
     try:
         import html2text  # type: ignore
     except ImportError as e:
         raise UnsupportedFileType("html2text not installed") from e
     h = html2text.HTML2Text()
     h.body_width = 0  # 不自动换行
-    raw = src.read_text(encoding="utf-8", errors="ignore")
-    dst.write_text(h.handle(raw), encoding="utf-8")
+    raw = src.decode("utf-8", errors="ignore")
+    return h.handle(raw)
