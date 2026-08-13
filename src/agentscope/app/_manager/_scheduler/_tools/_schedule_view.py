@@ -18,7 +18,7 @@ class _ScheduleViewParams(BaseModel):
     """The params for the schedule view tool."""
 
     schedule_id: str = Field(
-        description="The schedule ID.",
+        description="调度的 ID。",
     )
 
 
@@ -32,9 +32,9 @@ class ScheduleView(ToolBase):
     name: str = "ScheduleView"
 
     description: str = (
-        "View the full details of a scheduled task by its schedule ID, "
-        "including cron expression, timezone, stateful flag, permission "
-        "mode, and the next scheduled run time."
+        "按调度 ID 查看定时任务的完整详情，"
+        "包括 cron 表达式、时区、stateful 标志、权限模式，"
+        "以及下一次计划运行时间。"
     )
     input_schema: dict = _ScheduleViewParams.model_json_schema()
 

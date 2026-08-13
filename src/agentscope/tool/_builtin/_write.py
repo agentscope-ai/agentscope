@@ -30,14 +30,14 @@ class Write(ToolBase):
     """The tool name presented to the agent."""
 
     # pylint: disable=line-too-long
-    description: str = """Writes a file to the local filesystem.
+    description: str = """将文件写入本地文件系统。
 
-Usage:
-- This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""  # noqa: E501
+用法：
+- 如果提供的路径上已有文件，本工具将覆盖该文件。
+- 如果这是一个已存在的文件，你必须先使用 Read 工具读取该文件的内容。如果你没有先读取该文件，本工具将失败。
+- 始终优先编辑代码库中已有的文件。除非明确要求，绝不要新建文件。
+- 绝不要主动创建文档文件（*.md）或 README 文件。只有在用户明确要求时才创建文档文件。
+- 只在用户明确要求时才使用 emoji。除非被要求，否则避免向文件中写入 emoji。"""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -45,12 +45,12 @@ Usage:
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "The absolute path to the file to write "
-                "(must be absolute, not relative)",
+                "description": "要写入的文件的绝对路径 "
+                "（必须是绝对路径，不能是相对路径）",
             },
             "content": {
                 "type": "string",
-                "description": "The content to write to the file",
+                "description": "要写入文件的内容",
             },
         },
         "required": ["file_path", "content"],

@@ -72,70 +72,55 @@ class _AgentInviteParams(ParamsBase):
 
     target: str = Field(
         description=(
-            "The invitable agent to borrow, formatted "
-            '``"<name>@<handle>"`` (e.g. ``"Monday@9f3c1a20"``). Choose '
-            "from the enum values — each was populated from the "
-            "user's currently-invitable agents at the moment the tool "
-            "list was assembled."
+            "要借用的可邀请智能体，格式为"
+            '``"<name>@<handle>"``（例如 ``"Monday@9f3c1a20"``）。'
+            "从枚举值中选择——每个枚举值都是在组装工具列表时，"
+            "根据用户当前可邀请的智能体填充的。"
         ),
     )
     prompt: str = Field(
         description=(
-            "The first task delivered to the invited agent as a user "
-            "message. It begins executing immediately upon joining — "
-            "do NOT tell it to wait for further instructions. Include "
-            "context, constraints, deliverables, and deadlines the "
-            "agent needs to work autonomously."
+            "作为用户消息传递给被邀请智能体的第一个任务。"
+            "它加入后会立即开始执行——不要告诉它等待进一步指示。"
+            "请包含智能体自主工作所需的上下文、约束、交付物和截止时间。"
         ),
     )
 
 
-_DESCRIPTION_HEADER = """Borrow an existing user-owned agent into the \
-team you lead.
+_DESCRIPTION_HEADER = """将用户已有的智能体借用到你领导的团队中。
 
-<If ``AgentCreate`` is not available in your toolset, ignore all \
-references to it below.>
+<如果你的工具集中没有``AgentCreate``，请忽略下面所有对它的引用。>
 
-## Difference From ``AgentCreate``
-- ``AgentCreate`` spins up a brand-new agent that **shares your \
-workspace**, so you and it can collaborate on files inside the same \
-working directory. ``AgentInvite`` borrows a pre-existing agent that has \
-its **own workspace** — depending on how the user has configured it, the \
-two workspaces MAY or MAY NOT expose the same filesystem, so paths you \
-hand over cannot be assumed to resolve on the invited agent's side.
-- The invited agent already has a name; you cannot rename it.
+## 与``AgentCreate``的区别
+- ``AgentCreate``会创建一个**与你共享工作区**的全新智能体，因此你们可以在
+同一工作目录内协作处理文件。``AgentInvite``借用的则是**拥有自己工作区**的
+已有智能体——根据用户的配置，两个工作区可能共享也可能不共享同一文件系统，
+因此你交出的路径无法假定能在被邀请方一侧解析。
+- 被邀请的智能体已有名称；你不能重命名它。
 
-## When to Use This Tool
-- A user-owned agent already exists whose stated purpose matches a role \
-you need — reuse it instead of spawning a fresh worker with \
-``AgentCreate``.
-- You want to notify or delegate to an existing agent that specialises \
-in a specific domain.
+## 何时使用此工具
+- 已存在一个用户自有智能体，其声明的用途正好符合你需要的角色——
+直接复用它，而不是用``AgentCreate``创建新的成员。
+- 你想通知或委派给某个特定领域专长的已有智能体。
 
-## When NOT to Use This Tool
-- No suitable invitable agent exists — use ``AgentCreate`` instead.
-- You need to customise the member's system prompt or role for this \
-team specifically — invited members' configs are frozen; use \
-``AgentCreate`` if you need per-team customisation.
-- You are not currently leading a team. Call ``TeamCreate`` first.
+## 何时不要使用此工具
+- 没有合适的可邀请智能体——改用``AgentCreate``。
+- 你需要为这个团队定制成员的system prompt或角色——被邀请成员的配置是
+冻结的；如果需要按团队定制，请使用``AgentCreate``。
+- 你目前没有领导任何团队。请先调用``TeamCreate``。
 
-## Important
-- Do NOT assume the invited agent shares your filesystem. Prefer \
-self-contained messages; do not embed working-directory or file paths \
-unless you have first verified the two sides can see them.
-- If (and only if) the task genuinely requires jointly operating on the \
-same large file or complex project directory, first use ``TeamSay`` to \
-check whether the invited agent can actually see the same files (e.g. \
-by asking it to list or stat a specific path). Skip this handshake for \
-tasks where only message content matters.
-- ``TeamSay`` is the primary communication channel between you and the \
-invited agent.
-- ``TeamDelete`` does NOT delete the invited agent — only the \
-team-scoped session is cleaned up. If you invite the same agent into \
-multiple teams over time, it may retain long-term memory or files from \
-earlier collaborations with you.
+## 重要提示
+- 不要假定被邀请的智能体与你共享文件系统。优先使用自包含的消息；
+除非你已先验证双方都能看到，否则不要在消息中嵌入工作目录或文件路径。
+- 如果（且仅当）任务确实需要双方共同操作同一个大型文件或复杂的项目目录，
+请先使用``TeamSay``确认被邀请的智能体能否看到相同的文件（例如让它列出或
+检查某个特定路径）。对于只涉及消息内容的任务，可以跳过这个握手步骤。
+- ``TeamSay``是你与被邀请智能体之间的主要沟通渠道。
+- ``TeamDelete``不会删除被邀请的智能体——只会清理团队范围的会话。
+如果你多次把同一个智能体邀请进不同团队，它可能会保留早期合作中的
+长期记忆或文件。
 
-## Available invitable agents"""
+## 可邀请的智能体"""
 
 
 class AgentInvite(_TeamToolBase):
@@ -436,13 +421,12 @@ class AgentInvite(_TeamToolBase):
 
             hint = HintBlock(
                 hint=(
-                    "<system-reminder>You're now invited into a team named "
-                    f"'{team.data.name}' led by an agent named "
-                    f"'{leader_name}' in this session. All team members "
-                    f"can **ONLY** communicate through the `TeamSay` tool. "
-                    f"Once you finished the given tasks, or want to "
-                    f"communicate with the leader or team members, "
-                    f"use `TeamSay`.</system-reminder>\n"
+                    "<system-reminder>你已被邀请加入一个名为 "
+                    f"'{team.data.name}' 的团队，该团队由本会话中一个名为 "
+                    f"'{leader_name}' 的 agent 领导。所有团队成员"
+                    f"**只能**通过 `TeamSay` 工具进行沟通。"
+                    f"当你完成分配的任务，或想与领导或团队成员沟通时，"
+                    f"请使用 `TeamSay`。</system-reminder>\n"
                     f'<team-message from="{leader_name}">\n'
                     f"{prompt}\n"
                     f"</team-message>"

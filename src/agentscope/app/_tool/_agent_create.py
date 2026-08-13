@@ -26,14 +26,13 @@ if TYPE_CHECKING:
 
 
 _DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
-    "You are {member_name}, a member of team '{team_name}' led by "
-    "{leader_name}.\n\n"
-    "Team purpose: {team_description}\n\n"
-    "Your role: {member_description}\n\n"
-    "You communicate with the team leader and other members "
-    "through the TeamSay tool. "
-    "Speak on the team only when you have something "
-    "external to share — your private reasoning stays private."
+    "你是 {member_name}，由 {leader_name} 领导的团队"
+    "'{team_name}' 的一员。\n\n"
+    "团队目标：{team_description}\n\n"
+    "你的角色：{member_description}\n\n"
+    "你通过 TeamSay 工具与团队领导和其它成员沟通。"
+    "只有当你需要向团队外部传达的内容时，才在团队中发言——"
+    "你的私人思考保持私密。"
 )
 
 DEFAULT_SUB_AGENT_TEMPLATE = SubAgentTemplate(
@@ -143,34 +142,29 @@ class AgentCreate(_TeamToolBase):
     name: str = "AgentCreate"
     is_state_injected: bool = True
 
-    description: str = """Add a new member to the team you lead.
+    description: str = """为你所领导的团队添加一名新成员。
 
-## When to Use This Tool
-After ``TeamCreate``, call this for each member you want on the team. \
-Each call:
-- Creates a worker agent dedicated to this team.
-- Delivers ``prompt`` as the worker's first user message — **the worker \
-starts executing it immediately**. (So DONT use ``TeamSay`` right after \
-creating one agent).
+## 何时使用此工具
+在 ``TeamCreate`` 之后，为你想要的每一位团队成员调用此工具。\
+每次调用：
+- 创建一个专属于该团队的 worker agent。
+- 将 ``prompt`` 作为该 worker 的第一条用户消息发出——**该 worker \
+会立即开始执行它**。（因此，在创建一个 agent 后，不要马上使用 ``TeamSay``）。
 
-## When NOT to Use This Tool
-- You're not currently leading a team. Call ``TeamCreate`` first.
-- The new member would duplicate an existing member's role; reuse the \
-existing member via ``TeamSay`` instead.
+## 何时不要使用此工具
+- 你当前没有领导任何团队。请先调用 ``TeamCreate``。
+- 新成员会与现有成员的角色重复；请改用 ``TeamSay`` 复用现有成员。
 
-## Effects
-- Use the ``name`` you chose as ``to=<name>`` in ``TeamSay`` to direct \
-messages to this member specifically. Names must be unique within the \
-team (including against the leader's name); duplicates are rejected.
-- Members spawned this way live only as long as the team — they are \
-deleted when ``TeamDelete`` is called.
+## 效果
+- 使用你选择的 ``name`` 作为 ``TeamSay`` 中的 ``to=<name>``，以将消息专门\
+发送给该成员。名称在团队内必须唯一（包括不能与领导的名称冲突）；重复会被拒绝。
+- 这样创建出的成员只在团队存续期间存在——当 ``TeamDelete`` 被调用时，\
+它们会被删除。
 
-## Important
-- You are responsible for organising the team, assigning tasks, collecting \
-every member's report, and producing the final answer — all members report \
-directly to you. Therefore, **DO NOT** encourage members to communicate with \
-each other, and **AVOID** creating "integrator"-style members; both make the \
-overall communication topology unnecessarily complex.
+## 重要
+- 你负责组织团队、分配任务、收集每位成员的报告并产出最终答案——所有成员都\
+直接向你汇报。因此，**不要**鼓励成员之间互相沟通，并且**避免**创建\
+"集成者"式的成员；这两者都会让整体沟通拓扑变得不必要的复杂。
 """
 
     input_schema: dict = _AgentCreateParams.model_json_schema()

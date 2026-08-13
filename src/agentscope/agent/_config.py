@@ -11,37 +11,37 @@ class SummarySchema(BaseModel):
 
     task_overview: str = Field(
         description=(
-            "The user's core request and success criteria.\n"
-            "Any clarifications or constraints they specified"
+            "用户的核心诉求与成功标准。\n"
+            "用户提出的任何澄清或约束"
         ),
     )
     current_state: str = Field(
         description=(
-            "What has been completed so far.\n"
-            "File created, modified, or analyzed (with paths if relevant).\n"
-            "Key outputs or artifacts produced."
+            "目前已完成的内容。\n"
+            "已创建、修改或分析的文件（如相关，附上路径）。\n"
+            "产生的关键输出或产物。"
         ),
     )
     important_discoveries: str = Field(
         description=(
-            "Technical constraints or requirements uncovered.\n"
-            "Decisions made and their rationale.\n"
-            "Errors encountered and how they were resolved.\n"
-            "What approaches were tried that didn't work (and why)"
+            "发现的技术约束或需求。\n"
+            "已做出的决策及其理由。\n"
+            "遇到的错误及解决方法。\n"
+            "尝试过但没有奏效的方案（以及原因）"
         ),
     )
     next_steps: str = Field(
         description=(
-            "Specific actions needed to complete the task.\n"
-            "Any blockers or open questions to resolve.\n"
-            "Priority order if multiple steps remain"
+            "完成任务所需的具体行动。\n"
+            "需要解决的任何阻碍或待定问题。\n"
+            "若仍有多个步骤，给出优先级顺序"
         ),
     )
     context_to_preserve: str = Field(
         description=(
-            "User preferences or style requirements.\n"
-            "Domain-specific details that aren't obvious.\n"
-            "Any promises made to the user"
+            "用户的偏好或风格要求。\n"
+            "不明显但具有领域特异性的细节。\n"
+            "对用户做出的任何承诺"
         ),
     )
     """The important context to preserve across compression, e.g. user
@@ -65,31 +65,27 @@ class ContextConfig(BaseModel):
 
     compression_prompt: str = Field(
         default=(
-            "<system-hint>You have been working on the task described above "
-            "but have not yet completed it. "
-            "Now write a continuation summary that will allow you to resume "
-            "work efficiently in a future context window where the "
-            "conversation history will be replaced with this summary. "
-            "Your summary should be structured, concise, and actionable.\n"
-            "The current time is {current_time}.\n"
-            "This summary may itself be summarized again later, and the "
-            "conversation history it refers to will be gone, so every "
-            "reference must be self-contained — resolve anything that "
-            "depends on the vanished context into an absolute, "
-            "fully-qualified form:\n"
-            "- Time: convert relative expressions ('today', 'now', "
-            "'yesterday', 'tomorrow', 'recently') to absolute dates using "
-            "the current time above; re-anchor them even if an earlier "
-            "summary already wrote them relatively.\n"
-            "- Names & pointers: use file paths, symbol names, PR/issue "
-            "numbers, IDs, URLs, and exact commands/error strings verbatim "
-            "instead of 'this file', 'the above', 'the second approach', "
-            "'the 5 failing tests'.\n"
-            "- In-flight work: record everything still pending, especially "
-            "tools launched in the background whose results you are still "
-            "waiting on — give each one's id and a short note of what it is "
-            "doing — and mark each item's owner (user request vs your own "
-            "decision) and status (done / pending / blocked).\n"
+            "<system-hint>你一直在处理上面描述的任务，"
+            "但尚未完成它。"
+            "现在请编写一份续接摘要，以便你在未来的上下文窗口"
+            "（届时对话历史将被这份摘要取代）中能够高效地恢复工作。"
+            "你的摘要应当结构清晰、简洁且具有可操作性。\n"
+            "当前时间是 {current_time}。\n"
+            "这份摘要以后可能还会被再次概括，而它所引用的对话历史"
+            "将不复存在，因此每一处引用都必须自包含——把所有依赖"
+            "已消失上下文的内容都解析为绝对、完整限定的形式：\n"
+            "- 时间：使用上面的当前时间，将相对表达（'today'、'now'、"
+            "'yesterday'、'tomorrow'、'recently'）转换为绝对日期；"
+            "即使更早的摘要已经用相对方式写过，也要重新锚定。\n"
+            "- 名称与指针：使用文件路径、符号名、PR/issue 编号、"
+            "ID、URL，以及逐字保留的精确命令/错误字符串，"
+            "而不是'this file'、'the above'、'the second approach'、"
+            "'the 5 failing tests'。\n"
+            "- 进行中的工作：记录所有仍待处理的事项，尤其是"
+            "在后台启动、其运行结果你仍在等待的工具——"
+            "为每一项给出其 id 和一句简短说明（它在做什么），"
+            "并标注每项的归属（用户请求还是你自己的决定）"
+            "和状态（done / pending / blocked）。\n"
             "</system-hint>"
         ),
         # ``format: textarea`` is a hint for schema-driven UI renderers
@@ -103,16 +99,16 @@ class ContextConfig(BaseModel):
 
     summary_template: str = Field(
         default=(
-            "<system-info>Here is a summary of your previous work\n"
-            "# Task Overview\n"
+            "<system-info>以下是你之前工作的摘要\n"
+            "# 任务概述\n"
             "{task_overview}\n\n"
-            "# Current State\n"
+            "# 当前状态\n"
             "{current_state}\n\n"
-            "# Important Discoveries\n"
+            "# 重要发现\n"
             "{important_discoveries}\n\n"
-            "# Next Steps\n"
+            "# 下一步计划\n"
             "{next_steps}\n\n"
-            "# Context to Preserve\n"
+            "# 需要保留的上下文\n"
             "{context_to_preserve}"
             "</system-info>"
         ),
@@ -207,9 +203,9 @@ class InjectionConfig(BaseModel):
 
     template: str = Field(
         title="Template",
-        default="""<system-reminder>Treat the following as the ground truth \
-at this point of the conversation. Anything stated earlier is outdated, and a \
-later reminder, if any, supersedes this one:
+        default="""<system-reminder>请在对话的这一时刻，将以下内容视为 \
+事实依据。之前所述的一切均已过时，若之后还有提醒，则以更晚的 \
+提醒为准：
 {runtime_state}
 </system-reminder>""",
         description=(
@@ -314,7 +310,7 @@ class ReActConfig(BaseModel):
 
     interruption_message: str = Field(
         title="Interruption Message",
-        default="I notice the interruption. How can I help you?",
+        default="我注意到你打断了。有什么可以帮你的吗？",
         description="The quick reply message when interrupted.",
     )
     """The interruption message."""

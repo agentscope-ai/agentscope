@@ -20,7 +20,7 @@ class _ScheduleDeleteParams(BaseModel):
     """The params for the schedule delete tool."""
 
     schedule_id: str = Field(
-        description="The schedule ID to delete (permanently remove).",
+        description="要删除（永久移除）的调度的 ID。",
     )
 
 
@@ -36,9 +36,8 @@ class ScheduleDelete(ToolBase):
     name: str = "ScheduleDelete"
 
     description: str = (
-        "Permanently delete a scheduled task by its schedule ID. "
-        "After this call the task will no longer be executed and its record "
-        "will be deleted from storage."
+        "按调度 ID 永久删除一个定时任务。"
+        "调用后该任务将不再被执行，其记录将从存储中删除。"
     )
     input_schema: dict = _ScheduleDeleteParams.model_json_schema()
 

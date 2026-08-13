@@ -12,7 +12,7 @@ from ...message import TextBlock, ToolResultState
 class _TaskGetParams(BaseModel):
     """The params of the get task."""
 
-    task_id: str = Field(description="The ID of the task to retrieve")
+    task_id: str = Field(description="要检索的任务的 ID")
 
 
 class TaskGet(_TaskToolBase):
@@ -20,27 +20,27 @@ class TaskGet(_TaskToolBase):
 
     name: str = "TaskGet"
 
-    description: str = """Use this tool to retrieve a task by its ID from the task list.
+    description: str = """使用此工具按 ID 从任务列表中检索任务。
 
-## When to Use This Tool
+## 何时使用此工具
 
-- When you need the full description and context before starting work on a task
-- To understand task dependencies (what it blocks, what blocks it)
-- After being assigned a task, to get complete requirements
+- 当你在开始处理一个任务之前需要完整的描述和上下文时
+- 为了理解任务之间的依赖关系（它阻塞了什么，什么阻塞了它）
+- 在接到任务分配后，获取完整的需求
 
-## Output
+## 输出
 
-Returns full task details:
-- **subject**: Task title
-- **description**: Detailed requirements and context
-- **status**: 'pending', 'in_progress', or 'completed'
-- **blocks**: Tasks waiting on this one to complete
-- **blockedBy**: Tasks that must complete before this one can start
+返回完整的任务详情：
+- **subject**：任务标题
+- **description**：详细的需求和上下文
+- **status**：'pending'、'in_progress' 或 'completed'
+- **blocks**：等待此任务完成的任务
+- **blockedBy**：必须在此任务开始之前完成的任务
 
-## Tips
+## 提示
 
-- After fetching a task, verify its blockedBy list is empty before beginning work.
-- Use TaskList to see all tasks in summary form."""  # noqa: E501
+- 获取任务后，在开始工作之前，请验证其 blockedBy 列表是否为空。
+- 使用 TaskList 查看所有任务的摘要形式。"""  # noqa: E501
 
     input_schema: dict = _TaskGetParams.model_json_schema()
 

@@ -25,53 +25,53 @@ from ....storage import (
 class _ScheduleCreateParams(BaseModel):
     """The params for the schedule create tool."""
 
-    name: str = Field(description="Display name of the schedule.")
+    name: str = Field(description="调度的显示名称。")
 
     description: str = Field(
         default="",
-        description="Description of the schedule, including its purpose.",
+        description="调度的描述，包括其用途。",
     )
 
     cron_expression: str = Field(
-        description="Standard 5-field cron expression, e.g. '0 9 * * 1-5'.",
+        description="标准 5 段 cron 表达式，例如 '0 9 * * 1-5'。",
     )
 
     timezone: str = Field(
         default="UTC",
-        description="IANA timezone name used to evaluate the cron expression, "
-        "e.g. 'America/New_York' or 'Asia/Shanghai'.",
+        description="用于计算 cron 表达式的 IANA 时区名称，"
+        "例如 'America/New_York' 或 'Asia/Shanghai'。",
     )
 
     enabled: bool = Field(
         default=True,
-        description="Whether the schedule is active immediately after "
-        "creation. Set to False to create a disabled schedule.",
+        description="调度在创建后是否立即生效。"
+        "设置为 False 可创建禁用的调度。",
     )
 
     started_at: datetime | None = Field(
         default=None,
-        description="ISO-8601 datetime at which the schedule becomes active. "
-        "Defaults to the current time when not specified.",
+        description="调度生效的 ISO-8601 日期时间。"
+        "未指定时默认为当前时间。",
     )
 
     ended_at: datetime | None = Field(
         default=None,
-        description="ISO-8601 datetime at which the schedule stops firing. "
-        "If not set the schedule runs indefinitely.",
+        description="调度停止触发的 ISO-8601 日期时间。"
+        "若未设置，调度将无限期运行。",
     )
 
     stateful: bool = Field(
         default=False,
-        description="If True, consecutive executions share the same session "
-        "context. If False, each execution gets a fresh session.",
+        description="若为 True，连续执行共享同一会话上下文。"
+        "若为 False，每次执行都会获得全新的会话。",
     )
 
     permission_mode: str = Field(
         default=PermissionMode.DONT_ASK.value,
         description=(
-            "Permission mode for the agent during scheduled execution. "
-            f"Allowed values: {[m.value for m in PermissionMode]}. "
-            "Defaults to 'dont_ask' since no user is present."
+            "调度执行期间智能体的权限模式。"
+            f"允许的值：{[m.value for m in PermissionMode]}。"
+            "由于没有用户在场，默认为 'dont_ask'。"
         ),
     )
 
@@ -90,25 +90,23 @@ class ScheduleCreate(ToolBase):
 
     name: str = "ScheduleCreate"
 
-    description: str = """Create a new recurring scheduled task for yourself. \
-You will be notified in a new session each time the schedule is triggered.
+    description: str = """为自己创建新的周期性定时任务。\
+每次调度被触发时，你都会在一个新会话中被通知。
 
-**About the cron expression:**
-- Determine your current timezone first, that's very important for setting a \
-correct cron expression. Get it by bash command like `date +%z`, \
-`cat /etc/timezone` or directly ask the user.
-- Determine whether the task should run once or recur at an interval, \
-then set the cron expression accordingly.
-- For a one-off task, query the current time first and set the cron \
-expression to fire at that specific moment.
-- Set `started_at` and `ended_at` to match the user's requirements. \
-When in doubt, ask for clarification before creating the schedule.
+**关于 cron 表达式：**
+- 首先确定你当前的时区，这对设置正确的 cron 表达式非常重要。\
+可以通过 bash 命令（如 `date +%z`、`cat /etc/timezone`）获取，\
+或直接询问用户。
+- 确定任务是只运行一次还是按固定间隔重复运行，然后据此设置 cron 表达式。
+- 对于一次性任务，先查询当前时间，再将 cron 表达式设置为\
+在该特定时刻触发。
+- 将 `started_at` 和 `ended_at` 设置为符合用户的要求。\
+如有疑问，请在创建调度前先请求澄清。
 
-**About the description field:**
-- The `description` is the only context available to you when the \
-schedule fires in a new session. Include all necessary details: the goal, \
-expected output, constraints, relevant file paths, and anything else needed \
-to complete the task independently.
+**关于 description 字段：**
+- 当调度在新会话中触发时，`description` 是你唯一可用的上下文。\
+请包含所有必要细节：目标、预期输出、约束条件、相关文件路径，\
+以及独立完成该任务所需的任何其他信息。
 """
 
     input_schema: dict = _ScheduleCreateParams.model_json_schema()

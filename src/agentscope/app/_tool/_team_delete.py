@@ -14,27 +14,26 @@ class TeamDelete(_TeamToolBase):
 
     name: str = "TeamDelete"
 
-    description: str = """Dissolve the team you currently lead.
+    description: str = """解散你当前领导的团队。
 
-## When to Use This Tool
-- The team has finished its work and you want to clean up.
-- The team is unrecoverably stuck and you want to start over.
-- You have collected the deliverables you need from each member.
+## 何时使用该工具
+- 团队已完成其工作，你想进行清理。
+- 团队陷入无法恢复的僵局，你想重新开始。
+- 你已经从每位成员处收集到了所需的交付物。
 
-## When NOT to Use This Tool
-- Members are still producing useful output and you may want their \
-follow-up; dissolving deletes them and they cannot be revived.
-- You want to remove only one specific member — there is no "remove \
-single member" tool in v1, only whole-team dissolution.
+## 何时不要使用该工具
+- 成员仍在产生有用的输出，你可能还需要它们的后续成果；\
+解散会删除它们，且无法恢复。
+- 你只想移除某一个特定成员——v1 中没有"移除单个成员"的工具，\
+只能整体解散团队。
 
-## Effects
-- Every member agent + its session is deleted.
-- The team record is deleted.
-- Your own session continues to exist but is no longer associated with \
-any team — the team-related tools become unavailable on subsequent \
-reasoning steps.
+## 影响
+- 每一位成员智能体及其会话都会被删除。
+- 团队记录会被删除。
+- 你自己的会话仍然存在，但不再关联任何团队——相关团队工具在\
+后续推理步骤中将不可用。
 
-This is irreversible.
+该操作不可逆。
 """
 
     input_schema: dict = _TeamDeleteParams.model_json_schema()

@@ -374,15 +374,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             agent.name,
         )
 
-        placeholder_text = f"""<system-reminder>Tool '{tool_name}' is \
-running in background (id={task_id}) for over {self._timeout_secs}s. \
-You will be notified automatically when it finishes, so **DO NOT** poll, \
-query, or wait for the result yourself. **DO NOT** call any waiting tool \
-such as `bash sleep`. You have exactly two valid options:
-1. Continue with other independent tasks and ignore this tool for now; or
-2. If there is nothing else to do, simply give a text reply without calling \
-any tool, which ends the current reasoning loop — just do nothing and end \
-this run.
+        placeholder_text = f"""<system-reminder>工具 '{tool_name}' 已在后台 \
+运行（id={task_id}）超过 {self._timeout_secs} 秒。\
+当它完成时会自动通知你，因此**不要**自行轮询、\
+查询或等待结果。**不要**调用任何等待类的工具，\
+例如 `bash sleep`。你只有两个有效选项：
+1. 继续处理其它独立任务，暂时忽略该工具；或
+2. 如果没有其它事情可做，就简单地给出一个文本回复，不调用任何工具，\
+从而结束当前推理循环——什么都不做，直接结束本轮。
 </system-reminder>"""
 
         yield ToolChunk(

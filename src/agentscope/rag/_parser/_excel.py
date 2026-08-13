@@ -446,7 +446,7 @@ class ExcelParser(ParserBase):
             parts.append(f"Sheet: {sheet_name}")
 
         parts.append(
-            "<system-info>A table loaded as a JSON array:</system-info>",
+            "<system-info>表格已作为JSON数组加载：</system-info>",
         )
 
         for ri, row in enumerate(table_data):

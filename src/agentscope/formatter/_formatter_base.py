@@ -114,9 +114,9 @@ class FormatterBase(BaseModel):
                     identifier = shortuuid.uuid()
 
                     textual_output.append(
-                        f"<system-reminder>A(n) {main_type} file is returned "
-                        f"and will be presented to you with the identifier "
-                        f"[{identifier}].</system-reminder>",
+                        f"<system-reminder>返回了一个 {main_type} 文件，"
+                        f"它将通过标识符 [{identifier}] 呈现给你。"
+                        f"</system-reminder>",
                     )
                     multimodal_data.extend(
                         [
@@ -135,8 +135,8 @@ class FormatterBase(BaseModel):
                 # rather than changing the formatter.
                 elif isinstance(block.source, URLSource):
                     textual_output.append(
-                        f"<system-reminder>A(n) {main_type} file is returned "
-                        f"and can be accessed at the URL: {block.source.url}."
+                        f"<system-reminder>返回了一个 {main_type} 文件，"
+                        f"你可以通过该 URL 访问它：{block.source.url}。"
                         f"</system-reminder>",
                     )
 
@@ -152,8 +152,8 @@ class FormatterBase(BaseModel):
                         decoded_data = base64.b64decode(block.source.data)
                         temp_file.write(decoded_data)
                         textual_output.append(
-                            f"<system-reminder>A(n) {main_type} file is "
-                            f"returned and saved locally at: {temp_file.name}."
+                            f"<system-reminder>返回了一个 {main_type} 文件，"
+                            f"已保存到本地：{temp_file.name}。"
                             f"</system-reminder>",
                         )
 
@@ -161,8 +161,7 @@ class FormatterBase(BaseModel):
         if multimodal_data:
             multimodal_data = [
                 TextBlock(
-                    text="<system-reminder>The multimodal data and their "
-                    "identifiers are listed as follows:",
+                    text="<system-reminder>多模态数据及其标识符如下所列：",
                 ),
                 *multimodal_data,
                 TextBlock(

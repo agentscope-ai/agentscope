@@ -11,9 +11,9 @@ if TYPE_CHECKING:
     from ..agent import Agent
 
 _DEFAULT_HINT_MESSAGE = (
-    "<system-reminder>You have reached the maximum token budget set by the "
-    "user. Now you MUST wrap up immediately and provide a final "
-    "concluding response without invoking any tools."
+    "<system-reminder>你已经达到了用户设定的最大 token 预算。"
+    "现在你必须立即收尾，并在不调用任何工具的情况下"
+    "给出最终的总结性回复。"
     "</system-reminder>"
 )
 

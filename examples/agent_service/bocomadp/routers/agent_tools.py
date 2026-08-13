@@ -49,44 +49,43 @@ _BUILTIN_TOOLS: list[dict] = [
     {
         "name": "bash",
         "description": (
-            "Execute a bash command in the workspace sandbox. "
-            "The command runs in the workspace directory and can "
-            "read/write files, install packages, and run scripts."
+            "在工作区沙箱中执行bash命令。"
+            "命令在工作区目录中运行，可以读写文件、安装包和执行脚本。"
         ),
     },
     {
         "name": "read",
         "description": (
-            "Read the contents of a file from the workspace. "
-            "Supports line-range selection for large files."
+            "读取工作区中文件的内容。"
+            "支持为大型文件选择行范围。"
         ),
     },
     {
         "name": "write",
         "description": (
-            "Write content to a file in the workspace. "
-            "Creates parent directories automatically."
+            "向工作区中的文件写入内容。"
+            "会自动创建父目录。"
         ),
     },
     {
         "name": "edit",
         "description": (
-            "Perform exact string replacements in an existing file. "
-            "Useful for targeted edits without rewriting the whole file."
+            "在现有文件中执行精确的字符串替换。"
+            "适用于无需重写整个文件的有针对性修改。"
         ),
     },
     {
         "name": "glob",
         "description": (
-            "Find files matching a glob pattern (e.g. ``**/*.py``). "
-            "Returns relative file paths."
+            "查找匹配glob模式的文件（例如 ``**/*.py``）。"
+            "返回相对文件路径。"
         ),
     },
     {
         "name": "grep",
         "description": (
-            "Search file contents using regular expressions. "
-            "Supports full regex syntax with ripgrep."
+            "使用正则表达式搜索文件内容。"
+            "支持基于ripgrep的完整正则语法。"
         ),
     },
 ]

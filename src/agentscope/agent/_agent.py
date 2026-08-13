@@ -601,8 +601,8 @@ class Agent:
                     msgs=msgs_to_compress,
                 )
                 new_summary += (
-                    f"\n<system-reminder>The compressed context is offloaded "
-                    f"to '{path}', you can refer to it when needed."
+                    f"\n<system-reminder>压缩后的上下文已卸载到 "
+                    f"'{path}'，需要时可以随时查阅。"
                     f"</system-reminder>"
                 )
 
@@ -715,8 +715,7 @@ class Agent:
                 awaiting_tool_calls.pop(block.id, None)
 
         interruption_message = (
-            "<system-reminder>The tool call has been interrupted by "
-            "the user.</system-reminder>"
+            "<system-reminder>该工具调用已被用户中断。</system-reminder>"
         )
 
         for index in awaiting_tool_calls.values():
@@ -1193,9 +1192,9 @@ class Agent:
         # same reminder isn't repeated on every iteration
         if has_uncompleted_tasks and not aware_of_tasks:
             injections["tasks"] = (
-                f"You have {task_status['in_progress']} in-progress tasks "
-                f"and {task_status['pending']} pending tasks. "
-                f"Use `TaskList` to view them if you don't know."
+                f"你有 {task_status['in_progress']} 个进行中的任务 "
+                f"和 {task_status['pending']} 个待处理任务。"
+                f"如果不清楚，可以使用 `TaskList` 查看。"
             )
 
         # =====================================================================
@@ -1223,9 +1222,9 @@ class Agent:
             ):
                 # To trigger memory compress
                 injections["context-length"] = (
-                    f"Your current context contains {input_tokens} "
-                    f"tokens. When reaching {trigger_tokens} tokens, "
-                    f"your context will be compressed."
+                    f"你的当前上下文包含 {input_tokens} 个 token。"
+                    f"当达到 {trigger_tokens} 个 token 时，"
+                    f"你的上下文将被压缩。"
                 )
 
         if injections:
@@ -1613,8 +1612,8 @@ class Agent:
                         async for evt in self._handle_error_tool_call(
                             tool_call,
                             message=(
-                                "<system-reminder>The execution of tool "
-                                f'"{tool_call.name}" is denied by user!'
+                                "<system-reminder>工具 "
+                                f'"{tool_call.name}" 的执行已被用户拒绝！'
                                 "</system-reminder>"
                             ),
                             state=ToolResultState.DENIED,
@@ -2233,9 +2232,8 @@ class Agent:
                     # reserved context
                     if offload_tool_result_block is not None:
                         reminder = (
-                            "\n<<<TRUNCATED>>>\n<system-reminder>The "
-                            "remaining content has been omitted for "
-                            "limited context.{offload_reminder}"
+                            "\n<<<TRUNCATED>>>\n<system-reminder>由于上下文"
+                            "有限，其余内容已被省略。{offload_reminder}"
                             "</system-reminder>"
                         )
 
@@ -3140,9 +3138,9 @@ class Agent:
                     mode=_GenerateStructuredOutput.name,
                 )
                 suffix = (
-                    "You have reached the maximum reasoning-acting "
-                    "iterations, so call this tool at once to generate "
-                    "the final structured output."
+                    "你已经达到最大推理-行动迭代次数，"
+                    "请立即调用该工具以生成最终的"
+                    "结构化输出。"
                 )
 
             # Next continue reasoning with injected hint
@@ -3151,9 +3149,9 @@ class Agent:
                     hint=[
                         TextBlock(
                             text=(
-                                "<system-reminder>You're required to "
-                                "generate structured output by calling the "
-                                f"'{_GenerateStructuredOutput.name}' tool. "
+                                "<system-reminder>你必须通过调用 "
+                                f"'{_GenerateStructuredOutput.name}' 工具来"
+                                "生成结构化输出。"
                                 f"{suffix}</system-reminder>"
                             ),
                         ),

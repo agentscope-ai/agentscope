@@ -22,10 +22,9 @@ class SkillViewer(ToolBase):
     """The name of the skill viewer tool to the agent."""
 
     description = (
-        "Retrieve a skill within the conversation. "
-        "When users asks you to perform tasks, check if any of the available "
-        "skills match. "
-        "Skills provide specialized capabilities and domain knowledge."
+        "在对话中检索技能。"
+        "当用户要求你执行任务时，请检查是否有任何可用的技能与之匹配。"
+        "技能提供专业的能力和领域知识。"
     )
     """The tool description of the skill viewer tool to the agent."""
 
@@ -34,7 +33,7 @@ class SkillViewer(ToolBase):
         "properties": {
             "skill": {
                 "type": "string",
-                "description": "The exact name of the skill to view. ",
+                "description": "要查看的技能的准确名称。",
             },
         },
         "required": ["skill"],

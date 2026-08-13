@@ -14,11 +14,11 @@ from ...message import TextBlock, ToolResultState
 class _TaskCreateParams(BaseModel):
     """The params of the creating task tool."""
 
-    subject: str = Field(description="A brief title for the task")
-    description: str = Field(description="What needs to be done")
+    subject: str = Field(description="任务的简短标题")
+    description: str = Field(description="需要做什么")
     metadata: dict[str, Any] | None = Field(
         default=None,
-        description="Arbitrary metadata to attach to the task",
+        description="要附加到任务的任意元数据",
     )
 
 
@@ -27,56 +27,54 @@ class TaskCreate(_TaskToolBase):
 
     name: str = "TaskCreate"
 
-    description: str = """Use this tool to create a structured task list for \
-your current session. This helps you track progress, organize complex tasks, \
-and demonstrate thoroughness to the user.
-It also helps the user understand the progress of the task and overall \
-progress of their requests.
+    description: str = """使用此工具为当前会话创建结构化的任务列表。这有助于你跟踪进度、\
+组织复杂任务，并向用户展示工作的周密性。
+它还能帮助用户理解任务的进度以及其请求的整体进度。
 
-## When to Use This Tool
-Use this tool proactively in these scenarios:
+## 何时使用此工具
+请在以下场景中主动使用此工具：
 
-- Complex multi-step tasks - When a task requires 3 or more distinct steps \
-or actions
-- Non-trivial and complex tasks - Tasks that require careful planning or \
-multiple operations
-- Plan mode - When using plan mode, create a task list to track the work
-- User explicitly requests todo list - When the user directly asks you to \
-use the todo list
-- User provides multiple tasks - When users provide a list of things to be \
-done (numbered or comma-separated)
-- After receiving new instructions - Immediately capture user requirements \
-as tasks
-- When you start working on a task - Mark it as in_progress BEFORE \
-beginning work
-- After completing a task - Mark it as completed and add any new follow-up \
-tasks discovered during implementation
+- 复杂的多步骤任务——当任务需要 3 个或更多不同的步骤 \
+或操作时
+- 非琐碎且复杂的任务——需要仔细规划或 \
+多个操作的任务
+- 计划模式（Plan mode）——使用计划模式时，创建任务列表来跟踪工作
+- 用户明确要求待办列表——当用户直接要求你 \
+使用待办列表时
+- 用户提供多个任务——当用户提供一系列要做的事情 \
+（编号或逗号分隔）时
+- 收到新指令后——立即将用户的需求 \
+记录为任务
+- 当你开始处理一个任务时——在开始工作之前 \
+将其标记为 in_progress
+- 完成一个任务后——将其标记为 completed，并添加在实现过程中发现的任何新的 \
+后续任务
 
-## When NOT to Use This Tool
+## 何时不要使用此工具
 
-Skip using this tool when:
-- There is only **one single, straightforward** task
-- The task is trivial and tracking it provides no organizational benefit
-- The task can be completed in less than 3 trivial steps
-- The task is purely conversational or informational
+在以下情况跳过使用此工具：
+- 只有一个**单一、直接**的任务
+- 任务过于琐碎，跟踪它没有任何组织上的好处
+- 任务可以在不到 3 个琐碎步骤内完成
+- 任务纯粹是对话性或信息性的
 
-NOTE that you should **NOT** use this tool if there is only one trivial task \
-to do. In this case you are better off just doing the task directly.
+请注意，如果只有一个琐碎的任务要做，你**不应该**使用此工具。\
+在这种情况下，最好直接执行该任务。
 
-## Task Fields
+## 任务字段
 
-- **subject**: A brief, actionable title in imperative form (e.g., \
-"Fix authentication bug in login flow")
-- **description**: What needs to be done
+- **subject**：祈使句形式的简短、可操作的标题（例如 \
+"Fix authentication bug in login flow"）
+- **description**：需要做什么
 
-All tasks are created with status `pending`.
+所有任务创建时状态均为 `pending`。
 
-## Tips
+## 提示
 
-- Create tasks with clear, specific subjects that describe the outcome
-- After creating tasks, use TaskUpdate to set up dependencies \
-(blocks/blockedBy) if needed
-- Check TaskList first to avoid creating duplicate tasks"""
+- 创建具有清晰、具体主题的任务，描述期望的结果
+- 创建任务后，如果需要，使用 TaskUpdate 设置依赖关系 \
+（blocks/blockedBy）
+- 先检查 TaskList，避免创建重复的任务"""
 
     input_schema: dict = _TaskCreateParams.model_json_schema()
 

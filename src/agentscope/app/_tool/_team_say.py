@@ -19,60 +19,53 @@ class _TeamSayParams(ParamsBase):
 
     content: str = Field(
         description=(
-            "The message text. Plain natural-language; the recipient "
-            "sees it as a user message in its context."
+            "消息文本。纯自然语言；接收方会将其作为一条用户消息"
+            "出现在其上下文中。"
         ),
     )
     to: str | None = Field(
         default=None,
         description=(
-            "Recipient member name. Pass ``null`` (the default) to "
-            "broadcast to every other member of the team. To address "
-            "a specific peer use that member's name."
+            "接收方成员名称。传入 ``null``（默认值）向团队中其他所有成员"
+            "广播。若要指定某位成员，请使用该成员的名称。"
         ),
     )
 
 
-_LEADER_DESCRIPTION = """Send a message to a specific team member or \
-broadcast to all members.
+_LEADER_DESCRIPTION = """向特定团队成员发送消息，或向所有成员广播。
 
-## When to Use This Tool
-- Pass **new** requirements or context from the user to a specific member.
-- Broadcast an update or coordination message to all members.
-- Ask a member a follow-up question when you need clarification.
+## 何时使用该工具
+- 将用户提出的**新**需求或新上下文传递给特定成员。
+- 向所有成员广播更新或协调消息。
+- 在需要澄清时向某位成员追问后续问题。
 
-## When NOT to Use This Tool
-- DO NOT repeatedly call this to check on a member's progress — members \
-will automatically notify you via ``TeamSay`` when they finish their task. \
-Wait for their message instead of polling.
-- DO NOT call this right after creating a member by ``AgentCreate``, the \
-member will receive its initial task from the ``prompt`` of the \
-``AgentCreate`` call and report back when done — just wait for their message. \
-- The session is not in a team yet (call ``TeamCreate`` first).
-- You want to talk to yourself — use your own reasoning.
+## 何时不要使用该工具
+- 不要反复调用该工具去检查某位成员的进度——成员完成任务时会通过 \
+``TeamSay`` 自动通知你。请等待它们的消息，不要轮询。
+- 不要在通过 ``AgentCreate`` 创建成员后立即调用该工具，成员会从 \
+``AgentCreate`` 调用的 ``prompt`` 中收到初始任务，并在完成后汇报—— \
+只需等待它们的消息。
+- 当前会话尚不属于任何团队（请先调用 ``TeamCreate``）。
+- 你想与自己对话——请使用你自己的推理。
 
-## Important
-- Each member starts working immediately when created via AgentCreate. \
-When a member finishes its task, it will call ``TeamSay`` to report results \
-back to you. You do NOT need to prompt them — just wait for their reply.
-- **DO NOT** reply to a member's report message unless you have further \
-questions or requirements. ``TeamSay`` is for coordination, not chit-chat — \
-your top priority is to complete the overall task.
+## 重要
+- 每位成员一经通过 AgentCreate 创建便会立即开始工作。成员完成任务后，\
+会调用 ``TeamSay`` 向你汇报结果。你无需再提示它们——只需等待它们的回复。
+- 除非你还有进一步的问题或需求，否则**不要**回复成员的工作汇报消息。\
+``TeamSay`` 用于协调，而不是闲聊——你的首要任务是完成整体任务。
 """
 
-_WORKER_DESCRIPTION = """Send a message to the team leader or broadcast to \
-all team members.
+_WORKER_DESCRIPTION = """向团队领导者发送消息，或向所有团队成员广播。
 
-## When to Use This Tool
-- **IMPORTANT**: When you finish your assigned task, you MUST call this \
-tool to report your results back to the leader. The leader is waiting \
-for your report — do not end your turn without sending it.
-- Share intermediate findings or ask the leader for clarification.
-- Broadcast information that other members might need.
+## 何时使用该工具
+- **重要**：当你完成分配的任务时，**必须**调用该工具将结果汇报给领导者。\
+领导者正在等待你的汇报——发送汇报前不要结束你的回合。
+- 分享阶段性发现，或向领导者寻求澄清。
+- 广播其他成员可能需要的信息。
 
-## When NOT to Use This Tool
-- You want to talk to yourself — use your own reasoning.
-- The message is a transient internal thought with no value to others.
+## 何时不要使用该工具
+- 你想与自己对话——请使用你自己的推理。
+- 消息只是转瞬即逝的内心想法，对他人没有价值。
 """
 
 

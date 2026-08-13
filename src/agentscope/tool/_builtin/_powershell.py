@@ -26,37 +26,34 @@ class PowerShell(ToolBase):
     name: str = "PowerShell"
     """The tool name presented to the agent."""
 
-    description: str = """Executes a PowerShell command and returns its output.
+    description: str = """执行 PowerShell 命令并返回其输出。
 
-Each command starts in the configured working directory, but PowerShell
-session state does not persist between commands. Commands run without
-loading the user's PowerShell profile.
+每条命令都在配置的工作目录中启动，但 PowerShell 会话状态不会在命令之间
+保留。命令执行时不加载用户的 PowerShell 配置文件。
 
-IMPORTANT: Avoid using this tool for filesystem operations when a dedicated
-tool can accomplish the task. Prefer the dedicated tools because their calls
-are easier for the user to review and authorize:
+重要提示：当专用工具可以完成文件系统操作时，避免使用本工具。请优先使用
+专用工具，因为它们的调用更容易让用户审查和授权：
 
- - File search: Use Glob (NOT Get-ChildItem)
- - Content search: Use Grep (NOT Select-String)
- - Read files: Use Read (NOT Get-Content)
- - Edit files: Use Edit
- - Write files: Use Write (NOT Set-Content or Out-File)
- - Communication: Output text directly (NOT Write-Output)
+ - 文件搜索：使用 Glob（而不是 Get-ChildItem）
+ - 内容搜索：使用 Grep（而不是 Select-String）
+ - 读取文件：使用 Read（而不是 Get-Content）
+ - 编辑文件：使用 Edit
+ - 写入文件：使用 Write（而不是 Set-Content 或 Out-File）
+ - 通信：直接输出文本（而不是 Write-Output）
 
-# Instructions
- - Verify the parent directory before creating new directories or files.
- - Quote paths containing spaces, for example: Get-Item "path with spaces".
- - Prefer absolute paths and avoid Set-Location so the working directory is
-   clear in every command.
- - You may specify an optional timeout in milliseconds (up to 600000ms /
-   10 minutes). The default timeout is 120000ms (2 minutes).
- - Write a concise description of what the command does. Include more context
-   for pipelines, uncommon parameters, or commands with side effects.
- - Run independent commands in parallel tool calls. Keep dependent commands
-   together and use PowerShell-native error handling when later work depends
-   on earlier work succeeding.
- - Prefer new git commits over amending existing commits. Avoid destructive
-   git operations and never bypass hooks unless the user explicitly asks."""
+# 说明
+ - 在创建新目录或文件之前，先确认父目录是否存在。
+ - 用引号引用包含空格的路径，例如：Get-Item "path with spaces"。
+ - 优先使用绝对路径并避免使用 Set-Location，这样每条命令的工作目录都清晰
+   明了。
+ - 你可以指定可选的超时时间（毫秒，最大 600000ms / 10 分钟）。默认超时
+   时间为 120000ms（2 分钟）。
+ - 为命令编写简洁的描述。对于管道、不常见的参数或具有副作用的命令，请提供
+   更多上下文。
+ - 在并行的工具调用中运行相互独立的命令。让相互依赖的命令保持在一起，并且
+   当后续工作依赖前面的工作成功完成时，使用 PowerShell 原生的错误处理。
+ - 优先创建新的 git 提交，而不是修改已有提交。避免破坏性的 git 操作，除非
+   用户明确要求，否则绝不绕过钩子。"""
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -64,19 +61,19 @@ are easier for the user to review and authorize:
         "properties": {
             "command": {
                 "type": "string",
-                "description": "The PowerShell command to execute.",
+                "description": "要执行的 PowerShell 命令。",
             },
             "description": {
                 "type": "string",
                 "description": (
-                    "Clear, concise description of what this command does."
+                    "对此命令作用的清晰、简洁的描述。"
                 ),
             },
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Optional timeout in milliseconds "
-                    "(default: 120000, max: 600000)"
+                    "可选的超时时间（毫秒）"
+                    "（默认值：120000，最大值：600000）"
                 ),
                 "default": 120000,
                 "maximum": 600000,

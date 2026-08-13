@@ -24,20 +24,14 @@ class ResetTools(ToolBase):
 
     name: str = "reset_tools"
     description: str = (
-        "This tool allows you to reset your equipped tools based on your "
-        "current task requirements. These tools are organized into different "
-        "groups, and you can activate/deactivate them by specifying the "
-        "boolean values for each group in the input.\n\n"
-        "**Important: The input booleans are the final state of their "
-        "corresponding tool groups, not incremental changes.** Any group not "
-        "explicitly set to True will be deactivated, regardless of its "
-        "previous state.\n\n"
-        "**Best practice**: Actively manage your tool groups——activate only "
-        "what you need for the current task, and promptly deactivate groups "
-        "as soon as they are no longer needed to conserve context space.\n\n"
-        "This tool will return the usage instructions for the activated tool "
-        "groups, which you **MUST pay attention to and follow**. You can "
-        "also reuse this tool to re-check the instructions."
+        "此工具允许你根据当前任务需求重新配置已装配的工具。这些工具被组织成"
+        "不同的分组，你可以通过在输入中为每个分组指定布尔值来激活/停用它们。\n\n"
+        "**重要提示：输入的布尔值是相应工具分组的最终状态，而不是增量更改。** "
+        "任何未被显式设置为 True 的分组都将被停用，无论其之前的状态如何。\n\n"
+        "**最佳实践**：主动管理你的工具分组——只激活当前任务所需的分组，并在"
+        "不再需要时及时停用它们，以节省上下文空间。\n\n"
+        "此工具将返回已激活工具分组的使用说明，你**必须注意并遵循这些说明**。"
+        "你也可以重复使用此工具来重新查看这些说明。"
     )
     is_mcp: bool = False
     is_read_only: bool = False

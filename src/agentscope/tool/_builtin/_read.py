@@ -23,16 +23,16 @@ class Read(ToolBase):
     """The tool name presented to the agent."""
 
     # pylint: disable=line-too-long
-    description: str = """Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+    description: str = """从本地文件系统读取文件。你可以直接使用此工具访问任何文件。
+假设本工具能够读取机器上的所有文件。如果用户提供了文件路径，请假定该路径有效。读取不存在的文件也没问题，此时会返回错误。
 
-Usage:
-- The file_path parameter must be an absolute path, not a relative path
-- By default, it reads up to 2000 lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
-- Results are returned using cat -n format, with line numbers starting at 1
-- This tool allows you to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as you're a multimodal LLM.
-- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific pages."""  # noqa: E501
+用法：
+- file_path 参数必须是绝对路径，不能是相对路径
+- 默认情况下，从文件开头读取最多 2000 行
+- 你可以选择指定行偏移量（offset）和限制（limit）（对于长文件尤其有用），但建议不提供这些参数以读取整个文件
+- 结果以 cat -n 格式返回，行号从 1 开始
+- 此工具允许你读取图片（如 PNG、JPG 等）。读取图片文件时，内容会以可视方式呈现，因为你是一个多模态 LLM。
+- 此工具可以读取 PDF 文件（.pdf）。对于较大的 PDF（超过 10 页），你必须提供 pages 参数来读取特定页面。"""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -40,19 +40,19 @@ Usage:
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "The absolute path to the file to read.",
+                "description": "要读取的文件的绝对路径。",
             },
             "offset": {
                 "type": "integer",
-                "description": "Optional 1-based line number to start reading "
-                "from (default: 1)",
+                "description": "可选的开始读取的起始行号（从 1 开始）"
+                "（默认值：1）",
                 "default": 1,
                 "minimum": 1,
             },
             "limit": {
                 "type": "integer",
-                "description": "Optional maximum number of lines to read "
-                "(default: 2000, max: 2000)",
+                "description": "可选的读取的最大行数"
+                "（默认值：2000，最大值：2000）",
                 "default": 2000,
                 "maximum": 2000,
                 "minimum": 1,

@@ -13,16 +13,14 @@ class _TeamCreateParams(ParamsBase):
 
     name: str = Field(
         description=(
-            "Display name of the team. Used by the user to identify the "
-            "team and shown in the team UI."
+            "团队显示名称。用于用户识别团队，并显示在团队界面中。"
         ),
     )
     description: str = Field(
         description=(
-            "What the team is for — its overall goal or shared context. "
-            "This becomes the team's charter and is wired into every "
-            "member's system prompt so all members share the same "
-            "high-level understanding of why the team exists."
+            "团队的用途——其总体目标或共享上下文。"
+            "这会成为团队的章程，并注入每位成员的系统提示词中，"
+            "使所有成员对团队存在的原因有一致的高层理解。"
         ),
     )
 
@@ -32,22 +30,18 @@ class TeamCreate(_TeamToolBase):
 
     name: str = "TeamCreate"
 
-    description: str = """Create a new team led by your current session and \
-return its team id.
+    description: str = """以你当前的会话为领导创建一个新团队，并返回其团队 ID。
 
-## When to Use This Tool
-Use this tool when the task you've been given is best decomposed into \
-parallel sub-tasks executed by multiple specialised agents (members) \
-under your coordination. After creating the team, use ``AgentCreate`` to \
-spawn each member with its own role, prompt, and permission mode. NOTE: \
-the ``prompt`` you pass to ``AgentCreate`` is delivered to that member \
-automatically, so do **NOT** call ``TeamSay`` right after ``AgentCreate`` — \
-just wait for the members to report back.
+## 何时使用该工具
+当你收到的任务最适合拆分为多个由专业化智能体（成员）在你协调下 \
+并行执行的子任务时，使用该工具。创建团队后，使用 ``AgentCreate`` \
+为每位成员配置各自的角色、提示词和权限模式来创建成员。注意：\
+你传给 ``AgentCreate`` 的 ``prompt`` 会自动送达该成员，因此**不要**\
+在 ``AgentCreate`` 之后紧接着调用 ``TeamSay``——只需等待成员汇报即可。
 
-## When NOT to Use This Tool
-- The task is small enough to handle yourself.
-- You already lead a team in this session — a session can only lead \
-one team at a time.
+## 何时不要使用该工具
+- 任务足够简单，你可以自行处理。
+- 你在本次会话中已经领导一个团队——一个会话一次只能领导一个团队。
 """
 
     input_schema: dict = _TeamCreateParams.model_json_schema()
@@ -131,9 +125,9 @@ one team at a time.
                 content=[
                     TextBlock(
                         text=(
-                            f"Team {team.id} ({team.data.name}) created. "
-                            f"You are the leader. Use AgentCreate to add "
-                            f"members, then TeamSay to coordinate them."
+                            f"团队 {team.id}（{team.data.name}）已创建。"
+                            f"你是团队负责人。使用AgentCreate添加成员，"
+                            f"然后用TeamSay协调他们。"
                         ),
                     ),
                 ],
