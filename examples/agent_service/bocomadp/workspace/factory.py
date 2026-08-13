@@ -16,26 +16,16 @@ from agentscope.app.workspace_manager import (
     K8sWorkspaceManager,
 )
 
-from ._dual_pvc import DualPvcK8sWorkspaceManager
 from ._shared_pvc import SharedPvcK8sWorkspaceManager
 from .config import get_k8s_workspace_config
 
 
 def build_k8s_workspace_manager() -> (
-    K8sWorkspaceManager
-    | SharedPvcK8sWorkspaceManager
-    | DualPvcK8sWorkspaceManager
+    K8sWorkspaceManager | SharedPvcK8sWorkspaceManager
 ):
     """创建预配置的 K8s 沙箱管理器。
 
-    隔离策略根据 ``ADP_K8S_DUAL_PVC_ENABLED`` 和
-    ``ADP_K8S_SHARED_PVC_ENABLED`` 决定：
-
-    - **双 PVC 模式** （``DUAL_PVC_ENABLED=true``，优先）：
-      创建 :class:`DualPvcK8sWorkspaceManager`。
-      每个 session 独立 Pod + 独立 session PVC，完全隔离；
-      skills / .mcp 存储在 agent 级共享 PVC。
-      需要集群支持 ReadWriteMany 存储（NFS / CephFS 等）。
+    隔离策略根据 ``ADP_K8S_SHARED_PVC_ENABLED`` 决定：
 
     - **共享 PVC 模式** （``SHARED_PVC_ENABLED=true``）：
       创建 :class:`SharedPvcK8sWorkspaceManager`。
@@ -57,28 +47,6 @@ def build_k8s_workspace_manager() -> (
         ValueError: 缺少必需的 ``ADP_K8S_KUBECONFIG`` 环境变量。
     """
     cfg = get_k8s_workspace_config()
-
-    if cfg.dual_pvc_enabled:
-        return DualPvcK8sWorkspaceManager(
-            agent_pvc_access_mode=cfg.agent_pvc_access_mode,
-            session_pvc_access_mode=cfg.session_pvc_access_mode,
-            # ── K8s 连接 ──
-            kubeconfig=cfg.kubeconfig,
-            namespace=cfg.namespace,
-            # ── Pod 配置 ──
-            image=cfg.image,
-            image_pull_policy=cfg.image_pull_policy,
-            resources=cfg.resources,
-            # ── 存储 ──
-            storage_class=cfg.storage_class,
-            storage_size=cfg.storage_size,
-            delete_pvc_on_close=cfg.delete_pvc_on_close,
-            # ── TTL 缓存 ──
-            ttl=cfg.ttl,
-            sweep_interval=cfg.sweep_interval,
-            # ── 限流 ──
-            max_active_pods=cfg.max_active_pods,
-        )
 
     if cfg.shared_pvc_enabled:
         return SharedPvcK8sWorkspaceManager(
