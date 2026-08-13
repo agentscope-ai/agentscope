@@ -290,8 +290,8 @@ async def install_skill(
 
 
 # Keep this catch-all path route after the more specific ``/install`` route.
-# Starlette resolves routes in declaration order, so placing it first would
-# turn owner-scoped install requests into 405 responses.
+# This keeps route precedence explicit and protects specific routes from
+# accidental shadowing as more card actions are added.
 @hub_router.get("/skill/{hub_id}/cards/{card_id:path}")
 async def get_skill_card(
     hub_id: str,
