@@ -44,10 +44,11 @@ class AgentView(AgentRecord):
     is_team: bool = Field(
         default=False,
         description=(
-            "True when this agent leads an expert team — i.e. its "
-            "team_config carries at least one member_id. Lets the "
-            "frontend distinguish team leaders from plain agents in the "
-            "shared agent list."
+            "True when this agent is an expert-team leader — i.e. its "
+            "team_config is present. Members may be empty until they are "
+            "created, so a leader created with is_team=true is already "
+            "classified as a team. Lets the frontend distinguish team "
+            "leaders from plain agents in the shared agent list."
         ),
     )
     parent_agent_id: str | None = Field(
@@ -529,9 +530,10 @@ class ResourceAccessService:
             return CredentialView.model_validate(payload)
         if isinstance(record, AgentRecord):
             team_cfg = record.data.team_config
-            is_team = bool(
-                team_cfg is not None and team_cfg.member_ids
-            )
+            # A non-None team_config marks the agent as an expert-team
+            # leader ("shell counts as a team"), so a leader created with
+            # is_team=true but no members yet is still classified as a team.
+            is_team = team_cfg is not None
             return AgentView.model_validate(
                 {
                     **record.model_dump(),
