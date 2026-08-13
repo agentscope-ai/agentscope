@@ -95,6 +95,7 @@ class FeishuChannel(ChannelBase):
     description = "Group and direct-message bot with card interactions."
     icon_url = "https://www.google.com/s2/favicons?domain=feishu.cn&sz=128"
     platform_bot_id_field = "app_id"
+    supports_scheduled_tools = True
 
     class Credentials(BaseModel):
         """Feishu bot application credentials."""
@@ -965,6 +966,31 @@ class FeishuChannel(ChannelBase):
             SendMessage(self, backend),
             SendFile(self, backend),
             SendImage(self, backend),
+        ]
+
+    async def list_scheduled_tools(
+        self,
+        workspace: "WorkspaceBase",
+    ) -> list["ToolBase"]:
+        """Expose the narrow Feishu whitelist authorised by a schedule.
+
+        File/image tools are intentionally excluded because they can read and
+        transmit workspace content. Text send is explicitly authorised by the
+        selected channel; discovery tools remain read-only.
+
+        Args:
+            workspace (`WorkspaceBase`): Calling session workspace.
+
+        Returns:
+            `list[ToolBase]`: Chat discovery and text-send tools only.
+        """
+        from ._tools import ListChatMembers, ListChats, SendMessage
+
+        backend = workspace.get_backend()
+        return [
+            ListChats(self, backend),
+            ListChatMembers(self, backend),
+            SendMessage(self, backend, allow_scheduled_actions=True),
         ]
 
     # -- Agent-tool operations (act on chats/users other than the current) --
