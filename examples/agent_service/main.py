@@ -87,6 +87,7 @@ from bocomadp.routers.agent_tools import agent_tools_router
 from bocomadp.mcp import McpRegistry
 from bocomadp.runtime import Runtime, HookRegistry
 from bocomadp.skills import ExternalSkillHub
+from bocomadp.skills.bocom_skill_hub import BocomSkillHub
 from bocomadp.tools import ToolRegistry, build_enterprise_tools
 from bocomadp.uploads.manager import cleanup_stale_upload_staging_files
 
@@ -342,6 +343,7 @@ app = create_app(
     skill_hubs=[
         ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN")),
         ExternalSkillHub(),
+        BocomSkillHub(hub_id="bocom"),
     ],
     custom_subagent_templates=load_subagent_templates(),
     # 通用中间件构建入口：registry 自动扫描 + 企业中间件主动 build（审计留痕）
