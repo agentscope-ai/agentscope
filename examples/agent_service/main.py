@@ -530,6 +530,12 @@ vector_store = QdrantStore(location=":memory:")
 if is_k8s_enabled():
     # -- K8s 沙箱模式 —— 每个智能体的代码执行在独立的 K8s Pod 中运行。
     # -- 共享 PVC 模式下 skills/.mcp 存储在 agent 级 PVC，session 数据子目录隔离。
+    from bocomadp.workspace.k8s_exec_patch import apply_k8s_exec_patch
+
+    # k3s 的 apiserver 在 exec 进程退出后不发 WebSocket close 帧，
+    # 框架写路径（stdin 通道）会永久等待挂起；必须在任何沙箱
+    # 写操作发生之前应用 patch。
+    apply_k8s_exec_patch()
     from agentscope.app.message_bus import RedisMessageBus
 
     workspace_manager = build_k8s_workspace_manager()
