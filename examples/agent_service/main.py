@@ -32,6 +32,7 @@ Run::
 import logging
 import os
 from contextlib import asynccontextmanager
+from logging.handlers import TimedRotatingFileHandler
 from typing import Any
 
 import uvicorn
@@ -108,19 +109,57 @@ from bocomadp.workspace import (
 # 以便它们使用的 ``as`` logger 自动拥有文件 handler。
 _LOG_DIR = os.getenv("AGENTSCOPE_LOG_DIR", "/app/logs")
 _LOG_FILE = os.path.join(_LOG_DIR, "events.log")
+# 每日滚动的历史文件保留天数（backupCount；0 = 永不自动清理）
+_LOG_BACKUP_COUNT = int(os.getenv("AGENTSCOPE_LOG_BACKUP_COUNT", "30"))
 os.makedirs(_LOG_DIR, exist_ok=True)
-setup_logger("INFO", filepath=_LOG_FILE)
+setup_logger("INFO")  # 只挂 StreamHandler；文件 handler 由下方共享实例接管
+
+
+class _EventsFormatter(logging.Formatter):
+    """单个滚动 handler 同时服务 ``as`` 与 ``uvicorn.access``，
+    按 logger 名保持各自原有行格式。"""
+
+    _FORMATS = {
+        "as": (
+            "%(asctime)s | %(levelname)-7s | "
+            "%(module)s:%(funcName)s:%(lineno)s - %(message)s"
+        ),
+        "uvicorn.access": (
+            "%(asctime)s | %(levelname)-7s | %(name)s - %(message)s"
+        ),
+    }
+
+    def __init__(self) -> None:
+        super().__init__(self._FORMATS["as"])
+        self._sub_formatters = {
+            name: logging.Formatter(fmt) for name, fmt in self._FORMATS.items()
+        }
+
+    def format(self, record: logging.LogRecord) -> str:
+        sub = self._sub_formatters.get(record.name)
+        return sub.format(record) if sub is not None else super().format(record)
+
+
+# 每日滚动文件 handler：当天写 events.log，次日零点第一条日志触发滚动，
+# 旧文件重命名为 events.log.<前一天日期>（如 events.log.2026-08-13），
+# 超出 _LOG_BACKUP_COUNT 天的历史文件自动删除。
+# 注意：``as`` 与 ``uvicorn.access`` 必须共享同一个 handler 实例 ——
+# 若各自持有独立实例，两个实例会在同一天各自执行 rename，
+# 后执行者会覆盖先滚动出的旧文件（os.rename 静默覆盖），当天日志丢失。
+_events_file_handler = TimedRotatingFileHandler(
+    _LOG_FILE,
+    when="midnight",
+    interval=1,
+    backupCount=_LOG_BACKUP_COUNT,
+    encoding="utf-8",
+)
+_events_file_handler.suffix = "%Y-%m-%d"
+_events_file_handler.setFormatter(_EventsFormatter())
+logging.getLogger("as").addHandler(_events_file_handler)
 
 # 把 uvicorn 的 HTTP 访问日志（``uvicorn.access``）也并入同一个文件，
 # 便于在一个文件中对照"客户端请求 → 后端处理 → 模型调用 → 工具调用"时间线。
-_access_logger = logging.getLogger("uvicorn.access")
-_access_file_handler = logging.FileHandler(_LOG_FILE)
-_access_file_handler.setFormatter(
-    logging.Formatter(
-        "%(asctime)s | %(levelname)-7s | %(name)s - %(message)s",
-    ),
-)
-_access_logger.addHandler(_access_file_handler)
+logging.getLogger("uvicorn.access").addHandler(_events_file_handler)
 
 default_mcps = [
     MCPClient(
