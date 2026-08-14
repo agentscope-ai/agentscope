@@ -176,12 +176,22 @@ def test_missing_oss_key():
     assert "AGENTSCOPE_OSS_KEY" in resp.error
 
 
-def test_no_intermediate_dir():
+def test_no_intermediate_dir_outputs_fallback():
+    # 无 uploads/*_intermediate 目录，但 outputs 有报告 → ② 级兜底应成功
     resp = _call_endpoint(
         _tree_at("/workspace/sessions/s1", {"user-data": {"outputs": {"proofread_report.md": b"x"}}}),
     )
+    assert resp.success == "true"
+    assert resp.error == ""
+
+
+def test_no_intermediate_dir_no_file_anywhere():
+    # 无 uploads/*_intermediate 且 outputs/workdir 均无报告 → 仍报找不到
+    resp = _call_endpoint(
+        _tree_at("/workspace/sessions/s1", {"user-data": {"outputs": {}}}),
+    )
     assert resp.success == "false"
-    assert "No proofread report directory" in resp.error
+    assert "No downloadable files" in resp.error
 
 
 def test_no_report_file():
@@ -278,19 +288,19 @@ def test_find_report_dir_ok():
 
 
 def test_find_report_dir_no_uploads():
+    # uploads 目录不存在 → 返回 None，由 _collect_files 兜底
     backend = FakeBackend(_tree_at("/workspace/sessions/s1", {"user-data": {}}))
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(mod._find_report_dir("/workspace/sessions/s1", backend))
-    assert ei.value.status_code == 404
+    got = asyncio.run(mod._find_report_dir("/workspace/sessions/s1", backend))
+    assert got is None
 
 
 def test_find_report_dir_no_match():
+    # uploads 下无 *_intermediate → 返回 None，由 _collect_files 兜底
     backend = FakeBackend(
         _tree_at("/workspace/sessions/s1", {"user-data": {"uploads": {"docs": {}}}}),
     )
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(mod._find_report_dir("/workspace/sessions/s1", backend))
-    assert ei.value.status_code == 404
+    got = asyncio.run(mod._find_report_dir("/workspace/sessions/s1", backend))
+    assert got is None
 
 
 def test_collect_uploads_first():
@@ -310,6 +320,15 @@ def test_collect_outputs_fallback():
             backend,
             "/workspace/sessions/s1/user-data/uploads/run_intermediate",
         ),
+    )
+    assert files == [("proofread_report.md", b"report-o")]
+
+
+def test_collect_none_report_dir_outputs_fallback():
+    # report_dir=None（无 *_intermediate）→ 跳过 ①，② outputs 兜底命中
+    backend = FakeBackend(_tree_with_report("outputs"))
+    files = asyncio.run(
+        mod._collect_files("/workspace/sessions/s1", backend, None),
     )
     assert files == [("proofread_report.md", b"report-o")]
 

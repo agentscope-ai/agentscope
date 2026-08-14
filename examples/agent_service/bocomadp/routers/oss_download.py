@@ -13,7 +13,7 @@ HTTP 200 + success="false" + error，不产生 HTTP 4xx/5xx。
   ② {workdir}/user-data/outputs/proofread_report.md
   ③ {workdir} 递归
 注：宿主侧 uploads 尚未迁移到容器内 user-data/uploads 前，① 级可能不命中，
-②/③ 级兜底始终可用。
+②/③ 级兜底始终可用（① 级目录缺失不会阻断下载）。
 
 凭证（方案 A）：Fernet 密文硬编码 + 环境变量 AGENTSCOPE_OSS_KEY 解密，
 密文由 scripts/encrypt_oss_credentials.py 生成后填入下方 _ENC 常量。
@@ -104,11 +104,12 @@ def _get_oss_bucket() -> oss2.Bucket:
     return _bucket_client
 
 
-async def _find_report_dir(workdir: str, backend) -> str:
+async def _find_report_dir(workdir: str, backend) -> str | None:
     """在 {workdir}/user-data/uploads 下找第一个 *_intermediate 目录。
 
-    Raises:
-        HTTPException(404): uploads 目录不存在或无 *_intermediate 匹配。
+    uploads 目录不存在或无 *_intermediate 匹配时返回 None——
+    不在此处报错，由 ``_collect_files`` 的 ② outputs / ③ workdir
+    递归兜底继续搜索（① 级缺失不应让 outputs 里的报告无法下载）。
     """
     uploads_dir = backend.join_path(
         workdir,
@@ -118,19 +119,13 @@ async def _find_report_dir(workdir: str, backend) -> str:
     try:
         entries = await backend.list_dir(uploads_dir)
     except OSError:
-        raise HTTPException(
-            status_code=404,
-            detail="No proofread report directory found for session",
-        )
+        return None
     for entry in entries:
         if entry.endswith("_intermediate") and await backend.is_dir(
             backend.join_path(uploads_dir, entry),
         ):
             return backend.join_path(uploads_dir, entry)
-    raise HTTPException(
-        status_code=404,
-        detail="No proofread report directory found for session",
-    )
+    return None
 
 
 async def _rglob(backend, path: str, target: str, depth: int = 0) -> list[str]:
@@ -156,11 +151,11 @@ async def _rglob(backend, path: str, target: str, depth: int = 0) -> list[str]:
 async def _collect_files(
     workdir: str,
     backend,
-    report_dir: str,
+    report_dir: str | None,
 ) -> list[tuple[str, bytes]]:
     """三级降级搜索 proofread_report.md（对齐 deer-flow _collect_files）。
 
-    ① report_dir（当前 *_intermediate 目录）② outputs ③ workdir 递归。
+    ① report_dir（当前 *_intermediate 目录，可为 None）② outputs ③ workdir 递归。
     返回 [(archive_path, content_bytes), ...]；无文件 → HTTPException(404)。
     """
     search_paths = [
@@ -173,6 +168,8 @@ async def _collect_files(
         workdir,
     ]
     for idx, path in enumerate(search_paths):
+        if path is None:
+            continue
         if idx < 2:
             md = backend.join_path(path, "proofread_report.md")
             if await backend.file_exists(md):
@@ -261,6 +258,8 @@ async def file_download(
         )
         backend = workspace.get_backend()
         report_dir = await _find_report_dir(workspace.workdir, backend)
+        # report_dir 可能为 None（uploads 无 *_intermediate），
+        # _collect_files 内部跳过 ① 级，由 ②/③ 兜底搜索。
         files = await _collect_files(workspace.workdir, backend, report_dir)
         zip_buffer, zip_name = await asyncio.to_thread(
             _package_zip,
