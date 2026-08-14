@@ -248,6 +248,7 @@ class MCPClient(BaseModel):
         except Exception:
             await self._stack.aclose()
             self._stack = None
+            self._client = None
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
