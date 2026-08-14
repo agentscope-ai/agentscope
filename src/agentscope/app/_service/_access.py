@@ -60,6 +60,18 @@ class AgentView(AgentRecord):
             "filtering of team members."
         ),
     )
+    is_self_built: bool | None = Field(
+        default=None,
+        description=(
+            "Team-membership origin, set only when the list was queried "
+            "with ``parent_agent_id``. True = created under that leader "
+            "(``data.parent_agent_id == leader``): editable and "
+            "cascade-deletable. False = invited by reference (id in the "
+            "leader's ``team_config.member_ids`` without a parent "
+            "backlink): config frozen, unlink-only. None when queried "
+            "without ``parent_agent_id`` (top-level list)."
+        ),
+    )
 
 
 class CredentialView(CredentialRecord):
@@ -222,6 +234,23 @@ class ResourceAccessService:
                 list stays clean — call again with this id to fetch a
                 team's members.
         """
+        # When filtering by a team leader, also collect the leader's
+        # invited-by-reference members (ids present in ``member_ids`` but
+        # without a ``parent_agent_id`` backlink) so the team member list
+        # is complete — self-built vs invited is exposed via
+        # ``AgentView.is_self_built``.
+        member_ids: set[str] = set()
+        if kind is ResourceKind.AGENT and parent_agent_id is not None:
+            leader = await self._storage.get_agent(
+                viewer_id,
+                parent_agent_id,
+            )
+            if (
+                leader is not None
+                and leader.data.team_config is not None
+            ):
+                member_ids = set(leader.data.team_config.member_ids)
+
         if kind is ResourceKind.CREDENTIAL:
             own = await self._storage.list_credentials(viewer_id)
         elif kind is ResourceKind.AGENT:
@@ -238,13 +267,27 @@ class ResourceAccessService:
                         parent_agent_id is not None
                         and record.data.parent_agent_id == parent_agent_id
                     )
+                    or (
+                        parent_agent_id is not None
+                        and record.id in member_ids
+                    )
                 )
             ]
         else:
             own = await self._storage.list_knowledge_bases(viewer_id)
 
         views: list[BaseModel] = [
-            self._build_view(record, viewer_id, True) for record in own
+            self._build_view(
+                record,
+                viewer_id,
+                True,
+                is_self_built=self._self_built_flag(
+                    record,
+                    parent_agent_id,
+                    member_ids,
+                ),
+            )
+            for record in own
         ]
         seen = {(record.user_id, record.id) for record in own}
 
@@ -268,10 +311,37 @@ class ResourceAccessService:
                     record,
                     viewer_id,
                     ref.permission == ResourcePermission.EDIT,
+                    is_self_built=self._self_built_flag(
+                        record,
+                        parent_agent_id,
+                        member_ids,
+                    ),
                 ),
             )
             seen.add(key)
         return views
+
+    @staticmethod
+    def _self_built_flag(
+        record: AgentRecord,
+        parent_agent_id: str | None,
+        member_ids: set[str],
+    ) -> bool | None:
+        """Classify a listed agent's team-membership origin.
+
+        Only meaningful when the list was filtered by ``parent_agent_id``:
+        a matching ``parent_agent_id`` backlink marks a self-built member;
+        presence in the leader's ``member_ids`` without such a backlink
+        marks an invited-by-reference member. Top-level listings (no
+        ``parent_agent_id``) leave the flag ``None``.
+        """
+        if parent_agent_id is None:
+            return None
+        if record.data.parent_agent_id == parent_agent_id:
+            return True
+        if record.id in member_ids:
+            return False
+        return None
 
     # ------------------------------------------------------------------
     # get_resource
@@ -511,12 +581,18 @@ class ResourceAccessService:
         record: Any,
         viewer_id: str,
         editable: bool,
+        *,
+        is_self_built: bool | None = None,
     ) -> BaseModel:
         """Project a raw storage record onto a viewer-relative view.
 
         Credential ``data`` is masked when the viewer is not the owner
         so the wire format never leaks the shared secret; other kinds
         pass through unchanged apart from the added ``editable`` flag.
+
+        ``is_self_built`` only applies to AGENT views inside a team
+        member listing (see :meth:`list_resource`); every other caller
+        leaves it ``None``.
         """
         if isinstance(record, CredentialRecord):
             payload = record.model_dump()
@@ -540,6 +616,7 @@ class ResourceAccessService:
                     "editable": editable,
                     "is_team": is_team,
                     "parent_agent_id": record.data.parent_agent_id,
+                    "is_self_built": is_self_built,
                 },
             )
         return KnowledgeBaseView.model_validate(
