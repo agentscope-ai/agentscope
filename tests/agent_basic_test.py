@@ -699,11 +699,18 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         # 1) The end event must carry the cache tokens.
         self.assertEqual(len(end_events), 1)
-        end_event = end_events[0]
-        self.assertEqual(end_event.input_tokens, 100)
-        self.assertEqual(end_event.output_tokens, 20)
-        self.assertEqual(end_event.cache_input_tokens, 60)
-        self.assertEqual(end_event.cache_creation_input_tokens, 40)
+        self.assertEqual(
+            end_events[0].model_dump(),
+            {
+                **self._get_event_base(self.agent.state.reply_id),
+                "type": "MODEL_CALL_END",
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_input_tokens": 60,
+                "cache_creation_input_tokens": 40,
+                "finished_reason": "completed",
+            },
+        )
 
         # 2) The saved assistant message must expose the cache tokens in its
         #    usage.
@@ -714,10 +721,134 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         usage = assistant_msgs[0].usage
         self.assertIsNotNone(usage)
         assert usage is not None
-        self.assertEqual(usage.input_tokens, 100)
-        self.assertEqual(usage.output_tokens, 20)
-        self.assertEqual(usage.cache_input_tokens, 60)
-        self.assertEqual(usage.cache_creation_input_tokens, 40)
+        self.assertEqual(
+            usage.model_dump(),
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_input_tokens": 60,
+                "cache_creation_input_tokens": 40,
+            },
+        )
+
+    async def test_usage_cache_tokens_none_normalized_to_zero(self) -> None:
+        """Regression test: None-valued cache fields must not raise Pydantic.
+
+        ChatUsage is a plain dataclass that does not enforce int annotations at
+        runtime. Adapters copy optional SDK fields with getattr(x, 0),
+        which can still return None when the attribute exists but is null.
+        None-valued cache fields must be normalized to zero before
+        entering any Pydantic model.
+        """
+        usage_with_none_cache = ChatUsage(
+            input_tokens=10,
+            output_tokens=5,
+            time=0.1,
+        )
+        # Manually assign None to the two cache fields (dataclass will not
+        # complain at runtime because there is no runtime type check).
+        usage_with_none_cache.cache_input_tokens = None
+        usage_with_none_cache.cache_creation_input_tokens = None
+
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hi")],
+                    is_last=True,
+                    usage=usage_with_none_cache,
+                ),
+            ],
+        )
+
+        end_events = []
+        # Must not raise Pydantic ValidationError; reply completes cleanly.
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hello"),
+        ):
+            if event.type == "MODEL_CALL_END":
+                end_events.append(event)
+
+        self.assertEqual(len(end_events), 1)
+        self.assertEqual(
+            end_events[0].model_dump(),
+            {
+                **self._get_event_base(self.agent.state.reply_id),
+                "type": "MODEL_CALL_END",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                # None must be normalized to 0.
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+        )
+
+        assistant_msgs = [
+            msg for msg in self.agent.state.context if msg.role == "assistant"
+        ]
+        self.assertEqual(len(assistant_msgs), 1)
+        usage = assistant_msgs[0].usage
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        # None from dataclass must also be normalized to 0 in Msg.usage.
+        self.assertEqual(
+            usage.model_dump(),
+            {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        )
+
+    async def test_usage_cache_tokens_in_reply_return(self) -> None:
+        """Regression test: Agent.reply() result must keep the cache tokens.
+
+        ``final_usage`` is rebuilt from the saved context message when
+        returning the final ``AssistantMsg``. It must copy both cache
+        fields, otherwise the returned message silently reports zeros even
+        though the saved context carried the correct values.
+        """
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hello world!")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=20,
+                        time=0.5,
+                        cache_input_tokens=60,
+                        cache_creation_input_tokens=40,
+                    ),
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Hi"))
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cache_input_tokens": 60,
+                    "cache_creation_input_tokens": 40,
+                },
+            },
+        )
 
     async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:
         """A tool round consumes one iteration before final reasoning."""

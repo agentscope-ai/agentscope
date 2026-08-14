@@ -1600,9 +1600,9 @@ class Agent:
             reply_id=self.state.reply_id,
             input_tokens=usage.input_tokens if usage else 0,
             output_tokens=usage.output_tokens if usage else 0,
-            cache_input_tokens=usage.cache_input_tokens if usage else 0,
+            cache_input_tokens=(usage.cache_input_tokens or 0) if usage else 0,
             cache_creation_input_tokens=(
-                usage.cache_creation_input_tokens if usage else 0
+                (usage.cache_creation_input_tokens or 0) if usage else 0
             ),
             finished_reason=completed_response.finished_reason,
         )
@@ -1634,6 +1634,12 @@ class Agent:
                 Usage(
                     input_tokens=last_ctx.usage.input_tokens,
                     output_tokens=last_ctx.usage.output_tokens,
+                    cache_input_tokens=(
+                        last_ctx.usage.cache_input_tokens or 0
+                    ),
+                    cache_creation_input_tokens=(
+                        last_ctx.usage.cache_creation_input_tokens or 0
+                    ),
                 )
                 if last_ctx is not None and last_ctx.usage is not None
                 else None
@@ -3190,8 +3196,10 @@ class Agent:
             Usage(
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
-                cache_input_tokens=usage.cache_input_tokens,
-                cache_creation_input_tokens=usage.cache_creation_input_tokens,
+                cache_input_tokens=usage.cache_input_tokens or 0,
+                cache_creation_input_tokens=(
+                    usage.cache_creation_input_tokens or 0
+                ),
             )
             if usage is not None
             else None
