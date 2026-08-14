@@ -394,8 +394,14 @@ class ToolResultEndEvent(EventBase):
     """Optional metadata attached to the tool result event."""
 
 
+@deprecated(
+    "ExceedMaxItersEvent is deprecated and will be removed; check the "
+    "'finished_reason' field of ReplyEndEvent against "
+    "ReplyFinishedReason.EXCEED_MAX_ITERS instead.",
+)
 class ExceedMaxItersEvent(EventBase):
-    """Exceeded max iteration event."""
+    """Deprecated exceeded max iteration event, still emitted for backward
+    compatibility without semantics; use ``ReplyEndEvent.finished_reason``."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""

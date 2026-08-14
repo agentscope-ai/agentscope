@@ -4,6 +4,7 @@ import asyncio
 import collections
 import inspect
 import re
+import warnings
 
 from asyncio import Queue
 from copy import deepcopy
@@ -210,6 +211,10 @@ class Agent:
         self._compress_context_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_compress_context")
         ]
+
+        # Set when a `ReplyEndEvent` escapes the reply middleware chain; the
+        # reply loop only exits after the event is delivered (not swallowed)
+        self._receive_reply_end: bool = False
 
     def _validate_configs(self) -> None:
         """Validate the config combinations that a single config class cannot
@@ -640,13 +645,15 @@ class Agent:
         | None = None,
         structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply entry point (maybe wrapped by middleware)."""
+        """Reply entry point (maybe wrapped by middleware). The reply loop
+        exits only after its ``ReplyEndEvent`` escapes the middleware chain,
+        so an ``on_reply`` middleware can swallow the event (receive it
+        without yielding) to force another reasoning-acting round."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(
+            agen = self._reply_impl(
                 inputs=inputs,
                 structured_schema=structured_schema,
-            ):
-                yield item
+            )
         else:
 
             async def execute_chain(
@@ -688,8 +695,15 @@ class Agent:
                     ):
                         yield item
 
-            async for item in execute_chain():
-                yield item
+            agen = execute_chain()
+
+        self._receive_reply_end = False
+        async for item in agen:
+            # Set before the yield: the suspended `_reply_impl` checks the
+            # flag once resumed by the next pull
+            if isinstance(item, ReplyEndEvent):
+                self._receive_reply_end = True
+            yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -756,7 +770,7 @@ class Agent:
                 ),
             )
 
-    async def _reply_impl(
+    async def _reply_impl(  # pylint: disable=too-many-branches
         self,
         inputs: Msg
         | list[Msg]
@@ -860,6 +874,9 @@ class Agent:
             #  or no more tool calls to execute
             # =================================================================
             final_msg: Msg | None = None
+            # Detects middlewares swallowing the ReplyEndEvent repeatedly
+            # without any reasoning/acting in between (a busy loop)
+            made_progress = True
             while True:
                 # =============================================================
                 # Step 3.1: Decide the next action based on the current state
@@ -868,13 +885,36 @@ class Agent:
 
                 match next_action:
                     case Exit(exit_msg=exit_msg, exit_events=exit_events):
-                        for exit_event in exit_events or []:
-                            yield exit_event
-                        if exit_msg:
+                        if not exit_events:
+                            # Parked on HITL: the reply is not finished, so
+                            # the continuation protocol doesn't apply
                             yield exit_msg
-                        return
+                            return
+
+                        for exit_event in exit_events:
+                            yield exit_event
+
+                        # Exit unless a middleware swallowed the ReplyEndEvent
+                        # to force another reasoning-acting round
+                        if self._receive_reply_end:
+                            yield exit_msg
+                            return
+
+                        if not made_progress:
+                            raise RuntimeError(
+                                "A middleware swallowed the ReplyEndEvent "
+                                "twice without any reasoning/acting in "
+                                "between. Unblock the next round (e.g. "
+                                "adjust 'cur_iter', 'max_iters' or the "
+                                "structured output state) before swallowing "
+                                "the event again.",
+                            )
+                        made_progress = False
+                        final_msg = None
+                        continue
 
                     case Reasoning(hint=hint, tool_choice=tool_choice):
+                        made_progress = True
                         final_msg = None
                         if hint:
                             self.state.append_context(self.name, [hint])
@@ -916,6 +956,7 @@ class Agent:
                             return
 
                     case Acting(tool_calls=tool_calls):
+                        made_progress = True
                         for batch in await self._batch_tool_calls(tool_calls):
                             if batch.type == "sequential":
                                 evt_generator = (
@@ -3141,12 +3182,17 @@ class Agent:
                 >= self.react_config.max_iters
                 + self.react_config.structured_output_grace_iters
             ):
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exceed_event = ExceedMaxItersEvent(
+                        reply_id=self.state.reply_id,
+                        name=self.name,
+                    )
                 return Exit(
                     exit_events=[
-                        ExceedMaxItersEvent(
-                            reply_id=self.state.reply_id,
-                            name=self.name,
-                        ),
+                        exceed_event,
                         ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
@@ -3220,12 +3266,17 @@ class Agent:
                 self.react_config.max_iters,
             )
 
+            # Deprecated but still emitted for backward compatibility;
+            # suppressed since the warning targets consumers
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                exceed_event = ExceedMaxItersEvent(
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
             return Exit(
                 exit_events=[
-                    ExceedMaxItersEvent(
-                        reply_id=self.state.reply_id,
-                        name=self.name,
-                    ),
+                    exceed_event,
                     ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,
