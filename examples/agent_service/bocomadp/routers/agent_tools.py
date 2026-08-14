@@ -3,9 +3,9 @@
 
 Endpoints
 ---------
-``GET    /api/agents/{agent_id}/tools``           — list tools with status
-``PUT    /api/agents/{agent_id}/tools/{name}``    — enable a tool
-``DELETE /api/agents/{agent_id}/tools/{name}``    — disable a tool
+``GET    /agents/{agent_id}/tools``           — list tools with status
+``PUT    /agents/{agent_id}/tools/{name}``    — enable a tool
+``DELETE /agents/{agent_id}/tools/{name}``    — disable a tool
 
 Tool sources (matching the full ``get_toolkit()`` assembly):
 
@@ -42,7 +42,7 @@ from agentscope.app.deps import get_current_user_id
 logger = logging.getLogger("bocomadp.agent_tools")
 
 agent_tools_router = APIRouter(
-    prefix="/api/agents",
+    prefix="/agents",
     tags=["agent-tools"],
 )
 
@@ -242,7 +242,7 @@ def _all_tool_names(request: Request) -> set[str]:
 
 
 # ------------------------------------------------------------------
-# GET /api/agents/{agent_id}/tools
+# GET /agents/{agent_id}/tools
 # ------------------------------------------------------------------
 
 
@@ -329,7 +329,7 @@ async def list_agent_tools(
 
 
 # ------------------------------------------------------------------
-# PUT /api/agents/{agent_id}/tools/{tool_name}   — enable
+# PUT /agents/{agent_id}/tools/{tool_name}   — enable
 # ------------------------------------------------------------------
 
 
@@ -371,7 +371,7 @@ async def enable_agent_tool(
 
 
 # ------------------------------------------------------------------
-# DELETE /api/agents/{agent_id}/tools/{tool_name}   — disable
+# DELETE /agents/{agent_id}/tools/{tool_name}   — disable
 # ------------------------------------------------------------------
 
 

@@ -82,7 +82,7 @@ _current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 _AGENT_API = "http://localhost:8000/agent"
 
 # Tool-config API base — the per-agent tool whitelist endpoints.
-_TOOLS_API = "http://localhost:8000/api/agents"
+_TOOLS_API = "http://localhost:8000/agents"
 
 # Session API base — used to ensure a target agent has a session before
 # skill operations (skill endpoints resolve the workspace via session).

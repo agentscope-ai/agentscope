@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Models router — model listing + active model switching.
 
-GET  /api/models         — list all available models
-POST /api/models/active   — switch the active model
+GET  /models         — list all available models
+POST /models/active   — switch the active model
 
 This router exposes the :class:`ProviderManager` to the frontend.
 The built-in AgentScope ``create_app`` already has a model router
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-models_router = APIRouter(prefix="/api/models", tags=["models"])
+models_router = APIRouter(prefix="/models", tags=["models"])
 
 
 class SetActiveModelRequest(BaseModel):
