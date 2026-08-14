@@ -145,7 +145,7 @@ async def _api(
         "guwpToken": _current_token.get(),
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             resp = await client.request(
                 method,
                 url,
@@ -453,9 +453,12 @@ async def _get_or_create_session(agent_id: str) -> tuple[str, str]:
     Returns:
         ``(session_id, error)`` — exactly one of the two is non-empty.
     """
+    # 注意尾斜杠：框架路由定义 GET "/"（/sessions/），请求无尾斜杠的
+    # /sessions 会触发 307 重定向；虽然 _api 已开启 follow_redirects，
+    # 这里仍显式带上尾斜杠，避免依赖重定向语义。
     result = await _api(
         "GET",
-        f"?agent_id={urllib.parse.quote(agent_id)}",
+        f"/?agent_id={urllib.parse.quote(agent_id)}",
         base=_SESSIONS_API,
     )
     if isinstance(result, str):
