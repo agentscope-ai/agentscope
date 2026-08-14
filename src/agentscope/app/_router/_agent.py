@@ -471,7 +471,8 @@ class SetTeamConfigRequest(BaseModel):
 
     member_ids may reference existing agents (self-built or invited). The
     leader's ``parent_agent_id`` backlinks of referenced self-built members
-    are reconciled automatically.
+    are reconciled automatically; invited-by-reference members are never
+    re-stamped.
     """
 
     collaboration_mode: Literal["free_handoff", "workflow"] = "free_handoff"
@@ -583,11 +584,13 @@ async def set_team_config(
 ) -> TeamConfigResponse:
     """Replace the leader's team configuration wholesale.
 
-    Reconciles ``parent_agent_id`` backlinks: each member whose id is in
-    ``member_ids`` and is owned by the caller gets its ``parent_agent_id``
-    set to this leader (establishing a self-built membership); members
-    removed from the list have their backlink cleared (invited members are
-    never deleted, only unlinked). Honors ``max_members``.
+    Reconciles ``parent_agent_id`` backlinks for self-built members only:
+    removing a self-built member from the list clears its backlink.
+    Invited-by-reference members (``parent_agent_id`` is None or points at
+    another leader) are never re-stamped — re-stamping would silently
+    "promote" an invited member into a self-built one, flipping
+    ``is_self_built`` to true and making a later removal cascade-delete a
+    foreign-owned agent. Honors ``max_members``.
     """
     owner_id, agent = await access.resolve_for_edit(
         user_id,
@@ -600,13 +603,16 @@ async def set_team_config(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"member_ids exceeds max_members={body.max_members}.",
         )
-    # Reconcile self-built backlinks.
+    # Reconcile self-built backlinks. Only members whose parent_agent_id
+    # already points at this leader are touched: keeping a self-built
+    # member in the list leaves the backlink intact, removing it clears
+    # the backlink. Members with a None (or foreign) parent_agent_id are
+    # never re-stamped — otherwise a wholesale replace would "promote" an
+    # invited member into a self-built one (flipping is_self_built to true
+    # and arming the cascade delete on removal).
     all_agents = await storage.list_agents(owner_id)
     for m in all_agents:
-        if m.id in body.member_ids and m.data.parent_agent_id != agent_id:
-            m.data.parent_agent_id = agent_id
-            await storage.upsert_agent(owner_id, m)
-        elif (
+        if (
             m.data.parent_agent_id == agent_id
             and m.id not in body.member_ids
         ):

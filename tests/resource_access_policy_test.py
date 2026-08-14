@@ -22,6 +22,7 @@ from agentscope.app.storage import (
     EmbeddingModelConfig,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
+    TeamConfig,
 )
 from agentscope.app.storage import StorageBase
 from agentscope.agent import ContextConfig, ReActConfig
@@ -118,6 +119,29 @@ class _FakeStorage:
                 source="team",
                 data=_make_agent_data("Own team"),
             ),
+            ("team-owner", "team-leader"): AgentRecord(
+                id="team-leader",
+                user_id="team-owner",
+                data=_make_agent_data(
+                    "Team Leader",
+                    team_config=TeamConfig(
+                        member_ids=["self-built", "invited-a"],
+                    ),
+                ),
+            ),
+            ("team-owner", "self-built"): AgentRecord(
+                id="self-built",
+                user_id="team-owner",
+                data=_make_agent_data(
+                    "Self Built",
+                    parent_agent_id="team-leader",
+                ),
+            ),
+            ("team-owner", "invited-a"): AgentRecord(
+                id="invited-a",
+                user_id="team-owner",
+                data=_make_agent_data("Invited A"),
+            ),
         }
         self.knowledge_bases: dict[tuple[str, str], KnowledgeBaseRecord] = {
             ("viewer", "kb-1"): KnowledgeBaseRecord(
@@ -182,13 +206,19 @@ class _FakeStorage:
         return self.knowledge_bases.get((user_id, knowledge_base_id))
 
 
-def _make_agent_data(name: str) -> AgentData:
+def _make_agent_data(
+    name: str,
+    parent_agent_id: str | None = None,
+    team_config: TeamConfig | None = None,
+) -> AgentData:
     """Create valid agent data for tests."""
     return AgentData(
         name=name,
         system_prompt="You are a helpful assistant.",
         context_config=ContextConfig(),
         react_config=ReActConfig(),
+        parent_agent_id=parent_agent_id,
+        team_config=team_config,
     )
 
 
@@ -387,6 +417,92 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
                     "updated_at": AnyValue(),
                     "data": AnyValue(),
                     "editable": False,
+                    "is_team": False,
+                    "parent_agent_id": None,
+                    # Top-level listings carry no team-origin context.
+                    "is_self_built": None,
+                },
+            ],
+        )
+
+    async def test_list_team_members_marks_self_built_vs_invited(self) -> None:
+        """Team member listings should merge invited members with origin.
+
+        ``GET /agent/?parent_agent_id=<leader>`` must return both the
+        self-built members (``parent_agent_id`` backlink) and the
+        invited-by-reference members (present in the leader's
+        ``team_config.member_ids`` without a backlink), flagging each via
+        ``is_self_built`` so the frontend can freeze invited configs.
+        """
+        views = await self.service.list_resource(
+            "team-owner",
+            ResourceKind.AGENT,
+            parent_agent_id="team-leader",
+        )
+
+        self.assertEqual(
+            [v.model_dump() for v in views],
+            [
+                {
+                    "id": "self-built",
+                    "user_id": "team-owner",
+                    "source": "user",
+                    "created_at": AnyValue(),
+                    "updated_at": AnyValue(),
+                    "data": AnyValue(),
+                    "editable": True,
+                    "is_team": False,
+                    "parent_agent_id": "team-leader",
+                    "is_self_built": True,
+                },
+                {
+                    "id": "invited-a",
+                    "user_id": "team-owner",
+                    "source": "user",
+                    "created_at": AnyValue(),
+                    "updated_at": AnyValue(),
+                    "data": AnyValue(),
+                    "editable": True,
+                    "is_team": False,
+                    "parent_agent_id": None,
+                    "is_self_built": False,
+                },
+            ],
+        )
+
+    async def test_top_level_list_hides_self_built_members(self) -> None:
+        """Top-level listings should still hide self-built team members."""
+        views = await self.service.list_resource(
+            "team-owner",
+            ResourceKind.AGENT,
+        )
+
+        self.assertEqual(
+            [v.model_dump() for v in views],
+            [
+                {
+                    "id": "team-leader",
+                    "user_id": "team-owner",
+                    "source": "user",
+                    "created_at": AnyValue(),
+                    "updated_at": AnyValue(),
+                    "data": AnyValue(),
+                    "editable": True,
+                    "is_team": True,
+                    "parent_agent_id": None,
+                    "is_self_built": None,
+                },
+                {
+                    "id": "invited-a",
+                    "user_id": "team-owner",
+                    "source": "user",
+                    "created_at": AnyValue(),
+                    "updated_at": AnyValue(),
+                    "data": AnyValue(),
+                    "editable": True,
+                    "is_team": False,
+                    "parent_agent_id": None,
+                    "is_self_built": None,
                 },
             ],
         )
