@@ -57,8 +57,10 @@ from bocomadp.config import (
     load_models_from_yaml,
     build_model_instance,
 )
+from bocomadp.concurrency.guard import ConcurrencyGuard
 from bocomadp.logging.logging_config import configure_logging
 from bocomadp.logging.trace_middleware import TraceMiddleware
+from bocomadp.middleware.concurrency_guard import ConcurrencyGuardMiddleware
 from bocomadp.middleware.error_handler import ErrorHandlingMiddleware
 from bocomadp.middleware.ellm_refresh import build_ellm_refresh_middleware
 from bocomadp.middleware.factory import build_enterprise_middlewares
@@ -293,7 +295,26 @@ else:
         default_mcps=build_default_mcps(),
     )
 
+# 并发控制仅在生产 Redis 模式生效(InMemory 本地/测试模式零日志噪声)
+from agentscope.app.message_bus import RedisMessageBus as _RedisMessageBus
+
+_concurrency_active = isinstance(message_bus, _RedisMessageBus)
+
 runtime.workspace_manager = workspace_manager
+
+# ---------------------------------------------------------------------------
+# 4.5 /chat 并发控制:Redis 原子占位 + 注册表 + 入口对账
+# ---------------------------------------------------------------------------
+# Redis 客户端惰性获取:连接池由框架 lifespan 进入 message_bus 时创建,
+# get_client() 在进入前不可用,中间件运行期调用,失败即 fail-open。
+def _get_redis_client():
+    return message_bus.get_client()
+
+concurrency_guard = ConcurrencyGuard(
+    _get_redis_client,
+    max_running=config.run_concurrency.max_running,
+    max_running_per_user=config.run_concurrency.max_running_per_user,
+)
 
 # ---------------------------------------------------------------------------
 # 5. 构建 App —— create_app 自动注册 12 个内置路由
@@ -302,7 +323,7 @@ trace_enabled = is_trace_correlation_enabled(config)
 
 
 def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
-    """构建 ASGI 中间件栈（由内到外）。"""
+    """构建 ASGI 中间件栈(先注册者最外层)。"""
     return [
         Middleware(TraceMiddleware, enabled=trace_enabled),
         Middleware(AccessLogMiddleware, skip_paths=("/healthz", "/readyz")),
@@ -312,6 +333,17 @@ def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
             allow_origins=["*"],
             allow_methods=["*"],
             allow_headers=["*"],
+        ),
+        Middleware(
+            ConcurrencyGuardMiddleware,
+            guard=concurrency_guard,
+            grace_secs=config.run_concurrency.grace_secs,
+            enabled=config.run_concurrency.enabled
+            and (
+                config.run_concurrency.max_running > 0
+                or config.run_concurrency.max_running_per_user > 0
+            )
+            and _concurrency_active,
         ),
     ]
 
