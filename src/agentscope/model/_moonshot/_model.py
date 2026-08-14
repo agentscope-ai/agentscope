@@ -281,6 +281,14 @@ class MoonshotChatModel(ChatModelBase):
                     )
 
                 if not chunk.choices:
+                    # MoonShot emits a trailing usage-only chunk with no
+                    # choices; forward it as an empty-content delta so the
+                    # base class ``__call__`` can absorb ``usage`` into
+                    # ``acc_res``. The empty delta itself is filtered out
+                    # of the surfaced stream by ``_stream``.
+                    if usage is not None:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
