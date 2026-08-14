@@ -20,15 +20,77 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentscope.workspace import WorkspaceBase
 
-class _WhitelistWorkspaceProxy:
-    """Delegating workspace proxy filtering ``list_mcps`` per agent."""
+
+class _WhitelistWorkspaceProxy(WorkspaceBase):
+    """Delegating workspace proxy filtering ``list_mcps`` per agent.
+
+    必须继承 :class:`WorkspaceBase`：框架 ``Agent._get_system_prompt``
+    用 ``isinstance(self.offloader, WorkspaceBase)`` 判断是否把工作区
+    instructions（workspace 提示词）追加进系统提示词——普通委托类不满足
+    该检查，会导致 workspace 提示词被静默丢弃。抽象方法全部委托给
+    真实工作区，行为不变。
+    """
 
     def __init__(self, workspace: Any, agent_id: str) -> None:
         # ``object.__setattr__`` keeps ``__setattr__`` default so the
         # proxy stays inert; ``__getattr__`` below only fires on miss.
+        # 不调用 ``super().__init__``：避免在代理上生成 workspace_id /
+        # workdir 等真实属性，使这些属性仍经 ``__getattr__`` 委托。
         object.__setattr__(self, "_workspace", workspace)
         object.__setattr__(self, "_agent_id", agent_id)
+
+    # ── WorkspaceBase 抽象方法：全部委托给真实工作区 ────────────
+
+    async def initialize(self) -> None:
+        return await self._workspace.initialize()
+
+    async def close(self) -> None:
+        return await self._workspace.close()
+
+    def get_backend(self) -> Any:
+        return self._workspace.get_backend()
+
+    async def get_instructions(self) -> str:
+        return await self._workspace.get_instructions()
+
+    async def add_mcp(self, mcp_client: Any) -> None:
+        return await self._workspace.add_mcp(mcp_client)
+
+    async def remove_mcp(self, name: str) -> None:
+        return await self._workspace.remove_mcp(name)
+
+    # ── WorkspaceBase 已实现方法：显式转发，保持与真实工作区一致 ──
+    # 继承后这些方法默认走基类实现，会绕开 LocalWorkspace 等子类
+    # 的覆写（如 hash 索引的 list_skills、PowerShell 的 list_tools），
+    # 因此逐一转发到被代理的工作区。
+
+    async def reset(self) -> None:
+        return await self._workspace.reset()
+
+    async def list_tools(self) -> list:
+        return await self._workspace.list_tools()
+
+    async def list_skills(self) -> list:
+        return await self._workspace.list_skills()
+
+    async def add_skill(self, skill_path: str) -> None:
+        return await self._workspace.add_skill(skill_path)
+
+    async def add_skill_archive(self, *args: Any, **kwargs: Any) -> None:
+        return await self._workspace.add_skill_archive(*args, **kwargs)
+
+    async def remove_skill(self, name: str) -> None:
+        return await self._workspace.remove_skill(name)
+
+    async def offload_context(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._workspace.offload_context(*args, **kwargs)
+
+    async def offload_tool_result(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._workspace.offload_tool_result(*args, **kwargs)
+
+    # ── 代理特有：按智能体白名单过滤 MCP ────────────────────────
 
     async def list_mcps(self) -> list:
         """Return MCPs allowed by the per-agent tool whitelist.
