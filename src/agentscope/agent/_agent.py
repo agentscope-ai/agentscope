@@ -107,6 +107,15 @@ if TYPE_CHECKING:
 else:
     MiddlewareBase = Any
 
+_MAX_TOKENS_HINT = (
+    "The model response was truncated because it reached the maximum output "
+    "token limit. Increase max_tokens or ask the model to continue."
+)
+_MAX_TOKENS_TOOL_RESULT = (
+    "<system-reminder>The model reached its maximum output token limit before "
+    "the tool call completed. The tool was not executed.</system-reminder>"
+)
+
 
 class Agent:
     """The agent class."""
@@ -693,12 +702,21 @@ class Agent:
 
     async def _close_unfinished_tool_calls(
         self,
+        message: str | None = None,
+        result_state: ToolResultState = ToolResultState.INTERRUPTED,
     ) -> AsyncGenerator[
         ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
         None,
     ]:
-        """Close the unfinished tool calls on interruption, so the next
-        input will be handled normally."""
+        """Close unfinished tool calls with a synthetic terminal result.
+
+        Args:
+            message (`str | None`, defaults to `None`):
+                The synthetic tool result message. Defaults to the user
+                interruption message.
+            result_state (`ToolResultState`, defaults to `INTERRUPTED`):
+                The terminal state assigned to the synthetic tool result.
+        """
         if not self.state.context:
             return
 
@@ -715,7 +733,7 @@ class Agent:
             elif isinstance(block, ToolResultBlock):
                 awaiting_tool_calls.pop(block.id, None)
 
-        interruption_message = (
+        message = message or (
             "<system-reminder>The tool call has been interrupted by "
             "the user.</system-reminder>"
         )
@@ -740,21 +758,70 @@ class Agent:
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
-                delta=interruption_message,
+                delta=message,
             )
             yield ToolResultEndEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
-                state=ToolResultState.INTERRUPTED,
+                state=result_state,
             )
             last_msg.content.append(
                 ToolResultBlock(
                     id=last_msg.content[index].id,
                     name=last_msg.content[index].name,
-                    output=interruption_message,
-                    state=ToolResultState.INTERRUPTED,
+                    output=message,
+                    state=result_state,
                 ),
             )
+
+    async def _handle_model_termination(
+        self,
+        finished_reason: FinishedReason,
+        metadata: dict[str, Any],
+    ) -> tuple[list[AgentEvent], ReplyEndEvent | None, Msg | None]:
+        """Build the reply outcome for a terminal model response."""
+        if finished_reason == FinishedReason.COMPLETED:
+            return [], None, None
+
+        terminal_events: list[AgentEvent] = []
+        terminal_msg: Msg | None = None
+        reply_reason = ReplyFinishedReason(finished_reason.value)
+
+        if finished_reason == FinishedReason.MAX_TOKENS:
+            terminal_events = [
+                evt
+                async for evt in self._close_unfinished_tool_calls(
+                    message=_MAX_TOKENS_TOOL_RESULT,
+                    result_state=ToolResultState.ERROR,
+                )
+            ]
+
+            last_ctx = self._get_last_msg()
+            terminal_msg = AssistantMsg(
+                id=self.state.reply_id,
+                name=self.name,
+                content=(
+                    deepcopy(last_ctx.content)
+                    if last_ctx is not None
+                    else _MAX_TOKENS_HINT
+                ),
+                usage=(
+                    deepcopy(last_ctx.usage) if last_ctx is not None else None
+                ),
+                metadata=metadata,
+                finished_reason=ReplyFinishedReason.MAX_TOKENS,
+            )
+
+        return (
+            terminal_events,
+            ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id=self.state.reply_id,
+                finished_reason=reply_reason,
+                metadata=metadata,
+            ),
+            terminal_msg,
+        )
 
     async def _reply_impl(
         self,
@@ -769,6 +836,7 @@ class Agent:
         """Core reply logic."""
 
         end_event: ReplyEndEvent | None = None
+        terminal_msg: Msg | None = None
         try:
             # Dispatch the unified inputs by type into the legacy local
             # variables
@@ -887,7 +955,8 @@ class Agent:
                             yield evt
 
                         # Perform reasoning
-                        interrupted = False
+                        model_finished_reason = FinishedReason.COMPLETED
+                        model_finished_metadata: dict[str, Any] = {}
                         async for evt in self._reasoning(
                             tool_choice=tool_choice,
                         ):
@@ -898,21 +967,26 @@ class Agent:
                                 continue
 
                             if isinstance(evt, ModelCallEndEvent):
-                                interrupted = (
-                                    evt.finished_reason
-                                    == FinishedReason.INTERRUPTED
+                                model_finished_reason = FinishedReason(
+                                    evt.finished_reason,
+                                )
+                                model_finished_metadata = deepcopy(
+                                    evt.metadata,
                                 )
 
                             yield evt
 
-                        if interrupted:
-                            end_event = ReplyEndEvent(
-                                session_id=self.state.session_id,
-                                reply_id=self.state.reply_id,
-                                finished_reason=(
-                                    ReplyFinishedReason.INTERRUPTED
-                                ),
-                            )
+                        (
+                            termination_events,
+                            end_event,
+                            terminal_msg,
+                        ) = await self._handle_model_termination(
+                            model_finished_reason,
+                            model_finished_metadata,
+                        )
+                        for termination_event in termination_events:
+                            yield termination_event
+                        if end_event is not None:
                             return
 
                     case Acting(tool_calls=tool_calls):
@@ -1002,14 +1076,13 @@ class Agent:
 
                 yield end_event
 
-                if interrupted_end:
-                    # The fallback msg goes last: Msg terminates the stream
-                    yield AssistantMsg(
-                        id=self.state.reply_id,
-                        name=self.name,
-                        content=self.react_config.interruption_message,
-                        finished_reason=ReplyFinishedReason.INTERRUPTED,
-                    )
+                # The fallback msg goes last: Msg terminates the stream.
+                yield terminal_msg or AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content=self.react_config.interruption_message,
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
+                )
 
     async def _inject_runtime_state(
         self,
@@ -1421,12 +1494,27 @@ class Agent:
             if completed_response.usage
             else 0,
             finished_reason=completed_response.finished_reason,
+            metadata=deepcopy(completed_response.metadata),
         )
 
         self._save_to_context(
             list(completed_response.content),
             completed_response.usage,
         )
+
+        if completed_response.finished_reason == FinishedReason.MAX_TOKENS:
+            hint = HintBlock(
+                source="system",
+                hint=_MAX_TOKENS_HINT,
+            )
+            self.state.append_context(self.name, [hint])
+            yield HintBlockEvent(
+                reply_id=self.state.reply_id,
+                block_id=hint.id,
+                source=hint.source,
+                hint=hint.hint,
+            )
+            return
 
         # A thinking-only response is an intermediate reasoning step rather
         # than a user-visible final answer. Keep the ReAct loop running so the

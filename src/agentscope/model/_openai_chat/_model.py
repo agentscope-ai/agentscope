@@ -13,6 +13,7 @@ from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
+from .._utils import _parse_provider_finished_reason
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
@@ -362,6 +363,15 @@ class OpenAIChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                (
+                    finished_reason,
+                    reason_metadata,
+                ) = _parse_provider_finished_reason(
+                    getattr(choice, "finish_reason", None),
+                    {"length"},
+                )
+                delta_res.finished_reason = finished_reason
+                delta_res.metadata.update(reason_metadata)
                 delta = choice.delta
 
                 # Thinking
@@ -443,7 +453,7 @@ class OpenAIChatModel(ChatModelBase):
                         input=delta_args or "",
                     )
 
-                if delta_res.content or usage:
+                if delta_res.content or usage or reason_metadata:
                     delta_res.usage = usage
                     yield delta_res
 
@@ -471,9 +481,17 @@ class OpenAIChatModel(ChatModelBase):
         content_blocks: List[
             TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
         ] = []
+        finished_reason, reason_metadata = _parse_provider_finished_reason(
+            None,
+            {"length"},
+        )
 
         if response.choices:
             choice = response.choices[0]
+            finished_reason, reason_metadata = _parse_provider_finished_reason(
+                getattr(choice, "finish_reason", None),
+                {"length"},
+            )
             reasoning = getattr(choice.message, "reasoning_content", None)
             if not isinstance(reasoning, str):
                 reasoning = getattr(choice.message, "reasoning", None)
@@ -537,6 +555,8 @@ class OpenAIChatModel(ChatModelBase):
             "content": content_blocks,
             "is_last": True,
             "usage": usage,
+            "finished_reason": finished_reason,
+            "metadata": reason_metadata,
         }
         response_id = getattr(response, "id", None)
         if response_id:

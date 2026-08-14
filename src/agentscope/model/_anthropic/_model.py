@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
+from .._utils import _parse_provider_finished_reason
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
 from ...formatter import FormatterBase, AnthropicChatFormatter
@@ -293,6 +294,10 @@ class AnthropicChatModel(ChatModelBase):
                 the extracted content blocks and usage.
         """
         content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
+        finished_reason, reason_metadata = _parse_provider_finished_reason(
+            getattr(response, "stop_reason", None),
+            {"max_tokens"},
+        )
 
         if hasattr(response, "content") and response.content:
             for content_block in response.content:
@@ -374,6 +379,8 @@ class AnthropicChatModel(ChatModelBase):
             "content": content_blocks,
             "is_last": True,
             "usage": usage,
+            "finished_reason": finished_reason,
+            "metadata": reason_metadata,
         }
         response_id = getattr(response, "id", None)
         if response_id:
@@ -502,7 +509,21 @@ class AnthropicChatModel(ChatModelBase):
                 if event.usage and usage:
                     usage.output_tokens = event.usage.output_tokens
 
-            if delta_res.content:
+                (
+                    finished_reason,
+                    reason_metadata,
+                ) = _parse_provider_finished_reason(
+                    getattr(event.delta, "stop_reason", None),
+                    {"max_tokens"},
+                )
+                delta_res.finished_reason = finished_reason
+                delta_res.metadata.update(reason_metadata)
+
+            if (
+                delta_res.content
+                or delta_res.metadata
+                or (event.type == "message_delta" and usage)
+            ):
                 delta_res.usage = usage
                 yield delta_res
 

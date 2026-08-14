@@ -472,5 +472,23 @@ class ChatResponseAppendTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_append_chat_response_terminal_metadata(self) -> None:
+        """Terminal reason and metadata are copied from carrier deltas."""
+        acc = ChatResponse(content=[], is_last=True)
+        acc.append_chat_response(
+            ChatResponse(
+                content=[],
+                is_last=False,
+                finished_reason=FinishedReason.MAX_TOKENS,
+                metadata={"provider_finished_reason": "length"},
+            ),
+        )
+
+        self.assertEqual(acc.finished_reason, FinishedReason.MAX_TOKENS)
+        self.assertEqual(
+            acc.metadata,
+            {"provider_finished_reason": "length"},
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import XAIChatModel
+from agentscope.model import FinishedReason, XAIChatModel
 from agentscope.credential import XAICredential
 from agentscope.tool import ToolChoice
 
@@ -125,6 +125,7 @@ def _mock_completion(
     reasoning: str = "",
     tool_calls: list | None = None,
     response_id: str = "xai-resp-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock xAI non-streaming response."""
     resp = MagicMock()
@@ -133,6 +134,7 @@ def _mock_completion(
     resp.reasoning_content = reasoning
     resp.tool_calls = None
     resp.usage = None
+    resp.finish_reason = finish_reason
 
     if tool_calls:
         tc_mocks = []
@@ -661,3 +663,52 @@ class TestXAIFormatTools(unittest.TestCase):
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0].name, "get_weather")
         self.assertEqual(fmt_choice, "auto")
+
+
+class TestXAIFinishedReason(IsolatedAsyncioTestCase):
+    """Tests for xAI token-limit termination propagation."""
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_non_stream_max_tokens(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream MAX_TOKENS is normalized."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(
+                text="partial",
+                finish_reason="MAX_TOKENS",
+            ),
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        response = await _make_model(stream=False)([])
+
+        self.assertEqual(response.finished_reason, FinishedReason.MAX_TOKENS)
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_stream_max_tokens(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream MAX_TOKENS is carried into the final response."""
+        final_response = _mock_completion(
+            text="partial",
+            finish_reason="MAX_TOKENS",
+        )
+        stream_items = [
+            (final_response, _MockStreamChunk(content="partial")),
+        ]
+        mock_client_cls.return_value.chat.create.return_value = (
+            _MockChatStream(stream_items=stream_items)
+        )
+        mock_client_cls.return_value.close = AsyncMock()
+
+        stream = await _make_model(stream=True)([])
+        responses = [item async for item in stream]
+
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )

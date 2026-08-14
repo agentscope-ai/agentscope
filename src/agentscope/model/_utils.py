@@ -16,6 +16,50 @@ from ..message import (
     ToolCallBlock,
     URLSource,
 )
+from ..types import JSONSerializableObject
+
+_PROVIDER_FINISHED_REASON_KEY = "provider_finished_reason"
+
+
+def _parse_provider_finished_reason(
+    raw_reason: Any,
+    max_tokens_reasons: set[str],
+) -> tuple[FinishedReason, dict[str, JSONSerializableObject]]:
+    """Normalize a provider-specific model finish reason.
+
+    Only explicit provider signals are mapped to ``MAX_TOKENS``. Unknown
+    reasons retain the existing ``COMPLETED`` behavior, while their raw value
+    is preserved in metadata for diagnostics.
+
+    Args:
+        raw_reason (`Any`):
+            The provider-specific finish reason value or enum.
+        max_tokens_reasons (`set[str]`):
+            Case-insensitive provider values that mean the output token limit
+            was reached.
+
+    Returns:
+        `tuple[FinishedReason, dict[str, JSONSerializableObject]]`:
+            The normalized reason and metadata carrying the raw provider
+            value when one exists.
+    """
+    if raw_reason is None:
+        return FinishedReason.COMPLETED, {}
+
+    value = getattr(raw_reason, "value", None)
+    if not isinstance(value, (str, int)):
+        value = getattr(raw_reason, "name", None)
+    if not isinstance(value, (str, int)):
+        value = raw_reason
+
+    reason = str(value)
+    metadata: dict[str, JSONSerializableObject] = {
+        _PROVIDER_FINISHED_REASON_KEY: reason,
+    }
+    normalized_max_tokens_reasons = {_.casefold() for _ in max_tokens_reasons}
+    if reason.casefold() in normalized_max_tokens_reasons:
+        return FinishedReason.MAX_TOKENS, metadata
+    return FinishedReason.COMPLETED, metadata
 
 
 class _AccTextBlock(TextBlock):
@@ -75,6 +119,7 @@ class _AccToolCallBlock(ToolCallBlock):
     field holds the incremental JSON fragments until they are joined in
     ``build``."""
 
+    name: str
     input: list[str] = Field(  # type: ignore[assignment]
         default_factory=list,
     )
@@ -221,6 +266,9 @@ class _StreamAccumulator:
         self.finished_reason: FinishedReason = FinishedReason.COMPLETED
         """The finished reason to report in ``build``."""
 
+        self.metadata: dict[str, Any] = {}
+        """Metadata accumulated from streaming carrier chunks."""
+
     def append_chat_response(self, chat_response: ChatResponse) -> Self:
         """Collect one delta chunk in constant time per block.
 
@@ -263,6 +311,12 @@ class _StreamAccumulator:
         if chat_response.usage:
             self.usage = chat_response.usage
 
+        if chat_response.finished_reason != FinishedReason.COMPLETED:
+            self.finished_reason = chat_response.finished_reason
+
+        if chat_response.metadata:
+            self.metadata.update(chat_response.metadata)
+
         return self
 
     def build(self) -> ChatResponse:
@@ -276,5 +330,6 @@ class _StreamAccumulator:
             is_last=True,
             usage=self.usage,
             finished_reason=self.finished_reason,
+            metadata=self.metadata,
             **kwargs,
         )

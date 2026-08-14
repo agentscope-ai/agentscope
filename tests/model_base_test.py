@@ -35,6 +35,7 @@ def _expected(
     is_last: bool,
     finished_reason: FinishedReason = FinishedReason.COMPLETED,
     usage: dict | None = None,
+    metadata: dict | None = None,
 ) -> dict:
     """Build the expected serialized ``ChatResponse`` dict, with
     ``AnyString`` placeholders for auto-generated fields (id,
@@ -50,7 +51,7 @@ def _expected(
         "type": "chat_response",
         "usage": usage,
         "finished_reason": finished_reason,
-        "metadata": {},
+        "metadata": metadata or {},
     }
 
 
@@ -1064,6 +1065,37 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                     },
                 ),
             ],
+        )
+
+    async def test_stream_finished_reason_carrier_is_accumulated(self) -> None:
+        """A content-free terminal reason carrier reaches the final chunk."""
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="partial", id="t1")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[],
+                        is_last=False,
+                        finished_reason=FinishedReason.MAX_TOKENS,
+                        metadata={"provider_finished_reason": "length"},
+                    ),
+                ],
+            ],
+        )
+
+        stream = await self.model(messages=self.messages)
+        responses = [response async for response in stream]
+
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )
+        self.assertEqual(
+            responses[-1].metadata,
+            {"provider_finished_reason": "length"},
         )
 
     async def asyncTearDown(self) -> None:

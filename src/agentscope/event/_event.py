@@ -107,6 +107,7 @@ class ReplyEndReason(StrEnum):
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
     EXCEED_MAX_ITERS = "exceed_max_iters"
+    MAX_TOKENS = "max_tokens"
 
 
 class ReplyEndEvent(EventBase):

@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import GeminiChatModel
+from agentscope.model import FinishedReason, GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
@@ -61,11 +61,13 @@ def _make_part(
 def _mock_completion(
     parts: list,
     response_id: str = "resp-gem-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming Gemini response."""
     resp = MagicMock()
     resp.response_id = response_id
     resp.candidates = [MagicMock()]
+    resp.candidates[0].finish_reason = finish_reason
     resp.candidates[0].content = MagicMock()
     resp.candidates[0].content.parts = parts
     resp.usage_metadata = MagicMock()
@@ -77,11 +79,13 @@ def _mock_completion(
 def _make_stream_chunk(
     parts: list,
     response_id: str = "resp-gem-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
     chunk.response_id = response_id
     chunk.candidates = [MagicMock()]
+    chunk.candidates[0].finish_reason = finish_reason
     chunk.candidates[0].content = MagicMock()
     chunk.candidates[0].content.parts = parts
     chunk.usage_metadata = MagicMock()
@@ -795,3 +799,40 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+class TestGeminiFinishedReason(IsolatedAsyncioTestCase):
+    """Tests for Gemini token-limit termination propagation."""
+
+    async def test_non_stream_and_stream_max_tokens(self) -> None:
+        """Both response modes map ``MAX_TOKENS`` explicitly."""
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion(
+                [_make_part(text="partial")],
+                finish_reason="MAX_TOKENS",
+            ),
+        )
+        response = await model([])
+        self.assertEqual(response.finished_reason, FinishedReason.MAX_TOKENS)
+
+        model = _make_model(stream=True)
+        model.client = MagicMock()
+        model.client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_MockAsyncStream(
+                [
+                    _make_stream_chunk([_make_part(text="partial")]),
+                    _make_stream_chunk(
+                        [],
+                        finish_reason="MAX_TOKENS",
+                    ),
+                ],
+            ),
+        )
+        stream = await model([])
+        responses = [item async for item in stream]
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )

@@ -1037,5 +1037,26 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             msg="Msg must not change when delta targets a missing block",
         )
 
+    async def test_reply_end_max_tokens_is_preserved(self) -> None:
+        """The additive max_tokens wire value round-trips into a Msg."""
+        msg = Msg(
+            id=_REPLY_ID,
+            name="assistant",
+            role="assistant",
+            content=[],
+        )
+        msg.append_event(
+            ReplyEndEvent(
+                reply_id=_REPLY_ID,
+                session_id=_SESSION_ID,
+                finished_reason=ReplyFinishedReason.MAX_TOKENS,
+            ),
+        )
+
+        self.assertEqual(
+            msg.finished_reason,
+            ReplyFinishedReason.MAX_TOKENS,
+        )
+
     async def asyncTearDown(self) -> None:
         """No teardown needed."""

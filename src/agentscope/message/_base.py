@@ -101,7 +101,7 @@ class Msg(BaseModel):
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
     finished_reason: ReplyFinishedReason | None = Field(default=None)
-    """Terminal reason of this reply (error / interrupted /
+    """Terminal reason of this reply (error / interrupted / max_tokens /
     exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
     structured_output: dict | None = Field(default=None)
     """The structured output of the reply. Populated only when a structured

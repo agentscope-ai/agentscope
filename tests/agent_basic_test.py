@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
-from agentscope.model import ChatResponse
+from agentscope.model import ChatResponse, FinishedReason
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -21,6 +21,7 @@ from agentscope.message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
+    ToolResultState,
     UserMsg,
 )
 from agentscope.types import ReplyFinishedReason
@@ -700,6 +701,65 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             tool_results[0].output[0].text,
             "Sequential result: x",
         )
+
+    async def test_max_tokens_returns_partial_response(self) -> None:
+        """A token-limited response is visible and explicitly terminal."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="partial answer")],
+                    is_last=True,
+                    finished_reason=FinishedReason.MAX_TOKENS,
+                    metadata={"provider_finished_reason": "length"},
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(
+            msg.finished_reason,
+            ReplyFinishedReason.MAX_TOKENS,
+        )
+        self.assertEqual(msg.get_text_content(), "partial answer")
+        self.assertEqual(
+            msg.metadata,
+            {"provider_finished_reason": "length"},
+        )
+        self.assertEqual(len(msg.get_content_blocks("hint")), 1)
+        self.assertEqual(self.model.cnt, 1)
+
+    async def test_max_tokens_does_not_execute_partial_tool_call(self) -> None:
+        """A truncated tool call is closed with an error, not executed."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tool_call_1",
+                            name="mock_sequential_tool",
+                            input='{"input": "x"',
+                        ),
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.MAX_TOKENS,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(
+            msg.finished_reason,
+            ReplyFinishedReason.MAX_TOKENS,
+        )
+        self.assertEqual(self.model.cnt, 1)
+        tool_calls = msg.get_content_blocks("tool_call")
+        tool_results = msg.get_content_blocks("tool_result")
+        self.assertEqual(tool_calls[0].state, "finished")
+        self.assertEqual(tool_results[0].state, ToolResultState.ERROR)
+        self.assertIn("was not executed", tool_results[0].output)
 
     async def test_thinking_only_response_continues_reasoning(self) -> None:
         """A thinking-only response should not end with an empty reply."""

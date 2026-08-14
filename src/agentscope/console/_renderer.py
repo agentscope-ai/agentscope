@@ -422,4 +422,12 @@ class ConsoleRenderer:
             self.console.print(
                 Text("⚠ Reply interrupted by the user.", style="yellow"),
             )
+        elif event.finished_reason == ReplyFinishedReason.MAX_TOKENS:
+            self.console.print(
+                Text(
+                    "⚠ Reply truncated because the model reached its "
+                    "maximum output token limit.",
+                    style="yellow",
+                ),
+            )
         self._debug_line(f"reply end · {event.finished_reason}")

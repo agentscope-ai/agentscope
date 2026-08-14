@@ -14,6 +14,8 @@ class ReplyFinishedReason(StrEnum):
     INTERRUPTED = "interrupted"
     EXCEED_MAX_ITERS = "exceed_max_iters"
     ERROR = "error"
+    MAX_TOKENS = "max_tokens"
+    """The model stopped because it reached its output token limit."""
 
 
 class ErrorType(StrEnum):

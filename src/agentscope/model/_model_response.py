@@ -28,6 +28,9 @@ class FinishedReason(StrEnum):
     COMPLETED = "completed"
     """The model response is completed."""
 
+    MAX_TOKENS = "max_tokens"
+    """The model stopped because it reached its output token limit."""
+
 
 @dataclass
 class ChatResponse(DictMixin):
@@ -314,6 +317,12 @@ class ChatResponse(DictMixin):
         # Override the chat usage
         if chat_response.usage:
             self.usage = chat_response.usage
+
+        if chat_response.finished_reason != FinishedReason.COMPLETED:
+            self.finished_reason = chat_response.finished_reason
+
+        if chat_response.metadata:
+            self.metadata.update(chat_response.metadata)
 
         return self
 

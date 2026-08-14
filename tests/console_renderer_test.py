@@ -307,3 +307,15 @@ class ConsoleRendererTest(TestCase):
             msg.finished_reason,
             ReplyFinishedReason.INTERRUPTED,
         )
+
+    def test_reply_end_max_tokens_always_warns(self) -> None:
+        """Token truncation is visible at the default verbosity."""
+        self.renderer.render(
+            ReplyEndEvent(
+                session_id="s",
+                reply_id=REPLY_ID,
+                finished_reason=ReplyFinishedReason.MAX_TOKENS,
+            ),
+        )
+
+        self.assertIn("maximum output token limit", self.output())

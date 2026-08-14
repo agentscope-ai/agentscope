@@ -20,7 +20,7 @@ from agentscope.message import (
     ThinkingBlock,
     DataBlock,
 )
-from agentscope.model import DashScopeChatModel
+from agentscope.model import DashScopeChatModel, FinishedReason
 from agentscope.credential import DashScopeCredential
 from agentscope.tool import ToolChoice
 
@@ -52,6 +52,7 @@ def _mock_completion(
     tool_calls: Any = None,
     reasoning: Any = None,
     response_id: str = "req-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
@@ -71,6 +72,7 @@ def _mock_completion(
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason
 
     resp = MagicMock()
     resp.id = response_id
@@ -90,6 +92,7 @@ def _make_stream_chunk(
     response_id: str = "req-1",
     usage: dict | None = None,
     has_choices: bool = True,
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
@@ -111,6 +114,7 @@ def _make_stream_chunk(
         delta.audio = delta_audio
         choice = MagicMock()
         choice.delta = delta
+        choice.finish_reason = finish_reason
         chunk.choices = [choice]
     else:
         chunk.choices = []
@@ -648,3 +652,37 @@ class TestDashScopeFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertIsNone(fmt_choice)
+
+
+class TestDashScopeFinishedReason(IsolatedAsyncioTestCase):
+    """Tests for DashScope token-limit termination propagation."""
+
+    async def test_non_stream_and_stream_max_tokens(self) -> None:
+        """Both response modes map ``length`` to max_tokens."""
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(
+                text="partial",
+                finish_reason="length",
+            ),
+        )
+        response = await model([])
+        self.assertEqual(response.finished_reason, FinishedReason.MAX_TOKENS)
+
+        model = _make_model(stream=True)
+        model.client = MagicMock()
+        model.client.chat.completions.create = AsyncMock(
+            return_value=_MockAsyncStream(
+                [
+                    _make_stream_chunk(delta_text="partial"),
+                    _make_stream_chunk(finish_reason="length"),
+                ],
+            ),
+        )
+        stream = await model([])
+        responses = [item async for item in stream]
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )
