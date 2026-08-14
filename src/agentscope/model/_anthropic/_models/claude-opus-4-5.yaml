@@ -19,3 +19,16 @@ output_size: 65536
 
 parameter_overrides:
   max_tokens: {"maximum": 65536}
+  # Extended-thinking-only generation: adaptive mode is not accepted, and
+  # thinking display is already summarized by default here.
+  thinking_mode:
+    hidden: true
+  thinking_display:
+    hidden: true
+  # The oldest model accepting reasoning_effort at all; xhigh and max
+  # arrived with the 4.6 generation.
+  reasoning_effort:
+    anyOf:
+      - enum: [low, medium, high]
+        type: string
+      - type: "null"

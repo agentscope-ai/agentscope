@@ -72,7 +72,7 @@ class DashScopeListModelsTest(IsolatedAsyncioTestCase):
         self.assertIn("multimodal-embedding-v1", names)
 
     async def test_hidden_dimensions(self) -> None:
-        """multimodal-embedding-v1 has hidden dimensions."""
+        """multimodal-embedding-v1 declares a fixed dimension (no enum)."""
         cards = DashScopeEmbeddingModel.list_models()
         v1 = next(c for c in cards if c.name == "multimodal-embedding-v1")
         self.assertDictEqual(
@@ -89,33 +89,26 @@ class DashScopeListModelsTest(IsolatedAsyncioTestCase):
                     "image/bmp",
                 ],
                 "output_types": ["application/x-embedding"],
+                "dimensions": 1024,
+                "supported_dimensions": None,
                 "context_size": 512,
                 "parameter_schema": {
                     "type": "object",
                     "properties": {},
                     "required": [],
                 },
-                "parameter_overrides": {
-                    "dimensions": {"hidden": True, "default": 1024},
-                },
+                "parameter_overrides": {},
             },
         )
 
     async def test_visible_dimensions(self) -> None:
-        """qwen3-vl-embedding exposes dimension choices."""
+        """qwen3-vl-embedding exposes dimension choices on the card."""
         cards = DashScopeEmbeddingModel.list_models()
         qwen = next(c for c in cards if c.name == "qwen3-vl-embedding")
-        dims = qwen.parameter_schema["properties"]["dimensions"]
-        self.assertDictEqual(
-            dims,
-            {
-                "default": 2560,
-                "description": "The output embedding vector dimensions.",
-                "enum": [2560, 2048, 1536, 1024, 768, 512, 256],
-                "exclusiveMinimum": 0,
-                "title": "Dimensions",
-                "type": "integer",
-            },
+        self.assertEqual(qwen.dimensions, 2560)
+        self.assertEqual(
+            qwen.supported_dimensions,
+            [2560, 2048, 1536, 1024, 768, 512, 256],
         )
 
 
@@ -129,7 +122,7 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="text-embedding-v4",
-            parameters=DashScopeEmbeddingModel.Parameters(dimensions=2),
+            dimensions=2,
         )
         result = await model(["hello", "world"])
         self.assertDictEqual(
@@ -150,6 +143,7 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="text-embedding-v4",
+            dimensions=1024,
         )
         with self.assertRaises(ValueError):
             await model([_img()])
@@ -161,6 +155,7 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="text-embedding-v4",
+            dimensions=1024,
             retry_delay=0.0,
         )
         with self.assertRaises(RuntimeError):
@@ -175,7 +170,7 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="qwen3-vl-embedding",
-            parameters=DashScopeEmbeddingModel.Parameters(dimensions=2),
+            dimensions=2,
         )
         model._call_multimodal = AsyncMock(
             return_value=_mock_resp([[0.1, 0.2], [0.3, 0.4]]),
@@ -198,7 +193,7 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="qwen3-vl-embedding",
-            parameters=DashScopeEmbeddingModel.Parameters(dimensions=1),
+            dimensions=1,
         )
         call_count = 0
 
@@ -217,7 +212,7 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="qwen3-vl-embedding",
-            parameters=DashScopeEmbeddingModel.Parameters(dimensions=1),
+            dimensions=1,
         )
         call_count = 0
 

@@ -4,6 +4,7 @@
 import json
 import os
 import tempfile
+from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -12,8 +13,86 @@ from utils import MockModel, AnyString
 from agentscope.model import StructuredResponse
 from agentscope.agent import Agent, ContextConfig
 from agentscope.state import AgentState
-from agentscope.message import UserMsg, AssistantMsg, TextBlock, ToolCallBlock
+from agentscope.message import (
+    UserMsg,
+    AssistantMsg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    HintBlock,
+    Msg,
+)
 from agentscope.tool import Toolkit
+
+
+class RecordingStructuredMockModel(MockModel):
+    """A mock model that records structured-output compression calls."""
+
+    def __init__(
+        self,
+        *args: Any,
+        fail_structured_output_times: int = 0,
+        force_compression_overflow: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the recording mock model."""
+        super().__init__(*args, **kwargs)
+        self.recorded_structured_messages: list[list[Msg]] = []
+        self._fail_structured_output_times = fail_structured_output_times
+        self._force_compression_overflow = force_compression_overflow
+        self._compression_count_calls = 0
+
+    async def count_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """Force the overflow branch when counting compression messages."""
+        is_compression_count = bool(
+            tools
+            and tools[0].get("function", {}).get("name")
+            == "generate_structured_output",
+        )
+        if self._force_compression_overflow and is_compression_count:
+            self._compression_count_calls += 1
+            if self._compression_count_calls == 1:
+                return self.context_size + 1
+            return 1
+        return await super().count_tokens(messages, tools)
+
+    async def _call_api_with_structured_output(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        structured_model: Any,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Record the structured-output call and optionally fail first."""
+        self.recorded_structured_messages.append(list(messages))
+        if self._fail_structured_output_times > 0:
+            self._fail_structured_output_times -= 1
+            raise RuntimeError("simulated compression overflow")
+        return await super()._call_api_with_structured_output(
+            model_name,
+            messages,
+            structured_model,
+            **kwargs,
+        )
+
+
+def _has_instruction_hint(
+    messages: list[Msg],
+    instructions: HintBlock,
+) -> bool:
+    """Return True if messages contain instructions as an assistant hint."""
+    for msg in messages:
+        if msg.role != "assistant":
+            continue
+        for hint_block in msg.get_content_blocks("hint"):
+            if hint_block.id == instructions.id:
+                return hint_block.hint == instructions.hint
+    return False
 
 
 class ContextCompressionTest(IsolatedAsyncioTestCase):
@@ -147,12 +226,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -163,6 +247,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -170,6 +257,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -184,6 +273,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -191,6 +283,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "text": "c" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -200,12 +294,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -246,12 +345,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -262,6 +366,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -269,11 +376,15 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                         {
                             "id": "c",
                             "text": "c" * 60,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -288,12 +399,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -333,12 +449,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -349,6 +470,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -356,6 +480,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -370,6 +496,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -377,6 +506,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "c",
                             "text": "c" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -386,12 +517,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -431,12 +567,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -452,6 +593,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -459,11 +603,15 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                         {
                             "id": "c",
                             "text": "c" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -473,12 +621,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -521,6 +674,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -528,11 +684,15 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                         {
                             "id": "c",
                             "text": "c" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -542,13 +702,225 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
+        )
+
+    async def test_split_multi_tool_pairs_reaches_stable_boundary(
+        self,
+    ) -> None:
+        """The boundary is rechecked after moving an unmatched result."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="",
+            model=MockModel(context_size=1_000),
+            state=AgentState(
+                session_id="multi-tool-compression",
+                context=[
+                    UserMsg("User", "old" * 80, id="old-user"),
+                    AssistantMsg(
+                        "Friday",
+                        [
+                            ToolCallBlock(
+                                id="tc1",
+                                name="first_tool",
+                                input=json.dumps({"value": "a" * 80}),
+                            ),
+                            ToolCallBlock(
+                                id="tc2",
+                                name="second_tool",
+                                input=json.dumps({"value": "b" * 80}),
+                            ),
+                            ToolResultBlock(
+                                id="tc1",
+                                name="first_tool",
+                                output=[
+                                    TextBlock(text="first result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            ToolResultBlock(
+                                id="tc2",
+                                name="second_tool",
+                                output=[
+                                    TextBlock(text="second result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            TextBlock(
+                                text="Both tools completed.",
+                                id="final-text",
+                            ),
+                        ],
+                        id="multi-tool-msg",
+                    ),
+                    UserMsg(
+                        "User",
+                        "latest question",
+                        id="latest-user",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        to_compress, to_reserve = await agent._split_context_for_compression(
+            to_reserved_tokens=86,
+            tools=[],
+        )
+
+        self.assertListEqual(
+            [msg.model_dump() for msg in to_compress],
+            [
+                {
+                    "id": "old-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": "old" * 80,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "tc1",
+                            "type": "tool_call",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "first_tool",
+                            "input": json.dumps({"value": "a" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_call",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "second_tool",
+                            "input": json.dumps({"value": "b" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc1",
+                            "type": "tool_result",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "first_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "text": "first result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_result",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "second_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "text": "second result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
+        )
+        self.assertListEqual(
+            [msg.model_dump() for msg in to_reserve],
+            [
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "final-text",
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": "Both tools completed.",
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "latest-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": "latest question",
                         },
                     ],
                     "metadata": {},
@@ -631,6 +1003,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -638,6 +1013,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "text": "2" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -647,6 +1024,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -654,6 +1034,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "text": "3" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -870,6 +1252,137 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             self.assertIsNone(
                 await agent.state.tool_context.get_cache(file_path),
             )
+
+    async def test_context_compression_injects_instructions_as_hint(
+        self,
+    ) -> None:
+        """Instructions are injected as a HintBlock only for compression."""
+        model = RecordingStructuredMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+        instructions = HintBlock(
+            hint="Keep user requirements and file paths.",
+            source="user",
+        )
+
+        await agent.compress_context(instructions=instructions)
+
+        self.assertEqual(len(model.recorded_structured_messages), 1)
+        self.assertTrue(
+            _has_instruction_hint(
+                model.recorded_structured_messages[0],
+                instructions,
+            ),
+        )
+        self.assertFalse(
+            any(msg.get_content_blocks("hint") for msg in agent.state.context),
+        )
+
+    async def test_context_compression_overflow_retry_keeps_instructions(
+        self,
+    ) -> None:
+        """Overflow retry preserves instructions when rebuilding messages."""
+        model = RecordingStructuredMockModel(
+            context_size=100,
+            fail_structured_output_times=1,
+            force_compression_overflow=True,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+        instructions = HintBlock(
+            hint="Keep the user's original success criteria.",
+            source="user",
+        )
+
+        await agent.compress_context(instructions=instructions)
+
+        self.assertEqual(len(model.recorded_structured_messages), 2)
+        self.assertTrue(
+            _has_instruction_hint(
+                model.recorded_structured_messages[-1],
+                instructions,
+            ),
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

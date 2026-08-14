@@ -164,15 +164,7 @@ class MCPClient(BaseModel):
         self._initialize_client()
 
     def _initialize_client(self) -> None:
-        """Pre-build the stdio client context manager.
-
-        Only the stdio transport is materialised at construction time —
-        ``StdioServerParameters`` carry process-launch details that are
-        cheap to bind upfront. HTTP transports are built lazily inside
-        :meth:`connect` (or per-call inside :meth:`_get_client_gen` for
-        stateless mode), since each ``streamable_http_client`` /
-        ``sse_client`` is a one-shot context manager.
-        """
+        """Pre-build the stdio client context manager."""
         if self.mcp_config.type == "stdio_mcp":
             config = self.mcp_config
             self._client = stdio_client(
@@ -233,10 +225,15 @@ class MCPClient(BaseModel):
                 "Call close() before reconnecting.",
             )
 
-        # Create HTTP client if needed
-        if self._client is None and self.mcp_config.type == "http_mcp":
-            self._client = self._create_http_client()
+        # Transports are one-shot context managers. Recreate them before every
+        # connection so connect() -> close() -> connect() starts a fresh one.
+        if self._client is None:
+            if self.mcp_config.type == "http_mcp":
+                self._client = self._create_http_client()
+            else:
+                self._initialize_client()
 
+        assert self._client is not None
         self._stack = AsyncExitStack()
 
         try:
@@ -251,6 +248,7 @@ class MCPClient(BaseModel):
         except Exception:
             await self._stack.aclose()
             self._stack = None
+            self._client = None
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
@@ -288,6 +286,7 @@ class MCPClient(BaseModel):
                 str(e),
             )
         finally:
+            self._client = None
             self._stack = None
             self._session = None
             self._is_connected = False

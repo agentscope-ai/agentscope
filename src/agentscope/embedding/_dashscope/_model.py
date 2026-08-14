@@ -3,10 +3,15 @@
 
 Handles both text-only and multimodal models under a single class.
 Text models (``text-embedding-v3``, ``text-embedding-v4``) accept
-``list[str]``.  Multimodal models (``qwen*-vl-embedding``,
+``list[str | TextBlock]``.  Multimodal models (``qwen*-vl-embedding``,
 ``multimodal-embedding-*``, ``tongyi-embedding-vision-*``)
 additionally accept :class:`~agentscope.message.DataBlock`.
 The model name determines which DashScope API endpoint is used.
+
+Text payloads may be passed either as bare ``str`` or as
+:class:`~agentscope.message.TextBlock` — the latter is unpacked to its
+``.text`` field on entry so the rest of the pipeline only deals with
+``str`` and ``DataBlock``.
 """
 from __future__ import annotations
 
@@ -21,7 +26,7 @@ from .._embedding_usage import EmbeddingUsage
 from .._embedding_base import EmbeddingModelBase
 from ..._logging import logger
 from ...credential import CredentialBase
-from ...message import DataBlock, Base64Source, URLSource
+from ...message import DataBlock, Base64Source, TextBlock, URLSource
 
 #: Model name prefixes that route to the multimodal API.
 _MULTIMODAL_PREFIXES = (
@@ -83,7 +88,7 @@ _DEFAULT_LIMITS = _MultimodalLimits(
 )
 
 
-class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
+class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
     """Unified DashScope embedding model.
 
     Routes to the text or multimodal DashScope API based on the model
@@ -105,6 +110,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int | None,
         parameters: "DashScopeEmbeddingModel.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
@@ -121,10 +127,16 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
                 The embedding model name (e.g.
                 ``"text-embedding-v4"`` or
                 ``"qwen3-vl-embedding"``).
+            dimensions (`int | None`):
+                The output embedding vector dimensions.  Required at
+                the contract level — see :class:`EmbeddingModelBase`
+                for the rationale.  ``None`` is accepted only for
+                backward compatibility with legacy configs that
+                persisted ``dimensions`` inside ``parameters``.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific non-dimensional parameters.  Currently
+                empty for DashScope.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -140,6 +152,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,
@@ -169,7 +182,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
 
     async def __call__(
         self,
-        inputs: list[str | DataBlock],
+        inputs: list[str | TextBlock | DataBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Embed inputs with batching and retry.
@@ -180,26 +193,34 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         total elements, images, and videos per request.
 
         Args:
-            inputs (`list[str | DataBlock]`):
-                The input data to embed.
+            inputs (`list[str | TextBlock | DataBlock]`):
+                The input data to embed.  ``TextBlock`` items are
+                unpacked to their ``.text`` field on entry, so the
+                remainder of the pipeline only sees ``str`` and
+                ``DataBlock``.
             **kwargs:
                 Forwarded to the DashScope API.
 
         Returns:
             `EmbeddingResponse`: Merged response for all inputs.
         """
+        normalized: list[str | DataBlock] = [
+            item.text if isinstance(item, TextBlock) else item
+            for item in inputs
+        ]
+
         if not self._is_multimodal:
             # Text mode — use base class batching.
-            return await super().__call__(inputs, **kwargs)
+            return await super().__call__(normalized, **kwargs)
 
         # Multimodal mode — content-aware batching.
-        batches = self._split_multimodal_batches(inputs)
+        batches = self._split_multimodal_batches(normalized)
 
         if len(batches) > 1:
             logger.info(
                 "Embedding %d multimodal inputs in %d batches for "
                 "model %s (limits: elements=%d, images=%d, videos=%d).",
-                len(inputs),
+                len(normalized),
                 len(batches),
                 self.model,
                 self._limits.max_elements,

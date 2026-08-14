@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Middleware that turns reasoning text into speech and injects it as
 ``DATA_BLOCK_*`` events into the agent's event stream."""
-import uuid
 from typing import TYPE_CHECKING, AsyncGenerator, Callable
 
 from ._base import MiddlewareBase
+from .._utils._common import _generate_id
 from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -163,7 +163,7 @@ class TTSMiddleware(MiddlewareBase):
             return
 
         if audio_block_id is None:
-            audio_block_id = uuid.uuid4().hex
+            audio_block_id = _generate_id()
             audio_media_type = media_type
             yield DataBlockStartEvent(
                 reply_id=agent.state.reply_id,

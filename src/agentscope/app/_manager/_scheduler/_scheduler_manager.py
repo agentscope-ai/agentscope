@@ -12,6 +12,7 @@ from ....tool import ToolBase
 from ...._logging import logger
 from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
 from ...message_bus import MessageBus
+from ..._bus_ops import deliver_to_inbox
 from ...storage import (
     StorageBase,
     ScheduleRecord,
@@ -232,14 +233,12 @@ class SchedulerManager:
                         ensure_ascii=False,
                     ),
                 )
-                await message_bus.inbox_push(
-                    session.id,
-                    hint.model_dump(mode="json"),
-                )
-                await message_bus.enqueue_wakeup(
+                await deliver_to_inbox(
+                    message_bus,
                     user_id=record.user_id,
                     session_id=session.id,
                     agent_id=record.agent_id,
+                    payload=hint.model_dump(mode="json"),
                 )
 
                 logger.info(

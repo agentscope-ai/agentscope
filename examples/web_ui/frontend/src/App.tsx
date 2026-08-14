@@ -3,13 +3,18 @@ import { useMemo, useState } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
+import { MCPHubPage } from './pages/mcp';
+import { SkillHubPage } from './pages/skill';
 import { RouteError } from '@/components/error/RouteError';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
+import { UploadProvider } from '@/context/UploadContext';
 import { useTranslation } from '@/i18n/useI18n';
+import { ChannelPage } from '@/pages/channel';
 import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
+import { KnowledgePage } from '@/pages/knowledge';
 import { SchedulePage } from '@/pages/schedule';
 import { SetupPage } from '@/pages/setup';
 
@@ -43,7 +48,14 @@ const router = createBrowserRouter([
 						element: <ChatPage />,
 					},
 					{ path: '/schedule', element: <SchedulePage /> },
+					{ path: '/channel', element: <ChannelPage /> },
 					{ path: '/credential', element: <CredentialPage /> },
+					{ path: '/mcp', element: <MCPHubPage /> },
+					{ path: '/mcp/:hubId', element: <MCPHubPage /> },
+					{ path: '/skill', element: <SkillHubPage /> },
+					{ path: '/skill/:hubId', element: <SkillHubPage /> },
+					{ path: '/knowledge', element: <KnowledgePage /> },
+					{ path: '/knowledge/:kbId', element: <KnowledgePage /> },
 				],
 			},
 		],
@@ -68,7 +80,9 @@ function App() {
 				shadowOpacity="0.6"
 				cardTransition={{ type: 'spring', duration: 0.4 }}
 			>
-				<RouterProvider router={router} />
+				<UploadProvider>
+					<RouterProvider router={router} />
+				</UploadProvider>
 				<Toaster richColors position="top-right" />
 			</Onborda>
 		</OnbordaProvider>

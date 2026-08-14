@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 
 
 class _FakeStorage:
@@ -148,6 +148,17 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
+    async def try_lock(
+        self,
+        key: str,
+        *,
+        ttl_secs: int = 600,
+    ) -> bool:
+        return True
+
+    async def unlock(self, key: str) -> None:
+        pass
+
     # Mode F — registry (unused by WakeupDispatcher; raise so any
     # accidental dependency surfaces immediately rather than silently
     # passing through a stub).
@@ -168,6 +179,13 @@ class _FakeBus(MessageBus):
         raise NotImplementedError
 
     async def registry_getall(self, namespace: str) -> dict[str, str]:
+        raise NotImplementedError
+
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
         raise NotImplementedError
 
     async def registry_drop(self, namespace: str) -> None:
@@ -221,10 +239,10 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "s1", "agent_id": "a1"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
@@ -246,7 +264,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         bus = _FakeBus()
         chat = _FakeChatService()
         await bus.queue_push(
-            MessageBus._WAKEUP_QUEUE_KEY,
+            MessageBusKeys.wakeup_queue(),
             {"user_id": "u", "session_id": "pre", "agent_id": "a"},
         )
 
@@ -270,8 +288,8 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_active_session_skipped(self) -> None:
-        """If the target session is already running, no chat run is
+    async def test_active_session_not_spawned_while_locked(self) -> None:
+        """While the target session holds its run lock, no chat run is
         spawned for it."""
         bus = _FakeBus()
         chat = _FakeChatService()
@@ -284,10 +302,10 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "busy", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.sleep(0.05)
 
         self.assertEqual(chat.calls, [])
@@ -305,14 +323,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"oops": True},
             )
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "s2", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         # Only the valid entry made it through.
@@ -344,14 +362,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "ghost", "agent_id": "a"},
             )
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "live", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         self.assertEqual(
@@ -365,6 +383,128 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_resume_idle_spawns_with_parsed_event(self) -> None:
+        """A ``resume`` trigger for an idle session spawns a run whose
+        ``input_msg`` is the carried HITL event, rebuilt from its dump."""
+        from agentscope.event import UserConfirmResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        event = UserConfirmResultEvent.model_construct(
+            reply_id="r1",
+            confirm_results=[],
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        call = chat.calls[0]
+        self.assertEqual(call["session_id"], "w1")
+        self.assertIsInstance(call["input_msg"], UserConfirmResultEvent)
+        self.assertEqual(call["input_msg"].reply_id, "r1")
+
+    async def test_resume_running_session_requeues_until_free(self) -> None:
+        """A ``resume`` whose target is still running is NOT dropped: it
+        is re-queued (with backoff) and dispatched once the session lock
+        releases. This is the structural fix for the parked-run 409 race.
+        """
+        from agentscope.event import UserConfirmResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="w1")
+        bus._locks.add(lock_key)  # session is busy finishing its park tail
+        event = UserConfirmResultEvent.model_construct(
+            reply_id="r1",
+            confirm_results=[],
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+
+            # While locked, the resume must keep deferring — no run yet.
+            await asyncio.sleep(0.25)
+            self.assertEqual(chat.calls, [])
+
+            # Release the lock; the re-queued resume now lands.
+            bus._locks.discard(lock_key)
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["session_id"], "w1")
+        self.assertIsInstance(
+            chat.calls[0]["input_msg"],
+            UserConfirmResultEvent,
+        )
+
+    async def test_wake_running_session_requeues_until_free(self) -> None:
+        """A ``wake`` whose target is still running is NOT dropped.
+
+        Producers only enqueue one after finding no registered inbox
+        consumer, and a finishing run gives that registration up before
+        releasing its session lock — so a held lock is no evidence that
+        anything is still going to drain the inbox. Dropping here is
+        what used to strand a payload until the next user turn.
+        """
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="w2")
+        bus._locks.add(lock_key)
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {"user_id": "u", "session_id": "w2", "agent_id": "wa2"},
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+
+            await asyncio.sleep(0.25)
+            self.assertEqual(chat.calls, [])
+
+            bus._locks.discard(lock_key)
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["session_id"], "w2")
+        self.assertIsNone(chat.calls[0]["input_msg"])
 
 
 class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):

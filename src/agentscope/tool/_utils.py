@@ -73,7 +73,7 @@ def _extract_input_schema(
     """Extract input schema from the tool function's docstring
 
     Args:
-        tool_func (`ToolFunction`):
+        tool_func (`Callable`):
             The tool function to extract the JSON schema from.
         include_var_positional (`bool`):
             Whether to include variable positional arguments in the JSON

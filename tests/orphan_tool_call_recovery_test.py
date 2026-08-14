@@ -8,7 +8,9 @@ sending that unpaired tool call back to the model provider is rejected
 which bricks the session until the stored context is repaired by hand.
 
 These tests verify the agent recovers by closing the orphan tool call with an
-``interrupted`` tool result before the context ever reaches the model.
+``interrupted`` tool result: in-run failures are closed immediately in the
+failure path of the reply, and orphans persisted by a crashed run are closed
+before the next reply starts.
 """
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
@@ -65,8 +67,11 @@ class _MockOkTool(ToolBase):
             message="Mock tool always allows.",
         )
 
-    # pylint: disable=redefined-builtin
-    async def __call__(self, input: str, **kwargs: Any) -> ToolChunk:
+    async def call(
+        self,
+        input: str,  # pylint: disable=redefined-builtin
+        **kwargs: Any,
+    ) -> ToolChunk:
         """Return a plain result."""
         return ToolChunk(content=[TextBlock(text=f"Result: {input}")])
 
@@ -109,8 +114,9 @@ class OrphanToolCallRecoveryTest(IsolatedAsyncioTestCase):
 
     async def test_orphan_recovered_after_in_run_acting_failure(self) -> None:
         """A mid-stream failure that strikes after a tool call is appended but
-        before its result is persisted must not brick the session: the next run
-        recovers by closing the orphan tool call with an interrupted result.
+        before its result is persisted must not brick the session: the
+        failure path itself closes the orphan tool call with an interrupted
+        result, so the very next run proceeds normally.
 
         The failure is simulated with an ``on_acting`` middleware that raises,
         which (unlike an exception inside a tool) is not converted into a tool
@@ -157,22 +163,24 @@ class OrphanToolCallRecoveryTest(IsolatedAsyncioTestCase):
             ):
                 pass
 
-        # The context now holds the orphan tool call with no result, which is
-        # exactly the state that bricks the session on the next run.
+        # The context held an orphan tool call at the moment of the failure;
+        # the failure path must have closed it immediately, so by the time
+        # the exception reaches the caller the orphan is already paired with
+        # an interrupted result.
         call_ids = [
             b.id for b in _collect_blocks(agent.state.context, "tool_call")
         ]
+        self.assertIn(self.tool_call_id, call_ids)
         result_ids = [
             b.id for b in _collect_blocks(agent.state.context, "tool_result")
         ]
-        self.assertIn(self.tool_call_id, call_ids)
-        self.assertNotIn(self.tool_call_id, result_ids)
+        self.assertIn(self.tool_call_id, result_ids)
 
-        # Turn 2: a new user message. Without recovery the orphan tool call
-        # would be sent back to the model provider and brick the session.
+        # Turn 2: a new user message must proceed normally instead of
+        # sending the unpaired tool call back to the model provider.
         await agent.reply(UserMsg(name="user", content="Continue"))
 
-        # The orphan tool call must now be paired with an interrupted result.
+        # Exactly one interrupted result is paired to the orphan tool call.
         recovered = [
             b
             for b in _collect_blocks(agent.state.context, "tool_result")
@@ -196,6 +204,11 @@ class OrphanToolCallRecoveryTest(IsolatedAsyncioTestCase):
         """The interrupted result is attached to the message that holds the
         orphan tool call, mirroring the structure produced when a tool runs
         successfully, and the orphan tool call is marked finished.
+
+        The post-failure state is injected directly: a persisted context
+        whose tail is an assistant message with a tool call but no result,
+        exactly what a crashed run leaves behind. Recovery runs before the
+        new user message is appended to the context.
         """
         agent = Agent(
             name="Friday",
@@ -204,8 +217,8 @@ class OrphanToolCallRecoveryTest(IsolatedAsyncioTestCase):
             toolkit=Toolkit(tools=[_MockOkTool()]),
         )
 
-        # Inject the post-failure state directly: an assistant message with a
-        # tool call but no result, followed by a fresh user message.
+        # Inject the persisted post-failure state: the orphan assistant
+        # message is the context tail (no user message after it).
         orphan_call = ToolCallBlock(
             id=self.tool_call_id,
             name="mock_ok_tool",
@@ -213,7 +226,6 @@ class OrphanToolCallRecoveryTest(IsolatedAsyncioTestCase):
         )
         agent.state.context = [
             AssistantMsg(name="Friday", content=[orphan_call]),
-            UserMsg(name="user", content="Continue"),
         ]
 
         self.model.set_responses(

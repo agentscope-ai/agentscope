@@ -7,6 +7,6 @@ poke at the underlying module layout.
 """
 
 from ._e2b_workspace import E2BWorkspace
+from ._e2b_backend import E2BBackend
 
-
-__all__ = ["E2BWorkspace"]
+__all__ = ["E2BWorkspace", "E2BBackend"]

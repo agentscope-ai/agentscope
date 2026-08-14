@@ -1,163 +1,178 @@
 # -*- coding: utf-8 -*-
 """In-workspace MCP gateway — FastAPI router over agentscope MCPClients.
 
-Runs *inside* the workspace environment as a standalone script
-(``python /path/to/_mcp_gateway_app.py``). Reads ``--config`` JSON,
-instantiates one :class:`agentscope.mcp.MCPClient` per configured server,
-and exposes per-server HTTP endpoints. Each call is forwarded to the
-underlying ``MCPClient`` (which owns the upstream session).
+Runs inside the workspace environment as a standalone script. It starts
+with an empty registry and never reads the workspace's ``.mcp`` file:
+the workspace is the authority on which MCPs exist, and registers them
+here on demand. Boot cost is therefore independent of how many agents
+or sessions the workspace has accumulated. Authentication is optional —
+sandboxes sharing a host network namespace can enable a bearer token to
+prevent cross-workspace gateway access.
 
-The script uses an absolute import for ``agentscope.mcp`` (rather than
-a package-relative import) so it can be invoked directly without
-loading ``agentscope.workspace.__init__`` — the latter eagerly imports
-heavy modules (skill, tool, …) that are unnecessary for the gateway
-and would force their dependencies into the in-container venv.
+Endpoints::
 
-Endpoints
----------
-
-    GET    /health                              # liveness, no auth
-    GET    /mcps                                # [{name, tools}, ...]
-    POST   /mcps                                # body: MCPClient.model_dump()
+    GET    /health
+    GET    /mcps                       # [MCPClient.model_dump(), ...]
+    POST   /mcps                       # body: MCPClient.model_dump()
     DELETE /mcps/{name}
-    GET    /mcps/{name}/tools                   # upstream tool schemas
-    POST   /mcps/{name}/tools/{tool}            # body: {arguments: {...}}
+    GET    /mcps/{name}/tools
+    POST   /mcps/{name}/tools/{tool}   # body: {arguments: {...}}
 
-Auth: every endpoint except ``/health`` requires
-``Authorization: Bearer <token>`` when a token is configured.
+Every endpoint except ``/health`` takes ``?agent_id=&session_id=``.
+Upstream sessions are kept per agent, session and MCP name, so two
+sessions running the same MCP get independent state (browser cookies,
+login state) and one closing its client never disturbs the other.
 
-Config schema::
-
-    {
-        "token": "bearer-token",
-        "servers": [<MCPClient.model_dump()>, ...]
-    }
+The absolute import for ``agentscope.mcp`` avoids loading
+``agentscope.workspace.__init__`` (which pulls in skill/tool trees the
+gateway does not need).
 """
 
 import argparse
 import asyncio
-import json
+import secrets
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from agentscope.mcp import MCPClient
-
-
-# ── gateway state ──────────────────────────────────────────────────
 
 
 class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[str, MCPClient] = {}
-        self.token: str = ""
+        self.clients: dict[tuple[str, str], dict[str, MCPClient]] = {}
         self.lock = asyncio.Lock()
 
 
-def _make_auth_dep(state: _State) -> Any:
-    """Build a Bearer-token auth dependency closed over the state.
-
-    No-op when ``state.token`` is empty.
-    """
-
-    async def _auth(request: Request) -> None:
-        if not state.token:
-            return
-        header = request.headers.get("authorization", "")
-        if header != f"Bearer {state.token}":
-            raise HTTPException(status_code=401, detail="unauthorized")
-
-    return _auth
-
-
-# ── client construction ───────────────────────────────────────────
-
-
 async def _build_client(spec: dict[str, Any]) -> MCPClient:
-    """Validate a config / request body into an :class:`MCPClient`,
-    then connect if stateful so subsequent ``list_raw_tools`` /
-    ``get_tool`` work without re-spawning the upstream session.
+    """Validate a spec into an ``MCPClient``, connect if stateful,
+    and prime its tool cache.
     """
     client = MCPClient.model_validate(spec)
     if client.is_stateful:
         await client.connect()
-    # Prime the tool cache so /mcps/{name}/tools is cheap and stable.
     await client.list_raw_tools()
     return client
 
 
-# ── FastAPI app ────────────────────────────────────────────────────
-
-
-def _build_app(state: _State) -> FastAPI:
+def _build_app(
+    state: _State,
+    auth_token: str | None = None,
+    instance_nonce: str | None = None,
+) -> FastAPI:
     """Build the FastAPI app with all routes wired against ``state``."""
     app = FastAPI(title="agentscope-workspace-mcp-gateway")
-    auth = Depends(_make_auth_dep(state))
 
-    @app.get("/health")
-    async def _health() -> PlainTextResponse:
+    def _lookup(agent_id: str, session_id: str, name: str) -> MCPClient:
+        """Resolve one registered client or raise 404."""
+        client = state.clients.get((agent_id, session_id), {}).get(name)
+        if client is None:
+            raise HTTPException(
+                404,
+                f"{name!r} not found for agent={agent_id!r} "
+                f"session={session_id!r}",
+            )
+        return client
+
+    if auth_token:
+
+        @app.middleware("http")
+        async def _auth_middleware(request: Request, call_next: Any) -> Any:
+            if request.url.path == "/health":
+                return await call_next(request)
+            header = request.headers.get("authorization", "")
+            expected = f"Bearer {auth_token}"
+            valid = (
+                header.isascii()
+                and expected.isascii()
+                and secrets.compare_digest(header, expected)
+            )
+            if not valid:
+                return PlainTextResponse(
+                    "invalid gateway token",
+                    status_code=401,
+                )
+            return await call_next(request)
+
+    @app.get("/health", response_model=None)
+    async def _health() -> Any:
+        if instance_nonce is not None:
+            return {"status": "ok", "instance_nonce": instance_nonce}
         return PlainTextResponse("ok")
 
-    @app.get("/mcps", dependencies=[auth])
-    async def _list_mcps() -> list[dict[str, Any]]:
-        # Dump the full MCPClient field set so the host can rebuild
-        # `GatewayMCPClient.model_validate(spec)` losslessly.
-        return [c.model_dump(mode="json") for c in state.clients.values()]
+    @app.get("/mcps")
+    async def _list_mcps(
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> list[dict[str, Any]]:
+        return [
+            c.model_dump(mode="json")
+            for c in state.clients.get((agent_id, session_id), {}).values()
+        ]
 
-    @app.post("/mcps", dependencies=[auth])
-    async def _add_mcp(request: Request) -> dict[str, Any]:
+    @app.post("/mcps")
+    async def _add_mcp(
+        request: Request,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
         body = await request.json()
         name = body.get("name", "")
         if not name:
             raise HTTPException(400, "name required")
         async with state.lock:
-            if name in state.clients:
-                raise HTTPException(409, f"{name!r} already exists")
+            by_name = state.clients.setdefault((agent_id, session_id), {})
+            if name in by_name:
+                raise HTTPException(
+                    409,
+                    f"{name!r} already exists for agent={agent_id!r} "
+                    f"session={session_id!r}",
+                )
             try:
-                client = await _build_client(body)
+                by_name[name] = await _build_client(body)
             except HTTPException:
                 raise
             except Exception as e:  # noqa: BLE001
-                raise HTTPException(
-                    500,
-                    f"connect failed: {e}",
-                ) from e
-            state.clients[name] = client
+                raise HTTPException(500, f"connect failed: {e}") from e
         return {"ok": True}
 
-    @app.delete("/mcps/{name}", dependencies=[auth])
-    async def _remove_mcp(name: str) -> dict[str, Any]:
+    @app.delete("/mcps/{name}")
+    async def _remove_mcp(
+        name: str,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
         async with state.lock:
-            client = state.clients.pop(name, None)
-            if client is None:
-                raise HTTPException(404, f"{name!r} not found")
+            client = _lookup(agent_id, session_id, name)
+            del state.clients[(agent_id, session_id)][name]
+            if not state.clients[(agent_id, session_id)]:
+                del state.clients[(agent_id, session_id)]
             if client.is_stateful and client.is_connected:
                 await client.close()
         return {"ok": True}
 
-    @app.get("/mcps/{name}/tools", dependencies=[auth])
-    async def _list_tools(name: str) -> list[dict[str, Any]]:
-        client = state.clients.get(name)
-        if client is None:
-            raise HTTPException(404, f"{name!r} not found")
-        # Send raw mcp.types.Tool over the wire so the host-side
-        # GatewayMCPClient can re-wrap them via the standard MCPClient
-        # path (preserves inputSchema, annotations.readOnlyHint, ...).
+    @app.get("/mcps/{name}/tools")
+    async def _list_tools(
+        name: str,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> list[dict[str, Any]]:
+        client = _lookup(agent_id, session_id, name)
         raw = await client.list_raw_tools()
         return [t.model_dump(mode="json") for t in raw]
 
-    @app.post("/mcps/{name}/tools/{tool}", dependencies=[auth])
+    @app.post("/mcps/{name}/tools/{tool}")
     async def _call_tool(
         name: str,
         tool: str,
         request: Request,
+        agent_id: str = "",
+        session_id: str = "",
     ) -> dict[str, Any]:
-        client = state.clients.get(name)
-        if client is None:
-            raise HTTPException(404, f"{name!r} not found")
+        client = _lookup(agent_id, session_id, name)
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
@@ -167,75 +182,62 @@ def _build_app(state: _State) -> FastAPI:
             raise HTTPException(404, str(e)) from e
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, str(e)) from e
-        # ToolChunk is a pydantic model — let host reconstruct it.
         return {"chunk": chunk.model_dump(mode="json")}
 
     return app
 
 
-# ── lifecycle ──────────────────────────────────────────────────────
-
-
-async def _connect_initial(
-    state: _State,
-    server_cfgs: list[dict[str, Any]],
+async def _run(
+    port: int,
+    auth_token: str | None = None,
+    instance_nonce: str | None = None,
 ) -> None:
-    """Connect every server listed in the static config file."""
-    for cfg in server_cfgs:
-        client = await _build_client(cfg)
-        if client.name in state.clients:
-            if client.is_stateful and client.is_connected:
-                await client.close()
-            raise ValueError(
-                f"Duplicated server name in config: {client.name!r}",
-            )
-        state.clients[client.name] = client
-        print(f"[gateway] connected {client.name!r}", flush=True)
-
-
-async def _run(config_path: str, port: int) -> None:
-    """Read config, connect upstreams, start uvicorn, clean up on exit."""
-    with open(config_path, encoding="utf-8") as f:
-        config = json.load(f)
-
+    """Start uvicorn on an empty registry, clean up upstreams on exit."""
     state = _State()
-    state.token = config.get("token", "") or ""
-    await _connect_initial(state, config.get("servers", []) or [])
-
-    app = _build_app(state)
-    print(
-        f"[gateway] serving {len(state.clients)} MCPs on :{port}",
-        flush=True,
+    app = _build_app(
+        state,
+        auth_token=auth_token,
+        instance_nonce=instance_nonce,
     )
+    print(f"[gateway] serving on :{port}", flush=True)
 
     import uvicorn
 
     uvi_cfg = uvicorn.Config(
         app,
-        host="0.0.0.0",  # noqa: S104 — gateway listens inside container
+        host="127.0.0.1",
         port=port,
-        log_level="warning",
+        log_level="info",
     )
     server = uvicorn.Server(uvi_cfg)
     try:
         await server.serve()
     finally:
-        for client in list(state.clients.values()):
-            if client.is_stateful and client.is_connected:
-                await client.close()
+        for by_name in state.clients.values():
+            for client in by_name.values():
+                if client.is_stateful and client.is_connected:
+                    await client.close()
 
 
 def main() -> None:
-    """CLI entry point — invoked via
-    ``python -m agentscope.workspace._mcp_gateway``.
-    """
+    """CLI entry point."""
     parser = argparse.ArgumentParser(
         description="In-workspace MCP gateway (FastAPI)",
     )
-    parser.add_argument("--config", required=True)
+    # Accepted and ignored — kept so an image shipping an older
+    # launch command still starts.
+    parser.add_argument("--config", default=None)
     parser.add_argument("--port", type=int, default=5600)
+    parser.add_argument("--auth-token")
+    parser.add_argument("--instance-nonce")
     args = parser.parse_args()
-    asyncio.run(_run(args.config, args.port))
+    asyncio.run(
+        _run(
+            args.port,
+            auth_token=args.auth_token,
+            instance_nonce=args.instance_nonce,
+        ),
+    )
 
 
 if __name__ == "__main__":
