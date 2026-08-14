@@ -30,6 +30,10 @@ from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
 )
+from agentscope.exception import (
+    ToolNotFoundError,
+    ToolGroupInactiveError,
+)
 
 
 class Tool1(ToolBase):
@@ -1387,6 +1391,40 @@ The tool instructions are a collection of suggestions, rules and notifications a
         )
 
         self.assertEqual(await toolkit.get_tool_schemas(), [])
+
+    async def test_check_tool_available_distinguishes_inactive_group(
+        self,
+    ) -> None:
+        """A tool in an inactive group raises ToolGroupInactiveError with
+        the activation hint (matching call_tool), while an unregistered
+        name still raises ToolNotFoundError."""
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="group_1",
+                    description="Group 1",
+                    tools=[Tool1()],
+                ),
+            ],
+        )
+
+        # Inactive group -> the agent-facing check names the group and
+        # the meta tool, instead of claiming the tool doesn't exist.
+        with self.assertRaises(ToolGroupInactiveError) as ctx:
+            await toolkit.check_tool_available("tool_1", [])
+        self.assertIn("group_1", str(ctx.exception))
+        self.assertIn(
+            toolkit.builtin_meta_tool.tool.name,
+            str(ctx.exception),
+        )
+
+        # Activated group -> resolves normally.
+        tool = await toolkit.check_tool_available("tool_1", ["group_1"])
+        self.assertEqual(tool.name, "tool_1")
+
+        # Unregistered name -> still not found.
+        with self.assertRaises(ToolNotFoundError):
+            await toolkit.check_tool_available("no_such_tool", [])
 
 
 class RemoveTitleFieldTest(TestCase):
