@@ -184,6 +184,91 @@ async def get_agent_skills(
 
 
 @skill_router.get(
+    "/skills/bocom",
+    response_model=AgentSkillsListResponse,
+    summary="Get Bocom Skills",
+    description=(
+        "Query the Bocom skillhub catalog and return it to the "
+        "frontend with the same shape as the external skillhub, "
+        "marking as ``used`` the skills already present in the "
+        "session's workspace (``agent_id`` and ``session_id`` are "
+        "passed as query parameters)."
+    ),
+)
+async def get_bocom_skills(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    keyword: str = Query(default=""),
+    userId: str = Query(default=""),
+    loginName: str = Query(default="1"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=10, ge=1, le=200),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
+) -> AgentSkillsListResponse:
+    """查询 Bocom skillhub 目录并返回（返回格式与 external hub 一致）。
+
+    参数与 Bocom 上游查询接口对齐：``keyword`` / ``userId`` /
+    ``loginName``（默认 ``"1"``）/ ``page``（从 1 起）/ ``size``；
+    ``agent_id`` / ``session_id`` 用于解析 workspace 以标记 ``used`` 状态。
+    """
+    # 归属校验：agent 必须属于（或被共享给）调用者，否则 404。
+    await access.resolve_agent(user_id, agent_id)
+
+    used_names = await _session_used_names(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+    )
+
+    hub = hubs.get("bocom") if hubs else None
+    if hub is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No 'bocom' skill hub is registered.",
+        )
+
+    # 显式传入的业务 userId 覆盖 hub 默认值（逐请求设置）。
+    set_user_id = getattr(hub, "set_user_id", None)
+    if set_user_id is not None and userId:
+        set_user_id(userId)
+
+    merged_q = keyword or None
+    # 上游 page 从 1 起；hub 的 cursor 从 0 计。
+    cursor = f"page:{page - 1}" if page > 1 else None
+    page_result = await hub.list_skills(
+        user_id,
+        q=merged_q,
+        cursor=cursor,
+        limit=size,
+        loginName=loginName,
+    )
+
+    skills_list = [
+        SkillInfo(
+            name=card.name,
+            category="public",
+            description=card.description or "",
+            used=card.name in used_names,
+        )
+        for card in page_result.cards
+    ]
+    return AgentSkillsListResponse(
+        skills=skills_list,
+        total=(
+            page_result.total
+            if page_result.total is not None
+            else len(skills_list)
+        ),
+    )
+
+
+@skill_router.get(
     "/skills/uploaded",
     response_model=AgentSkillsListResponse,
     summary="Get Uploaded Skills",
@@ -361,4 +446,108 @@ async def enable_agent_skill(
         success=True,
         action="enabled",
         skill_id=skill_full_name,
+    )
+
+
+@skill_router.post(
+    "/skill/download/bocom/{skill_name}",
+    response_model=SkillActionResponse,
+    summary="Enable Bocom Skill for Agent",
+    description=(
+        "Download a skill from the Bocom skillhub into the session's "
+        "workspace. ``skill_name`` is the Bocom skill name (e.g. "
+        "``excel智能分析``); ``agent_id`` and ``session_id`` are passed "
+        "as query parameters."
+    ),
+)
+async def enable_bocom_skill(
+    skill_name: str,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    guwp_token: str | None = Header(default=None, alias="guwpToken"),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
+) -> SkillActionResponse:
+    """为指定 agent 启用（下载安装）一个 Bocom skill。
+
+    ``skill_name`` 为 Bocom 技能名（如 ``excel智能分析``），直接从
+    ``bocom`` hub 下载归档并安装进会话 workspace。已装备时幂等返回。
+    目标 workspace 从持久化会话记录解析，任意隔离策略下都精确。
+    """
+    await access.resolve_agent(user_id, agent_id)
+
+    # PER_SESSION 下 workspace id 是每会话随机值，必须来自数据库而非现算。
+    workspace = await _resolve_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+    )
+
+    # 已装备 —— 幂等成功。按 agent-facing 名或目录名匹配（frontmatter
+    # 名可能与 slug 不同）。
+    existing = await workspace.list_skills()
+    if skill_name in {s.name for s in existing} or any(
+        os.path.basename(s.dir.rstrip("/\\")) == skill_name
+        for s in existing
+    ):
+        logger.info(
+            "Bocom skill '%s' already equipped in agent %s's workspace",
+            skill_name,
+            agent_id,
+        )
+        return SkillActionResponse(
+            success=True,
+            action="enabled",
+            skill_id=skill_name,
+        )
+
+    # 从 bocom hub 下载 —— 归档流式送入 workspace 后端（沙箱兼容）。
+    hub = hubs.get("bocom") if hubs else None
+    if hub is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No 'bocom' skill hub is registered.",
+        )
+    _set_token(hub, guwp_token)
+    try:
+        archive = await hub.download(user_id, skill_name)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_name}' not found on the Bocom skillhub.",
+        ) from None
+    try:
+        await workspace.add_skill_archive(
+            archive.stream,
+            archive.format,
+            skill_name,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to install skill '{skill_name}': {e}",
+        ) from e
+
+    # 校验确有新 skill 落盘（解压目录可能按 frontmatter 命名）。
+    refreshed = await workspace.list_skills()
+    new_names = {s.name for s in refreshed} - {s.name for s in existing}
+    if not new_names:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Downloaded skill '{skill_name}' has no valid SKILL.md "
+                "(requires 'name' and 'description' fields)."
+            ),
+        )
+
+    logger.info("Enabled Bocom skill '%s' for agent '%s'", skill_name, agent_id)
+    return SkillActionResponse(
+        success=True,
+        action="enabled",
+        skill_id=skill_name,
     )

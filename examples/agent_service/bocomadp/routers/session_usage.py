@@ -3,7 +3,7 @@
 
 Endpoint
 --------
-``GET /api/sessions/{session_id}/usage?agent_id=xxx&user_id=xxx``
+``GET /sessions/{session_id}/usage?agent_id=xxx&user_id=xxx``
 
     Returns ``input_tokens``, ``output_tokens`` and ``message_count``
     aggregated across all persisted messages in the session.
@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 logger = logging.getLogger("bocomadp.session_usage")
 
 session_usage_router = APIRouter(
-    prefix="/api/sessions",
+    prefix="/sessions",
     tags=["session-usage"],
 )
 

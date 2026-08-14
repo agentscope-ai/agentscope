@@ -53,6 +53,10 @@ class AgentConfigRequest(BaseModel):
         default_factory=list,
         description="Tool names to enable (empty = all)",
     )
+    requires_sandbox: bool = Field(
+        default=True,
+        description="Whether the agent needs a K8s sandbox workspace",
+    )
 
 
 class AgentConfigResponse(BaseModel):
@@ -65,6 +69,7 @@ class AgentConfigResponse(BaseModel):
     model_name: str
     max_iters: int
     enabled_tools: list[str]
+    requires_sandbox: bool
 
 
 # ------------------------------------------------------------------
@@ -92,13 +97,20 @@ class MultiAgentManager:
             model_name="",
             max_iters=20,
             enabled_tools=[],
+            requires_sandbox=True,
         )
         self._agents["default"] = default
 
     def list_agents(self) -> list[AgentConfigResponse]:
-        return list(self._agents.values())
+        """Return user-visible agents only.
+
+        Agents whose ``agent_id`` starts with ``"_"`` are considered
+        built-in / internal and are excluded from the public list.
+        """
+        return [a for a in self._agents.values() if not a.agent_id.startswith("_")]
 
     def get_agent(self, agent_id: str) -> AgentConfigResponse | None:
+        """Get any agent by id, including built-in ones."""
         return self._agents.get(agent_id)
 
     def create_agent(self, config: AgentConfigRequest) -> AgentConfigResponse:
@@ -122,8 +134,10 @@ class MultiAgentManager:
         return agent
 
     def delete_agent(self, agent_id: str) -> bool:
-        if agent_id == "default":
-            raise ValueError("Cannot delete the default agent")
+        if agent_id.startswith("_") or agent_id == "default":
+            raise ValueError(
+                f"Agent '{agent_id}' is built-in and cannot be deleted",
+            )
         if agent_id not in self._agents:
             return False
         del self._agents[agent_id]

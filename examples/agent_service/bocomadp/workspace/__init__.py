@@ -19,10 +19,12 @@
 
 from .factory import build_k8s_workspace_manager
 from .config import K8sWorkspaceConfig, get_k8s_workspace_config, is_k8s_enabled
+from .whitelist import WhitelistWorkspaceManager
 
 __all__ = [
     "build_k8s_workspace_manager",
     "K8sWorkspaceConfig",
     "get_k8s_workspace_config",
     "is_k8s_enabled",
+    "WhitelistWorkspaceManager",
 ]

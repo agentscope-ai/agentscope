@@ -190,15 +190,71 @@ optional):
                 "leader" if team.session_id == session_record.id else "worker"
             )
     if team_role == "worker":
-        tools.append(TeamSay(**team_tool_kwargs, role="worker"))
+        # Strict-workflow handoff for workers: in ``workflow`` mode a
+        # worker may only report back to the team leader (the hub of
+        # the sequential chain). In ``free_handoff`` mode no constraint
+        # is applied (soft guidance only).
+        allowed_handoff_targets: set[str] | None = None
+        if team is not None:
+            leader_session = await storage.get_session(
+                user_id,
+                "",
+                team.session_id,
+            )
+            if leader_session is not None:
+                leader_agent = await storage.get_agent(
+                    user_id,
+                    leader_session.agent_id,
+                )
+                if (
+                    leader_agent is not None
+                    and leader_agent.data.team_config is not None
+                    and leader_agent.data.team_config.collaboration_mode
+                    == "workflow"
+                ):
+                    allowed_handoff_targets = {leader_session.agent_id}
+        tools.append(
+            TeamSay(
+                **team_tool_kwargs,
+                role="worker",
+                allowed_handoff_targets=allowed_handoff_targets,
+            )
+        )
     else:
+        # ------------------------------------------------------------
+        # Strict-workflow handoff: when the leader operates in
+        # ``workflow`` mode with configured ``handoff_relations``,
+        # compute the set of agent_ids the leader is allowed to
+        # ``TeamSay``-to, and pass it to the tool so that
+        # ``TeamSay.__call__`` can hard-enforce the edges at runtime.
+        # ------------------------------------------------------------
+        allowed_handoff_targets: set[str] | None = None
+        if agent_record.data.team_config is not None:
+            cfg = agent_record.data.team_config
+            if (
+                cfg.collaboration_mode == "workflow"
+                and cfg.handoff_relations
+            ):
+                # Sequential hub-and-spoke workflow: the leader is the
+                # hub — it delegates to the first member, waits for the
+                # report, then forwards it to the NEXT member. So the
+                # leader may TeamSay to ANY ``to`` endpoint of the
+                # configured edges (not just edges starting from it).
+                allowed_handoff_targets = {
+                    r.to_agent_id
+                    for r in cfg.handoff_relations
+                }
         tools += [
             TeamCreate(**team_tool_kwargs),
             AgentCreate(
                 **team_tool_kwargs,
                 sub_agent_templates=sub_agent_templates or {},
             ),
-            TeamSay(**team_tool_kwargs, role="leader"),
+            TeamSay(
+                **team_tool_kwargs,
+                role="leader",
+                allowed_handoff_targets=allowed_handoff_targets,
+            ),
             TeamDelete(**team_tool_kwargs),
         ]
         # Conditionally attach AgentInvite. Skipping construction when
@@ -216,11 +272,25 @@ optional):
             user_id,
             ResourceKind.AGENT,
         )
+        # ``list_resource`` hides team members (``parent_agent_id`` set)
+        # so the top-level agent list stays clean, but ``AgentInvite``
+        # must be able to borrow them: an expert team's configured
+        # members are exactly the agents a leader needs to invite at
+        # runtime. ``storage.list_agents`` returns the user's full
+        # ``source='user'`` set (team workers are excluded, team
+        # members are NOT), so merge it with the policy-visible set
+        # (which also covers cross-owner shared agents) and de-dupe by
+        # id.
+        pool_by_id: dict[str, AgentRecord] = {
+            view.id: view for view in visible_agents
+        }
+        for record in await storage.list_agents(user_id):
+            pool_by_id.setdefault(record.id, record)
         invitable_pool = [
-            view
-            for view in visible_agents
-            if view.data.invite_config.invitable
-            and (view.data.invite_config.invite_description or "").strip()
+            agent
+            for agent in pool_by_id.values()
+            if agent.data.invite_config.invitable
+            and (agent.data.invite_config.invite_description or "").strip()
         ]
         if invitable_pool:
             tools.append(

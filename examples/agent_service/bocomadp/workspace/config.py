@@ -135,17 +135,6 @@ class K8sWorkspaceConfig:
         default_factory=lambda: _env_bool("DELETE_PVC_ON_CLOSE", False),
     )
 
-    # ── 双 PVC（agent 级共享 + session 级独立） ──
-    dual_pvc_enabled: bool = field(
-        default_factory=lambda: _env_bool("DUAL_PVC_ENABLED", False),
-    )
-    agent_pvc_access_mode: str = field(
-        default_factory=lambda: _env("AGENT_PVC_ACCESS_MODE", "ReadWriteMany"),
-    )
-    session_pvc_access_mode: str = field(
-        default_factory=lambda: _env("SESSION_PVC_ACCESS_MODE", "ReadWriteOnce"),
-    )
-
     # ── 共享 PVC（PER_SESSION Pod + agent 级共享存储）──
     shared_pvc_enabled: bool = field(
         default_factory=lambda: _env_bool("SHARED_PVC_ENABLED", False),

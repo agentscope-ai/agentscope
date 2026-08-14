@@ -9,14 +9,32 @@ then injects all dependencies into the agent constructor.
 This is the QwenPaw-style "build per request" pattern — every
 request gets a freshly assembled agent so configuration changes
 (model switch, tool toggle) take effect immediately.
+
+No-sandbox agents
+-----------------
+Agents with ``requires_sandbox=False`` skip workspace (K8s Pod)
+creation entirely.  Their skills are loaded from the host filesystem
+via :class:`~agentscope.skill.LocalSkillLoader`, and factory tools
+(``agent_factory_tools``) are injected for the built-in
+``agent-creator`` agent.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Resolve the host skill directory once at import time.
+# Relative to this builder module:  ../../skills  (bocomadp/skills/)
+# ---------------------------------------------------------------------------
+_HOST_SKILL_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "skills",
+)
 
 
 class AgentBuilder:
@@ -43,6 +61,8 @@ class AgentBuilder:
         self._middleware_registry = middleware_registry
         self._provider_manager = provider_manager
         self._workspace_manager = workspace_manager
+        # Host skill loader — built lazily on first use
+        self._host_skill_loader: Any = None
 
     async def build(
         self,
@@ -52,12 +72,20 @@ class AgentBuilder:
 
         Pulls overrides from ``ctx.agent_config`` (sourced from
         :class:`MultiAgentManager`) when available — system prompt,
-        max_iters, and tool whitelist all take effect per-agent.
+        max_iters, tool whitelist, and sandbox preference all take
+        effect per-agent.
         """
         from agentscope.agent import Agent, ReActConfig
         from agentscope.tool import Toolkit
 
         cfg = getattr(ctx, "agent_config", None)
+        agent_id = getattr(ctx, "agent_id", "") or "default"
+        # Framework agents default to sandbox, but the built-in
+        # agent-creator runs without one (host skills + factory tools).
+        requires_sandbox = (
+            False if agent_id == "_agent-creator"
+            else getattr(cfg, "requires_sandbox", True)
+        )
 
         # Resolve tools (apply whitelist across all sources)
         whitelist: list[str] = getattr(cfg, "enabled_tools", None) or []
@@ -83,41 +111,61 @@ class AgentBuilder:
 
         # Resolve system prompt (config > fallback)
         sys_prompt = getattr(cfg, "system_prompt", None) or self._build_prompt(ctx)
-        # 始终向系统提示追加当前会话身份，便于查询上传文件（见 _build_prompt）。
-        sys_prompt = self._with_identity_hint(sys_prompt, ctx)
 
         # Resolve max_iters (config > default)
         max_iters = getattr(cfg, "max_iters", None) or 20
 
-        # Resolve workspace skills + MCPs + builtins (matches built-in /chat path)
+        # Resolve workspace skills + MCPs + builtins
         skills: list = []
         mcps: list = []
-        if self._workspace_manager is not None:
-            user_id = getattr(ctx, "user_id", "default")
-            session_id = getattr(ctx, "session_id", "") or ""
-            try:
-                workspace = await self._workspace_manager.get_workspace(
-                    user_id=user_id,
-                    agent_id=getattr(ctx, "agent_id", "default"),
-                    session_id=session_id,
-                )
-                # source 2: workspace builtins (Bash, Read, Write, etc.)
-                tools += await workspace.list_tools()
-                skills = await workspace.list_skills()
-                # source 3: MCP servers (filtered by whitelist)
-                all_mcps = await workspace.list_mcps()
-                if whitelist:
-                    mcps = self._filter_by_name(all_mcps, whitelist)
-                else:
-                    mcps = all_mcps
-                ctx.workspace = workspace
-            except Exception:
-                logger.warning(
-                    "builder: workspace load failed, skills/mcps skipped",
-                    exc_info=True,
-                )
 
-        # Apply whitelist to all tools (builtins + project)
+        if requires_sandbox:
+            # ── [normal] sandbox path: create K8s Pod workspace ──
+            sys_prompt = self._with_identity_hint(sys_prompt, ctx)
+            if self._workspace_manager is not None:
+                user_id = getattr(ctx, "user_id", "default")
+                session_id = getattr(ctx, "session_id", "") or ""
+                try:
+                    workspace = await self._workspace_manager.get_workspace(
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        session_id=session_id,
+                    )
+                    # source 2: workspace builtins (Bash, Read, Write, etc.)
+                    tools += await workspace.list_tools()
+                    skills = await workspace.list_skills()
+                    # source 3: MCP servers (filtered by whitelist)
+                    all_mcps = await workspace.list_mcps()
+                    if whitelist:
+                        mcps = self._filter_by_name(all_mcps, whitelist)
+                    else:
+                        mcps = all_mcps
+                    ctx.workspace = workspace
+                except Exception:
+                    logger.warning(
+                        "builder: workspace load failed, skills/mcps skipped",
+                        exc_info=True,
+                    )
+        else:
+            # ── [no-sandbox] host path: no K8s Pod ──
+            logger.info(
+                "builder: no-sandbox agent=%s, loading host skills",
+                agent_id,
+            )
+            # Load skills from host filesystem
+            skills = await self._load_host_skills()
+
+            # Inject factory tools for the built-in agent-creator
+            if agent_id == "_agent-creator":
+                factory_tools = self._get_factory_tools()
+                if factory_tools:
+                    tools.extend(factory_tools)
+                    logger.info(
+                        "builder: injected %d factory tools for agent-creator",
+                        len(factory_tools),
+                    )
+
+        # Apply whitelist to all tools (builtins + project + factory)
         if whitelist:
             tools = self._filter_tools(tools, whitelist)
 
@@ -128,7 +176,7 @@ class AgentBuilder:
         )
 
         agent = Agent(
-            name=getattr(ctx, "agent_id", None) or "default",
+            name=agent_id,
             model=model,
             system_prompt=sys_prompt,
             toolkit=toolkit,
@@ -141,14 +189,96 @@ class AgentBuilder:
             agent.load_state_dict(ctx.session_state)
 
         logger.info(
-            "builder: built agent session=%s tools=%d skills=%d mcps=%d middlewares=%d",
+            "builder: built agent session=%s tools=%d skills=%d mcps=%d middlewares=%d sandbox=%s",
             getattr(ctx, "session_id", ""),
             len(tools),
             len(skills),
             len(mcps),
             len(middlewares),
+            requires_sandbox,
         )
         return agent
+
+    # ------------------------------------------------------------------
+    # Host skill loading
+    # ------------------------------------------------------------------
+
+    async def _load_host_skills(self) -> list:
+        """Load skills from the host filesystem via :class:`LocalSkillLoader`.
+
+        Scans ``bocomadp/skills/`` recursively for ``SKILL.md`` files.
+        The loader is initialized lazily and cached.
+        """
+        try:
+            from agentscope.skill import LocalSkillLoader
+        except ImportError:
+            logger.warning("builder: LocalSkillLoader not available")
+            return []
+
+        if self._host_skill_loader is None:
+            if not os.path.isdir(_HOST_SKILL_DIR):
+                logger.warning(
+                    "builder: host skill dir not found: %s",
+                    _HOST_SKILL_DIR,
+                )
+                return []
+            self._host_skill_loader = LocalSkillLoader(
+                _HOST_SKILL_DIR,
+                scan_subdir=True,
+            )
+            logger.info(
+                "builder: host skill loader initialized dir=%s",
+                _HOST_SKILL_DIR,
+            )
+
+        return await self._host_skill_loader.list_skills()
+
+    # ------------------------------------------------------------------
+    # Factory tools (agent-creator only)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_factory_tools() -> list:
+        """Return agent factory tool functions.
+
+        These are NOT registered in the global :class:`ToolRegistry` —
+        they are injected only into the built-in ``agent-creator`` agent
+        so no other agent can accidentally call them.
+        """
+        try:
+            from bocomadp.tools.agent_factory_tools import (
+                create_agent,
+                update_agent,
+                delete_agent,
+                list_agents,
+                get_agent,
+                list_tools_for_agent,
+                set_agent_tools,
+                list_available_skills,
+                enable_skill_for_agent,
+            )
+
+            return [
+                create_agent,
+                update_agent,
+                delete_agent,
+                list_agents,
+                get_agent,
+                list_tools_for_agent,
+                set_agent_tools,
+                list_available_skills,
+                enable_skill_for_agent,
+            ]
+        except ImportError:
+            logger.warning(
+                "builder: agent_factory_tools not available, "
+                "agent-creator will have no factory tools",
+            )
+            return []
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _filter_tools(tools: list, whitelist: list[str]) -> list:

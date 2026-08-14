@@ -464,6 +464,57 @@ class SessionService:
             `bool`:
                 ``True`` if the agent record existed and was deleted.
         """
+        # --- Config-layer expert-team cascade ---------------------------
+        # A leader agent may carry a persistent expert-team config
+        # (AgentData.team_config + members pointing back via
+        # parent_agent_id). When the leader is deleted we must:
+        #   * self-built members (parent_agent_id == agent_id) -> cascade
+        #     delete them (they exist only under this team);
+        #   * invited/referenced members (present in some leader's
+        #     member_ids but not owned by this leader) -> only detach
+        #     them from that leader's member_ids (the underlying agent
+        #     record is preserved, matching the permission-isolation rule).
+        # Run this before deleting the leader's own sessions so the
+        # child deletes complete first.
+        #
+        # Note: storage.list_agents() hides team members (parent_agent_id
+        # set), so we cannot rely on it to enumerate self-built children.
+        # Instead we read the leader's own team_config.member_ids and
+        # resolve each member directly via get_agent.
+        leader = await self._storage.get_agent(user_id, agent_id)
+        if leader is not None and leader.data.team_config is not None:
+            for mid in list(leader.data.team_config.member_ids):
+                member = await self._storage.get_agent(user_id, mid)
+                if (
+                    member is not None
+                    and member.data.parent_agent_id == agent_id
+                ):
+                    # Self-built member: cascade delete it.
+                    await self.delete_agent(user_id, mid)
+
+        # Detach this agent from any leader that references it (invited
+        # member case). Top-level agents are always returned by
+        # list_agents (members are hidden, but leaders are not).
+        all_agents = await self._storage.list_agents(user_id)
+        for other_leader in all_agents:
+            cfg = other_leader.data.team_config
+            if (
+                other_leader.id != agent_id
+                and cfg is not None
+                and agent_id in cfg.member_ids
+            ):
+                cfg.member_ids.remove(agent_id)
+                cfg.handoff_relations = [
+                    r
+                    for r in cfg.handoff_relations
+                    if r.from_agent_id != agent_id
+                    and r.to_agent_id != agent_id
+                ]
+                await self._storage.upsert_agent(
+                    other_leader.user_id,
+                    other_leader,
+                )
+
         for session in await self._storage.list_sessions(user_id, agent_id):
             if session.team_id is not None:
                 team = await self._storage.get_team(

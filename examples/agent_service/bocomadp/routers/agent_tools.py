@@ -3,9 +3,9 @@
 
 Endpoints
 ---------
-``GET    /api/agents/{agent_id}/tools``           — list tools with status
-``PUT    /api/agents/{agent_id}/tools/{name}``    — enable a tool
-``DELETE /api/agents/{agent_id}/tools/{name}``    — disable a tool
+``GET    /agents/{agent_id}/tools``           — list tools with status
+``PUT    /agents/{agent_id}/tools/{name}``    — enable a tool
+``DELETE /agents/{agent_id}/tools/{name}``    — disable a tool
 
 Tool sources (matching the full ``get_toolkit()`` assembly):
 
@@ -30,14 +30,19 @@ and MCPs return 400 on PUT/DELETE.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from agentscope.app.deps import get_current_user_id
 
 logger = logging.getLogger("bocomadp.agent_tools")
 
 agent_tools_router = APIRouter(
-    prefix="/api/agents",
+    prefix="/agents",
     tags=["agent-tools"],
 )
 
@@ -91,6 +96,74 @@ _BUILTIN_TOOLS: list[dict] = [
 ]
 
 # ------------------------------------------------------------------
+# Tool whitelist store
+# ------------------------------------------------------------------
+# Framework agents (StorageBase) have no ``enabled_tools`` field.
+# This dict acts as the write target for tool enable / disable so
+# the tool config APIs work for every framework-managed agent.
+_tool_whitelists: dict[str, list[str]] = {}
+
+
+def _whitelist_file() -> Path:
+    """Persistent storage path for the tool whitelist store.
+
+    Lives under ``{workspace_dir}/_meta/`` so it survives service
+    restarts (the store itself is in-memory and would otherwise be
+    lost, silently re-granting every tool to whitelisted agents).
+    """
+    try:
+        from bocomadp.config.uploads_config import get_workspace_dir
+
+        return get_workspace_dir() / "_meta" / "agent_tool_whitelists.json"
+    except Exception:  # noqa: BLE001
+        return Path(
+            os.environ.get(
+                "BOCMADP_WHITELIST_FILE",
+                os.path.join(
+                    os.path.dirname(os.path.dirname(
+                        os.path.dirname(os.path.abspath(__file__)))),
+                    ".agent_tool_whitelists.json",
+                ),
+            )
+        )
+
+
+def _persist_whitelists() -> None:
+    """Write the whitelist store to disk (best effort)."""
+    path = _whitelist_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_tool_whitelists, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        logger.warning("persist tool whitelists failed", exc_info=True)
+
+
+def load_tool_whitelists() -> None:
+    """Restore the whitelist store from disk (called at startup)."""
+    path = _whitelist_file()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            logger.warning("whitelist file %s is not a dict; ignoring", path)
+            return
+        _tool_whitelists.clear()
+        _tool_whitelists.update(data)
+        logger.info(
+            "loaded %d agent tool whitelists from %s",
+            len(data),
+            path,
+        )
+    except FileNotFoundError:
+        logger.info("no tool whitelist file yet: %s", path)
+    except Exception:  # noqa: BLE001
+        logger.warning("load tool whitelists failed", exc_info=True)
+
+
+# ------------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------------
 
@@ -100,14 +173,47 @@ def _tool_registry(request: Request):
     return request.app.state.tool_registry
 
 
-def _agent_manager(request: Request):
-    """Return the global :class:`MultiAgentManager` from app state."""
-    return request.app.state.multi_agent_manager
-
-
 def _mcp_registry(request: Request):
     """Return the global :class:`McpRegistry` from app state (may be None)."""
     return getattr(request.app.state, "mcp_registry", None)
+
+
+async def _resolve_framework_agent(
+    request: Request,
+    user_id: str,
+    agent_id: str,
+) -> Any:
+    """Look up *agent_id* in framework StorageBase.
+
+    Scoped by the authenticated caller *user_id* so the tool config
+    APIs work for every user, not just ``default``.
+
+    Returns:
+        The :class:`AgentRecord` if found, ``None`` otherwise.
+    """
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        return None
+    try:
+        return await storage.get_agent(user_id, agent_id)
+    except Exception:
+        logger.debug(
+            "agent_tools: storage lookup failed for %s",
+            agent_id,
+            exc_info=True,
+        )
+        return None
+
+
+def _get_enabled_tools(agent_id: str) -> list[str]:
+    """Return the current enabled-tools list for *agent_id*."""
+    return list(_tool_whitelists.get(agent_id, []))
+
+
+def _set_enabled_tools(agent_id: str, tools: list[str]) -> None:
+    """Persist *tools* for *agent_id*."""
+    _tool_whitelists[agent_id] = tools
+    _persist_whitelists()
 
 
 def _resolve_enabled(all_tool_names: list[str], whitelist: list[str]) -> set[str]:
@@ -135,7 +241,7 @@ def _all_tool_names(request: Request) -> set[str]:
 
 
 # ------------------------------------------------------------------
-# GET /api/agents/{agent_id}/tools
+# GET /agents/{agent_id}/tools
 # ------------------------------------------------------------------
 
 
@@ -146,6 +252,7 @@ def _all_tool_names(request: Request) -> set[str]:
 async def list_agent_tools(
     agent_id: str,
     request: Request,
+    user_id: str = Depends(get_current_user_id),
 ) -> dict:
     """Return every tool the agent sees, annotated with its enabled state.
 
@@ -165,13 +272,13 @@ async def list_agent_tools(
           ]
         }
     """
-    mgr = _agent_manager(request)
-    agent = mgr.get_agent(agent_id)
+    agent = await _resolve_framework_agent(request, user_id, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     all_names = sorted(_all_tool_names(request))
-    enabled_names = _resolve_enabled(all_names, agent.enabled_tools)
+    enabled_tools = _get_enabled_tools(agent_id)
+    enabled_names = _resolve_enabled(all_names, enabled_tools)
 
     tools: list[dict] = []
     mcps: list[dict] = []
@@ -221,7 +328,7 @@ async def list_agent_tools(
 
 
 # ------------------------------------------------------------------
-# PUT /api/agents/{agent_id}/tools/{tool_name}   — enable
+# PUT /agents/{agent_id}/tools/{tool_name}   — enable
 # ------------------------------------------------------------------
 
 
@@ -233,10 +340,10 @@ async def enable_agent_tool(
     agent_id: str,
     tool_name: str,
     request: Request,
+    user_id: str = Depends(get_current_user_id),
 ) -> dict:
     """Add *tool_name* to the agent's enabled-tools whitelist."""
-    mgr = _agent_manager(request)
-    agent = mgr.get_agent(agent_id)
+    agent = await _resolve_framework_agent(request, user_id, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -244,11 +351,11 @@ async def enable_agent_tool(
     if tool_name not in toggleable:
         raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
 
-    current = agent.enabled_tools
+    current = _get_enabled_tools(agent_id)
 
     # [] means all enabled → already enabled, nothing to do
     if not current:
-        agent.enabled_tools = current  # keep []
+        _set_enabled_tools(agent_id, current)  # keep []
         logger.info("agent_tools: %s enable %s (already all-enabled)", agent_id, tool_name)
         return {"ok": True}
 
@@ -257,13 +364,13 @@ async def enable_agent_tool(
         return {"ok": True}
 
     current.append(tool_name)
-    agent.enabled_tools = current
+    _set_enabled_tools(agent_id, current)
     logger.info("agent_tools: %s enable %s → enabled_tools=%s", agent_id, tool_name, current)
     return {"ok": True}
 
 
 # ------------------------------------------------------------------
-# DELETE /api/agents/{agent_id}/tools/{tool_name}   — disable
+# DELETE /agents/{agent_id}/tools/{tool_name}   — disable
 # ------------------------------------------------------------------
 
 
@@ -275,14 +382,14 @@ async def disable_agent_tool(
     agent_id: str,
     tool_name: str,
     request: Request,
+    user_id: str = Depends(get_current_user_id),
 ) -> dict:
     """Remove *tool_name* from the agent's enabled-tools whitelist.
 
     When ``enabled_tools`` is empty (all-enabled), it is first expanded
     to the full tool list so the disable can take effect.
     """
-    mgr = _agent_manager(request)
-    agent = mgr.get_agent(agent_id)
+    agent = await _resolve_framework_agent(request, user_id, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -290,7 +397,7 @@ async def disable_agent_tool(
     if tool_name not in toggleable:
         raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
 
-    current = list(agent.enabled_tools)
+    current = _get_enabled_tools(agent_id)
 
     # [] → expand to full list first, then remove
     if not current:
@@ -301,7 +408,7 @@ async def disable_agent_tool(
         return {"ok": True}
 
     current.remove(tool_name)
-    agent.enabled_tools = current
+    _set_enabled_tools(agent_id, current)
     logger.info("agent_tools: %s disable %s → enabled_tools=%s", agent_id, tool_name, current)
     return {"ok": True}
 
@@ -322,4 +429,10 @@ def _tool_name(tool: object) -> str:
     return getattr(tool, "__name__", "") or ""
 
 
-__all__ = ["agent_tools_router"]
+__all__ = [
+    "agent_tools_router",
+    "_tool_whitelists",
+    "_get_enabled_tools",
+    "_set_enabled_tools",
+    "load_tool_whitelists",
+]
