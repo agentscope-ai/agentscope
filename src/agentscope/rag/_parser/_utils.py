@@ -94,6 +94,6 @@ def _table_to_json(table_data: list[list[str]]) -> str:
             ``"<system-info>...</system-info>\\n<json>"``.
     """
     return (
-        "<system-info>A table loaded as a JSON array:</system-info>\n"
+        "<system-info>表格已作为JSON数组加载：</system-info>\n"
         + json.dumps(table_data, ensure_ascii=False)
     )

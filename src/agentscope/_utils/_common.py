@@ -152,7 +152,7 @@ def _json_loads_with_repair(
     raise ToolJSONDecodeError(
         f"""<system-reminder>{error_message}
 
-Your argument string is decoded by the following code snippet{ellipsis_hint}:
+你的参数字符串由以下代码片段解码{ellipsis_hint}：
 ```python
 import json
 
@@ -160,7 +160,7 @@ your_tool_arguments = {repr(error_json_str)}
 json.loads(your_tool_arguments)
 ```
 
-**You should recorrect the arguments in JSON format.**</system-reminder>""",
+**你应该用 JSON 格式重新修正这些参数。**</system-reminder>""",
     )
 
 

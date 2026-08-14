@@ -148,15 +148,14 @@ optional):
             ToolGroup(
                 name="schedule_tools",
                 description=(
-                    """Tools for managing cron schedules. A cron schedule is \
-a recurring task that fires at a specified time — at that point, a new \
-session is created and an agent will be invoked to complete the given task \
-autonomously.
+                    """用于管理 cron 计划任务的工具。cron 计划是一种 \
+按指定时间触发的重复性任务——触发时，会创建一个新的 \
+会话，并调用一个 agent 来自动完成给定的任务。
 
-## When to Use This Tool Group
-- When you need to create a new cron schedule that triggers at a specific \
-time or interval"
-- When you're asked to list, inspect, stop, or delete existing cron schedules
+## 何时使用此工具组
+- 当你需要创建一个在特定 \
+时间或间隔触发的新的 cron 计划时"
+- 当有人要求你列出、查看、停止或删除已有的 cron 计划时
 """
                 ),
                 tools=await scheduler_manager.list_tools(

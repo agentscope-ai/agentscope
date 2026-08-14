@@ -41,19 +41,19 @@ from ..state import AgentState
 
 
 # pylint: disable=line-too-long
-DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}All tool groups are currently deactivated.{% else %}The currently activated tool group(s): {{ groups | map(attribute='name') | join(', ') }}.{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
+DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}所有工具组当前均已停用。{% else %}当前已激活的工具组：{{ groups | map(attribute='name') | join(', ') }}。{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
 <tool-instructions>
-The tool instructions are a collection of suggestions, rules and notifications about how to use the tools in the activated groups.
+工具说明是一组关于如何在已激活的工具组中使用工具的提示、规则和通知。
 {% for group in groups %}{% if group.instructions %}<group name="{{ group.name }}">{{ group.instructions }}</group>{% endif %}{% endfor %}
 </tool-instructions>{% endif %}{% endif %}"""  # noqa: E501
 
 
 DEFAULT_SKILL_INSTRUCTION = """<agent-skills>
-Skills are a collection of instructions, scripts, and resources to extend your capabilities.
+技能是一系列用于扩展你能力的指令、脚本和资源。
 
-**IMPORTANT**: Skills are NOT tools, and you cannot call a skill directly. To use a skill, you MUST use the `{{ skill_viewer }}` tool to read the skill's full instructions, and then follow those instructions to use the tools and resources provided by the skill.
+**重要**：技能不是工具，你不能直接调用技能。要使用技能，你必须使用 `{{ skill_viewer }}` 工具阅读技能的完整说明，然后按照这些说明使用技能所提供的工具和资源。
 
-# Available Skills:{% for skill in skills %}
+# 可用技能：{% for skill in skills %}
 <skill>
 <name>{{ skill.name }}</name>
 <description>{{ skill.description }}</description>

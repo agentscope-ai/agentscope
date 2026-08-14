@@ -45,14 +45,12 @@ class Glob(ToolBase):
     name: str = "Glob"
     """The tool name presented to the agent."""
 
-    description: str = """Fast file pattern matching tool that works with
-any codebase size.
+    description: str = """适用于任意规模代码库的快速文件模式匹配工具。
 
-Supports glob patterns like "**/*.js" or "src/**/*.ts" and returns
-matching file paths sorted by modification time (newest first).
+支持 "**/*.js" 或 "src/**/*.ts" 等 glob 模式，并返回按修改时间排序
+（最新的在前）的匹配文件路径。
 
-Use this tool when you need to find files by pattern across the
-codebase."""  # ignore: E501
+当你需要按模式在代码库中查找文件时，请使用本工具。"""  # ignore: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -60,13 +58,13 @@ codebase."""  # ignore: E501
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "The glob pattern to match against "
-                "(e.g., '**/*.py', 'src/**/*.ts')",
+                "description": "要匹配的 glob 模式 "
+                "（例如 '**/*.py'、'src/**/*.ts'）",
             },
             "path": {
                 "type": "string",
-                "description": "The base directory to search from "
-                "(defaults to current working directory)",
+                "description": "要从中开始搜索的基础目录 "
+                "（默认为当前工作目录）",
             },
         },
         "required": ["pattern"],

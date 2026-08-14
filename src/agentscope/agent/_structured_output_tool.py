@@ -44,18 +44,16 @@ class _GenerateStructuredOutput(ToolBase):
 
     name = "GenerateStructuredOutput"
 
-    description = """Generate the required structured output by this tool.
+    description = """通过此工具生成所需的结构化输出。
 
-This tool is equipped only when you're required to generate structured output.
-The input schema represents the required structured output.
-When you are ready to generate a structured output, call this tool with the
-structured output as input.
-When you're equipped this tool, you MUST end your response with calling this
-tool. Once this tool is called, your current response is finished and the
-structured output is sent to the user.
+仅当你被要求生成结构化输出时，才会装配此工具。
+输入模式（input schema）表示所需的结构化输出。
+当你准备好生成结构化输出时，调用此工具并将结构化输出作为输入传入。
+当你装配了此工具后，你必须以调用此工具来结束你的回复。一旦此工具被调用，
+你当前的回复即告完成，结构化输出将发送给用户。
 
-# When to Use This Tool
-- When you collect enough resources and information.
+# 何时使用此工具
+- 当你收集到足够的资源和信息时。
 """
     is_state_injected = True
     is_concurrency_safe = True

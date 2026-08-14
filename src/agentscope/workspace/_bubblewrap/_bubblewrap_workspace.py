@@ -34,16 +34,16 @@ from ._constants import (
 )
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
-You have a Bubblewrap-based Linux workspace. All tool calls execute
-inside the sandbox at ``{workdir}``.
+你拥有一个基于 Bubblewrap 的 Linux 工作区。所有工具调用都在
+沙箱内的 ``{workdir}`` 中执行。
 
-Layout:
+目录结构：
 
 ```
 {workdir}/
-|-- data/       # offloaded multimodal files
-|-- skills/     # reusable skills
-`-- sessions/   # session context and tool results
+|-- data/       # 卸载的多模态文件
+|-- skills/     # 可复用的技能
+`-- sessions/   # 会话上下文与工具结果
 ```
 </workspace>"""
 

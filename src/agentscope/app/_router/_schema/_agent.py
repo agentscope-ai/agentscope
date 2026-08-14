@@ -14,7 +14,7 @@ class CreateAgentRequest(BaseModel):
 
     name: str = Field(description="Display name of the agent.")
     system_prompt: str = Field(
-        default="You're a helpful assistant.",
+        default="你是一个乐于助人的AI助手。",
         description="Base system prompt fed to the agent.",
     )
     context_config: ContextConfig = Field(

@@ -130,6 +130,34 @@ class RedisConfig(BaseModel):
     port: int = Field(default=6379)
 
 
+class RunConcurrencyConfig(BaseModel):
+    """/chat 并发控制上限(仿 deer-flow run_concurrency)。
+
+    ``0`` 表示不限;``grace_secs`` 为装配窗口宽限秒数;``enabled=false``
+    时中间件完全透传,跳过对账/占位/注册。
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="并发控制总开关;false 时中间件完全透传,跳过对账/占位/注册。",
+    )
+    max_running: int = Field(
+        default=10,
+        ge=0,
+        description="全局并发上限(0=不限)。",
+    )
+    max_running_per_user: int = Field(
+        default=3,
+        ge=0,
+        description="每用户并发上限(0=不限)。",
+    )
+    grace_secs: float = Field(
+        default=6.0,
+        gt=0,
+        description="装配窗口宽限秒数(响应先于框架锁 key 创建的时间窗口)。",
+    )
+
+
 class DbConfig(BaseModel):
     """AgentScope 持久化存储后端（AsyncSQLAlchemyStorage）。
 
@@ -417,6 +445,10 @@ class AppConfig(BaseSettings):
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     db: DbConfig = Field(default_factory=DbConfig)
+    run_concurrency: RunConcurrencyConfig = Field(
+        default_factory=RunConcurrencyConfig,
+        description="/chat 并发控制配置。",
+    )
 
     # ---- QwenPaw migration placeholders (all default off) ----
     providers: ProviderConfig = Field(default_factory=ProviderConfig)

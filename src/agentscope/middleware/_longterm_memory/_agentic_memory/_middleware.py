@@ -333,15 +333,12 @@ than broad keywords.
 """  # noqa:
 
 DEFAULT_RETRIEVAL_INSTRUCTIONS = (
-    "You are selecting memory files that will be useful as context for "
-    "processing a user's query. You will be given the user's query and a "
-    "list of available memory files with their filenames and descriptions.\n\n"
-    "Return a list of filenames for the memories that will clearly be "
-    "useful (up to 5). Only include memories that you are certain will be "
-    "helpful based on their name and description.\n"
-    "- If you are unsure whether a memory will be useful, do not include "
-    "it. Be selective and discerning.\n"
-    "- If no memories would clearly be useful, return an empty list."
+    "你正在选择对处理用户查询有用的记忆文件。系统将给你用户的查询，"
+    "以及一份可用记忆文件列表（含文件名和描述）。\n\n"
+    "请返回一份对处理当前查询明显有用的记忆文件名列表（最多5个）。"
+    "只纳入你根据文件名和描述确信有帮助的记忆。\n"
+    "- 如果不确定某个记忆是否有用，就不要纳入。要有选择性和辨别力。\n"
+    "- 如果没有明显有用的记忆，就返回空列表。"
 )
 
 
@@ -542,10 +539,10 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             remain_lines = len(memory_md_truncated.split("\n"))
             omitted_lines = len(memory_md_content.split("\n")) - remain_lines
             memory_md_truncated += (
-                "\n<<<TRUNCATED>>>\n<system-reminder>The remaining "
-                f"{omitted_lines} lines have been omitted due to context "
-                "length limits. Use the `Read` tool with offset "
-                f"`{remain_lines}` to access the rest of '{memory_md_path}'."
+                "\n<<<TRUNCATED>>>\n<system-reminder>由于上下文长度限制，"
+                f"剩余的 {omitted_lines} 行已被省略。"
+                f"如需访问 '{memory_md_path}' 的其余内容，"
+                f"请使用 offset 为 `{remain_lines}` 的 `Read` 工具。"
                 f"</system-reminder>"
             )
 

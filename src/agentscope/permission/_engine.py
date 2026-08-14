@@ -288,8 +288,8 @@ class PermissionEngine:
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message=(
-                f"Permission denied for {tool.name} "
-                f"(explore mode is read-only)"
+                f"已拒绝 {tool.name} 的权限申请"
+                f"（探索模式为只读）"
             ),
             decision_reason="Explore mode does not allow modifications",
         )
@@ -583,8 +583,8 @@ class PermissionEngine:
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message=(
-                f"Permission denied for {tool.name} "
-                f"(dont_ask mode - user not available)"
+                f"已拒绝 {tool.name} 的权限申请"
+                f"（dont_ask 模式——用户不可用）"
             ),
             decision_reason="User is not available to answer permission "
             "prompts",
@@ -619,9 +619,9 @@ class PermissionEngine:
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message=(
-                f"Permission denied for {tool.name} "
-                f"(dont_ask mode - ASK converted to DENY, "
-                f"user not available)"
+                f"已拒绝 {tool.name} 的权限申请"
+                f"（dont_ask 模式——ASK 已转换为 DENY，"
+                f"用户不可用）"
             ),
             decision_reason=(
                 f"DONT_ASK mode converted ASK to DENY. "
@@ -713,7 +713,7 @@ class PermissionEngine:
             if await self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.DENY,
-                    message=f"Permission to use {tool.name} has been denied",
+                    message=f"使用 {tool.name} 的权限已被拒绝",
                     decision_reason=f"Rule: {rule.rule_content}",
                 )
         return None

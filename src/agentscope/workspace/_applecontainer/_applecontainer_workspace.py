@@ -55,16 +55,16 @@ from ._constants import (
 )
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
-You have an Apple-Container-based workspace. All tool calls execute
-**inside the container** at ``{workdir}``.
+你拥有一个基于 Apple Container 的工作区。所有工具调用都在
+**容器内部**的 ``{workdir}`` 中执行。
 
-Layout:
+目录结构：
 
 ```
 {workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
+├── data/        # 卸载的多模态文件
+├── skills/      # 可复用的技能
+└── sessions/    # 会话上下文与工具结果
 ```
 </workspace>"""
 

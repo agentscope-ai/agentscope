@@ -63,9 +63,8 @@ if TYPE_CHECKING:
 
 
 _DEFAULT_HINT_TEMPLATE = (
-    "<system-reminder>The following content is retrieved from the "
-    "knowledge base(s) and may be helpful for the current "
-    "request:\n<content>{context}</content></system-reminder>"
+    "<system-reminder>以下内容是从知识库中检索到的，"
+    "可能对当前请求有帮助：\n<content>{context}</content></system-reminder>"
 )
 # Wrapper around the formatted search results.  Must contain a single
 # ``{context}`` placeholder — :func:`_wrap_hint` splits on it.

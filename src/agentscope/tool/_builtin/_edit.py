@@ -28,23 +28,19 @@ class Edit(ToolBase):
     name: str = "Edit"
     """The tool name presented to the agent."""
 
-    description: str = """Performs exact string replacements in files.
+    description: str = """对文件执行精确的字符串替换。
 
-Usage:
-- You must use your `Read` tool at least once in the conversation
-  before editing. This tool will error if you attempt an edit without
-  reading the file.
-- When editing text from Read tool output, ensure you preserve the
-  exact indentation (tabs/spaces) as it appears AFTER the line number
-  prefix. The line number prefix format is: line number + tab.
-  Everything after that is the actual file content to match. Never
-  include any part of the line number prefix in the old_string or
-  new_string.
-- ALWAYS prefer editing existing files in the codebase. NEVER write
-  new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding
-  emojis to files unless asked.
-- The edit will FAIL if `old_string` is not unique in the file."""  # noqa: E501
+用法：
+- 在编辑之前，你必须先在本对话中至少使用一次 `Read` 工具。如果未经读取
+  就尝试编辑，本工具将报错。
+- 在编辑从 Read 工具输出中获取的文本时，请确保保留行号前缀之后出现的
+  精确缩进（制表符/空格）。行号前缀的格式为：行号 + 制表符。
+  之后的所有内容才是要与 old_string / new_string 匹配的实际文件内容。
+  绝不要把行号前缀的任何部分包含在 old_string 或 new_string 中。
+- 始终优先编辑代码库中已有的文件。除非明确要求，绝不要新建文件。
+- 只在用户明确要求时才使用 emoji。除非被要求，否则避免在文件中添加
+  emoji。
+- 如果 `old_string` 在文件中不是唯一的，编辑将失败。"""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -52,25 +48,24 @@ Usage:
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "The absolute path to the file to edit.",
+                "description": "要编辑的文件的绝对路径。",
             },
             "old_string": {
                 "type": "string",
                 "description": (
-                    "The exact string to replace. Must match exactly "
-                    "including whitespace and indentation."
+                    "要替换的精确字符串。必须精确匹配，"
+                    "包括空白和缩进。"
                 ),
             },
             "new_string": {
                 "type": "string",
-                "description": "The string to replace old_string with.",
+                "description": "用于替换 old_string 的字符串。",
             },
             "replace_all": {
                 "type": "boolean",
                 "description": (
-                    "If true, replace all occurrences. If false "
-                    "(default), only replace if there is exactly one "
-                    "occurrence."
+                    "如果为 true，则替换所有出现的位置。如果为 false"
+                    "（默认值），则仅在恰好出现一次时才替换。"
                 ),
                 "default": False,
             },

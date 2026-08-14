@@ -28,74 +28,55 @@ class Bash(ToolBase):
     name: str = "Bash"
     """The tool name presented to the agent."""
 
-    description: str = """Executes a bash command and returns its output.
+    description: str = """执行 bash 命令并返回其输出。
 
-The working directory persists between commands, but shell state does
-not. The shell environment is initialized from the user's profile
-(bash or zsh).
+工作目录在命令之间保持不变，但 shell 状态不会保留。shell 环境从用户的
+配置文件（bash 或 zsh）初始化。
 
-IMPORTANT: Avoid using this tool to run `find`, `grep`, `cat`, `head`,
-`tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed
-or after you have verified that a dedicated tool cannot accomplish your
-task. Instead, use the appropriate dedicated tool as this will provide
-a much better experience for the user:
+重要提示：除非被明确指示，或你已经确认专用工具无法完成你的任务，否则避免
+使用本工具运行 `find`、`grep`、`cat`、`head`、`tail`、`sed`、`awk` 或
+`echo` 命令。请改用相应的专用工具，因为这会为用户带来更好的体验：
 
- - File search: Use Glob (NOT find or ls)
- - Content search: Use Grep (NOT grep or rg)
- - Read files: Use Read (NOT cat/head/tail)
- - Edit files: Use Edit (NOT sed/awk)
- - Write files: Use Write (NOT echo >/cat <<EOF)
- - Communication: Output text directly (NOT echo/printf)
+ - 文件搜索：使用 Glob（而不是 find 或 ls）
+ - 内容搜索：使用 Grep（而不是 grep 或 rg）
+ - 读取文件：使用 Read（而不是 cat/head/tail）
+ - 编辑文件：使用 Edit（而不是 sed/awk）
+ - 写入文件：使用 Write（而不是 echo >/cat <<EOF）
+ - 通信：直接输出文本（而不是 echo/printf）
 
-While the Bash tool can do similar things, it's better to use the
-built-in tools as they provide a better user experience and make it
-easier to review tool calls and give permission.
+虽然 Bash 工具也能完成类似的操作，但最好使用内置工具，因为它们能提供
+更好的用户体验，也更容易审查工具调用和授予权限。
 
-# Instructions
- - If your command will create new directories or files, first use
-   this tool to run `ls` to verify the parent directory exists and is
-   the correct location.
- - Always quote file paths that contain spaces with double quotes in
-   your command (e.g., cd "path with spaces/file.txt")
- - Try to maintain your current working directory throughout the
-   session by using absolute paths and avoiding usage of `cd`. You may
-   use `cd` if the User explicitly requests it.
- - You may specify an optional timeout in milliseconds (up to 600000ms
-   / 10 minutes). By default, your command will timeout after 120000ms
-   (2 minutes).
- - Write a clear, concise description of what your command does. For
-   simple commands, keep it brief (5-10 words). For complex commands
-   (piped commands, obscure flags, or anything hard to understand at a
-   glance), include enough context so that the user can understand what
-   your command will do.
- - When issuing multiple commands:
-  - If the commands are independent and can run in parallel, make
-    multiple Bash tool calls in a single message. Example: if you need
-    to run "git status" and "git diff", send a single message with two
-    Bash tool calls in parallel.
-  - If the commands depend on each other and must run sequentially,
-    use a single Bash call with '&&' to chain them together.
-  - Use ';' only when you need to run commands sequentially but don't
-    care if earlier commands fail.
-  - DO NOT use newlines to separate commands (newlines are ok in
-    quoted strings).
- - For git commands:
-  - Prefer to create a new commit rather than amending an existing
-    commit.
-  - Before running destructive operations (e.g., git reset --hard, git
-    push --force, git checkout --), consider whether there is a safer
-    alternative that achieves the same goal. Only use destructive
-    operations when they are truly the best approach.
-  - Never skip hooks (--no-verify) or bypass signing (--no-gpg-sign,
-    -c commit.gpgsign=false) unless the user has explicitly asked for
-    it. If a hook fails, investigate and fix the underlying issue.
- - Avoid unnecessary `sleep` commands:
-  - Do not sleep between commands that can run immediately — just run
-    them.
-  - Do not retry failing commands in a sleep loop — diagnose the root
-    cause or consider an alternative approach.
-  - If you must sleep, keep the duration short (1-5 seconds) to avoid
-    blocking the user."""
+# 说明
+ - 如果你的命令会创建新目录或新文件，请先使用本工具运行 `ls`，确认父目录
+   存在且位置正确。
+ - 在命令中，始终用双引号引用包含空格的路径（例如 cd "path with spaces/file.txt"）。
+ - 尽量在整个会话中保持当前工作目录不变：使用绝对路径并避免使用 `cd`。
+   只有在用户明确要求时才能使用 `cd`。
+ - 你可以指定可选的超时时间（毫秒，最大 600000ms / 10 分钟）。默认情况下，
+   你的命令会在 120000ms（2 分钟）后超时。
+ - 为你的命令编写清晰、简洁的描述。对于简单命令，请保持简短（5-10 个词）。
+   对于复杂命令（管道命令、不常见的参数或任何一眼难以理解的内容），请提供
+   足够的上下文，让用户能够理解你的命令将要做什么。
+ - 当需要发出多条命令时：
+  - 如果命令相互独立且可以并行执行，请在一条消息中发起多个 Bash 工具调用。
+    例如：如果需要运行 "git status" 和 "git diff"，请在同一条消息中并行发送
+    两个 Bash 调用。
+  - 如果命令之间存在依赖关系且必须顺序执行，请用单个 Bash 调用，使用 '&&'
+    将它们串联起来。
+  - 只有当你需要顺序执行命令且不关心前面的命令是否失败时，才使用 ';'。
+  - 不要用换行符分隔命令（在带引号的字符串中允许换行）。
+ - 对于 git 命令：
+  - 优先创建新的提交，而不是修改（amend）已有的提交。
+  - 在执行破坏性操作（例如 git reset --hard、git push --force、git checkout --）
+    之前，请考虑是否有更安全的替代方案能达到同样的目的。只有在确实是最佳方案时，
+    才使用破坏性操作。
+  - 除非用户明确要求，否则绝不跳过钩子（--no-verify）或绕过签名（--no-gpg-sign、
+    -c commit.gpgsign=false）。如果钩子失败，请调查并修复根本问题。
+ - 避免不必要的 `sleep` 命令：
+  - 不要在可以立即执行的命令之间 sleep——直接执行即可。
+  - 不要用 sleep 循环重试失败的命令——请诊断根本原因或考虑替代方案。
+  - 如果必须 sleep，请保持较短的时长（1-5 秒），以免阻塞用户。"""
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -103,22 +84,20 @@ easier to review tool calls and give permission.
         "properties": {
             "command": {
                 "type": "string",
-                "description": "The bash command to execute.",
+                "description": "要执行的 bash 命令。",
             },
             "description": {
                 "type": "string",
                 "description": (
-                    "Clear, concise description of what this command "
-                    "does. For simple commands, keep it brief (5-10 "
-                    "words). For complex commands, include enough "
-                    "context."
+                    "对此命令作用的清晰、简洁的描述。对于简单命令，请保持"
+                    "简短（5-10 个词）。对于复杂命令，请提供足够的上下文。"
                 ),
             },
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Optional timeout in milliseconds "
-                    "(default: 120000, max: 600000)"
+                    "可选的超时时间（毫秒）"
+                    "（默认值：120000，最大值：600000）"
                 ),
                 "default": 120000,
                 "maximum": 600000,

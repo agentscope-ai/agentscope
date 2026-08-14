@@ -42,17 +42,20 @@ class Grep(ToolBase):
     name: str = "Grep"
     """The tool name presented to the agent."""
 
-    description: str = """A powerful search tool built on ripgrep
+    description: str = """基于 ripgrep 构建的强大搜索工具
 
-  Usage:
-- ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
-- Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
-- Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
-- Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts per file
-- Context lines: use context parameter or -A/-B/-C for lines after/before/around matches
-- Case-insensitive search: set i to true
-- Multiline regex: set multiline to true for patterns spanning multiple lines
-- Limit results: use head_limit to cap the number of results returned"""  # noqa: E501
+  用法：
+- 搜索任务一律使用 Grep。绝不要以 Bash 命令的方式调用 `grep` 或 `rg`。Grep 工具
+  已经针对正确的权限和访问进行了优化。
+- 支持完整的正则表达式语法（例如 "log.*Error"、"function\\s+\\w+"）
+- 使用 glob 参数（例如 "*.js"、"**/*.tsx"）或 type 参数（例如 "js"、"py"、"rust"）
+  过滤文件
+- 输出模式："content" 显示匹配行，"files_with_matches" 只显示文件路径（默认），
+  "count" 显示每个文件的匹配数量
+- 上下文行：使用 context 参数或 -A/-B/-C 指定匹配之后/之前/周围的上下文行数
+- 不区分大小写的搜索：将 i 设置为 true
+- 多行正则：对于跨越多行的模式，将 multiline 设置为 true
+- 限制结果数：使用 head_limit 限制返回的结果数量"""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -60,89 +63,87 @@ class Grep(ToolBase):
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "The regular expression pattern to search "
-                "for in file contents.",
+                "description": "要在文件内容中搜索的正则表达式模式。",
             },
             "path": {
                 "type": "string",
-                "description": "File or directory to search in. Defaults "
-                "to current working directory.",
+                "description": "要搜索的文件或目录。默认"
+                "为当前工作目录。",
             },
             "output_mode": {
                 "type": "string",
                 "enum": ["content", "files_with_matches", "count"],
-                "description": "Output mode: 'content' shows matching lines "
-                "(supports -A/-B/-C context, -n line numbers, "
-                "head_limit), 'files_with_matches' shows file "
-                "paths (supports head_limit), 'count' shows "
-                "match counts (supports head_limit). "
-                "Defaults to 'files_with_matches'.",
+                "description": "输出模式：'content' 显示匹配行 "
+                "（支持 -A/-B/-C 上下文、-n 行号、"
+                "head_limit），'files_with_matches' 显示文件"
+                "路径（支持 head_limit），'count' 显示"
+                "匹配数量（支持 head_limit）。"
+                "默认为 'files_with_matches'。",
                 "default": "files_with_matches",
             },
             "glob": {
                 "type": "string",
-                "description": "Glob pattern to filter files (e.g., '*.js', "
-                "'*.{ts,tsx}').",
+                "description": "用于过滤文件的 glob 模式（例如 '*.js'、"
+                "'*.{ts,tsx}'）。",
             },
             "type": {
                 "type": "string",
-                "description": "File type to search (rg --type). "
-                "Common types: js, py, rust, go, java, etc.",
+                "description": "要搜索的文件类型（rg --type）。"
+                "常见类型：js、py、rust、go、java 等。",
             },
             "-A": {
                 "type": "integer",
-                "description": "Number of lines to show after each match. "
-                "Requires output_mode: 'content'.",
+                "description": "每个匹配项之后要显示的行数。"
+                "要求 output_mode 为 'content'。",
             },
             "-B": {
                 "type": "integer",
-                "description": "Number of lines to show before each match. "
-                "Requires output_mode: 'content'.",
+                "description": "每个匹配项之前要显示的行数。"
+                "要求 output_mode 为 'content'。",
             },
             "-C": {
                 "type": "integer",
-                "description": "Alias for context.",
+                "description": "context 的别名。",
             },
             "context": {
                 "type": "integer",
-                "description": "Number of context lines to show before and "
-                "after matches. Requires output_mode: "
-                "'content'.",
+                "description": "匹配项前后要显示的上下文行数。要求 "
+                "output_mode 为 'content'。",
             },
             "n": {
                 "type": "boolean",
-                "description": "Show line numbers in output. Requires "
-                "output_mode: 'content'. Defaults to true.",
+                "description": "在输出中显示行号。要求 "
+                "output_mode 为 'content'。默认为 true。",
                 "default": True,
             },
             "i": {
                 "type": "boolean",
-                "description": "Case insensitive search.",
+                "description": "不区分大小写的搜索。",
                 "default": False,
             },
             "case_insensitive": {
                 "type": "boolean",
-                "description": "Case insensitive search (alias for i).",
+                "description": "不区分大小写的搜索（i 的别名）。",
                 "default": False,
             },
             "multiline": {
                 "type": "boolean",
-                "description": "Enable multiline mode where . matches "
-                "newlines and patterns can span lines. "
-                "Default: false.",
+                "description": "启用多行模式，其中 . 匹配 "
+                "换行符，且模式可以跨越多行。"
+                "默认值：false。",
                 "default": False,
             },
             "head_limit": {
                 "type": "integer",
-                "description": "Limit output to first N lines/entries. "
-                "Defaults to 250 when unspecified. "
-                "Pass 0 for unlimited.",
+                "description": "将输出限制为前 N 行/条目。"
+                "未指定时默认为 250。"
+                "传 0 表示不限制。",
                 "minimum": 0,
             },
             "offset": {
                 "type": "integer",
-                "description": "Skip first N lines/entries before applying "
-                "head_limit. Defaults to 0.",
+                "description": "在应用 head_limit 之前跳过前 "
+                "N 行/条目。默认为 0。",
                 "default": 0,
                 "minimum": 0,
             },

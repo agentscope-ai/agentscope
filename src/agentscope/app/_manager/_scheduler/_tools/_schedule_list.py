@@ -29,9 +29,9 @@ class ScheduleList(ToolBase):
     name: str = "ScheduleList"
 
     description: str = (
-        "List all scheduled tasks for the current user. "
-        "Shows schedule ID, name, cron expression, timezone, next run time, "
-        "enabled/disabled status, and whether the schedule is stateful."
+        "列出当前用户的全部定时任务。"
+        "显示调度 ID、名称、cron 表达式、时区、下次运行时间、"
+        "启用/禁用状态，以及调度是否为有状态（stateful）。"
     )
     input_schema: dict = _ScheduleListParams.model_json_schema()
 

@@ -66,7 +66,7 @@ class _ToolStopParams(BaseModel):
     """The params of the stop tool."""
 
     task_id: str = Field(
-        description="The task id of the background tool to stop.",
+        description="要停止的后台工具的任务 ID。",
     )
 
 
@@ -77,9 +77,8 @@ class ToolStop(ToolBase):
     """The tool name."""
 
     description: str = (
-        "Stop a background tool execution by its task id. "
-        "Use this when you want to cancel a previously offloaded tool "
-        "that is still running in the background."
+        "按任务 ID 停止后台工具的执行。"
+        "当你想要取消之前已卸载、仍在后台运行的工具时，使用该工具。"
     )
     """The tool description."""
 

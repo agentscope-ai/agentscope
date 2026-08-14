@@ -50,6 +50,13 @@ runtime:
   enabled: true            # 挂载 /api/chat/run SSE 端点
   heartbeat_interval_seconds: 15.0
 
+# /chat 并发控制(0=不限)
+run_concurrency:
+  enabled: false
+  max_running: 2
+  max_running_per_user: 1
+  grace_secs: 30
+
 # ---------- 组件注册表 ----------
 # 三大 registry（工具 / agent 中间件 / MCP）统一开关：
 # enabled 控制内置组件扫描，load_custom 控制 custom/ 目录自动扫描。

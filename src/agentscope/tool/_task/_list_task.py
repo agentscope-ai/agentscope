@@ -19,25 +19,25 @@ class TaskList(_TaskToolBase):
     name: str = "TaskList"
 
     # pylint: disable=line-too-long
-    description: str = """Use this tool to list all tasks in the task list.
+    description: str = """使用此工具列出任务列表中的所有任务。
 
-## When to Use This Tool
-- To see what tasks are available to work on (status: 'pending', no owner, not blocked)
-- To check overall progress on the project
-- To find tasks that are blocked and need dependencies resolved
-- After completing a task, to check for newly unblocked work or claim the next available task
-- **Prefer working on tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones
+## 何时使用此工具
+- 查看有哪些任务可以处理（status：'pending'、无 owner、未被阻塞）
+- 检查项目的整体进度
+- 查找被阻塞且需要解决依赖关系的任务
+- 完成一个任务后，检查是否有新解除阻塞的工作，或认领下一个可用的任务
+- 当有多个任务可用时，**优先按 ID 顺序处理任务**（ID 最小的优先），因为较早的任务通常为较晚的任务建立上下文
 
-## Output
+## 输出
 
-Returns a summary of each task:
-- **id**: Task identifier (use with TaskGet, TaskUpdate)
-- **subject**: Brief description of the task
-- **status**: 'pending', 'in_progress', or 'completed'
-- **owner**: Agent ID if assigned, empty if available
-- **blockedBy**: List of open task IDs that must be resolved first (tasks with blockedBy cannot be claimed until dependencies resolve)
+返回每个任务的摘要：
+- **id**：任务标识符（与 TaskGet、TaskUpdate 配合使用）
+- **subject**：任务的简要描述
+- **status**：'pending'、'in_progress' 或 'completed'
+- **owner**：已分配时的 Agent ID，可用时为空
+- **blockedBy**：必须先解决的未完成任务 ID 列表（有 blockedBy 的任务在依赖关系解决之前不能被认领）
 
-Use TaskGet with a specific task ID to view full details including description and comments."""  # noqa: E501
+使用 TaskGet 并指定任务 ID 来查看包含描述和评论在内的完整详情。"""  # noqa: E501
 
     input_schema: dict = _TaskListParams.model_json_schema()
 

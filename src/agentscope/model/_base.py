@@ -544,9 +544,9 @@ class ChatModelBase:
         if tool_choice is None:
             tool_choice = ToolChoice(mode=func_name)
         instruction = (
-            "<system-reminder>Now you **MUST** call the tool named "
-            f"'{func_name}' to generate the structured output required "
-            "by the user. DON'T do anything else.</system-reminder>"
+            "<system-reminder>现在你**必须**调用名为 "
+            f"'{func_name}' 的工具来生成用户所需的结构化输出。"
+            "**不要**做任何其它事情。</system-reminder>"
         )
 
         copied_messages = deepcopy(messages)

@@ -44,10 +44,10 @@ except ImportError:
 
 @tool
 def get_current_time() -> str:
-    """Get the current date and time.
+    """获取当前日期和时间。
 
     Returns:
-        str: Current date and time in ISO format.
+        str: 当前日期和时间，ISO 格式。
     """
     from datetime import datetime
 
@@ -56,13 +56,13 @@ def get_current_time() -> str:
 
 @tool
 def echo(text: str) -> str:
-    """Echo the input text back to the caller.
+    """将输入文本原样返回给调用方。
 
     Args:
-        text (str): The text to echo.
+        text (str): 要回显的文本。
 
     Returns:
-        str: The same text.
+        str: 原样返回的文本。
     """
     return text
 
