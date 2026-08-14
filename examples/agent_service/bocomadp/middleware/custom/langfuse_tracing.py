@@ -12,7 +12,12 @@
 
 2. 装配 ``TracerProvider`` + ``OTLPSpanExporter``（Basic Auth）+
    ``BatchSpanProcessor``，并设为全局 TracerProvider。
-3. 导出模块级 ``TracingMiddleware`` 实例，被 registry 扫描后自动注入
+3. monkey-patch 内置 extractor：AgentScope 的
+   ``_get_llm_request_attributes`` 只提取生成参数与工具定义，忽略
+   ``input_kwargs["messages"]``（含系统提示词 / 历史对话），导致
+   Langfuse 中 GENERATION 的 Input 缺失。补丁为其补上
+   ``gen_ai.input.messages`` 属性（Langfuse OTLP 映射为 input）。
+4. 导出模块级 ``TracingMiddleware`` 实例，被 registry 扫描后自动注入
    所有 Agent，将模型调用 / 工具调用 / 回复链路以 OTel GenAI 语义
    上报 Langfuse。
 
@@ -47,6 +52,88 @@ def _derive_otlp_endpoint() -> str | None:
             .replace("://127.0.0.1:", "://host.docker.internal:")
         )
     return base_url.rstrip("/") + _OTLP_PATH
+
+
+def _patch_llm_request_extractor() -> None:
+    """给 TracingMiddleware 的属性提取器补上输入 messages 与系统提示词。
+
+    AgentScope 内置 ``_get_llm_request_attributes`` 不读取
+    ``input_kwargs["messages"]``，导致 Langfuse 中 GENERATION 的
+    Input 只有工具定义、缺少系统提示词与对话上下文；
+    ``_get_agent_request_attributes`` 只记录用户输入，AGENT（trace
+    根）的 Input 同样缺系统提示词。这里通过 monkey-patch 注入
+    ``gen_ai.input.messages``（实测 Langfuse OTLP 会将其映射为
+    observation input），零框架源码改动。
+
+    注意：TracingMiddleware（``_trace`` 模块）通过
+    ``from ._extractor import ...`` 在导入时绑定函数引用，只替换
+    ``_extractor`` 命名空间不会影响其调用，因此两个命名空间都要
+    替换。
+
+    幂等：模块被重复导入（如 worker fork）时靠标记位跳过二次包装。
+    """
+    try:
+        from agentscope.middleware._tracing import _extractor, _trace
+        from agentscope.middleware._tracing._attributes import (
+            SpanAttributes,
+        )
+        from agentscope.middleware._tracing._extractor import (
+            _get_agent_messages,
+        )
+        from agentscope.middleware._tracing._utils import _serialize_to_str
+        from agentscope.message import Msg
+    except ImportError:
+        _logger.warning(
+            "langfuse tracing: cannot patch request extractors",
+            exc_info=True,
+        )
+        return
+
+    # ---- LLM 层：GENERATION input 带上完整 messages（含 SystemMsg） ----
+    _llm_original = _trace._get_llm_request_attributes
+    if not getattr(_llm_original, "_langfuse_patched", False):
+
+        def _patched_llm(instance, kwargs):
+            attributes = _llm_original(instance, kwargs)
+            messages = kwargs.get("messages")
+            if messages:
+                attributes[SpanAttributes.GEN_AI_INPUT_MESSAGES] = (
+                    _serialize_to_str(_get_agent_messages(messages))
+                )
+            return attributes
+
+        _patched_llm._langfuse_patched = True  # type: ignore[attr-defined]
+        _trace._get_llm_request_attributes = _patched_llm
+        _extractor._get_llm_request_attributes = _patched_llm
+        _logger.info("langfuse tracing: llm request extractor patched")
+
+    # ---- AGENT 层：trace 根 input 前插系统提示词 ----
+    _agent_original = _trace._get_agent_request_attributes
+    if not getattr(_agent_original, "_langfuse_patched", False):
+
+        def _patched_agent(instance, kwargs):
+            attributes = _agent_original(instance, kwargs)
+            inputs = kwargs.get("inputs")
+            if isinstance(inputs, (Msg, list)):
+                sys_prompt = getattr(instance, "_system_prompt", None)
+                if sys_prompt:
+                    system_msg = {
+                        "role": "system",
+                        "parts": [{"type": "text", "content": sys_prompt}],
+                        "name": "system",
+                        "finish_reason": "stop",
+                    }
+                    attributes[SpanAttributes.GEN_AI_INPUT_MESSAGES] = (
+                        _serialize_to_str(
+                            [system_msg] + _get_agent_messages(inputs)
+                        )
+                    )
+            return attributes
+
+        _patched_agent._langfuse_patched = True  # type: ignore[attr-defined]
+        _trace._get_agent_request_attributes = _patched_agent
+        _extractor._get_agent_request_attributes = _patched_agent
+        _logger.info("langfuse tracing: agent request extractor patched")
 
 
 def setup_langfuse_tracing() -> bool:
@@ -106,6 +193,8 @@ def setup_langfuse_tracing() -> bool:
 # ---------------------------------------------------------------------------
 # 模块级实例 —— MiddlewareRegistry.load_custom() 会扫描并自动注册
 # ---------------------------------------------------------------------------
-setup_langfuse_tracing()
+if setup_langfuse_tracing():
+    # tracing 启用后才打补丁：未配置凭据时保持近零开销、零侵入
+    _patch_llm_request_extractor()
 
 langfuse_tracing_mw = TracingMiddleware()
