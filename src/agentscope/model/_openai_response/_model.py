@@ -8,12 +8,14 @@ from pydantic import BaseModel, Field
 
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse
+from .._model_response import ChatResponse, FinishedReason
 from .._model_usage import ChatUsage
+from .._utils import _parse_provider_finished_reason
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIResponseFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
+from ...types import JSONSerializableObject
 
 if TYPE_CHECKING:
     from openai.types.responses import Response
@@ -26,6 +28,22 @@ else:
 
 # kwargs accepted by Chat Completions but NOT by the Responses API.
 _RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
+
+
+def _parse_response_finished_reason(
+    response: Any,
+) -> tuple[FinishedReason, dict[str, JSONSerializableObject]]:
+    """Extract the terminal reason from an OpenAI Responses response."""
+    status = getattr(response, "status", None)
+    raw_reason = status
+    status_value = getattr(status, "value", status)
+    if str(status_value).casefold() == "incomplete":
+        details = getattr(response, "incomplete_details", None)
+        raw_reason = getattr(details, "reason", None) or status
+    return _parse_provider_finished_reason(
+        raw_reason,
+        {"max_output_tokens"},
+    )
 
 
 class OpenAIResponseModel(ChatModelBase):
@@ -310,8 +328,14 @@ class OpenAIResponseModel(ChatModelBase):
                         input=event.delta or "",
                     )
 
-            elif event_type == "response.completed":
+            elif event_type in ("response.completed", "response.incomplete"):
                 resp = event.response
+                (
+                    finished_reason,
+                    reason_metadata,
+                ) = _parse_response_finished_reason(resp)
+                delta_res.finished_reason = finished_reason
+                delta_res.metadata.update(reason_metadata)
                 if resp.usage:
                     u = resp.usage
                     details = getattr(u, "input_tokens_details", None)
@@ -344,7 +368,7 @@ class OpenAIResponseModel(ChatModelBase):
                                 reasoning_item_id=reasoning_item_id,
                             )
 
-            if delta_res.content or usage:
+            if delta_res.content or usage or delta_res.metadata:
                 delta_res.usage = usage
                 yield delta_res
 
@@ -366,6 +390,9 @@ class OpenAIResponseModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True``.
         """
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        finished_reason, reason_metadata = _parse_response_finished_reason(
+            response,
+        )
 
         for item in response.output:
             item_type = getattr(item, "type", None)
@@ -425,6 +452,8 @@ class OpenAIResponseModel(ChatModelBase):
             "content": content_blocks,
             "is_last": True,
             "usage": usage,
+            "finished_reason": finished_reason,
+            "metadata": reason_metadata,
         }
         response_id = getattr(response, "id", None)
         if response_id:

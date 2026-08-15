@@ -10,6 +10,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _parse_provider_finished_reason
 from ...credential import OllamaCredential
 from ...formatter import FormatterBase, OllamaChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -255,6 +256,12 @@ class OllamaChatModel(ChatModelBase):
                 is_last=False,
                 id=response_id,
             )
+            finished_reason, reason_metadata = _parse_provider_finished_reason(
+                getattr(chunk, "done_reason", None),
+                {"length"},
+            )
+            delta_res.finished_reason = finished_reason
+            delta_res.metadata.update(reason_metadata)
 
             msg = chunk.message
 
@@ -310,6 +317,10 @@ class OllamaChatModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True``.
         """
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        finished_reason, reason_metadata = _parse_provider_finished_reason(
+            getattr(response, "done_reason", None),
+            {"length"},
+        )
 
         message_thinking = getattr(response.message, "thinking", None)
         if message_thinking:
@@ -345,4 +356,6 @@ class OllamaChatModel(ChatModelBase):
             content=content_blocks,
             is_last=True,
             usage=usage,
+            finished_reason=finished_reason,
+            metadata=reason_metadata,
         )

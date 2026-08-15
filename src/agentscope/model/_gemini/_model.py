@@ -11,6 +11,7 @@ from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _parse_provider_finished_reason
 from ...credential import GeminiCredential
 from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -344,12 +345,16 @@ class GeminiChatModel(ChatModelBase):
             response_id = getattr(chunk, "response_id", None) or response_id
             delta_res.id = response_id
 
-            if (
-                chunk.candidates
-                and chunk.candidates[0].content
-                and chunk.candidates[0].content.parts
-            ):
-                for part in chunk.candidates[0].content.parts:
+            candidate = chunk.candidates[0] if chunk.candidates else None
+            finished_reason, reason_metadata = _parse_provider_finished_reason(
+                getattr(candidate, "finish_reason", None),
+                {"max_tokens"},
+            )
+            delta_res.finished_reason = finished_reason
+            delta_res.metadata.update(reason_metadata)
+
+            if candidate and candidate.content and candidate.content.parts:
+                for part in candidate.content.parts:
                     if part.text:
                         # Thinking
                         if part.thought:
@@ -385,7 +390,7 @@ class GeminiChatModel(ChatModelBase):
 
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
-            if delta_res.content or usage:
+            if delta_res.content or usage or reason_metadata:
                 delta_res.usage = usage
                 yield delta_res
 
@@ -407,13 +412,14 @@ class GeminiChatModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True``.
         """
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        candidate = response.candidates[0] if response.candidates else None
+        finished_reason, reason_metadata = _parse_provider_finished_reason(
+            getattr(candidate, "finish_reason", None),
+            {"max_tokens"},
+        )
 
-        if (
-            response.candidates
-            and response.candidates[0].content
-            and response.candidates[0].content.parts
-        ):
-            for part in response.candidates[0].content.parts:
+        if candidate and candidate.content and candidate.content.parts:
+            for part in candidate.content.parts:
                 if part.text:
                     if part.thought:
                         content_blocks.append(
@@ -445,6 +451,8 @@ class GeminiChatModel(ChatModelBase):
             content=content_blocks,
             is_last=True,
             usage=usage,
+            finished_reason=finished_reason,
+            metadata=reason_metadata,
         )
 
     def _extract_usage(

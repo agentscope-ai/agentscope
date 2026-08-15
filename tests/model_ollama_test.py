@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import OllamaChatModel
+from agentscope.model import FinishedReason, OllamaChatModel
 from agentscope.tool import ToolChoice
 
 A = AnyString()
@@ -37,6 +37,7 @@ def _mock_completion(
     content: str = "",
     thinking: str | None = None,
     tool_calls: list | None = None,
+    done_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming Ollama response."""
     msg = MagicMock()
@@ -59,6 +60,7 @@ def _mock_completion(
     resp.prompt_eval_count = 10
     resp.eval_count = 5
     resp.id = None
+    resp.done_reason = done_reason
     return resp
 
 
@@ -66,6 +68,7 @@ def _make_stream_chunk(
     content: str = "",
     thinking: str | None = None,
     tool_calls: list | None = None,
+    done_reason: str | None = None,
 ) -> MagicMock:
     """Build a single mock Ollama streaming chunk."""
     msg = MagicMock()
@@ -88,6 +91,7 @@ def _make_stream_chunk(
     chunk.prompt_eval_count = 10
     chunk.eval_count = 5
     chunk.id = None
+    chunk.done_reason = done_reason
     return chunk
 
 
@@ -399,3 +403,37 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0]["function"]["name"], "get_weather")
         self.assertIsNone(fmt_choice)
+
+
+class TestOllamaFinishedReason(IsolatedAsyncioTestCase):
+    """Tests for Ollama token-limit termination propagation."""
+
+    async def test_non_stream_and_stream_max_tokens(self) -> None:
+        """Both response modes map ``length`` to max_tokens."""
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.chat = AsyncMock(
+            return_value=_mock_completion(
+                content="partial",
+                done_reason="length",
+            ),
+        )
+        response = await model([])
+        self.assertEqual(response.finished_reason, FinishedReason.MAX_TOKENS)
+
+        model = _make_model(stream=True)
+        model.client = MagicMock()
+        model.client.chat = AsyncMock(
+            return_value=_MockAsyncStream(
+                [
+                    _make_stream_chunk(content="partial"),
+                    _make_stream_chunk(done_reason="length"),
+                ],
+            ),
+        )
+        stream = await model([])
+        responses = [item async for item in stream]
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )

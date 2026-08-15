@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import AnthropicChatModel
+from agentscope.model import AnthropicChatModel, FinishedReason
 from agentscope.credential import AnthropicCredential
 from agentscope.tool import ToolChoice
 
@@ -41,6 +41,7 @@ def _mock_completion(
     tool_calls: Any = None,
     thinking: Any = None,
     response_id: str = "msg-1",
+    stop_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming Anthropic Message response."""
     blocks = []
@@ -67,6 +68,7 @@ def _mock_completion(
     resp = MagicMock()
     resp.id = response_id
     resp.content = blocks
+    resp.stop_reason = stop_reason
     resp.usage = MagicMock()
     resp.usage.input_tokens = 10
     resp.usage.output_tokens = 5
@@ -926,3 +928,56 @@ class TestAnthropicFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
         self.assertIsNone(fmt_choice)
+
+
+class TestAnthropicFinishedReason(IsolatedAsyncioTestCase):
+    """Tests for Anthropic token-limit termination propagation."""
+
+    async def test_non_stream_and_stream_max_tokens(self) -> None:
+        """Both response modes map ``max_tokens`` explicitly."""
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.messages.create = AsyncMock(
+            return_value=_mock_completion(
+                text="partial",
+                stop_reason="max_tokens",
+            ),
+        )
+        response = await model([])
+        self.assertEqual(response.finished_reason, FinishedReason.MAX_TOKENS)
+
+        message = MagicMock(id="msg-1")
+        message.usage = MagicMock(
+            input_tokens=10,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        text_delta = MagicMock(type="text_delta", text="partial")
+        end_delta = MagicMock(stop_reason="max_tokens")
+        end_usage = MagicMock(output_tokens=5)
+        model = _make_model(stream=True)
+        model.client = MagicMock()
+        model.client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(
+                [
+                    _make_event("message_start", message=message),
+                    _make_event(
+                        "content_block_delta",
+                        index=0,
+                        delta=text_delta,
+                    ),
+                    _make_event(
+                        "message_delta",
+                        delta=end_delta,
+                        usage=end_usage,
+                    ),
+                ],
+            ),
+        )
+        stream = await model([])
+        responses = [item async for item in stream]
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )

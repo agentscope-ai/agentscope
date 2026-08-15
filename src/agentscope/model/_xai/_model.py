@@ -9,6 +9,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _parse_provider_finished_reason
 from ...credential import XAICredential
 from ...formatter import XAIChatFormatter
 from ...message import (
@@ -390,7 +391,15 @@ class XAIChatModel(ChatModelBase):
                 ),
             )
 
-        if trailing.content or trailing.usage:
+        if last_response is not None:
+            finished_reason, reason_metadata = _parse_provider_finished_reason(
+                getattr(last_response, "finish_reason", None),
+                {"max_tokens"},
+            )
+            trailing.finished_reason = finished_reason
+            trailing.metadata.update(reason_metadata)
+
+        if trailing.content or trailing.usage or trailing.metadata:
             yield trailing
 
     def _parse_completion_response(
@@ -411,6 +420,10 @@ class XAIChatModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True``.
         """
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        finished_reason, reason_metadata = _parse_provider_finished_reason(
+            getattr(response, "finish_reason", None),
+            {"max_tokens"},
+        )
 
         if response.reasoning_content:
             content_blocks.append(
@@ -446,6 +459,8 @@ class XAIChatModel(ChatModelBase):
             "content": content_blocks,
             "is_last": True,
             "usage": usage,
+            "finished_reason": finished_reason,
+            "metadata": reason_metadata,
         }
         response_id = getattr(response, "id", None)
         if response_id:

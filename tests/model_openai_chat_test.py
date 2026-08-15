@@ -24,7 +24,7 @@ from agentscope.message import (
     DataBlock,
     Base64Source,
 )
-from agentscope.model import OpenAIChatModel
+from agentscope.model import FinishedReason, OpenAIChatModel
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
 
@@ -51,6 +51,7 @@ def _mock_completion(
     reasoning: Any = None,
     response_id: str = "resp-1",
     audio: dict | None = None,
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
@@ -72,6 +73,7 @@ def _mock_completion(
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason
 
     resp = MagicMock()
     resp.id = response_id
@@ -90,6 +92,7 @@ def _make_stream_chunk(
     usage: dict | None = None,
     has_choices: bool = True,
     delta_audio: dict | None = None,
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
@@ -112,6 +115,7 @@ def _make_stream_chunk(
         delta.tool_calls = tool_calls
         choice = MagicMock()
         choice.delta = delta
+        choice.finish_reason = finish_reason
         chunk.choices = [choice]
     else:
         chunk.choices = []
@@ -196,6 +200,23 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "resp-1")
+
+    async def test_max_tokens_finished_reason(self) -> None:
+        """The OpenAI ``length`` reason is preserved as max_tokens."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(
+                text="partial",
+                finish_reason="length",
+            ),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.MAX_TOKENS)
+        self.assertEqual(
+            result.metadata["provider_finished_reason"],
+            "length",
+        )
 
     async def test_default_thinking_enable_not_forwarded(
         self,
@@ -440,6 +461,28 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(responses[-1].id, "resp-1")
+
+    async def test_stream_max_tokens_carrier(self) -> None:
+        """A content-free ``length`` chunk marks the final response."""
+        chunks = [
+            _make_stream_chunk(delta_text="partial"),
+            _make_stream_chunk(finish_reason="length"),
+        ]
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_MockAsyncStream(chunks),
+        )
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.MAX_TOKENS,
+        )
+        self.assertEqual(
+            responses[-1].metadata["provider_finished_reason"],
+            "length",
+        )
 
     async def test_stream_thinking_and_text(
         self,
