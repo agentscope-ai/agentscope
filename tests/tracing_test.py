@@ -362,6 +362,33 @@ class TracingTest(IsolatedAsyncioTestCase):
             "chat span gen_ai.operation.name should equal chat",
         )
 
+    async def test_chat_span_has_input_messages(self) -> None:
+        """chat span must carry the messages sent to the model."""
+        self.model.set_responses(
+            [_make_text_response("Input captured.")],
+        )
+        user_text = "Which messages reached the model?"
+        await self.agent.reply(UserMsg(name="user", content=user_text))
+
+        chat_spans = self._spans_by_name("chat")
+        self.assertEqual(len(chat_spans), 1, "Expected exactly one chat span")
+        span_attrs = dict(chat_spans[0].attributes or {})
+        input_raw = span_attrs.get("gen_ai.input.messages")
+        assert isinstance(input_raw, str)
+        input_messages = json.loads(input_raw)
+        self.assertTrue(
+            any(
+                message.get("role") == "user"
+                and {
+                    "type": "text",
+                    "content": user_text,
+                }
+                in message.get("parts", [])
+                for message in input_messages
+            ),
+            f"Expected user message in chat span input: {input_messages}",
+        )
+
     async def test_chat_span_has_output_messages(self) -> None:
         """chat span must carry gen_ai.output.messages with response
         content."""
