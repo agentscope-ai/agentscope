@@ -792,8 +792,24 @@ class Agent:
         self,
         finished_reason: FinishedReason,
         metadata: dict[str, Any],
+        model_response_start: int,
     ) -> tuple[list[AgentEvent], ReplyEndEvent | None, Msg | None]:
-        """Build the reply outcome for a terminal model response."""
+        """Build the reply outcome for a terminal model response.
+
+        Args:
+            finished_reason (`FinishedReason`):
+                The normalized model termination reason.
+            metadata (`dict[str, Any]`):
+                Metadata propagated from the model response.
+            model_response_start (`int`):
+                The index where the current model response begins in the
+                accumulated reply context.
+
+        Returns:
+            `tuple[list[AgentEvent], ReplyEndEvent | None, Msg | None]`:
+                Synthetic terminal events, the reply-end event, and the
+                terminal message when one is required.
+        """
         if finished_reason == FinishedReason.COMPLETED:
             return [], None, None
 
@@ -815,7 +831,7 @@ class Agent:
                 id=self.state.reply_id,
                 name=self.name,
                 content=(
-                    deepcopy(last_ctx.content)
+                    deepcopy(last_ctx.content[model_response_start:])
                     if last_ctx is not None
                     else _MAX_TOKENS_HINT
                 ),
@@ -994,6 +1010,15 @@ class Agent:
                         async for evt in self._inject_runtime_state():
                             yield evt
 
+                        last_ctx_before_reasoning = self._get_last_msg()
+                        model_response_start = (
+                            len(last_ctx_before_reasoning.content)
+                            if last_ctx_before_reasoning is not None
+                            and last_ctx_before_reasoning.id
+                            == self.state.reply_id
+                            else 0
+                        )
+
                         # Perform reasoning
                         model_finished_reason = FinishedReason.COMPLETED
                         model_finished_metadata: dict[str, Any] = {}
@@ -1023,6 +1048,7 @@ class Agent:
                         ) = await self._handle_model_termination(
                             model_finished_reason,
                             model_finished_metadata,
+                            model_response_start,
                         )
                         for termination_event in termination_events:
                             yield termination_event

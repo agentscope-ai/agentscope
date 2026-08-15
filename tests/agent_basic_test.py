@@ -761,6 +761,90 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertEqual(tool_results[0].state, ToolResultState.ERROR)
         self.assertIn("was not executed", tool_results[0].output)
 
+    async def test_max_tokens_returns_only_current_reasoning_round(
+        self,
+    ) -> None:
+        """A truncated reply excludes prior ReAct rounds."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ThinkingBlock(thinking="previous thinking"),
+                        ToolCallBlock(
+                            id="completed_tool_call",
+                            name="mock_sequential_tool",
+                            input='{"input": "first"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[
+                        ThinkingBlock(thinking="current thinking"),
+                        TextBlock(text="partial answer"),
+                        ToolCallBlock(
+                            id="truncated_tool_call",
+                            name="mock_sequential_tool",
+                            input='{"input": "second"',
+                        ),
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.MAX_TOKENS,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(msg.finished_reason, ReplyFinishedReason.MAX_TOKENS)
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(msg.get_text_content(), "partial answer")
+        self.assertEqual(
+            [block.thinking for block in msg.get_content_blocks("thinking")],
+            ["current thinking"],
+        )
+        self.assertEqual(
+            [block.id for block in msg.get_content_blocks("tool_call")],
+            ["truncated_tool_call"],
+        )
+        final_tool_results = msg.get_content_blocks("tool_result")
+        self.assertEqual(
+            [block.id for block in final_tool_results],
+            ["truncated_tool_call"],
+        )
+        self.assertEqual(final_tool_results[0].state, ToolResultState.ERROR)
+        self.assertEqual(len(msg.get_content_blocks("hint")), 1)
+
+        context_msg = self.agent.state.context[-1]
+        self.assertEqual(
+            [
+                block.thinking
+                for block in context_msg.get_content_blocks("thinking")
+            ],
+            ["previous thinking", "current thinking"],
+        )
+        self.assertEqual(
+            [
+                block.id
+                for block in context_msg.get_content_blocks("tool_call")
+            ],
+            ["completed_tool_call", "truncated_tool_call"],
+        )
+        context_tool_results = context_msg.get_content_blocks("tool_result")
+        self.assertEqual(
+            [block.id for block in context_tool_results],
+            ["completed_tool_call", "truncated_tool_call"],
+        )
+        self.assertEqual(
+            context_tool_results[0].output[0].text,
+            "Sequential result: first",
+        )
+        self.assertEqual(
+            context_tool_results[1].state,
+            ToolResultState.ERROR,
+        )
+
     async def test_thinking_only_response_continues_reasoning(self) -> None:
         """A thinking-only response should not end with an empty reply."""
         self.model.set_responses(
