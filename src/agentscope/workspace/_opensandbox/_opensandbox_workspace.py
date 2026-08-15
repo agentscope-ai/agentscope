@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+import hashlib
+import os
 import shlex
 from typing import TYPE_CHECKING, Literal
 
@@ -31,6 +33,19 @@ if TYPE_CHECKING:
         NetworkPolicy,
         SandboxInfo,
     )
+
+
+# ── Gateway proxy-direct 开关（AGENTSCOPE_GATEWAY_PROXY_DIRECT）────────
+# 默认开启（"1"）：沙箱 gateway 以 --host 0.0.0.0 启动，GatewayClient 改走
+# OpenSandbox server-proxy 直连（跳过 exec_shell shim 的 spawn 开销，
+# 工具调用 ~1s → ~0.5s）。仅 OpenSandbox 沙箱模式生效（本类 override
+# _gateway_proxy_url 才返回非 None）；Docker/E2B 等无 server-proxy 的
+# 沙箱不受影响，保持 loopback + shim。传输层故障自动 fallback 回 shim。
+# 关闭（"0"/"false"/"no"/"off"）：gateway 维持 127.0.0.1 绑定，走原
+# exec_shell shim 通道，行为与官方一致。
+AGENTSCOPE_GATEWAY_PROXY_DIRECT_ENABLED = os.getenv(
+    "AGENTSCOPE_GATEWAY_PROXY_DIRECT", "1"
+).strip().lower() not in ("0", "false", "no", "off")
 
 
 class OpenSandboxWorkspace(SandboxedWorkspaceBase):
@@ -66,6 +81,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        skip_system_bootstrap: bool = False,
+        pypi_index_url: str | None = None,
     ) -> None:
         """Construct an :class:`OpenSandboxWorkspace`.
 
@@ -114,6 +131,16 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 ``.mcp`` exists.
             skill_paths (`list[str] | None`, optional):
                 Local skill dirs seeded into ``skills/`` on first init.
+            skip_system_bootstrap (`bool`, defaults to ``False``):
+                When ``True``, skip the ``apt-get`` and ``uv`` installation
+                steps during bootstrap. Use this with a pre-built image that
+                already has ``curl``, ``ripgrep``, and ``uv`` installed to
+                speed up workspace initialization.
+            pypi_index_url (`str | None`, defaults to ``None``):
+                PyPI index URL for ``uv pip install`` during bootstrap.
+                Set to a mirror URL (e.g. ``https://mirrors.aliyun.com/pypi/simple/``)
+                to accelerate package downloads in China. ``None`` uses the
+                default PyPI registry.
         """
         super().__init__(
             workspace_id=workspace_id,
@@ -135,14 +162,88 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self.network_policy = network_policy
         self.extra_pip = list(extra_pip or [])
         self.instructions = instructions
+        self.skip_system_bootstrap = skip_system_bootstrap
+        self._pypi_index_url = pypi_index_url
 
         self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
+
+    def _fork_config_lines(self) -> list[str]:
+        lines = super()._fork_config_lines()
+        lines.append(
+            "AGENTSCOPE_GATEWAY_PROXY_DIRECT="
+            f"{'1' if AGENTSCOPE_GATEWAY_PROXY_DIRECT_ENABLED else '0'}"
+            "（OpenSandbox server-proxy 直连）：gateway 以 --host 0.0.0.0 启动，"
+            "GatewayClient 经 server-proxy 直连，工具调用跳过 exec_shell shim 的"
+            "spawn 开销（~1.03s→~0.5s）；传输层故障自动 fallback 回 shim。"
+            "关闭：AGENTSCOPE_GATEWAY_PROXY_DIRECT=0",
+        )
+        lines.append(
+            "use_server_proxy 强制=True（fork 定制）：沙箱 endpoint 返回 "
+            "172.19.124.30:8101 固定可路由地址，容器免 --network host"
+            "（防 SDK 默认 127.0.0.1 动态 docker-proxy 端口漂移）",
+        )
+        lines.append(
+            f"skip_system_bootstrap={self.skip_system_bootstrap}："
+            "预装镜像跳过 bootstrap，沙箱启动 <3s",
+        )
+        return lines
 
     @property
     def sandbox_id(self) -> str | None:
         """OpenSandbox sandbox id, or ``None`` before initialize."""
         return self._sandbox.id if self._sandbox else None
+
+    @property
+    def _gateway_python(self) -> str:
+        """Sandbox-side path of the gateway python interpreter.
+        
+        When skip_system_bootstrap=True, use system python instead of venv.
+        """
+        if self.skip_system_bootstrap:
+            return "/usr/local/bin/python"
+        return self.get_backend().join_path(
+            self._gateway_venv,
+            "bin",
+            "python",
+        )
+
+    async def _gateway_proxy_url(self) -> tuple[str, dict[str, str]] | None:
+        """OpenSandbox server-proxy direct transport (default on).
+
+        Only active while a sandbox exists (i.e. sandbox mode) and the
+        ``AGENTSCOPE_GATEWAY_PROXY_DIRECT`` switch is enabled: returns
+        the server-proxy ``(base_url, headers)`` for the gateway port.
+        ``_sandboxed_base`` then launches the gateway with
+        ``--host 0.0.0.0`` and wires :class:`GatewayClient` to the
+        proxy route (with automatic fallback to the in-sandbox shim).
+
+        Returns ``None`` — keeping loopback binding + shim transport —
+        when the switch is off, no sandbox is attached, or the SDK
+        cannot produce an endpoint (provider-side limitation).
+        """
+        if not AGENTSCOPE_GATEWAY_PROXY_DIRECT_ENABLED:
+            return None
+        if self._sandbox is None:
+            return None
+        try:
+            endpoint = await self._sandbox.get_endpoint(self.gateway_port)
+        except Exception as exc:
+            logger.warning(
+                "OpenSandboxWorkspace: get_endpoint(%s) failed (%s); "
+                "falling back to the in-sandbox shim transport.",
+                self.gateway_port,
+                exc,
+            )
+            return None
+        url = str(endpoint.endpoint or "").rstrip("/")
+        if not url:
+            return None
+        # SDK endpoint may be a bare host:port (no scheme); httpx requires
+        # an explicit http:// prefix for the proxy-direct transport.
+        if not url.startswith(("http://", "https://")):
+            url = f"http://{url}"
+        return url, dict(endpoint.headers or {})
 
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.
@@ -211,7 +312,26 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             kwargs["request_timeout"] = timedelta(
                 seconds=self.request_timeout_seconds,
             )
+        # 2026-08-04: 强制走 opensandbox-server 的 server-proxy 路由。
+        # SDK 默认 use_server_proxy=False 会返回 127.0.0.1:<docker-proxy 动态端口>，
+        # 沙箱重建后旧 URL 失效（实测 56498 漂移问题），且容器需 --network host 才能路由。
+        # 开启后返回 172.19.124.30:8101/v1/sandboxes/.../proxy/<port> 固定可路由地址，
+        # 容器可脱离 host 网络、走普通 bridge。
+        kwargs["use_server_proxy"] = True
         return ConnectionConfig(**kwargs)
+
+    def _docker_safe_workspace_id(self) -> str:
+        """Return a Docker-label-safe workspace identifier (≤ 63 chars).
+
+        Docker metadata labels must be ≤ 63 characters and match
+        ``[a-zA-Z0-9]([a-zA-Z0-9_.-]*[a-zA-Z0-9])?``.  When the
+        raw ``workspace_id`` exceeds 62 characters, we hash it to a
+        deterministic 16-character BLAKE2b hex digest.
+        """
+        if len(self.workspace_id) <= 62:
+            return self.workspace_id
+        h = hashlib.blake2b(self.workspace_id.encode(), digest_size=8)
+        return h.hexdigest()
 
     async def _find_existing_sandbox(self) -> SandboxInfo | None:
         """Return the most recent sandbox matching this workspace id."""
@@ -223,7 +343,9 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         )
         sandbox_filter = SandboxFilter(
             states=[SandboxState.RUNNING, SandboxState.PAUSED],
-            metadata={METADATA_WORKSPACE_ID_KEY: self.workspace_id},
+            metadata={
+                METADATA_WORKSPACE_ID_KEY: self._docker_safe_workspace_id(),
+            },
         )
         try:
             infos = await manager.list_sandbox_infos(sandbox_filter)
@@ -257,7 +379,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             "connection_config": self._connection_config(),
             "metadata": {
                 **self.sandbox_metadata,
-                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
+                METADATA_WORKSPACE_ID_KEY: self._docker_safe_workspace_id(),
             },
             "timeout": timedelta(seconds=self.timeout_seconds),
             "ready_timeout": timedelta(seconds=self.timeout_seconds),
@@ -270,7 +392,13 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             kwargs["entrypoint"] = self.entrypoint
         if self.network_policy is not None:
             kwargs["network_policy"] = self.network_policy
-        return await Sandbox.create(**kwargs)
+        sandbox = await Sandbox.create(**kwargs)
+        logger.info(
+            "Sandbox created: id=%s, execd_url=%s",
+            sandbox.id,
+            getattr(sandbox, "execd_url", "N/A"),
+        )
+        return sandbox
 
     async def _attach_existing_sandbox(self, info: SandboxInfo) -> Sandbox:
         """Connect or resume depending on the OpenSandbox info state."""
@@ -365,28 +493,49 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             A list of shell command strings, to be executed in order. Each
             must exit 0; a non-zero exit aborts bootstrap.
         """
+        # If using a pre-built image with all dependencies already installed,
+        # skip all bootstrap commands. The gateway script will be uploaded
+        # directly by the base class.
+        if self.skip_system_bootstrap:
+            logger.info(
+                "OpenSandboxWorkspace: skip_system_bootstrap=True, "
+                "skipping all bootstrap commands (assuming pre-built image)"
+            )
+            return []
+
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement so entries with spaces or shell
         # metacharacters cannot break ``sh -c`` or inject inside the sandbox.
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
+        # Build uv pip install command with optional PyPI index URL for
+        # Chinese mirror support.
+        pypi_index = ""
+        if self._pypi_index_url:
+            pypi_index = f" --index-url {self._pypi_index_url}"
+
         return [
-            # System packages used by bootstrap and builtin tools. The
-            # default image runs as root, so no sudo is needed. ``ripgrep``
-            # backs the Grep tool.
+            # Replace Debian sources with Aliyun mirrors (China network
+            # optimization), then install system packages used by bootstrap
+            # and builtin tools. Falls back silently if Debian sources files
+            # use non-standard paths.
+            "sed -i 's|deb.debian.org|mirrors.aliyun.com|g' "
+            "/etc/apt/sources.list.d/*.sources 2>/dev/null || true; "
+            "sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' "
+            "/etc/apt/sources.list 2>/dev/null || true; "
             "apt-get update -qq "
             "&& apt-get install -y --no-install-recommends curl "
             "ca-certificates ripgrep "
             "&& rm -rf /var/lib/apt/lists/*",
-            # Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
-            # suppresses shell rc edits.
-            "curl -LsSf https://astral.sh/uv/install.sh "
-            "| env UV_INSTALL_DIR=/usr/local/bin "
-            "INSTALLER_NO_MODIFY_PATH=1 sh",
+            # uv → prefer pre-installed uv (CN images ship it); otherwise
+            # install from Aliyun PyPI mirror. astral.sh has no CN mirror.
+            "command -v uv >/dev/null 2>&1 || "
+            "python3 -m pip install --break-system-packages -q "
+            f"-i {self._pypi_index_url or 'https://mirrors.aliyun.com/pypi/simple/'} uv",
             # Gateway venv + base requirements + agentscope from PyPI.
             # ``uv venv`` creates the gateway home as a parent dir.
             f"uv venv {self._gateway_venv}",
-            f"uv pip install --python {self._gateway_python} {pip_args}",
-            f"uv pip install --python {self._gateway_python} "
+            f"uv pip install{pypi_index} --python {self._gateway_python} {pip_args}",
+            f"uv pip install{pypi_index} --python {self._gateway_python} "
             f"--no-deps 'agentscope'",
         ]

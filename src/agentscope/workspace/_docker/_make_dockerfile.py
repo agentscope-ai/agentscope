@@ -161,7 +161,10 @@ def prepare_build_context(
     """
     extra_pip_list = list(extra_pip or [])
 
-    install_block = 'RUN uv pip install "agentscope"'
+    install_block = (
+        'RUN uv pip install "agentscope"'
+        " --index-url https://mirrors.aliyun.com/pypi/simple/"
+    )
 
     dockerfile_text = render_dockerfile(
         base_image=base_image,

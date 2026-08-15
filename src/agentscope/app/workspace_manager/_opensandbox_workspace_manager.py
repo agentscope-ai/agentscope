@@ -28,6 +28,7 @@ Differences from the Docker manager:
 """
 
 import asyncio
+import re
 import time
 from typing import Any, Literal, Self
 
@@ -44,6 +45,45 @@ from ...workspace import OpenSandboxWorkspace
 from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
+
+
+def _sanitize_metadata_value(value: str, max_length: int = 63) -> str:
+    """Sanitize metadata value to comply with OpenSandbox label requirements.
+    
+    OpenSandbox metadata values must:
+    - Be at most 63 characters
+    - Start and end with an alphanumeric character
+    - Contain only alphanumeric, '-', '_', or '.' characters
+    
+    Args:
+        value: The raw value to sanitize.
+        max_length: Maximum allowed length (default 63).
+    
+    Returns:
+        A sanitized value that complies with OpenSandbox requirements.
+    """
+    if not value:
+        return "unknown"
+    
+    # Replace invalid characters with '-'
+    sanitized = re.sub(r'[^a-zA-Z0-9._-]', '-', value)
+    
+    # Ensure starts with alphanumeric
+    while sanitized and not sanitized[0].isalnum():
+        sanitized = sanitized[1:]
+    
+    # Ensure ends with alphanumeric
+    while sanitized and not sanitized[-1].isalnum():
+        sanitized = sanitized[:-1]
+    
+    # Truncate to max length
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length]
+        # Ensure still ends with alphanumeric after truncation
+        while sanitized and not sanitized[-1].isalnum():
+            sanitized = sanitized[:-1]
+    
+    return sanitized or "unknown"
 
 
 class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
@@ -75,6 +115,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
+        skip_system_bootstrap: bool = False,
+        pypi_index_url: str | None = None,
     ) -> None:
         """Initialize the OpenSandbox workspace manager.
 
@@ -132,6 +174,12 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often the background sweeper wakes up to look for
                 idle workspaces.
+            skip_system_bootstrap (`bool`, defaults to ``False``):
+                Forwarded to :class:`OpenSandboxWorkspace`. See its
+                docstring for semantics.
+            pypi_index_url (`str | None`, optional):
+                Forwarded to :class:`OpenSandboxWorkspace`. See its
+                docstring for semantics.
         """
         self._image = image
         self._api_key = api_key
@@ -150,6 +198,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        self._skip_system_bootstrap = skip_system_bootstrap
+        self._pypi_index_url = pypi_index_url
         super().__init__(isolation=isolation)
 
         # workspace_id -> (workspace, last_access_monotonic)
@@ -182,8 +232,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             gateway_port=self._gateway_port,
             env=self._env,
             sandbox_metadata={
-                "agentscope.user.id": user_id,
-                "agentscope.agent.id": agent_id,
+                "agentscope.user.id": _sanitize_metadata_value(user_id),
+                "agentscope.agent.id": _sanitize_metadata_value(agent_id),
                 **self._sandbox_metadata,
             },
             resource=self._resource,
@@ -192,6 +242,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             extra_pip=self._extra_pip,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
+            skip_system_bootstrap=self._skip_system_bootstrap,
+            pypi_index_url=self._pypi_index_url,
         )
         await ws.initialize()
         return ws

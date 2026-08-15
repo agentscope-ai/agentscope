@@ -26,3 +26,10 @@ GATEWAY_HOME = f"{SANDBOX_USER_HOME}/.agentscope"
 
 #: Sandbox metadata key used to map workspace_id → sandbox_id.
 METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"
+
+#: Default E2B domain (Alibaba Cloud FC Agent Sandbox).
+#: cn-hangzhou is the verified working region.
+DEFAULT_DOMAIN = "cn-hangzhou.e2b.fc.aliyuncs.com"
+
+#: Default E2B API URL (Alibaba Cloud FC Agent Sandbox).
+DEFAULT_API_URL = "https://api.cn-hangzhou.e2b.fc.aliyuncs.com"

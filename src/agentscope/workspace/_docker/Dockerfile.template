@@ -5,24 +5,23 @@
 # runtime paths from those and joins them under ``_gateway_home``.
 {node_from_block}FROM {base_image}
 
-# Install uv via Astral's official shell installer.
-# We use this rather than ``COPY --from=ghcr.io/astral-sh/uv`` to avoid
-# depending on GitHub Container Registry at build time (the GHCR blob CDN
-# has been observed to time out from some networks). ``curl`` and
-# ``ca-certificates`` are not present in ``python:*-slim`` so we apt them
-# in first, then drop the apt cache to keep the layer small.
-# ``UV_INSTALL_DIR`` redirects the installer's default ``~/.local/bin``
-# target to ``/usr/local/bin`` so ``uv`` lands directly on PATH;
-# ``INSTALLER_NO_MODIFY_PATH=1`` suppresses the installer's attempt to
-# patch shell rc files (we don't need it — PATH already covers it).
+# Install uv. Prefer the pre-installed uv when the base image ships it;
+# otherwise install from the Aliyun PyPI mirror. astral.sh has no CN
+# mirror, so we avoid its installer entirely.
+# ``curl`` and ``ca-certificates`` are not present in ``python:*-slim``
+# so we apt them in first, then drop the apt cache to keep the layer
+# small.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates ripgrep \
  && rm -rf /var/lib/apt/lists/* \
- && curl -LsSf https://astral.sh/uv/install.sh \
-        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+ && if ! command -v uv >/dev/null 2>&1; then \
+        python3 -m pip install --break-system-packages -q \
+          -i https://mirrors.aliyun.com/pypi/simple/ uv; \
+    fi
 
 {node_copy_block}ENV UV_PROJECT_ENVIRONMENT={gateway_home}/.venv \
     UV_LINK_MODE=copy \
+    UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PATH={gateway_home}/.venv/bin:$PATH
 WORKDIR {gateway_home}
 RUN uv venv {gateway_home}/.venv
