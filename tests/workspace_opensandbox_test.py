@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Test cases for OpenSandboxWorkspace.
 
 The whole module is skipped when the ``OPENSANDBOX_DOMAIN`` environment
@@ -6,9 +7,13 @@ variable is not set, because every test requires a live OpenSandbox
 service.
 """
 import os
+import sys
+import types
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from agentscope.app.workspace_manager import OpenSandboxWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.workspace import OpenSandboxWorkspace
 
@@ -18,6 +23,75 @@ from agentscope.workspace import OpenSandboxWorkspace
 _DOMAIN = os.getenv("OPENSANDBOX_DOMAIN", "")
 _API_KEY = os.getenv("OPENSANDBOX_API_KEY", "")
 _SKIP_REASON = "OPENSANDBOX_DOMAIN environment variable is not set"
+
+
+class TestOpenSandboxWorkspaceConfig(IsolatedAsyncioTestCase):
+    """Test SDK option forwarding without a live OpenSandbox service."""
+
+    async def test_connection_proxy_and_volumes_are_forwarded(self) -> None:
+        """Workspace options reach the corresponding SDK calls."""
+        create = AsyncMock(return_value=MagicMock(id="sandbox-id"))
+
+        class ConnectionConfig:
+            """Capture SDK connection arguments."""
+
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        opensandbox = types.ModuleType("opensandbox")
+        opensandbox.Sandbox = types.SimpleNamespace(create=create)
+        config = types.ModuleType("opensandbox.config")
+        connection = types.ModuleType("opensandbox.config.connection")
+        connection.ConnectionConfig = ConnectionConfig
+
+        modules = {
+            "opensandbox": opensandbox,
+            "opensandbox.config": config,
+            "opensandbox.config.connection": connection,
+        }
+        volumes = [{"name": "workspace-data"}]
+        with patch.dict(sys.modules, modules):
+            workspace = OpenSandboxWorkspace(
+                use_server_proxy=True,
+                volumes=volumes,
+            )
+            connection_config = workspace._connection_config()
+            await workspace._create_sandbox()
+
+        self.assertTrue(connection_config.kwargs["use_server_proxy"])
+        self.assertEqual(create.await_args.kwargs["volumes"], volumes)
+
+    async def test_manager_forwards_proxy_and_volumes(self) -> None:
+        """Manager-created workspaces receive both SDK options."""
+        captured: dict[str, object] = {}
+
+        class FakeWorkspace:
+            """Capture manager workspace arguments."""
+
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+            async def initialize(self) -> None:
+                """Stand in for workspace startup."""
+
+        volumes = [{"name": "workspace-data"}]
+        manager = OpenSandboxWorkspaceManager(
+            use_server_proxy=True,
+            volumes=volumes,
+        )
+        with patch(
+            "agentscope.app.workspace_manager."
+            "_opensandbox_workspace_manager.OpenSandboxWorkspace",
+            FakeWorkspace,
+        ):
+            await manager._build_and_start(
+                workspace_id="workspace-id",
+                user_id="user-id",
+                agent_id="agent-id",
+            )
+
+        self.assertTrue(captured["use_server_proxy"])
+        self.assertEqual(captured["volumes"], volumes)
 
 
 # ── lifecycle tests ────────────────────────────────────────────────
