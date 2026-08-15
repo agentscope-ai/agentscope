@@ -29,7 +29,11 @@ from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..storage import StorageBase, AgentRecord, SessionRecord, SessionSource
-from .._manager import BackgroundTaskManager, SchedulerManager
+from .._manager import (
+    BackgroundTaskManager,
+    ChatRunRegistry,
+    SchedulerManager,
+)
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
@@ -101,6 +105,7 @@ class ChatService:
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
         channel_dispatcher: "ChannelLifecycleDispatcher | None" = None,
+        chat_run_registry: ChatRunRegistry | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -167,12 +172,20 @@ optional):
                 The node's channel dispatcher, forwarded to
                 :func:`get_toolkit` so a channel-originated session's
                 agent gets that channel's platform tools.
+            chat_run_registry (`ChatRunRegistry | None`, optional):
+                Per-process registry of in-flight chat-run asyncio
+                tasks. Consulted by :meth:`interrupt` to detect a run
+                that is live locally but has not yet acquired the
+                distributed session lock (during agent assembly).
+                ``None`` (tests / legacy callers) disables the registry
+                check, preserving the previous behaviour.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
+        self._chat_run_registry = chat_run_registry
         self._access = resource_access_service
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
@@ -398,11 +411,27 @@ optional):
 
         Two paths, chosen by session liveness:
 
-        - **Running** (lock held): publish on the interrupt channel so
-          the local :class:`~agentscope.app._manager.CancelDispatcher`
-          cancels its chat-run task; the agent's ``CancelledError``
-          cleanup runs (fake tool results for pending calls, fallback
-          message, ``ReplyEndEvent(INTERRUPTED)``).
+        - **Running** (lock held, or a run is live in this process):
+          publish on the interrupt channel so the local
+          :class:`~agentscope.app._manager.CancelDispatcher` cancels
+          its chat-run task. Once the reply has started, the agent's
+          ``CancelledError`` cleanup runs (fake tool results for
+          pending calls, fallback message, ``ReplyEndEvent(INTERRUPTED)``).
+          The in-process registry check closes the agent-assembly
+          window — before :meth:`_run_impl` acquires the session lock
+          (step 7) — during which the run is already cancellable but
+          ``is_locked`` is not yet ``True``.
+        - **Assembly-window consequences** (same-process): the run is
+          cancelled before any reply exists, so nothing is persisted
+          and no ``ReplyStartEvent`` / ``ReplyEndEvent`` is emitted —
+          the input ``Msg`` is only persisted after assembly (inside
+          the step-7 lock), so it is dropped from the transcript.
+          Synthesising an ``INTERRUPTED`` terminal event for that case
+          is a follow-up (issue direction #2). The registry is
+          per-process: in multi-replica deployments an interrupt
+          landing on a non-hosting worker during assembly still falls
+          through to the resume path (a distributed run-alive marker
+          is the follow-up).
         - **Not running**: enqueue a ``resume`` trigger carrying a
           :class:`UserInterruptEvent`. If the session is parked on
           HITL, the agent short-circuits into the same cleanup path;
@@ -431,7 +460,7 @@ optional):
 
         if await self._message_bus.is_locked(
             MessageBusKeys.session_lock(session_id),
-        ):
+        ) or self._has_live_local_run(session_id):
             await self._message_bus.publish(
                 MessageBusKeys.session_interrupt_channel(),
                 {"session_id": session_id},
@@ -446,6 +475,38 @@ optional):
             kind=MessageBusKeys.WAKEUP_KIND_RESUME,
             inputs=UserInterruptEvent(reply_id=session.state.reply_id),
         )
+
+    def _has_live_local_run(self, session_id: str) -> bool:
+        """Whether a chat-run task for ``session_id`` is live in this
+        process.
+
+        The distributed session lock is acquired only after agent
+        assembly (step 7 of :meth:`_run_impl`); during assembly the run
+        is already live locally but ``is_locked`` still reports
+        ``False``. Consulting the per-process registry closes that
+        window so an interrupt lands on the cancel path instead of being
+        enqueued as a ``resume`` trigger the assembling run cannot
+        process.
+
+        Scope: the registry is per-process, so this only detects runs
+        hosted in *this* process. A run assembling on another worker is
+        invisible here; multi-replica deployments need a distributed
+        run-alive marker (issue follow-up).
+
+        Args:
+            session_id (`str`):
+                The session whose local run to look up.
+
+        Returns:
+            `bool`:
+                ``True`` when a non-finished chat-run task is
+                registered for the session; ``False`` when the service
+                was built without a registry or the task is finished.
+        """
+        if self._chat_run_registry is None:
+            return False
+        task = self._chat_run_registry.get(session_id)
+        return task is not None and not task.done()
 
     @staticmethod
     def _skip_parked_wakeup(
