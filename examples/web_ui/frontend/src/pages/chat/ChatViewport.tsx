@@ -186,6 +186,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [configPending, setConfigPending] = useState(false);
+	const planPanelDismissedRef = useRef(false);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
@@ -194,6 +195,10 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
 	}, [panelLayout]);
+
+	useEffect(() => {
+		planPanelDismissedRef.current = false;
+	}, [agentId, sessionId]);
 
 	// When the viewport agent differs from the outer page's selected
 	// agent (i.e. user drilled into a team member), `refetchSessions`
@@ -217,7 +222,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
-			setTasksContext(value.tasks_context as TaskContext);
+			const nextTasks = value.tasks_context as TaskContext;
+			setTasksContext(nextTasks);
+			if (nextTasks.tasks?.length && !planPanelDismissedRef.current) {
+				setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+			}
 		}
 		if (value.permission_context) {
 			setPermissionContext(value.permission_context as PermissionContext);
@@ -254,15 +263,20 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 	// Toggle a panel open/closed from the top-bar buttons.
 	const togglePanel = useCallback((key: PanelKey) => {
-		setPanelLayout((layout) =>
-			layout.some((column) => column.includes(key))
-				? closePanelInLayout(layout, key)
-				: openPanelInLayout(layout, key),
-		);
+		setPanelLayout((layout) => {
+			const isOpen = layout.some((column) => column.includes(key));
+			if (isOpen && key === 'plan') {
+				planPanelDismissedRef.current = true;
+			}
+			return isOpen ? closePanelInLayout(layout, key) : openPanelInLayout(layout, key);
+		});
 	}, []);
 
 	// Close a panel (driven by the panel's own close button).
 	const closePanel = useCallback((key: PanelKey) => {
+		if (key === 'plan') {
+			planPanelDismissedRef.current = true;
+		}
 		setPanelLayout((layout) => closePanelInLayout(layout, key));
 	}, []);
 

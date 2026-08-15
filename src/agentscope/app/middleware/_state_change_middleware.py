@@ -6,12 +6,13 @@ event stream.
 Two kinds of change are detected:
 
 - **State change** — ``tasks_context`` or ``permission_context``
-  modified (detected via hash comparison). Checked both around each
-  tool call (``on_acting``, for incremental updates during a turn)
-  and around the whole reply (``on_reply``, to catch changes made
-  outside the tool-execution window — e.g. permission rules added
+  modified (detected via separate hash comparisons). Checked both
+  around each tool call (``on_acting``, for incremental updates during
+  a turn) and around the whole reply (``on_reply``, to catch changes
+  made outside the tool-execution window — e.g. permission rules added
   while handling a user confirmation). Pushes
-  ``CustomEvent(name="state_updated", value={...})``.
+  ``CustomEvent(name="state_updated", value={...})`` containing only
+  the fields that changed.
 - **Team change** — the tool that just ran is one of the team tools
   (``TeamCreate``, ``AgentCreate``, ``AgentInvite``, ``TeamDelete``).
   These tools directly mutate storage (``TeamRecord``,
@@ -68,8 +69,8 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         self._session_id = session_id
 
     @staticmethod
-    def _state_hash(agent: Any) -> str:
-        """Compute a fast hash of the state fields we track.
+    def _state_hashes(agent: Any) -> tuple[str, str]:
+        """Compute separate hashes of the state fields we track.
 
         Only ``tasks_context`` and ``permission_context`` are included;
         ``context`` (the message history) is intentionally excluded
@@ -80,33 +81,48 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             agent: The agent instance.
 
         Returns:
-            `str`: A hex digest that changes when the tracked fields
-            change.
+            `tuple[str, str]`: Hashes for ``tasks_context`` and
+            ``permission_context``, respectively.
         """
-        raw = (
-            agent.state.tasks_context.model_dump_json()
-            + agent.state.permission_context.model_dump_json()
+        return (
+            hashlib.md5(
+                agent.state.tasks_context.model_dump_json().encode(),
+            ).hexdigest(),
+            hashlib.md5(
+                agent.state.permission_context.model_dump_json().encode(),
+            ).hexdigest(),
         )
-        return hashlib.md5(raw.encode()).hexdigest()
 
-    async def _publish_state(self, agent: Any) -> None:
-        """Push a ``state_updated`` event with the current tracked state.
+    async def _publish_state_changes(
+        self,
+        agent: Any,
+        hashes_before: tuple[str, str],
+    ) -> None:
+        """Publish the tracked state fields that changed.
 
         Args:
             agent: The agent instance whose state to publish.
+            hashes_before (`tuple[str, str]`):
+                Tracked state hashes captured before execution.
         """
+        hashes_after = self._state_hashes(agent)
+        value = {}
+        if hashes_before[0] != hashes_after[0]:
+            value["tasks_context"] = agent.state.tasks_context.model_dump(
+                mode="json",
+            )
+        if hashes_before[1] != hashes_after[1]:
+            value[
+                "permission_context"
+            ] = agent.state.permission_context.model_dump(
+                mode="json",
+            )
+        if not value:
+            return
+
         event = CustomEvent(
             name="state_updated",
-            value={
-                "tasks_context": agent.state.tasks_context.model_dump(
-                    mode="json",
-                ),
-                "permission_context": (
-                    agent.state.permission_context.model_dump(
-                        mode="json",
-                    )
-                ),
-            },
+            value=value,
         )
         await publish_session_event(
             self._bus,
@@ -142,14 +158,12 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         Yields:
             ``AgentEvent | Msg`` — unchanged from downstream.
         """
-        hash_before = self._state_hash(agent)
+        hashes_before = self._state_hashes(agent)
 
         async for item in next_handler(**input_kwargs):
             yield item
 
-        hash_after = self._state_hash(agent)
-        if hash_before != hash_after:
-            await self._publish_state(agent)
+        await self._publish_state_changes(agent, hashes_before)
 
     async def on_acting(
         self,
@@ -173,15 +187,13 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         tool_call = input_kwargs.get("tool_call")
         tool_name = tool_call.name if tool_call else ""
 
-        hash_before = self._state_hash(agent)
+        hashes_before = self._state_hashes(agent)
 
         async for item in next_handler(**input_kwargs):
             yield item
 
         # Check 1: state fields changed?
-        hash_after = self._state_hash(agent)
-        if hash_before != hash_after:
-            await self._publish_state(agent)
+        await self._publish_state_changes(agent, hashes_before)
 
         # Check 2: team tool ran?
         if tool_name in _TEAM_TOOL_NAMES:
