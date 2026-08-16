@@ -96,6 +96,52 @@ class ChatModelBase:
         self.retry_delay = retry_delay
         self.context_size = context_size
 
+    def _is_thinking_disabled(self) -> bool:
+        """Whether thinking is explicitly disabled for this model.
+
+        Subclasses with provider-specific thinking controls can override this
+        method to report their effective configuration.
+
+        Returns:
+            `bool`:
+                Whether thinking is explicitly disabled.
+        """
+        return getattr(self.parameters, "thinking_enable", None) is False
+
+    def _warn_unexpected_thinking(
+        self,
+        response: ChatResponse,
+        warned: bool,
+    ) -> bool:
+        """Warn once if a disabled model returns thinking content.
+
+        Args:
+            response (`ChatResponse`):
+                The response to inspect.
+            warned (`bool`):
+                Whether this model call has already emitted the warning.
+
+        Returns:
+            `bool`:
+                Whether the warning has been emitted for this model call.
+        """
+        if warned or not self._is_thinking_disabled():
+            return warned
+
+        if any(
+            isinstance(block, ThinkingBlock) and bool(block.thinking)
+            for block in response.content
+        ):
+            logger.warning(
+                "Model %s returned thinking content while thinking is "
+                "disabled. The model provider may have ignored the request "
+                "parameter.",
+                self.model,
+            )
+            return True
+
+        return False
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         """Return the exception types that should trigger a retry.
@@ -231,15 +277,23 @@ class ChatModelBase:
         # Consume the model calling result
         # =====================================================================
         if isinstance(res, ChatResponse):
+            self._warn_unexpected_thinking(res, warned=False)
             return res
 
         async def _stream() -> AsyncGenerator[ChatResponse, None]:
             """The wrapper around model calling."""
             # For backward compatibility
             yield_acc_res = True
+            unexpected_thinking_warned = False
             acc_res = _StreamAccumulator()
             try:
                 async for chunk in res:
+                    unexpected_thinking_warned = (
+                        self._warn_unexpected_thinking(
+                            chunk,
+                            unexpected_thinking_warned,
+                        )
+                    )
                     if not chunk.is_last:
                         acc_res.append_chat_response(chunk)
                         acc_res.id = chunk.id
@@ -581,6 +635,7 @@ class ChatModelBase:
         )
 
         completed_response: ChatResponse | None = None
+        unexpected_thinking_warned = False
         if self.stream:
             # ``_call_api`` yields raw incremental chunks whose ``is_last``
             # is always ``False``; subclasses rely on the ``__call__``
@@ -592,6 +647,10 @@ class ChatModelBase:
             acc_res = _StreamAccumulator()
 
             async for chunk in res:
+                unexpected_thinking_warned = self._warn_unexpected_thinking(
+                    chunk,
+                    unexpected_thinking_warned,
+                )
                 if chunk.is_last:
                     completed_response = chunk
                     break
@@ -602,6 +661,11 @@ class ChatModelBase:
                 completed_response = acc_res.build()
         else:
             completed_response = res
+            if completed_response is not None:
+                self._warn_unexpected_thinking(
+                    completed_response,
+                    unexpected_thinking_warned,
+                )
 
         if completed_response is None or not completed_response.content:
             raise RuntimeError(

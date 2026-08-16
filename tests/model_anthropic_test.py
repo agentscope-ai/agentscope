@@ -378,6 +378,26 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
 
         self.assertEqual(self._thinking(), {"type": "adaptive"})
 
+    def test_effective_mode_controls_common_thinking_guard(self) -> None:
+        """The common guard follows the effective Anthropic mode."""
+        cases = [
+            ({}, True),
+            ({"thinking_enable": True}, False),
+            ({"thinking_mode": "adaptive"}, False),
+            ({"thinking_mode": "enabled"}, False),
+            ({"thinking_mode": "disabled"}, True),
+            (
+                {"thinking_enable": False, "thinking_mode": "adaptive"},
+                False,
+            ),
+        ]
+        for params, expected in cases:
+            with self.subTest(params=params):
+                model = _make_model()
+                for key, val in params.items():
+                    setattr(model.parameters, key, val)
+                self.assertEqual(model._is_thinking_disabled(), expected)
+
     async def test_budget_mode_expands_max_tokens(self) -> None:
         """max_tokens must stay strictly above budget_tokens."""
         self.model.parameters.thinking_mode = "enabled"
