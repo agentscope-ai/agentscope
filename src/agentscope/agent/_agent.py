@@ -705,6 +705,19 @@ class Agent:
                 self._receive_reply_end = True
             yield item
 
+    def _restore_context_before_final(
+        self,
+        context_before_final: tuple[Msg | None, int, Usage | None],
+    ) -> None:
+        """Restore context written before a swallowed final answer."""
+        context_msg, content_length, usage = context_before_final
+        if context_msg is None:
+            if self._get_last_msg() is not None:
+                self.state.context.pop()
+        else:
+            context_msg.content = context_msg.content[:content_length]
+            context_msg.usage = usage
+
     async def _close_unfinished_tool_calls(
         self,
     ) -> AsyncGenerator[
@@ -874,6 +887,11 @@ class Agent:
             #  or no more tool calls to execute
             # =================================================================
             final_msg: Msg | None = None
+            context_before_final: tuple[Msg | None, int, Usage | None] = (
+                None,
+                0,
+                None,
+            )
             # Detects middlewares swallowing the ReplyEndEvent repeatedly
             # without any reasoning/acting in between (a busy loop)
             made_progress = True
@@ -910,6 +928,10 @@ class Agent:
                                 "the event again.",
                             )
                         made_progress = False
+                        if final_msg is not None:
+                            self._restore_context_before_final(
+                                context_before_final,
+                            )
                         final_msg = None
                         continue
 
@@ -925,6 +947,17 @@ class Agent:
                         # Inject runtime state if needed before reasoning
                         async for evt in self._inject_runtime_state():
                             yield evt
+
+                        context_msg = self._get_last_msg()
+                        context_before_final = (
+                            context_msg,
+                            len(context_msg.content)
+                            if context_msg is not None
+                            else 0,
+                            deepcopy(context_msg.usage)
+                            if context_msg is not None
+                            else None,
+                        )
 
                         # Perform reasoning
                         interrupted = False

@@ -232,6 +232,14 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 ],
             },
         )
+        self.assertListEqual(
+            [
+                block.text
+                for block in agent.state.context[-1].content
+                if isinstance(block, TextBlock)
+            ],
+            ["second answer"],
+        )
 
     async def test_on_reasoning_middleware_pre_yield(self) -> None:
         """Test on_reasoning middleware pre and yield positions."""
