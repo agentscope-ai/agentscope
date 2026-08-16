@@ -707,14 +707,17 @@ class Agent:
 
     def _restore_context_before_final(
         self,
-        context_before_final: tuple[Msg | None, int, Usage | None],
+        context_before_final: tuple[int, Msg | None, int, Usage | None],
     ) -> None:
         """Restore context written before a swallowed final answer."""
-        context_msg, content_length, usage = context_before_final
-        if context_msg is None:
-            if self._get_last_msg() is not None:
-                self.state.context.pop()
-        else:
+        (
+            context_length,
+            context_msg,
+            content_length,
+            usage,
+        ) = context_before_final
+        del self.state.context[context_length:]
+        if context_msg is not None:
             context_msg.content = context_msg.content[:content_length]
             context_msg.usage = usage
 
@@ -887,7 +890,8 @@ class Agent:
             #  or no more tool calls to execute
             # =================================================================
             final_msg: Msg | None = None
-            context_before_final: tuple[Msg | None, int, Usage | None] = (
+            context_before_final: tuple[int, Msg | None, int, Usage | None] = (
+                0,
                 None,
                 0,
                 None,
@@ -949,7 +953,13 @@ class Agent:
                             yield evt
 
                         context_msg = self._get_last_msg()
+                        if (
+                            context_msg is not None
+                            and context_msg.id != self.state.reply_id
+                        ):
+                            context_msg = None
                         context_before_final = (
+                            len(self.state.context),
                             context_msg,
                             len(context_msg.content)
                             if context_msg is not None
