@@ -319,6 +319,16 @@ class ResourceAccessService:
                 ),
             )
             seen.add(key)
+
+        # Default list order: most recently modified first (updated_at
+        # desc). Both the top-level agent list and the per-team member
+        # list flow through this method, and the sort runs after shared
+        # references are merged, so storage-level ordering (SQL has no
+        # ORDER BY; Redis Sets are unordered) never leaks through.
+        views.sort(
+            key=lambda v: getattr(v, "updated_at"),
+            reverse=True,
+        )
         return views
 
     @staticmethod
