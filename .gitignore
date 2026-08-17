@@ -170,3 +170,5 @@ lerna-debug.log*
 
 
 .qoder/
+
+/examples/agent_service/workspaces

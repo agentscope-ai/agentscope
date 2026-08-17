@@ -27,6 +27,12 @@ except Exception:  # pragma: no cover - agentscope 不可用时降级（如纯�
                 yield event
 
 from bocomadp.uploads.db import get_uploads_db
+try:
+    from agentscope.message import TextBlock
+except Exception:  # pragma: no cover - agentscope 不可用时降级（如纯单测环境）
+    TextBlock = None  # type: ignore
+
+from bocomadp.uploads.manager import to_virtual_path
 from bocomadp.uploads.file_outline import create_outline
 
 logger = logging.getLogger(__name__)
@@ -96,10 +102,13 @@ class UploadsMiddleware(MiddlewareBase):
     @staticmethod
     def _extract_files(messages: list) -> list[dict]:
         for msg in reversed(messages):
-            # 兼容对象消息与 dict 消息两种形态
+            # 兼容对象消息与 dict 消息两种形态；新版 Msg 用 metadata 取代
+            # 旧版 additional_kwargs 承载自定义字段。
             f = getattr(msg, "additional_kwargs", None)
             if f is None and isinstance(msg, dict):
                 f = msg.get("additional_kwargs")
+            if f is None:
+                f = getattr(msg, "metadata", None)
             if isinstance(f, dict) and f.get("files"):
                 return f["files"]
         return []
@@ -184,7 +193,14 @@ class UploadsMiddleware(MiddlewareBase):
                     if isinstance(content, str):
                         msg.content = f"{content}\n\n{text}"
                     elif isinstance(content, list):
-                        content.append({"type": "text", "text": text})
+                        # Msg 对象：content 为 ContentBlock 对象列表（新版），
+                        # 也可能混入 dict（旧版序列化形态），统一追加文本块。
+                        block = (
+                            TextBlock(text=text)
+                            if TextBlock is not None
+                            else {"type": "text", "text": text}
+                        )
+                        content.append(block)
                 return
 
 

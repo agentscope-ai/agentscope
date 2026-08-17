@@ -4,7 +4,7 @@
 > ``config.yaml`` 为唯一配置载体，``AppConfig`` 为唯一 schema：
 >
 > - ``config.yaml`` 中的全部节点（``log_level`` / ``logging`` / ``service`` /
->   ``redis`` / ``runtime`` / ``tools`` / ``middlewares`` / ``mcp`` /
+>   ``redis`` / ``tools`` / ``middlewares`` / ``mcp`` /
 >   ``providers`` / ``app_name`` / ``workspace_dir``）作为主配置源；
 > - ``BOCOMADP_`` 前缀环境变量 / ``.env`` 文件可在部署期覆盖（优先级更高）。
 >
@@ -36,7 +36,7 @@ from .base import (
 # cross_search → get_cross_search_config）。
 # 新增此类业务节点时，必须加入本集合，否则启动校验会 fail-fast。
 _BUSINESS_KEYS: frozenset[str] = frozenset(
-    {"models", "audit", "cross_search", "uploads"},
+    {"models", "audit", "cross_search", "uploads","agents"},
 )
 
 # 拼写校验相似度阈值：YAML 键与声明字段的相似度达到该值即视为疑似拼写错误。
@@ -180,6 +180,20 @@ class DbConfig(BaseModel):
             "多副本生产应关闭，改用离线 alembic upgrade head 避免迁移竞争。"
         ),
     )
+    pool_pre_ping: bool = Field(
+        default=True,
+        description=(
+            "取出连接前先探测存活（asyncpg ping），"
+            "服务端/网络静默断连时自动重建，避免 connection is closed。"
+        ),
+    )
+    pool_recycle: int = Field(
+        default=1800,
+        description=(
+            "空闲连接回收秒数（默认 30 分钟），"
+            "早于防火墙/NAT 空闲超时主动重建连接。"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +229,39 @@ class ModelEntry(BaseModel):
     parameters: dict[str, Any] = Field(
         default_factory=dict,
         description="透传给 ChatModel.Parameters 的额外参数",
+    )
+
+
+class AgentEntry(BaseModel):
+    """config.yaml 中单个场景（Agent 模板）条目。
+
+    启动时由 ``load_agents_from_yaml`` 读取并在 lifespan 中幂等同步进
+    框架 StorageBase；chat / deerflow 按 ``agent_id`` 从 storage 解析
+    场景配置。
+    """
+
+    agent_id: str = Field(description="场景唯一标识，即 /api/chat/run 的 agent_id")
+    name: str = Field(default="", description="场景显示名")
+    system_prompt: str = Field(
+        default="You are a helpful AI assistant.",
+        description="场景系统提示词（Agent 的 system_prompt）",
+    )
+    model_provider: str = Field(
+        default="",
+        description="场景绑定的模型 provider_id；留空使用全局 active provider",
+    )
+    model_name: str = Field(
+        default="",
+        description="场景绑定的模型名（展示 / 校验用）",
+    )
+    max_iters: int = Field(default=20, description="ReAct 最大迭代次数")
+    enabled_tools: list[str] = Field(
+        default_factory=list,
+        description="场景启用的工具白名单（空 = 全部工具）",
+    )
+    enabled_skills: list[str] = Field(
+        default_factory=list,
+        description="场景启用的技能白名单（空 = 全部技能）",
     )
 
 
@@ -291,26 +338,8 @@ class LocalModelsConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Runtime / tools / middleware config (new framework modules)
+# Tools / middleware config (new framework modules)
 # ---------------------------------------------------------------------------
-
-
-class RuntimeConfig(BaseModel):
-    """Configuration for the 8-phase runtime orchestrator.
-
-    Controls the SSE heartbeat interval and whether the runtime
-    SSE endpoint is mounted (vs. relying on AgentScope's built-in
-    fire-and-forget chat).
-    """
-
-    enabled: bool = Field(
-        default=True,
-        description="Mount the /api/chat/run SSE endpoint.",
-    )
-    heartbeat_interval_seconds: float = Field(
-        default=15.0,
-        description="SSE keep-alive interval for long-idle periods.",
-    )
 
 
 class ToolsConfig(BaseModel):
@@ -459,7 +488,6 @@ class AppConfig(BaseSettings):
     local_models: LocalModelsConfig = Field(default_factory=LocalModelsConfig)
 
     # ---- New framework modules ----
-    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     middlewares: MiddlewaresConfig = Field(default_factory=MiddlewaresConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
@@ -486,6 +514,30 @@ def load_models_from_yaml(
     result: list[ModelEntry] = []
     for item in entries_data:
         result.append(ModelEntry(**item))
+    return result
+
+
+def load_agents_from_yaml(
+    path: str | Path | None = None,
+) -> list[AgentEntry]:
+    """从 YAML 文件加载场景（Agent 模板）列表。
+
+    与 ``load_models_from_yaml`` 同构：默认读取 ``agent_service/config.yaml``
+    （绝对路径，与启动工作目录无关），读取后先做 ``$VAR`` / ``${VAR}``
+    环境变量展开。文件不存在时返回空列表（不影响启动）。
+    """
+    if path:
+        p = Path(path)
+        if not p.exists():
+            return []
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        data = expand_env_vars(raw) if isinstance(raw, dict) else {}
+    else:
+        data = expand_env_vars(load_config_yaml())
+    entries_data = data.get("agents", [])
+    result: list[AgentEntry] = []
+    for item in entries_data:
+        result.append(AgentEntry(**item))
     return result
 
 
@@ -519,10 +571,16 @@ def build_model_instance(entry: ModelEntry):
     credential = credential_cls(**credential_kwargs)
 
     model_cls = credential_cls.get_chat_model_class()
+    # AgentScope 的 ChatModel 期望 Parameters（pydantic 模型）而非 dict；
+    # 将 config.yaml 的 parameters 字典转换为模型类对应的 Parameters 对象，
+    # 否则调用阶段会报 'dict' object has no attribute 'max_tokens'。
+    parameters = entry.parameters or None
+    if parameters is not None:
+        parameters = model_cls.Parameters(**parameters)
     model = model_cls(
         credential=credential,
         model=entry.model_name or entry.provider_id,
-        parameters=entry.parameters or None,
+        parameters=parameters,
     )
     return model
 

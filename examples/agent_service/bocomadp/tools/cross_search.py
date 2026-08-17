@@ -24,9 +24,71 @@ from typing import Any
 
 import httpx
 
+try:
+    from agentscope.tool import FunctionTool, ToolMiddlewareBase
+except ImportError:
+    FunctionTool = ToolMiddlewareBase = None
+
 from ..config.cross_search_config import CrossSearchConfig, get_cross_search_config
+from ..deerflow.custom_params import get_custom_params
 
 logger = logging.getLogger(__name__)
+
+# 请求级 custom_params 中允许强制覆盖本工具参数的 key 集合
+# （与工具函数签名参数同名，下划线形式）。
+_OVERRIDE_KEYS = (
+    "space_code_list",
+    "team_space_code_list",
+    "psnl_space_code_id",
+    "user_code",
+    "search_type",
+    "customized_tag_list",
+    "psnl_category_id_list",
+)
+
+
+class _SpacecodeOverrideMiddleware(ToolMiddlewareBase):
+    """空间码参数强制覆盖中间件（对齐 deer-flow SpacecodeOverrideMiddleware）。
+
+    每次工具调用时读取请求级 custom_params（ContextVar，由 deerflow
+    路由层在 spawn run 前注入），对 :data:`_OVERRIDE_KEYS` 中的参数
+    直接赋值覆盖——即使模型传错值也会被纠正为请求方指定的空间码。
+
+    ``personal_search_switch`` 显式 ``False`` 时，在覆盖之后清空
+    ``psnl_space_code_id`` / ``psnl_category_id_list``（对齐 deer-flow：
+    该开关为 False 时不挂个人知识库搜索工具；bocomadp 无独立个人
+    搜索工具，等价于禁用 cross_search 的个人检索维度）。config 中
+    对应默认值为空，参数置 ``None`` 后不会回填。
+    """
+
+    async def on_tool_call(self, tool, input_kwargs, next_handler):
+        params = get_custom_params()
+        for key in _OVERRIDE_KEYS:
+            value = params.get(key)
+            if value is not None:
+                previous = input_kwargs.get(key)
+                input_kwargs[key] = value  # 强制覆盖，模型传错的也纠正
+                logger.info(
+                    "SpacecodeOverride: %s %r -> %r",
+                    key,
+                    previous,
+                    value,
+                )
+        # 个人检索显式关闭优先于空间码覆盖（关闭开关后置处理）
+        if params.get("personal_search_switch") is False:
+            for key in ("psnl_space_code_id", "psnl_category_id_list"):
+                previous = input_kwargs.get(key)
+                if previous:
+                    input_kwargs[key] = None
+                    logger.info(
+                        "SpacecodeOverride: personal_search_switch=false, "
+                        "%s %r -> None",
+                        key,
+                        previous,
+                    )
+        async for chunk in next_handler(**input_kwargs):
+            yield chunk
+
 
 
 def _build_req_message(
@@ -313,7 +375,7 @@ async def search_cross_backend(
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
-async def cross_search_tool(
+async def _cross_search_tool_impl(
     keyword: str,
     search_type: str | None = None,
     user_code: str | None = None,
@@ -388,6 +450,22 @@ async def cross_search_tool(
             [{"error": f"跨知识搜索失败: {exc}"}],
             ensure_ascii=False,
         )
+
+
+if FunctionTool is not None and ToolMiddlewareBase is not None:
+    cross_search_tool = FunctionTool(
+        _cross_search_tool_impl,
+        # 工具函数名必须是 ^[a-zA-Z0-9_-]+$（DeepSeek 等 API 强校验），
+        # 不能用中文名「行内搜索」；中文语义放在 docstring 描述里，
+        # 模型通过描述识别该工具。与 deer-search-mcp 的 vector_search
+        # 命名风格保持一致。
+        name="cross_search",
+        is_read_only=True,
+        middlewares=[_SpacecodeOverrideMiddleware()],
+    )
+else:
+    # agentscope 不可用时的降级：保持裸函数（与项目 registry.py 风格一致）
+    cross_search_tool = _cross_search_tool_impl
 
 
 __all__ = ["cross_search_tool", "search_cross_backend"]

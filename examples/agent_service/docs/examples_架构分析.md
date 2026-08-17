@@ -1,7 +1,7 @@
 # AgentScope `examples/` 架构分析
 
-> 分析对象：`/home/wjc_wsl/workspace/agentplatform/agentscope/examples`
-> 生成时间：2026-08-06
+> 分析对象：`examples/`（相对 `agentscope/` 仓库根目录）
+> 生成时间：2026-08-06；修订：2026-08-17（`memo/` 归并进 `docs/` 后修订）
 
 ---
 
@@ -22,8 +22,8 @@
 
 | 目录 | 类型 | 规模 | 定位 |
 |---|---|---|---|
-| `agent_service/` | **完整后端应用** | 73 文件 / Python 包 | 生产级参考实现 |
-| `web_ui/` | **完整前端应用** | 242 文件 / pnpm monorepo | 配套 Web 控制台 |
+| `agent_service/` | **完整后端应用** | Python 包 | 生产级参考实现 |
+| `web_ui/` | **完整前端应用** | pnpm monorepo | 配套 Web 控制台 |
 | `long_term_memory/` | 轻量脚本 | 3 子示例 × (README + 单文件) | 单点功能演示 |
 | `rag/` | 轻量脚本 | 2 个单文件脚本 | 单点功能演示 |
 | `workspace/` | **纯文档** | 1 个 md，无代码 | 部署说明 |
@@ -52,12 +52,12 @@ pnpm dev
 包名为 `bocomadp`，本质是演示 **如何在官方 `create_app()` 之上叠加企业能力而不 fork 主库**。
 
 ```python
-# examples/agent_service/main.py:39-45
+# examples/agent_service/main.py
 from agentscope.app import create_app
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, RedisMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
-from agentscope.app.storage import RedisStorage
+from agentscope.app.storage import AsyncSQLAlchemyStorage, RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import QdrantStore
 ```
@@ -66,48 +66,54 @@ from agentscope.rag import QdrantStore
 
 ### 2.2 `main.py` 是唯一装配入口
 
-模块级顺序执行（非工厂函数），七个阶段严格有序：
+模块级顺序执行（非工厂函数），各阶段严格有序：
 
-| 阶段 | 内容 | 行号 |
-|---|---|---|
-| 1 | 配置 + 日志：`get_app_config()` → `configure_logging()` | L77-79 |
-| 2 | 注册表初始化：Tool / Middleware / Mcp Registry + ProviderManager | L84-135 |
-| 3 | Runtime 编排器：`Runtime(hook, tool, mw, provider, agents)` | L141-148 |
-| 4 | 基础设施：Redis / Qdrant / LocalWorkspaceManager | L207-218 |
-| 5 | `create_app()`：注入全部依赖，自动挂 12 个内置路由 | L241-258 |
-| 6 | `app.state` 挂载：把注册表暴露给路由层 | L263-268 |
-| 7 | 自定义路由：6 个 router 叠加在内置路由之上 | L273-279 |
+| 阶段 | 内容 |
+|---|---|
+| 1 | 配置 + 日志：`get_app_config()` → `configure_logging()` |
+| 2 | 注册表初始化：Tool / Middleware / Mcp Registry + ProviderManager |
+| 3 | 会话 / 运行记账：RunManager + BusBridge（deerflow SSE 依赖） |
+| 4 | 基础设施：storage + Qdrant + workspace manager（K8s 沙箱或本地模式二选一）+ message bus（Redis 或 InMemory） |
+| 5 | `create_app()`：注入全部依赖，自动挂载内置路由 |
+| 6 | `app.state` 挂载：把注册表暴露给路由层 |
+| 7 | 自定义路由：deerflow / health / models / stats / agent_tools / session_usage / uploads 等叠加在内置路由之上 |
 
 ```
-配置加载 → 注册表 → Runtime → 基础设施 → create_app → app.state → 自定义路由
+配置加载 → 注册表 → 运行记账 → 基础设施 → create_app → app.state → 自定义路由
 ```
 
 ### 2.3 `bocomadp/` 模块划分
 
 ```
 bocomadp/
-├── config/      配置四件套：base(公共加载层) / app_config(唯一 schema) / audit_config
+├── config/      配置：base(公共加载层) / app_config(唯一 schema) / audit_config
 ├── logging/     trace_context(ContextVar) + trace_middleware(ASGI) + formatter
-├── runtime/     ★ 8 阶段编排引擎
-│                  phases(枚举) / hooks(HookRegistry) / envelope(SSE 状态机)
-│                  executor(AgentExecutor) / builder(AgentBuilder) / runtime(编排器)
+├── deerflow/    ★ DeerFlow 风格 SSE：protocol / formatter / bridge / runs /
+│                custom_params / auth_context / deps / routers(threads + chat + auth_stub)
 ├── providers/   ProviderManager —— 多模型注册与运行时切换
-├── tools/       registry(自动扫描) + builtin + enterprise(主动 build) + custom/
-├── middleware/  registry + agent_middleware + audit + factory
-│                  + error_handler / request_log (2 个 ASGI 中间件)
+├── credential/  自定义凭证类型（ELLMCredential 等）
+├── tools/       registry(自动扫描) + builtin + enterprise(主动 build)
+│                + cross_search(空间码覆盖中间件) + agent_factory_tools + custom/
+├── middleware/  registry + agent_middleware + audit + custom_prompt + factory
+│                + error_handler / request_log (2 个 ASGI 中间件)
 ├── mcp/         registry(duck-type 扫描) + builtin_mcps + custom/
-├── routers/     chat_sse / agent_manage / models / health / platform_health / stats
+├── routers/     models / health / platform_health / stats / agent_tools /
+│                session_usage / channels / credential_model / skill_router
+│                / uploads / workspace_files / custom
+├── skills/      BocomSkillHub 企业技能
+├── uploads/     上传 staging 管理（过期清理）
+├── workspace/   K8s 沙箱工作区（whitelist 代理 / factory / 共享 PVC 子目录隔离）
 └── agents/      templates.py —— researcher / coder 子 agent 模板
 ```
 
-其中 `runtime/envelope.py` 是最大的单文件（SSE 状态机），承担事件封装与流式协议转换。
+其中 `deerflow/routers/deerflow_chat.py` 承担 4 端点 + 会话/凭证自动供给 + custom_params 注入，是全链路最大的单文件。
 
 ### 2.4 三个值得注意的架构模式
 
 #### ① 扩展点分两类：被动扫描 vs 主动构建
 
 ```python
-# examples/agent_service/main.py:175-201
+# examples/agent_service/main.py
 async def build_agent_tools(user_id, agent_id, session_id):
     tools = tool_registry.list_tools()                 # 被动扫描：builtin + custom/
     tools.extend(await build_enterprise_tools(...))    # 主动 build：按会话构造
@@ -122,20 +128,20 @@ async def build_agent_middlewares(user_id, agent_id, session_id):
 | 方式 | 机制 | 适用场景 |
 |---|---|---|
 | **被动扫描** | 在 `custom/` 目录放一个模块级实例即可，重启生效 | 无状态工具 / 中间件 / MCP |
-| **主动 build** | 工厂函数可拿到 `user_id / agent_id / session_id` | 需要会话隔离的企业能力（如审计留痕） |
+| **主动 build** | 工厂函数可拿到 `user_id / agent_id / session_id` | 需要会话隔离的企业能力（如审计留痕、检索开关） |
 
 两者最终在 `build_agent_tools` / `build_agent_middlewares` 汇合，通过 `create_app(extra_agent_tools=..., extra_agent_middlewares=...)` 注入。
 
 #### ② 注册表统一挂到 `app.state`
 
 ```python
-# examples/agent_service/main.py:263-268
-app.state.runtime = runtime
+# examples/agent_service/main.py（app.state 挂载段）
 app.state.provider_manager = provider_manager
-app.state.multi_agent_manager = multi_agent_manager
 app.state.tool_registry = tool_registry
+app.state.mcp_registry = mcp_registry
 app.state.middleware_registry = middleware_registry
-app.state.hook_registry = hook_registry
+app.state.run_manager = RunManager()
+app.state.bus_bridge = BusBridge(message_bus)
 ```
 
 路由层不 import 全局变量，而是从 `request.app.state` 取，保持可测试性。
@@ -143,7 +149,7 @@ app.state.hook_registry = hook_registry
 #### ③ ASGI 中间件栈显式声明顺序
 
 ```python
-# examples/agent_service/main.py:226-238
+# examples/agent_service/main.py
 def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
     """构建 ASGI 中间件栈（由内到外）。"""
     return [
@@ -156,15 +162,22 @@ def build_asgi_middlewares(trace_enabled: bool) -> list[Middleware]:
 
 顺序：`Trace → AccessLog → ErrorHandler → CORS`（由内到外）。
 
+#### ④ 请求级配置走 ContextVar（custom_params）
+
+前端随 run 请求携带 `custom_params`，路由层 `set → spawn（create_task 复制快照）→ reset`，
+run 任务内的工具中间件 / 提示词中间件 / 工具工厂经 `get_custom_params()` 消费；
+带值请求同时落盘到会话 workspace（`sessions/{session_id}/custom_params.json`），
+不带值请求自动回退加载。完整机制见 [custom_params.md](./custom_params.md)。
+
 ### 2.5 配置体系
 
-- `config.yaml`（126 行）—— 唯一配置源
-- `config.yaml.example`（78 行）—— 配置模板
+- `config.yaml` —— 唯一配置源
+- `config.yaml.example` —— 配置模板
 - `.env` / `.env.example` —— 环境变量
-- 加载链路：`config.yaml` + `.env` + 环境变量 → `AppConfig`（`config/app_config.py`，480 行，唯一 schema）
-- 详细设计见同目录 `config_load_design.md`
+- 加载链路：`config.yaml` + `.env` + 环境变量 → `AppConfig`（`config/app_config.py`，唯一 schema）
+- 详细设计见 [config_load_design.md](./config_load_design.md)
 
-模型配置从 yaml 加载并自动注册到 `ProviderManager`（`main.py:109-135`），支持 `is_active` 标记切换默认激活项。
+模型配置从 yaml 加载并自动注册到 `ProviderManager`，支持 `is_active` 标记切换默认激活项。
 
 ---
 
@@ -330,15 +343,17 @@ main()  (asyncio.run)
    `create_app()` 全参数注入，示例通过**组合**而非继承扩展。企业能力全部落在 `bocomadp` 包内，主库零改动。
 
 2. **扩展分层**
-   注册表自动扫描（无状态）+ 工厂函数主动构建（会话相关），两者在 `build_agent_tools` / `build_agent_middlewares` 汇合。
+   注册表自动扫描（无状态）+ 工厂函数主动构建（会话相关），两者在 `build_agent_tools` / `build_agent_middlewares` 汇合；请求级差异（空间码 / 提示词 / 开关 / 认证）经 custom_params 的 ContextVar 通道注入 run 任务。
 
 3. **前后端协议由 SDK 统一**
    `@agentscope-ai/agentscope` npm 包与 Python 侧 EventType 对齐，避免手写协议漂移。
 
-### 已知文档偏差
+### 文档修订记录
 
-- `memo/README.md:79` 提到的 `tests/test_registry_scan.py` 实际不存在。
-- `memo/目录结构.md` 为早期模块映射表，与当前代码存在出入。
+- 2026-08-17：`memo/` 五份文档归并进 `docs/`；`README.md` 目录树更新为当前代码
+  （tests 实为 `test_logging.py` + `test_deerflow_*.py` 系列，旧文所述
+  `test_registry_scan.py` 不存在）；早期 `目录结构.md` 的 P0 模块映射表并入
+  `docs/README.md` 后删除。
 
 ---
 
@@ -346,35 +361,34 @@ main()  (asyncio.run)
 
 ```
 examples/
-├── agent_service/                    # 完整后端应用（73 文件）
-│   ├── main.py                       # 唯一入口，297 行
-│   ├── config.yaml                   # 唯一配置源（126 行）
-│   ├── config.yaml.example           # 配置模板（78 行）
+├── agent_service/                    # 完整后端应用
+│   ├── main.py                       # 唯一入口
+│   ├── config.yaml                   # 唯一配置源
+│   ├── config.yaml.example           # 配置模板
 │   ├── .env / .env.example
 │   ├── Dockerfile                    # python:3.14-bookworm + uv
-│   ├── memo/
-│   │   ├── README.md                 # 主文档（392 行）
-│   │   ├── config_load_design.md     # 配置加载链路设计
-│   │   ├── 目录结构.md                # 早期模块映射表
-│   │   └── examples_架构分析.md       # 本文档
-│   ├── tests/
-│   │   ├── __init__.py
-│   │   └── test_logging.py
+│   ├── docs/                         # 项目文档（README / api / API接口文档 /
+│   │                                 #   custom_params / config_load_design / 本文档）
+│   ├── tests/                        # test_logging + test_deerflow_* 系列（14 个）
 │   └── bocomadp/
-│       ├── __init__.py
-│       ├── config/      (base / app_config / audit_config)
+│       ├── config/      (base / app_config / audit_config / ...)
 │       ├── logging/     (logging_config / trace_context / trace_middleware)
-│       ├── runtime/     (phases / hooks / envelope / executor / builder / runtime)
+│       ├── deerflow/    (protocol / formatter / bridge / runs / custom_params
+│       │                 / auth_context / deps / routers)
 │       ├── providers/   (provider_manager)
-│       ├── tools/       (registry / builtin_tools / enterprise / placeholder / custom)
-│       ├── middleware/  (registry / agent_middleware / audit / factory
-│       │                 / error_handler / request_log / custom)
+│       ├── credential/  (ellm)
+│       ├── tools/       (registry / builtin_tools / enterprise / cross_search
+│       │                 / agent_factory_tools / placeholder / custom)
+│       ├── middleware/  (registry / agent_middleware / audit / custom_prompt
+│       │                 / factory / error_handler / request_log / custom)
 │       ├── mcp/         (registry / builtin_mcps / custom)
-│       ├── routers/     (chat_sse / agent_manage / models / health
-│       │                 / platform_health / stats / custom)
+│       ├── routers/     (models / health / platform_health / stats / agent_tools
+│       │                 / session_usage / channels / credential_model
+│       │                 / skill_router / uploads / workspace_files / custom)
+│       ├── skills/ uploads/ workspace/ docker/ toolkit_whitelist.py
 │       └── agents/      (templates)
 │
-├── web_ui/                           # pnpm monorepo（242 文件）
+├── web_ui/                           # pnpm monorepo
 │   ├── package.json                  # 根：concurrently 编排
 │   ├── pnpm-workspace.yaml
 │   ├── pnpm-lock.yaml

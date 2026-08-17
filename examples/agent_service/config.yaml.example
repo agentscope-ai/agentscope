@@ -3,7 +3,7 @@
 # cp config.yaml.example config.yaml
 #
 # 本文件为唯一配置源模板：框架级参数（logging/service/redis/
-# runtime/tools/middlewares/mcp/providers）与业务配置（models/
+# tools/middlewares/mcp/providers）与业务配置（models/
 # app_name/audit/workspace_dir）统一在此声明。
 # 读取优先级：进程环境变量（BOCOMADP_*）> .env > config.yaml > 代码默认值
 # ==========================================================
@@ -29,11 +29,6 @@ service:
 redis:
   host: localhost
   port: 6379
-
-# ---------- 运行时 ----------
-runtime:
-  enabled: true
-  heartbeat_interval_seconds: 15.0
 
 # ---------- 组件注册表 ----------
 tools:
