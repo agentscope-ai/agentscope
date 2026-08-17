@@ -2,15 +2,25 @@
 
 基于 AgentScope 2.0 `create_app` 搭建的可扩展 Agent 服务骨架。在官方 `agent_service` 示例之上，构建了完整的模块化扩展架构，企业扩展能力已全部整合进 `bocomadp`。
 
+> 文档索引（本目录 `docs/`）：
+>
+> - [API接口文档.md](./API接口文档.md) —— 全量 curl 速查（网关 / 直连两种调用方式）
+> - [api.md](./api.md) —— 智能体工具白名单 + 会话 Token 用量接口
+> - [custom_params.md](./custom_params.md) —— custom_params 机制教学文档（请求级运行时配置）
+> - [config_load_design.md](./config_load_design.md) —— 配置加载链路设计
+> - [examples_架构分析.md](./examples_架构分析.md) —— examples/ 整体架构分析
+
 ## 核心特性
 
 - **DeerFlow 风格 SSE**（`deerflow/`）：`/api/threads/{tid}/runs/*` 四端点（stream / wait / join / cancel），事件/数据/id 帧 + 心跳 + Last-Event-ID 断线续传，执行引擎复用原生 `ChatService`
 - **SSE 协议与翻译**（`deerflow/protocol.py` + `formatter.py`）：AgentScope 事件 → deer-flow 事件（metadata/messages/custom/error/end）
+- **请求级运行时配置**（`custom_params`）：空间码强制覆盖 / custom_prompt 整体替换 / 检索开关 / 认证方案（guwp/jrt/okic/muwp），随 run 请求注入并落盘回退，详见 [custom_params.md](./custom_params.md)
+- **会话与凭证自动供给**：`_ensure_session` 懒建会话；模型凭证按 `deerflow-<user_id>-<provider_id>` 幂等写入 credential 存储（id 带 user_id 维度，避免 SQL 存储全局主键跨用户冲突）
 - **多模型路由**（`providers/`）：ProviderManager 注册 / 切换 / 列表，配合 `/api/models` 路由
 - **自动注册机制**：工具、中间件、MCP 三类组件均支持 `builtin + custom/` 自动扫描，新增组件只需放文件，重启即生效，无需改 `main.py`
 - **日志三件套**（`logging/`）：ContextVar trace_id 关联、TraceContextFilter、JsonTraceFormatter、ASGI TraceMiddleware
 - **自定义 ASGI 中间件**（`middleware/`）：访问日志、全局错误处理
-- **自定义路由**（`routers/`）：健康检查、Agent 管理、模型列表、统计示例（SSE 对话见 deerflow/）
+- **自定义路由**（`routers/`）：健康检查、Agent 工具白名单、模型列表、会话用量、上传、统计等（SSE 对话见 deerflow/）
 - **子智能体模板**（`agents/`）：researcher / coder，可通过 `custom_subagent_templates` 扩展
 - **企业扩展能力**（bocomadp）：审计留痕、企业内部工具、平台健康检查
 
@@ -21,8 +31,8 @@ examples/agent_service/
 ├── main.py                              # 入口：组装 create_app + 框架模块 + 中间件 + 路由
 ├── config.yaml                          # 单一配置文件（模型 + 企业扩展共享）
 ├── .env                                 # 环境变量（可选，自动加载）
-├── README.md
 ├── Dockerfile
+├── docs/                                # 项目文档（README / api / custom_params / 配置与架构）
 │
 ├── bocomadp/                            # 核心扩展包（含企业扩展能力）
 │   ├── config/                           # 配置包：app_config.py（唯一 schema）/ base.py（公共加载层）/ audit_config.py
@@ -36,16 +46,22 @@ examples/agent_service/
 │   │   ├── formatter.py                  # AgentScope 事件 → deer-flow 事件翻译
 │   │   ├── bridge.py                     # MessageBus 回放 + 订阅（断线续传）
 │   │   ├── runs.py                       # RunManager：run 状态机 / 延迟清理
+│   │   ├── custom_params.py              # 请求级 custom_params：ContextVar + workspace 落盘回退
+│   │   ├── auth_context.py               # 认证方案解析（ResolvedAuth + ContextVar）
 │   │   ├── deps.py                       # FastAPI 依赖注入
-│   │   └── routers/deerflow_chat.py      # 4 端点（stream / wait / join / cancel）
+│   │   └── routers/                      # threads.py / deerflow_chat.py / auth_stub.py
 │   │
 │   ├── providers/                       # 多模型路由
 │   │   └── provider_manager.py          # ProviderManager
 │   │
+│   ├── credential/                      # 自定义凭证类型（如 ELLMCredential）
+│   │
 │   ├── tools/                           # 自定义工具
 │   │   ├── registry.py                  # ToolRegistry (自动扫描)
 │   │   ├── builtin_tools.py             # 内置示例工具
-│   │   ├── enterprise.py                # 企业工具 build 工厂
+│   │   ├── enterprise.py                # 企业工具 build 工厂（检索开关消费点）
+│   │   ├── cross_search.py              # 行内检索（空间码强制覆盖中间件）
+│   │   ├── agent_factory_tools.py       # 智能体工厂工具（guwp token 联动）
 │   │   ├── placeholder.py               # 企业工具占位（HR / 文档库 / ITSM）
 │   │   └── custom/                      # 你的产品工具放这里（自动扫描）
 │   │
@@ -53,6 +69,7 @@ examples/agent_service/
 │   │   ├── registry.py                  # MiddlewareRegistry (自动扫描)
 │   │   ├── agent_middleware.py          # 内置示例
 │   │   ├── audit.py                     # 企业审计留痕中间件
+│   │   ├── custom_prompt.py             # custom_prompt 整体覆盖中间件
 │   │   ├── factory.py                   # 企业中间件 build 工厂
 │   │   ├── error_handler.py             # ASGI 错误处理
 │   │   ├── request_log.py               # ASGI 访问日志
@@ -67,14 +84,28 @@ examples/agent_service/
 │   │   ├── models.py                    # 模型列表 + 切换
 │   │   ├── health.py                    # 健康检查 (/healthz /readyz)
 │   │   ├── platform_health.py           # 平台健康检查 GET /platform/health
-│   │   └── stats.py                     # 统计示例
+│   │   ├── stats.py                     # 统计示例
+│   │   ├── agent_tools.py               # 智能体工具白名单管理（详见 docs/api.md）
+│   │   ├── session_usage.py             # 会话 Token 用量（详见 docs/api.md）
+│   │   ├── channels.py                  # deer-flow channels 兼容
+│   │   ├── credential_model.py          # 凭证-模型绑定查询 / 更新
+│   │   ├── skill_router.py              # 技能路由
+│   │   ├── uploads.py / workspace_files.py  # 文件上传与工作区文件
+│   │   └── custom/                      # 你的产品路由放这里
 │   │
+│   ├── skills/                          # 企业技能（BocomSkillHub）
+│   ├── uploads/                         # 上传 staging 管理（过期清理）
+│   ├── workspace/                       # K8s 沙箱工作区（whitelist 代理 / factory / 共享 PVC）
+│   ├── docker/                          # Docker 相关
+│   ├── toolkit_whitelist.py             # 工具白名单持久化
 │   └── agents/
 │       └── templates.py                 # subagent 模板
 │
 └── tests/
     ├── test_logging.py
-    └── test_registry_scan.py
+    └── test_deerflow_*.py               # DeerFlow SSE 全链路测试
+                                         # （bridge/formatter/protocol/runs/stream/join/
+                                         #   confirm/channels/threads_* 等 13 个）
 ```
 
 ---
@@ -170,49 +201,7 @@ BOCOMADP_PROVIDERS__CONFIG_FILE=config.yaml # 模型配置文件路径
 BOCOMADP_RUNTIME__HEARTBEAT_INTERVAL_SECONDS=15.0
 ```
 
-### 公共加载层（bocomadp/config/base.py）
-
-```
-main.py
-  └─ get_app_config()                       # AppConfig（唯一 schema，yaml 主源 + env 覆盖 + 键拼写校验）
-       └─ base.py 公共工具
-            ├─ _load_dotenv_once()    # .env 加载（lru_cache 保证只一次，setdefault 不覆盖）
-            ├─ load_config_yaml()     # YAML 读取（lru_cache 仅缓存原始解析）
-            ├─ expand_env_vars()      # $VAR / ${VAR} 递归展开（缓存外执行 → 环境变量实时生效）
-            └─ resolve_path()         # 相对路径 → 绝对路径（基于 BASE_DIR）
-
-  └─ get_audit_config().enabled             # AuditConfig（audit_config.py）
-       └─ AuditConfig.from_yaml()
-            └─ yaml_section(data, ["audit"]) → enabled / log_path
-```
-
-配置包结构：
-
-```
-bocomadp/config/
-├─ base.py             # 公共加载层：BASE_DIR 定位 / .env 加载 / yaml 读取 / $VAR 展开 / 类型工具
-├─ app_config.py       # AppConfig：唯一 schema（yaml 主源 + env 覆盖 + 键拼写校验 fail-fast）
-└─ audit_config.py     # AuditConfig：独立业务分组（dataclass + from_yaml 热加载）
-```
-
-`get_app_config()` 每次调用重建 `AppConfig`（热加载）；`get_audit_config()` 每次调用重新 `from_yaml()`（支持运行时修改配置即时生效）。
-
-### 环境变量展开机制
-
-`config.yaml` 中的字符串值支持 `$VAR` 和 `${VAR}` 两种写法：
-
-```yaml
-# .env 文件中设置
-DEEPSEEK_API_KEY=sk-xxx
-
-# config.yaml 中引用
-models:
-  - api_key: ${DEEPSEEK_API_KEY}     # → sk-xxx
-```
-
-展开时机：
-- **AppConfig（models 节点）**：`_resolve_env()` 逐个展开
-- **YAML 全树（业务节点）**：`expand_env_vars()` 递归展开（字符串、列表、字典中的字符串均支持）
+> 完整加载链路（热加载语义 / 键拼写校验 / 扩展规范）见 [config_load_design.md](./config_load_design.md)。
 
 ---
 
@@ -248,6 +237,10 @@ python main.py
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+> 工作区模式：`ADP_K8S_ENABLED=true`（默认）走 K8s 沙箱工作区（每个 agent 独立 Pod/PVC，
+> 或共享 PVC 按 session 子目录隔离）；本地开发设 `ADP_K8S_ENABLED=false` 回退
+> `LocalWorkspaceManager`（`{workspace_dir}/{agent_id}/` 布局）。
+
 ### 5. 启动 Web UI
 
 ```bash
@@ -267,11 +260,14 @@ pnpm install && pnpm dev
 | `/api/threads/{tid}/runs/{rid}/cancel` | POST | 取消 run（映射原生 interrupt） |
 | `/api/models` | GET | 模型列表 |
 | `/api/models/active` | POST | 切换活跃模型 |
+| `/api/agents/{agent_id}/tools` | GET/PUT/DELETE | 智能体工具白名单（详见 api.md） |
+| `/api/sessions/{session_id}/usage` | GET | 会话 Token 用量（详见 api.md） |
 | `/healthz` | GET | 存活检查 |
 | `/readyz` | GET | 就绪检查 |
 | `/platform/health` | GET | 平台健康检查（bocomadp） |
 
-> 上述路由叠加在 `create_app` 自动注册的 12 个内置路由之上。
+> 上述路由叠加在 `create_app` 自动注册的内置路由之上；全量 curl 速查（含网关转发规则）
+> 见 [API接口文档.md](./API接口文档.md)。
 > 已删除：`/api/chat/run` + `/api/chat/stop`（旧 Runtime 8 阶段编排 + Envelope 协议，2026-08 下线）
 
 ---
@@ -366,21 +362,38 @@ app.include_router(orders_router)
 2. **日志初始化** — `configure_logging(config)`
 3. **框架模块初始化** — ToolRegistry → MiddlewareRegistry → McpRegistry → ProviderManager → RunManager → BusBridge
 4. **模型注册** — `load_models_from_yaml("config.yaml")` 自动注册到 ProviderManager
-5. **构建 App** — `create_app()` 自动注册 12 个内置路由
-6. **注入 ASGI 中间件** — Trace → AccessLog → Error → CORS
-7. **挂载自定义路由** — health / stats / deerflow / models / platform_health
-8. **企业扩展接入** — `extra_agent_middlewares`（审计）、`extra_agent_tools`（企业工具）
+5. **工作区与消息总线** — K8s 沙箱模式（默认：K8s/共享 PVC 工作区 + RedisMessageBus）或本地模式（LocalWorkspaceManager + InMemoryMessageBus）
+6. **构建 App** — `create_app()` 自动注册内置路由
+7. **注入 ASGI 中间件** — Trace → AccessLog → Error → CORS
+8. **挂载自定义路由** — health / stats / deerflow / models / platform_health / agent_tools / session_usage / uploads 等
+9. **企业扩展接入** — `extra_agent_middlewares`（审计）、`extra_agent_tools`（企业工具）
 
 ### DeerFlow 风格 SSE 链路
 
 ```
 POST /api/threads/{tid}/runs/stream
+  → _ensure_session（懒建会话 + 模型凭证自动供给：deerflow-<user_id>-<provider_id>）
+  → custom_params 解析（带值落盘 workspace / 不带值回退加载）
   → RunManager 记账（409 并发拒绝）→ 原生 ChatService.run(run_id=...) 后台任务
   → BusBridge 订阅 MessageBus（Redis Stream 回放 + pub/sub live）
   → Formatter 翻译 → protocol 帧序列化（event/data/id + 心跳 + end 哨兵）
 GET  /api/threads/{tid}/runs/{rid}/stream  → join（Last-Event-ID 断线续传）
 POST /api/threads/{tid}/runs/{rid}/cancel  → 原生 session 级 interrupt
 ```
+
+### DeerFlow SSE 实现模块映射（P0 模块）
+
+| 模块 | 功能 | 实现文件 |
+|------|------|---------|
+| 1 | DeerFlow SSE 流式对话 | [deerflow/routers/deerflow_chat.py](../bocomadp/deerflow/routers/deerflow_chat.py)（4 端点） |
+| 2 | SSE 帧序列化 / 事件翻译 | [deerflow/protocol.py](../bocomadp/deerflow/protocol.py) + [deerflow/formatter.py](../bocomadp/deerflow/formatter.py) |
+| 3 | 总线适配（回放 + 订阅） | [deerflow/bridge.py](../bocomadp/deerflow/bridge.py)（复用原生 MessageBus） |
+| 4 | run 记账与状态机 | [deerflow/runs.py](../bocomadp/deerflow/runs.py)（RunManager） |
+| 5 | Agent 执行 | 原生 `ChatService`（与 `/chat/` 配置完全一致，无自研执行器） |
+| 6 | 聊天会话管理 | AgentScope 内置 `/sessions` 路由 + [deerflow/routers/deerflow_chat.py](../bocomadp/deerflow/routers/deerflow_chat.py) |
+| 7 | 多模型路由 | [providers/provider_manager.py](../bocomadp/providers/provider_manager.py) + [routers/models.py](../bocomadp/routers/models.py) |
+| 8 | 场景种子 | config.yaml agents 段 → lifespan 幂等同步进框架 StorageBase |
+| 9 | 请求级运行时配置 | [deerflow/custom_params.py](../bocomadp/deerflow/custom_params.py) + [tools/cross_search.py](../bocomadp/tools/cross_search.py) + [middleware/custom_prompt.py](../bocomadp/middleware/custom_prompt.py) |
 
 ---
 

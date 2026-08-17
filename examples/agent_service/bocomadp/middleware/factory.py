@@ -14,6 +14,7 @@ from agentscope.middleware import MiddlewareBase
 
 from ..config import get_audit_config
 from .audit import AuditMiddleware
+from .custom_prompt import CustomPromptMiddleware
 
 
 async def build_enterprise_middlewares(
@@ -25,8 +26,13 @@ async def build_enterprise_middlewares(
 
     被 AgentScope 在每次 agent 组装时调用一次，因此可以在这里
     根据用户/会话返回不同的中间件组合。
+
+    CustomPromptMiddleware 无 per-session 状态（提示词从请求级
+    ContextVar 读取），每次组装构建新实例即可，无额外成本。
     """
-    middlewares: list[MiddlewareBase] = []
+    middlewares: list[MiddlewareBase] = [
+        CustomPromptMiddleware(),
+    ]
 
     if get_audit_config().enabled:
         middlewares.append(

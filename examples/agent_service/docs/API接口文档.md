@@ -1,5 +1,9 @@
 # BocomADP 接口文档（curl 速查）
 
+> 本文件是 `docs/` 文档集的一部分；接口语义细节见同目录 [README.md](./README.md)、
+> [api.md](./api.md)（工具白名单 / Token 用量）、[custom_params.md](./custom_params.md)
+> （请求级运行时配置）。
+
 - 网关地址：`http://192.168.0.106`（nginx 80 端口，统一入口）
 - 转发规则：`/api/xxx` → 剥掉 `/api` 前缀 → `agentscope-service:8000/xxx`（`Docker-agentscope/nginx/nginx.conf`）
 - 直连方式（绕过网关）：`http://192.168.0.106:8000` + 服务端原始路径（**不带** `/api` 前缀）
@@ -24,21 +28,21 @@ curl http://192.168.0.106/api/stats/storage
 >
 > - `thread_id` 即原生 `session_id`（同一资源）；`agent_id` 选场景：
 >   default / customer_service / risk_control
-> - 所有端点需携带 `x-user-id` 请求头
+> - `x-user-id` 请求头**可选**（缺省 `default`，单租户本地部署；生产接入认证后可收紧为必填）
 > - 同 session 已有活跃 run 时再次创建 → `409 Conflict`
 
 ```bash
 # ① 创建 run + SSE 流式（-N 实时输出；响应头 Content-Location 携带 run_id）
 curl -N -X POST http://192.168.0.106/api/threads/t1/runs/stream \
   -H 'Content-Type: application/json' -H 'x-user-id: u1' \
-  -d '{"agent_id":"customer_service","input":"你好，帮我查一下余额"}'
+  -d '{"agent_id":"customer_service","input":{"type":"human","content":"你好，帮我查一下余额"}}'
 # 帧序列：event: metadata（首帧）→ event: messages / custom（增量）→ event: end（结束）
 # 帧格式：event: <名> \n data: <JSON> \n id: <游标>（Last-Event-ID 断线续传用）
 
 # ② 创建 run + 阻塞等待（返回终态 JSON：run_id / thread_id / status / error）
 curl -X POST http://192.168.0.106/api/threads/t1/runs/wait \
   -H 'Content-Type: application/json' -H 'x-user-id: u1' \
-  -d '{"agent_id":"customer_service","input":"简单回答：1+1=?"}'
+  -d '{"agent_id":"customer_service","input":{"type":"human","content":"简单回答：1+1=?"}}'
 
 # ③ join 已有 run（回放全部事件；带 Last-Event-ID 则从断点续传）
 curl -N http://192.168.0.106/api/threads/t1/runs/{run_id}/stream \
@@ -55,11 +59,37 @@ curl -X POST http://192.168.0.106/api/threads/t1/runs/{run_id}/cancel \
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `agent_id` | 是 | 场景 ID（同 `/chat/`） |
-| `input` | 否 | 输入消息（同 `/chat/` 的 `ChatRequest.input` 同构） |
+| `agent_id` | 否 | 场景 ID（同 `/chat/`）；与 `assistant_id` 二选一，都省略时回退 config.yaml 首个 seed agent |
+| `assistant_id` | 否 | LangGraph SDK 别名（前端固定传 `lead_agent`）；不在 seed 场景中时自动回退默认场景 |
+| `input` | 否 | 输入消息：单条消息 dict `{"type":"human","content":"..."}` 或 `{"messages":[...]}` 列表；**不接受纯字符串** |
+| `custom_params` | 否 | 请求级运行时配置（空间码 / custom_prompt / 检索开关 / guwp_token 等），见下节 |
 | `session_id` | 否 | 省略即 `thread_id`；显式提供且不一致 → 400 |
 | `stream_mode` / `multitask_strategy` | 否 | 接受但忽略（固定 messages+custom 流、reject 并发策略） |
 | `on_disconnect` | 否 | `cancel`（默认，断线即中断 run）/ `continue`（仅断开订阅） |
+
+### 1.1 custom_params 请求级配置（速查）
+
+```bash
+curl -N -X POST http://192.168.0.106/api/threads/t1/runs/stream \
+  -H 'Content-Type: application/json' -H 'x-user-id: u1' \
+  -d '{
+    "assistant_id": "lead_agent",
+    "input": {"type": "human", "content": "你好，介绍一下你自己"},
+    "custom_params": {
+      "space_code_list": ["SP0000001"],
+      "team_space_code_list": ["TEAM01"],
+      "user_code": "U001",
+      "search_type": "0",
+      "custom_prompt": "你是内部知识助手，回答必须简洁、引用检索结果。",
+      "vector_search_switch": true,
+      "guwp_token": "demo-guWP-token"
+    }
+  }'
+```
+
+> custom_params 完整机制（字段表 / 落盘回退 / 开关语义 / 端到端验证手册）见
+> [custom_params.md](./custom_params.md)。首次带值请求会落盘到会话 workspace
+> （`sessions/{session_id}/custom_params.json`），后续不带参数的请求自动回退加载。
 
 ## 2. 场景种子（config.yaml `agents` 段）
 
@@ -77,7 +107,7 @@ agents:
     model_name: ""
     max_iters: 20
     enabled_tools: []     # 空 = 全部工具；非空在首次创建时写入工具白名单
-    enabled_skills: []    # 暂无技能白名单落地机制
+    enabled_skills: []    # 技能白名单（匹配技能 frontmatter name 或目录名），空 = 全部
 ```
 
 ## 3. 模型（`/models`、`/model`）
@@ -128,6 +158,9 @@ curl -X POST http://192.168.0.106/api/sessions/{session_id}/interrupt \
 curl http://192.168.0.106/api/sessions/{session_id}/messages
 curl http://192.168.0.106/api/sessions/{session_id}/status
 curl -N http://192.168.0.106/api/sessions/{session_id}/stream
+
+# 会话 Token 用量（详见 api.md）
+curl 'http://192.168.0.106/api/sessions/{session_id}/usage?agent_id=xxx&user_id=xxx'
 ```
 
 ## 6. 框架内置：智能体（`/agent`）
@@ -141,6 +174,11 @@ curl -X POST http://192.168.0.106/api/agent/ \
 curl -X PATCH http://192.168.0.106/api/agent/{agent_id} \
   -H 'Content-Type: application/json' -d '{}'
 curl -X DELETE http://192.168.0.106/api/agent/{agent_id}
+
+# 智能体工具白名单（详见 api.md）
+curl http://192.168.0.106/api/agents/{agent_id}/tools
+curl -X PUT http://192.168.0.106/api/agents/{agent_id}/tools/{tool_name}
+curl -X DELETE http://192.168.0.106/api/agents/{agent_id}/tools/{tool_name}
 ```
 
 ## 7. 框架内置：凭证 / 聊天（`/credential`、`/chat`）
@@ -159,6 +197,10 @@ curl -X DELETE http://192.168.0.106/api/credential/{credential_id}
 curl -X POST http://192.168.0.106/api/chat/ \
   -H 'Content-Type: application/json' -d '{"session_id":"s1","input":"你好"}'
 ```
+
+> deerflow 链路的模型凭证为自动供给：首次建会话时按
+> `deerflow-<user_id>-<provider_id>` 幂等写入 credential 存储（不同用户互不冲突），
+> 无需手动创建。
 
 ## 8. 框架内置：知识库（`/knowledge_bases`）
 
@@ -237,3 +279,4 @@ curl http://192.168.0.106/api/tts-model/
 - 场景会话闭环验证只需第 0/1/2 组命令：`POST /api/threads/t1/runs/stream` 用 `agent_id` 验证场景路由（不同场景 → 不同 system_prompt / 模型 / 工具白名单）
 - OpenAPI 在线文档：`http://192.168.0.106:8000/docs` 或 `http://192.168.0.106:8000/openapi.json`（直连端口）
 - 会话状态与消息由原生 storage 落库（config.yaml `db.url`，PostgreSQL）；工作区文件根目录见 config.yaml `workspace_dir`（docker 挂载 `examples/agent_service/workspaces`）
+- custom_params 落盘位置：会话 workspace 的 `sessions/{session_id}/custom_params.json`（本地模式即 `{workspace_dir}/{agent_id}/sessions/{session_id}/` 下）

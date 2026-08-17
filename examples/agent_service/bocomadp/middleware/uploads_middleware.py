@@ -32,7 +32,7 @@ try:
 except Exception:  # pragma: no cover - agentscope 不可用时降级（如纯单测环境）
     TextBlock = None  # type: ignore
 
-from bocomadp.uploads.manager import resolve_upload_path, to_virtual_path
+from bocomadp.uploads.manager import to_virtual_path
 from bocomadp.uploads.file_outline import create_outline
 
 logger = logging.getLogger(__name__)

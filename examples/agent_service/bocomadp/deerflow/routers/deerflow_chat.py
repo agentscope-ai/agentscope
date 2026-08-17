@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from contextvars import Token
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -59,6 +60,17 @@ from agentscope.message import Msg, TextBlock
 from bocomadp.config import load_agents_from_yaml, load_models_from_yaml
 
 from ..bridge import BusBridge
+from ..auth_context import (
+    reset_resolved_auth,
+    resolve_auth_params,
+    set_resolved_auth,
+)
+from ..custom_params import (
+    load_custom_params_from_workspace,
+    reset_custom_params,
+    save_custom_params_to_workspace,
+    set_custom_params,
+)
 from ..deps import (
     _default_agent_id,
     get_bridge,
@@ -297,6 +309,11 @@ class CreateRunRequest(BaseModel):
         description="客户端断线后行为：cancel 立即中断 run（默认，对齐 "
         "deer-flow）；continue 仅断开订阅、run 继续执行。",
     )
+    custom_params: dict[str, Any] | None = Field(
+        default=None,
+        description="请求级自定义参数（空间码等），注入后台 run 任务，"
+        "由工具中间件强制覆盖模型传参。",
+    )
 
 
 # ── 内部辅助 ──────────────────────────────────────────────────────────
@@ -354,10 +371,10 @@ async def _resolve_chat_model_config(
     """把 config.yaml 的模型条目解析为原生 ChatModelConfig。
 
     场景绑定的 provider/model 为空时回退全局 active provider（bocomadp
-    场景 model_provider 常留空）；匹配到条目后以固定 id
-    （``deerflow-<provider_id>``）把 api_key/base_url 幂等写入 credential
-    存储，返回配置供原生 ``ChatService`` 构建模型。无可用条目时返回
-    None（由原生 404 报错兜底，不阻断请求）。
+    场景 model_provider 常留空）；匹配到条目后以用户维度的固定 id
+    （``deerflow-<user_id>-<provider_id>``）把 api_key/base_url 幂等写入
+    credential 存储，返回配置供原生 ``ChatService`` 构建模型。无可用
+    条目时返回 None（由原生 404 报错兜底，不阻断请求）。
     """
     # 场景绑定的 provider/model 直接查 config.yaml 种子条目（lifespan
     # 已同步进 storage；框架 AgentData 无模型绑定字段，种子是唯一来源）
@@ -417,7 +434,12 @@ async def _resolve_chat_model_config(
         )
         return None
 
-    credential_id = f"deerflow-{entry.provider_id}"
+    # SQL 存储的 credentials 表以全局 id 为主键：固定
+    # ``deerflow-<provider_id>`` 会在第二个用户首次建会话时与既有行
+    # 撞键（UniqueViolation），且 upsert_credential 的防越权保护会
+    # 拒绝覆盖他人持有的 id。id 必须带 user_id 维度（Redis 后端本就
+    # 按 user 命名空间隔离，此格式同样兼容）。
+    credential_id = f"deerflow-{user_id}-{entry.provider_id}"
     credential_kwargs: dict[str, Any] = {
         "api_key": entry.api_key,
         "id": credential_id,
@@ -549,6 +571,134 @@ async def _ensure_session(
         agent_id,
         user_id,
     )
+
+
+async def _resolve_custom_params(
+    storage: StorageBase,
+    workspace_manager: WorkspaceManagerBase,
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    requested: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """解析本次 run 的 custom_params（对齐 deer-flow ``_resolve_custom_params``）。
+
+    请求携带 custom_params → 落盘到会话绑定的 workspace（后续请求可
+    回退恢复）并直接采用；未携带 → 从会话 workspace 的落盘文件回退
+    加载（HITL 确认续跑等场景空间码约束持续生效）。
+
+    workspace 解析复用与 skill_router 相同的 DB 持久化路径
+    （``session.config.workspace_id``），任意隔离策略下都精确；落盘 /
+    读盘非致命——workspace 不可用或文件缺失时降级为空 dict，不阻断
+    run 创建。
+    """
+    if requested is not None:
+        # 运行时覆盖——落盘供后续请求恢复（对齐 deer-flow 保存语义）
+        session_record = await storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session_record is not None:
+            try:
+                workspace = await workspace_manager.get_workspace(
+                    user_id,
+                    agent_id,
+                    session_id,
+                    session_record.config.workspace_id,
+                )
+                await save_custom_params_to_workspace(
+                    workspace,
+                    session_id,
+                    requested,
+                )
+            except Exception:  # noqa: BLE001 —— 落盘失败不阻断 run 创建
+                logger.warning(
+                    "deerflow: workspace unavailable for session %s; "
+                    "custom_params persist skipped",
+                    session_id,
+                    exc_info=True,
+                )
+        return requested
+
+    # 无运行时值——尝试从会话 workspace 回退加载
+    session_record = await storage.get_session(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    if session_record is None:
+        return {}
+    try:
+        workspace = await workspace_manager.get_workspace(
+            user_id,
+            agent_id,
+            session_id,
+            session_record.config.workspace_id,
+        )
+        loaded = await load_custom_params_from_workspace(
+            workspace,
+            session_id,
+        )
+    except Exception:  # noqa: BLE001 —— 读盘失败降级为空 dict
+        logger.warning(
+            "deerflow: workspace unavailable for session %s; "
+            "custom_params fallback skipped",
+            session_id,
+            exc_info=True,
+        )
+        return {}
+    return loaded or {}
+
+
+def _set_run_auth_contexts(
+    params: dict[str, Any],
+) -> dict[str, Token]:
+    """spawn 前注入认证上下文：ResolvedAuth + guwp token 联动。
+
+    对齐 deer-flow ``_resolve_auth_params``：把 custom_params 的认证
+    字段解析为 :class:`ResolvedAuth` 写入 ContextVar，供 run 任务内的
+    工具后端经 :func:`get_resolved_auth` 读取。
+
+    ``guwp_token`` 同时联动 agent-factory 的 ``_current_token``
+    ContextVar——run 任务内 ``_resolve_session_token``（main.py）读取
+    它并持久化到 session token store，技能下载等工具直接可用。
+
+    返回各 ContextVar 的 reset token，spawn 完成后逐项 reset
+    （``asyncio.create_task`` 已复制上下文快照，reset 不影响后台任务）。
+    """
+    tokens: dict[str, Token] = {}
+    tokens["auth"] = set_resolved_auth(resolve_auth_params(params))
+    guwp_token = str(params.get("guwp_token") or "")
+    if guwp_token:
+        from bocomadp.tools.agent_factory_tools import _current_token
+
+        tokens["guwp"] = _current_token.set(guwp_token)
+    return tokens
+
+
+def _reset_run_auth_contexts(tokens: dict[str, Token]) -> None:
+    """恢复 :func:`_set_run_auth_contexts` 注入的 ContextVar。"""
+    try:
+        guwp_token = tokens.get("guwp")
+        if guwp_token is not None:
+            from bocomadp.tools.agent_factory_tools import _current_token
+
+            _current_token.reset(guwp_token)
+    except Exception:  # noqa: BLE001 —— reset 失败仅告警
+        logger.warning(
+            "deerflow: failed to reset guwp token context (non-fatal)",
+            exc_info=True,
+        )
+    try:
+        auth_token = tokens.get("auth")
+        if auth_token is not None:
+            reset_resolved_auth(auth_token)
+    except Exception:  # noqa: BLE001 —— reset 失败仅告警
+        logger.warning(
+            "deerflow: failed to reset auth context (non-fatal)",
+            exc_info=True,
+        )
 
 
 async def _build_user_confirm_event(
@@ -886,15 +1036,32 @@ async def create_run_stream(
     else:
         input_msg = converted
         human_chunks = _collect_human_chunks(input_msg)
-    record, _task = _spawn_run(
-        run_manager,
-        chat_run_registry,
-        chat_service,
+    # spawn 前注入请求级 custom_params：asyncio.create_task 复制当前
+    # ContextVar 上下文到后台 run 任务，工具中间件在 run 任务内读取
+    # 强制覆盖模型传参；spawn 后 reset 不影响已创建的子任务。
+    resolved_params = await _resolve_custom_params(
+        storage,
+        workspace_manager,
         user_id,
-        session_id,
         agent_id,
-        input_msg,
+        session_id,
+        body.custom_params,
     )
+    ctx_token = set_custom_params(resolved_params)
+    auth_tokens = _set_run_auth_contexts(resolved_params)
+    try:
+        record, _task = _spawn_run(
+            run_manager,
+            chat_run_registry,
+            chat_service,
+            user_id,
+            session_id,
+            agent_id,
+            input_msg,
+        )
+    finally:
+        _reset_run_auth_contexts(auth_tokens)
+        reset_custom_params(ctx_token)
     logger.info(
         "deerflow: run %s created for thread %s (agent=%s).",
         record.run_id,
@@ -949,15 +1116,32 @@ async def create_run_wait(
         agent_id,
         session_id,
     )
-    record, task = _spawn_run(
-        run_manager,
-        chat_run_registry,
-        chat_service,
+    # 同 create_run_stream：spawn 前注入 custom_params（带请求值则先
+    # 落盘、不带则从会话 workspace 回退），reset 不影响已创建的后台
+    # run 任务（create_task 复制 ContextVar 上下文）。
+    resolved_params = await _resolve_custom_params(
+        storage,
+        workspace_manager,
         user_id,
-        session_id,
         agent_id,
-        input_msg,
+        session_id,
+        body.custom_params,
     )
+    ctx_token = set_custom_params(resolved_params)
+    auth_tokens = _set_run_auth_contexts(resolved_params)
+    try:
+        record, task = _spawn_run(
+            run_manager,
+            chat_run_registry,
+            chat_service,
+            user_id,
+            session_id,
+            agent_id,
+            input_msg,
+        )
+    finally:
+        _reset_run_auth_contexts(auth_tokens)
+        reset_custom_params(ctx_token)
     try:
         await task
     except asyncio.CancelledError:
