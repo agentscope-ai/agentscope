@@ -44,9 +44,13 @@ class FakeStorage:
 
 
 def _make_app(messages: list[Msg]) -> FastAPI:
+    # 与 main.py 一致：router 挂到子应用，再 mount 到 /api（对外路径不变）；
+    # state 必须设在子应用上（挂载后 request.app 是子应用）。
+    api = FastAPI()
+    api.state.storage = FakeStorage(messages)
+    api.include_router(threads_router)
     app = FastAPI()
-    app.state.storage = FakeStorage(messages)
-    app.include_router(threads_router)
+    app.mount("/api", api)
     return app
 
 
@@ -64,7 +68,7 @@ def test_page_returns_latest_limit_ascending() -> None:
     messages = [_msg(i) for i in range(1, 7)]  # 6 条
     with TestClient(_make_app(messages)) as client:
         response = client.get(
-            "/api/threads/thread-1/messages/page?limit=3")
+            "/api/deerflow/threads/thread-1/messages/page?limit=3")
 
     assert response.status_code == 200
     body = response.json()
@@ -77,7 +81,7 @@ def test_page_before_seq_advances_backward() -> None:
     messages = [_msg(i) for i in range(1, 7)]
     with TestClient(_make_app(messages)) as client:
         response = client.get(
-            "/api/threads/thread-1/messages/page?limit=3&before_seq=4")
+            "/api/deerflow/threads/thread-1/messages/page?limit=3&before_seq=4")
 
     body = response.json()
     assert _seqs(body["data"]) == [1, 2, 3]
@@ -89,7 +93,7 @@ def test_page_exact_limit_has_no_more() -> None:
     messages = [_msg(i) for i in range(1, 3)]
     with TestClient(_make_app(messages)) as client:
         response = client.get(
-            "/api/threads/thread-1/messages/page?limit=2")
+            "/api/deerflow/threads/thread-1/messages/page?limit=2")
 
     body = response.json()
     assert _seqs(body["data"]) == [1, 2]
@@ -100,7 +104,7 @@ def test_page_exact_limit_has_no_more() -> None:
 def test_page_empty_session() -> None:
     with TestClient(_make_app([])) as client:
         response = client.get(
-            "/api/threads/thread-1/messages/page?limit=2")
+            "/api/deerflow/threads/thread-1/messages/page?limit=2")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -111,7 +115,7 @@ def test_page_row_carries_content_id_for_dedupe() -> None:
     messages = [_msg(1)]
     with TestClient(_make_app(messages)) as client:
         response = client.get(
-            "/api/threads/thread-1/messages/page")
+            "/api/deerflow/threads/thread-1/messages/page")
 
     row = response.json()["data"][0]
     assert row["run_id"] == row["content"]["id"]  # 前端以 content.id 去重
@@ -124,8 +128,8 @@ def test_page_rejects_invalid_params() -> None:
     messages = [_msg(i) for i in range(1, 4)]
     with TestClient(_make_app(messages)) as client:
         assert client.get(
-            "/api/threads/thread-1/messages/page?limit=0").status_code == 422
+            "/api/deerflow/threads/thread-1/messages/page?limit=0").status_code == 422
         assert client.get(
-            "/api/threads/thread-1/messages/page?limit=201").status_code == 422
+            "/api/deerflow/threads/thread-1/messages/page?limit=201").status_code == 422
         assert client.get(
-            "/api/threads/thread-1/messages/page?before_seq=0").status_code == 422
+            "/api/deerflow/threads/thread-1/messages/page?before_seq=0").status_code == 422

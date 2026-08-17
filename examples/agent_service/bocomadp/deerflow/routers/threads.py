@@ -4,11 +4,11 @@
 对齐 deer-flow 2.0 ``backend/app/gateway/routers/threads.py`` 的 LangGraph
 SDK 调用契约，但只实现对话闭环必需的最小端点：
 
-- ``POST /api/threads``             创建 thread（仅生成 id，session 懒创建）
-- ``POST /api/threads/search``      列表查询（恒空列表——thread 实体由首次
+- ``POST /api/deerflow/threads``             创建 thread（仅生成 id，session 懒创建）
+- ``POST /api/deerflow/threads/search``      列表查询（恒空列表——thread 实体由首次
   run 懒创建，无独立注册表，列表页仅需不报错）
-- ``GET  /api/threads/{tid}/state``   读取最新状态（``values.messages``）
-- ``POST /api/threads/{tid}/history`` 读取最近 checkpoint（``values.messages``）
+- ``GET  /api/deerflow/threads/{tid}/state``   读取最新状态（``values.messages``）
+- ``POST /api/deerflow/threads/{tid}/history`` 读取最近 checkpoint（``values.messages``）
 
 未实现（非对话必需）：删除 / 重命名 / 状态更新 / 分页游标。
 
@@ -44,9 +44,14 @@ from ..runs import RunManager, RunStatus
 
 logger = logging.getLogger(__name__)
 
-threads_router = APIRouter(prefix="/api/threads", tags=["deerflow-threads"])
+threads_router = APIRouter(prefix="/deerflow/threads", tags=["deerflow-threads"])
 
-# ── 消息分页（对齐 deer-flow 2.0 ``/api/threads/{tid}/messages/page``）──
+# 注意：本路由挂载在 main.py 的 /api 子应用下，对外路径为
+# /api/deerflow/threads/...；deer-flow 前端旧路径 /api/threads/... 由
+# nginx 网关 rewrite 兼容。
+
+# ── 消息分页（对齐 deer-flow 2.0 ``/api/threads/{tid}/messages/page``；
+# 本服务对外路径 /api/deerflow/threads/{tid}/messages/page）──
 
 # 全量拉取的批大小：storage.list_messages 直接把 limit 透传给 SQL LIMIT，
 # 无框架级上限；500 一批避免极端大会话单次查询过重。
