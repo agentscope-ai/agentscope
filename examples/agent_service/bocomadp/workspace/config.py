@@ -15,7 +15,7 @@
     - ``ADP_K8S_DELETE_PVC_ON_CLOSE``: 关闭时是否删除 PVC
     - ``ADP_K8S_TTL``: 空闲超时（秒），默认 ``1800``（30 分钟）
     - ``ADP_K8S_SWEEP_INTERVAL``: 回收扫描间隔（秒），默认 ``300``
-    - ``ADP_K8S_MAX_ACTIVE_PODS``: 温池大小，默认 ``1``（0=不池化）
+    - ``ADP_K8S_MAX_ACTIVE_PODS``: 温池大小，默认 ``5``（0=不池化）
     - ``ADP_K8S_POOL_WAIT_TIMEOUT``: 池耗尽等待超时（秒），默认 ``60``
     - ``ADP_K8S_RESOURCES_CPU_REQUEST``: CPU 请求，默认 ``"500m"``
     - ``ADP_K8S_RESOURCES_CPU_LIMIT``: CPU 限制
@@ -153,7 +153,7 @@ class K8sWorkspaceConfig:
 
     # ── 池化 ──
     max_active_pods: int = field(
-        default_factory=lambda: _env_int("MAX_ACTIVE_PODS", 1),
+        default_factory=lambda: _env_int("MAX_ACTIVE_PODS", 5),
     )
     pool_wait_timeout: float = field(
         default_factory=lambda: _env_float("POOL_WAIT_TIMEOUT", 60.0),

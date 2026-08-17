@@ -90,6 +90,7 @@ from bocomadp.routers.agent_tools import agent_tools_router
 from bocomadp.routers.agent_tools import (
     load_tool_whitelists,
 )
+from bocomadp.routers.agent_concurrency import agent_concurrency_router
 from bocomadp.toolkit_whitelist import patch_get_toolkit
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
@@ -827,6 +828,15 @@ async def _lifespan_with_builtin_agents(app):
     async with _original_lifespan(app):
         # 恢复持久化的工具白名单（内存存储重启会丢）
         load_tool_whitelists()
+        # 池并发配置：PG 真源回填 Redis（Redis 重启/清空后 per-agent 配置不丢）
+        try:
+            from bocomadp.pool_config import sync_all_to_redis
+
+            synced = await sync_all_to_redis()
+            if synced:
+                logger.info("pool concurrency configs synced to redis: %d", synced)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("pool concurrency sync skipped: %s", e)
         await _register_builtin_agents()
         await _seed_agents_from_yaml()
         # 框架 get_toolkit 全量注入 Task/Team/workspace/middleware 工具，
@@ -870,6 +880,8 @@ app.include_router(models_router)
 app.include_router(platform_health_router)
 # 外部 skill hub（目录查询 / 我的上传 / 下载安装）
 app.include_router(skill_router)
+# 智能体沙箱并发管理（写 PG 真源 + 同步 Redis）
+app.include_router(agent_concurrency_router)
 # 工作区文件列表 / 下载（/workspace/files、/workspace/files/download）
 app.include_router(workspace_files_router)
 # OSS 打包下载（/workspace/file-download）

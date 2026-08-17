@@ -15,6 +15,7 @@ from agentscope.app.workspace_manager import (
     IsolationPolicy,
     K8sWorkspaceManager,
 )
+from bocomadp.config import get_app_config
 
 from ._shared_pvc import SharedPvcK8sWorkspaceManager
 from .config import get_k8s_workspace_config
@@ -49,6 +50,9 @@ def build_k8s_workspace_manager() -> (
     cfg = get_k8s_workspace_config()
 
     if cfg.shared_pvc_enabled:
+        # Redis 连接参数与消息总线/存储同源（AppConfig），
+        # 不直读裸 REDIS_HOST/REDIS_PORT 环境变量
+        redis_cfg = get_app_config().redis
         return SharedPvcK8sWorkspaceManager(
             shared_pvc_access_mode=cfg.shared_pvc_access_mode,
             # ── K8s 连接 ──
@@ -68,6 +72,8 @@ def build_k8s_workspace_manager() -> (
             # ── 池化 ──
             max_active_pods=cfg.max_active_pods,
             pool_wait_timeout=cfg.pool_wait_timeout,
+            redis_host=redis_cfg.host,
+            redis_port=redis_cfg.port,
         )
 
     return K8sWorkspaceManager(
