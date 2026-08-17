@@ -70,6 +70,17 @@ DEFAULT_USER_OUTPUTS_DIR = "outputs"
 DEFAULT_USER_UPLOADS_DIR = "uploads"
 
 
+def _pool_slot_index(pod_name: str) -> int | None:
+    """从池 Pod 名 ``as-ws-{hash}-{i}`` 解析 slot 序号。
+
+    非池命名（session 按需 Pod）或解析失败返回 ``None``。
+    """
+    try:
+        return int(pod_name.rsplit("-", 1)[1])
+    except (ValueError, IndexError):
+        return None
+
+
 class SharedPvcK8sWorkspace(K8sWorkspace):
     """K8sWorkspace 子类：session Pod，共享 agent 级 PVC + 温池。
 
@@ -90,6 +101,9 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
         session_id: str = "",
         shared_pvc_access_mode: str = "ReadWriteMany",
         pod_name: str = "",
+        # ── 懒缩容支持（由 Manager 注入，普通构造可省略）──
+        agent_id: str = "",
+        pool_size_provider: Any = None,
         # ── 透传给父类的所有参数 ──
         workspace_id: str | None = None,
         kubeconfig: str | None = None,
@@ -139,6 +153,10 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
         self._session_id: str = session_id
         self._shared_pvc_access_mode: str = shared_pvc_access_mode
         self._assigned_pod_name: str = pod_name
+
+        # ── 懒缩容：归还 slot 时与当前池大小比较 ──
+        self._agent_id: str = agent_id
+        self._pool_size_provider: Any = pool_size_provider
 
         # ── 覆盖工作目录为 session 子目录 ──
         self.workdir = f"{POD_WORKDIR}/sessions/{self._session_id}"
@@ -485,31 +503,72 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
 
         if self._v1 is not None and self._pod_name:
             if self._assigned_pod_name:
-                # ── 温池：patch label 归还 slot ──
-                try:
-                    await self._v1.patch_namespaced_pod(
-                        self._pod_name,
-                        self._namespace,
-                        {"metadata": {"labels": {
-                            "agentscope.pool.slot": "available",
-                        }}},
-                    )
-                    logger.info(
-                        "SharedPvcK8sWorkspace: returned slot %r to pool",
-                        self._pod_name,
-                    )
-                except ApiException as e:
-                    if e.status == 404:
-                        logger.warning(
-                            "SharedPvcK8sWorkspace: pool pod %r gone, "
-                            "cannot return slot",
+                # ── 温池：懒缩容判断 ──
+                # slot 序号 >= 当前池大小时直接删除 Pod（热更新缩容后
+                # 在下一次会话结束时自然收敛），否则 patch 归还池中。
+                slot_index = _pool_slot_index(self._pod_name)
+                target_size: int | None = None
+                if slot_index is not None and self._pool_size_provider:
+                    try:
+                        target_size = await self._pool_size_provider(
+                            self._agent_id,
+                        )
+                    except Exception:
+                        # 池大小查询失败 → 保守归还，不误删
+                        target_size = None
+                if (
+                    slot_index is not None
+                    and target_size is not None
+                    and slot_index >= target_size
+                ):
+                    # ── 懒缩容：删除超出池大小的 slot Pod ──
+                    try:
+                        await self._v1.delete_namespaced_pod(
+                            self._pod_name,
+                            self._namespace,
+                        )
+                        logger.info(
+                            "SharedPvcK8sWorkspace: shrunk pool slot %r "
+                            "(index=%d >= pool_size=%d)",
+                            self._pod_name,
+                            slot_index,
+                            target_size,
+                        )
+                    except ApiException as e:
+                        if e.status != 404:
+                            logger.warning(
+                                "SharedPvcK8sWorkspace: shrink slot %r "
+                                "failed: %s",
+                                self._pod_name,
+                                e,
+                            )
+                else:
+                    # ── patch label 归还 slot ──
+                    try:
+                        await self._v1.patch_namespaced_pod(
+                            self._pod_name,
+                            self._namespace,
+                            {"metadata": {"labels": {
+                                "agentscope.pool.slot": "available",
+                            }}},
+                        )
+                        logger.info(
+                            "SharedPvcK8sWorkspace: returned slot %r to pool",
                             self._pod_name,
                         )
-                    else:
-                        logger.warning(
-                            "SharedPvcK8sWorkspace: slot return failed: %s",
-                            e,
-                        )
+                    except ApiException as e:
+                        if e.status == 404:
+                            logger.warning(
+                                "SharedPvcK8sWorkspace: pool pod %r gone, "
+                                "cannot return slot",
+                                self._pod_name,
+                            )
+                        else:
+                            logger.warning(
+                                "SharedPvcK8sWorkspace: slot return "
+                                "failed: %s",
+                                e,
+                            )
             else:
                 # ── 按需：删除 session Pod ──
                 try:
@@ -554,13 +613,21 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
     POOL_LABEL_SLOT = "agentscope.pool.slot"
     POOL_SLOT_AVAILABLE = "available"
 
+    # ── 池大小缓存 TTL（秒）──
+    # 短 TTL 平衡热更新时效性与 Redis 往返开销
+    POOL_SIZE_CACHE_TTL = 5.0
+
     def __init__(
         self,
         *,
         shared_pvc_access_mode: str = "ReadWriteMany",
         # ── 池化 ──
-        max_active_pods: int = 1,
+        max_active_pods: int = 5,
         pool_wait_timeout: float = 60.0,
+        # ── 池配置数据源（Redis） ──
+        # 连接参数由工厂注入（来自 AppConfig），禁止直读裸环境变量
+        redis_host: str = "localhost",
+        redis_port: int = 6379,
         # ── 透传给父类的参数 ──
         kubeconfig: str | None = None,
         namespace: str = "agentscope",
@@ -617,6 +684,13 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         # ── 池化 ──
         self._max_active_pods = max_active_pods
         self._pool_wait_timeout = pool_wait_timeout
+        self._redis_host = redis_host
+        self._redis_port = redis_port
+        # 懒加载长连接 + 池大小短 TTL 缓存，避免每个新会话
+        # 都新建/关闭一条 Redis 连接
+        self._redis_client: Any = None
+        self._redis_lock = asyncio.Lock()
+        self._pool_size_cache: dict[str, tuple[float, int]] = {}
         # K8s 客户端（懒加载，用于池管理）
         self._k8s_api_client: Any = None
         self._k8s_v1: Any = None
@@ -697,6 +771,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                 shared_pvc_name=shared_pvc_name,
                 session_id=session_id,
                 pod_name=pod_name,
+                agent_id=agent_id,
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws  # type: ignore[return-value]
@@ -708,11 +783,13 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         shared_pvc_name: str,
         session_id: str,
         pod_name: str = "",
+        agent_id: str = "",
     ) -> SharedPvcK8sWorkspace:
         """构造 :class:`SharedPvcK8sWorkspace` 并初始化。
 
         Args:
             pod_name: 非空表示使用温池 Pod，空表示按需创建。
+            agent_id: 用于归还 slot 时的懒缩容判断。
         """
         from agentscope.workspace._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 
@@ -722,6 +799,8 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
             session_id=session_id,
             shared_pvc_access_mode=self._shared_pvc_access_mode,
             pod_name=pod_name,
+            agent_id=agent_id,
+            pool_size_provider=self._get_pool_size,
             # ── 透传 Manager 配置 ──
             kubeconfig=self._kubeconfig,
             namespace=self._namespace,
@@ -773,31 +852,55 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         """获取 agent 维度的池大小。
 
         优先级：Redis per-agent → .env 全局默认。
+        短 TTL 进程内缓存 + 懒加载长连接，避免每个新会话都
+        新建/关闭一条 Redis 连接；Redis 异常时静默降级。
         """
-        # 尝试 Redis（如果可用）
+        now = time.monotonic()
+        cached = self._pool_size_cache.get(agent_id)
+        if cached is not None and now - cached[0] < self.POOL_SIZE_CACHE_TTL:
+            return cached[1]
+
         try:
-            import os
-
-            import redis.asyncio as aioredis
-
-            r = aioredis.Redis(
-                host=os.environ.get("REDIS_HOST", "localhost"),
-                port=int(os.environ.get("REDIS_PORT", "6379")),
-                socket_connect_timeout=2,
-                socket_timeout=2,
+            r = await self._get_redis()
+            val = await r.hget(
+                f"agentscope:pool:{agent_id}",
+                "max_active_pods",
             )
-            try:
-                val = await r.hget(
-                    f"agentscope:pool:{agent_id}",
-                    "max_active_pods",
-                )
-                if val is not None:
-                    return int(val)
-            finally:
-                await r.aclose()
+            if val is not None:
+                result = int(val)
+                self._pool_size_cache[agent_id] = (now, result)
+                return result
         except Exception:
+            # Redis 不可用 → 不缓存，回退全局默认
             pass
         return self._max_active_pods
+
+    async def _get_redis(self) -> Any:
+        """懒加载复用的 Redis 长连接。
+
+        连接参数由工厂注入（来自 AppConfig），与消息总线/存储同源；
+        连接异常由 redis-py 自动重连，失败在调用侧捕获降级。
+        """
+        if self._redis_client is None:
+            async with self._redis_lock:
+                if self._redis_client is None:
+                    import redis.asyncio as aioredis
+
+                    self._redis_client = aioredis.Redis(
+                        host=self._redis_host,
+                        port=self._redis_port,
+                        socket_connect_timeout=2,
+                        socket_timeout=2,
+                    )
+        return self._redis_client
+
+    def invalidate_pool_size(self, agent_id: str) -> None:
+        """失效指定 agent 的池大小进程内缓存。
+
+        管理 API（PUT/DELETE /agents/{id}/concurrency）写入 Redis 后
+        调用，让新配置立即生效而无需等缓存 TTL 过期。
+        """
+        self._pool_size_cache.pop(agent_id, None)
 
     async def _ensure_pool(
         self,
@@ -1099,12 +1202,22 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
             for pod in available:
                 pod_name = pod.metadata.name
                 try:
+                    # 带 resourceVersion 前置条件的条件 patch：
+                    # 并发抢同一 slot 时版本不匹配返回 409，试下一个，
+                    # 避免后写覆盖前写导致两个会话绑定同一 Pod
                     await self._k8s_v1.patch_namespaced_pod(
                         pod_name,
                         self._namespace,
-                        {"metadata": {"labels": {
-                            self.POOL_LABEL_SLOT: session_id,
-                        }}},
+                        {
+                            "metadata": {
+                                "resourceVersion": (
+                                    pod.metadata.resource_version
+                                ),
+                                "labels": {
+                                    self.POOL_LABEL_SLOT: session_id,
+                                },
+                            },
+                        },
                     )
                     return pod_name  # type: ignore[no-any-return]
                 except ApiException as e:
