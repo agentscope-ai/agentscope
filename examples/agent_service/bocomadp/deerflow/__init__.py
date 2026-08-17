@@ -2,11 +2,11 @@
 """DeerFlow 风格 SSE 适配包（bocomadp/deerflow）。
 
 基于原生 chat 链路（``ChatService`` + ``MessageBus``）新增的 deer-flow 2.0
-（LangGraph Platform）风格 SSE 路由适配层，替代已删除的 ``runtime/`` 模块：
+（LangGraph Platform）风格 SSE 路由适配层：
 
 - :mod:`~bocomadp.deerflow.protocol`   协议数据类与帧序列化（唯一接触帧格式的文件）
 - :mod:`~bocomadp.deerflow.formatter`  AgentEvent dict → StreamEvent 翻译
-  （输入侧分支骨架提炼自 runtime/envelope.py，输出侧对齐 deer-flow 协议）
+  （输入/输出侧统一对齐 deer-flow 协议）
 - :mod:`~bocomadp.deerflow.bridge`     MessageBus 薄适配（回放 + 订阅过滤 + Last-Event-ID 游标）
 - :mod:`~bocomadp.deerflow.runs`       RunManager（run_id 生成、session↔run 映射、状态推断）
 - :mod:`~bocomadp.deerflow.deps`       FastAPI 依赖注入

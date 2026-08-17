@@ -1,7 +1,7 @@
 # AgentScope `examples/` 架构分析
 
 > 分析对象：`examples/`（相对 `agentscope/` 仓库根目录）
-> 生成时间：2026-08-06；修订：2026-08-17（`runtime/` 8 阶段编排下线、`memo/` 归并进 `docs/` 后修订）
+> 生成时间：2026-08-06；修订：2026-08-17（`memo/` 归并进 `docs/` 后修订）
 
 ---
 
@@ -81,10 +81,6 @@ from agentscope.rag import QdrantStore
 ```
 配置加载 → 注册表 → 运行记账 → 基础设施 → create_app → app.state → 自定义路由
 ```
-
-> **历史变更**：旧 `runtime/` 8 阶段编排器（phases / hooks / envelope / executor /
-> builder / runtime）已于 2026-08 下线，`/api/chat/run` + `/api/chat/stop` 一并删除；
-> 执行引擎改为直接复用原生 `ChatService`（deerflow 四端点）。
 
 ### 2.3 `bocomadp/` 模块划分
 
@@ -357,8 +353,7 @@ main()  (asyncio.run)
 - 2026-08-17：`memo/` 五份文档归并进 `docs/`；`README.md` 目录树更新为当前代码
   （tests 实为 `test_logging.py` + `test_deerflow_*.py` 系列，旧文所述
   `test_registry_scan.py` 不存在）；早期 `目录结构.md` 的 P0 模块映射表并入
-  `docs/README.md` 后删除；本文档初版（2026-08-06）描述的 `runtime/` 8 阶段
-  编排引擎已于 2026-08 下线，相关章节已修订。
+  `docs/README.md` 后删除。
 
 ---
 

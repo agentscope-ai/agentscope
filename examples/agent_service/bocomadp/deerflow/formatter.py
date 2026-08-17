@@ -18,10 +18,10 @@
 | ``CustomEvent``               | ``custom``             | 原样透传                                   |
 | ``ReplyEndEvent(normal)``     | ``end``                | 哨兵（data=None）                          |
 | ``ReplyEndEvent(error)``      | ``error`` + ``end``    | ``{"message", "name"}`` 后接哨兵           |
-| 未知事件                      | ``custom``             | 原样透传而非丢弃（沿用 envelope 兜底策略） |
+| 未知事件                      | ``custom``             | 原样透传而非丢弃 |
 
-输入侧分支骨架提炼自已删除的 ``runtime/envelope.py``（TEXT/THINKING/TOOL
-分支匹配方式），输出侧整体替换为 deer-flow 协议。每个 run 一个实例。
+输入侧按 TEXT/THINKING/TOOL 分支匹配，输出侧统一翻译为 deer-flow 协议。
+每个 run 一个实例。
 """
 
 from __future__ import annotations
@@ -168,7 +168,7 @@ class DeerflowSSEFormatter:
 
         返回 0..N 条 StreamEvent；事件 id 为空串，由调用方（bridge）用
         Redis Stream entry_id 填充。未知事件原样透传为 ``custom`` 而非
-        丢弃（沿用 envelope.py 的兜底策略，保证翻译层单点不吞事件）。
+        丢弃（保证翻译层单点不吞事件）。
         """
         evt_type = str(event.get("type", "")).upper()
         handler = getattr(self, f"_on_{evt_type.lower()}", None)

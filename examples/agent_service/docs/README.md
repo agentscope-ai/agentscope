@@ -41,7 +41,7 @@ examples/agent_service/
 │   │   ├── logging_config.py            # TraceContextFilter + JsonTraceFormatter
 │   │   └── trace_middleware.py          # ASGI TraceMiddleware (X-Trace-Id)
 │   │
-│   ├── deerflow/                        # DeerFlow 风格 SSE（替代旧 runtime）
+│   ├── deerflow/                        # DeerFlow 风格 SSE
 │   │   ├── protocol.py                   # 帧序列化（event/data/id + 心跳 + end 哨兵）
 │   │   ├── formatter.py                  # AgentScope 事件 → deer-flow 事件翻译
 │   │   ├── bridge.py                     # MessageBus 回放 + 订阅（断线续传）
@@ -145,9 +145,6 @@ service:
 redis:
   host: localhost
   port: 6379
-runtime:
-  enabled: true
-  heartbeat_interval_seconds: 15.0
 tools / middlewares / mcp:
   enabled: true
   load_custom: true
@@ -198,7 +195,6 @@ BOCOMADP_TOOLS__LOAD_CUSTOM=true
 BOCOMADP_MIDDLEWARES__LOAD_CUSTOM=true
 BOCOMADP_MCP__LOAD_CUSTOM=true
 BOCOMADP_PROVIDERS__CONFIG_FILE=config.yaml # 模型配置文件路径
-BOCOMADP_RUNTIME__HEARTBEAT_INTERVAL_SECONDS=15.0
 ```
 
 > 完整加载链路（热加载语义 / 键拼写校验 / 扩展规范）见 [config_load_design.md](./config_load_design.md)。
@@ -268,7 +264,6 @@ pnpm install && pnpm dev
 
 > 上述路由叠加在 `create_app` 自动注册的内置路由之上；全量 curl 速查（含网关转发规则）
 > 见 [API接口文档.md](./API接口文档.md)。
-> 已删除：`/api/chat/run` + `/api/chat/stop`（旧 Runtime 8 阶段编排 + Envelope 协议，2026-08 下线）
 
 ---
 

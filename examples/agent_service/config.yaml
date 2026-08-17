@@ -48,11 +48,6 @@ redis:
   host: localhost
   port: 6379
 
-# ---------- 运行时 ----------
-runtime:
-  enabled: true            # 挂载 /api/chat/run SSE 端点
-  heartbeat_interval_seconds: 15.0
-
 # /chat 并发控制(0=不限)
 run_concurrency:
   enabled: false

@@ -401,8 +401,9 @@ async def build_agent_tools(
 
 
 # 通用中间件构建入口（AgentScope ``AgentMiddlewareFactory``）：
-# 合并「MiddlewareRegistry 自动扫描的内置中间件」+「主动 build 的企业中间件」，
-# 与 Runtime 层 AgentBuilder 注入的中间件视图保持一致。
+# 合并「MiddlewareRegistry 自动扫描的内置中间件」+「主动 build 的企业中间件」；
+# 经 ``_build_agent_middlewares_with_ellm`` 传给 create_app 的
+# ``extra_agent_middlewares``，与注册表视图保持同源。
 # 企业中间件（审计留痕）采用主动 build（middleware/factory.py），
 # 按会话创建独立实例，不依赖 custom/ 被动扫描。
 async def build_agent_middlewares(
@@ -439,9 +440,8 @@ class _BuiltinAgentStorageProxy:
     Framework lookup paths (``ResourceAccessService.resolve_agent`` etc.)
     only query the caller's own user id, so without this proxy the
     built-in agent is invisible to every non-default user (404 on
-    sessions/chat/agent views). ``Runtime._build_context`` already
-    applies the same fallback; this proxy extends it to the framework
-    HTTP API paths.
+    sessions/chat/agent views). This proxy extends the same fallback
+    to the framework HTTP API paths.
     """
 
     def __init__(self, inner: Any) -> None:
@@ -602,8 +602,6 @@ _concurrency_active = isinstance(message_bus, _RedisMessageBus)
 # per-agent 白名单过滤（PUT/DELETE /agents/{id}/tools/{name}）。
 workspace_manager = WhitelistWorkspaceManager(workspace_manager)
 
-runtime.workspace_manager = workspace_manager
-
 # ---------------------------------------------------------------------------
 # 4.5 /chat 并发控制:Redis 原子占位 + 注册表 + 入口对账
 # ---------------------------------------------------------------------------
@@ -719,7 +717,7 @@ app = create_app(
 
 
 # ── 注册内置智能体：智能体工厂（agent-creator）到框架 StorageBase ──
-# 使用 user_id="default" 创建；runtime._build_context 中对所有用户
+# 使用 user_id="default" 创建；对话上下文构建中对所有用户
 # fallback 查询 default 用户，确保每个用户都能与 agent-creator 对话。
 # 注意：框架 create_app 用 lifespan 创建 app（FastAPI(lifespan=...)），
 # @app.on_event("startup") 注册的处理器会被 Starlette 静默忽略，因此

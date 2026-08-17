@@ -171,7 +171,7 @@ DOTENV_FILE = BASE_DIR / ".env"
 - `env_file` 使用 `DOTENV_FILE`（`agent_service/.env` 绝对路径），与启动工作目录无关。
 - 分组：核心（`log_level` / `logging` / `service` / `redis`）、QwenPaw 移植占位
   （`providers` / `governance` / `hooks` / `checkpoints` / `token_usage` / `local_models`）、
-  框架模块（`runtime` / `tools` / `middlewares` / `mcp`）。
+  框架模块（`tools` / `middlewares` / `mcp`）。
 - `get_app_config()`：**唯一入口 + 热加载工厂**，每次调用重建 `AppConfig`
   （pydantic-settings 无缓存，config.yaml 实时重读），适合运行时按需获取最新配置；
   `main.py` 模块级调用一次形成**启动快照**。
