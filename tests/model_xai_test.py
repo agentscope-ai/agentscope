@@ -234,6 +234,57 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
         self.assertEqual(result.id, "xai-resp-1")
 
     @patch("xai_sdk.AsyncClient")
+    async def test_reasoning_effort_forwarded_without_thinking(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """reasoning_effort is sent even when thinking is disabled."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(text="Hello!"),
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        model = XAIChatModel(
+            credential=XAICredential(api_key="test"),
+            model="grok-3-mini",
+            stream=False,
+            context_size=131_072,
+            parameters=XAIChatModel.Parameters(
+                reasoning_effort="high",
+                thinking_enable=False,
+            ),
+        )
+
+        await model([])
+
+        self.assertEqual(
+            mock_client_cls.return_value.chat.create.call_args.kwargs[
+                "reasoning_effort"
+            ],
+            "high",
+        )
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_reasoning_effort_omitted_by_default(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Default parameters send no reasoning_effort field."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(text="Hello!"),
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        await self.model([])
+
+        self.assertNotIn(
+            "reasoning_effort",
+            mock_client_cls.return_value.chat.create.call_args.kwargs,
+        )
+
+    @patch("xai_sdk.AsyncClient")
     async def test_tool_call_response(
         self,
         mock_client_cls: MagicMock,
