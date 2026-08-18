@@ -340,7 +340,9 @@ class OpenAIResponseModel(ChatModelBase):
                     for output_item in getattr(resp, "output", []):
                         if getattr(output_item, "type", None) == "reasoning":
                             reasoning_item_id = getattr(
-                                output_item, "id", None
+                                output_item,
+                                "id",
+                                None,
                             )
                             if reasoning_item_id:
                                 delta_res.append_thinking(
