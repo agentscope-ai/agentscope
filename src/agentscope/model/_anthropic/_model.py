@@ -412,7 +412,9 @@ class AnthropicChatModel(ChatModelBase):
         async with response as stream:
             async for event in stream:
                 delta_res = ChatResponse(
-                    content=[], is_last=False, id=response_id
+                    content=[],
+                    is_last=False,
+                    id=response_id,
                 )
 
                 if event.type == "message_start":
