@@ -76,13 +76,17 @@ def _make_app(
     bus: InMemoryMessageBus,
     registry: FakeChatRunRegistry,
 ) -> FastAPI:
+    # 与 main.py 一致：router 挂到子应用，再 mount 到 /api（对外路径不变）；
+    # state 必须设在子应用上（挂载后 request.app 是子应用）。
+    api = FastAPI()
+    api.state.run_manager = run_manager
+    api.state.bus_bridge = BusBridge(bus)
+    api.state.chat_service = FakeChatService()
+    api.state.chat_run_registry = registry
+    api.state.storage = FakeStorage()
+    api.include_router(deerflow_router)
     app = FastAPI()
-    app.state.run_manager = run_manager
-    app.state.bus_bridge = BusBridge(bus)
-    app.state.chat_service = FakeChatService()
-    app.state.chat_run_registry = registry
-    app.state.storage = FakeStorage()
-    app.include_router(deerflow_router)
+    app.mount("/api", api)
     return app
 
 
@@ -95,7 +99,7 @@ def test_join_finished_record_ends_immediately() -> None:
 
     with TestClient(app) as client:
         response = client.get(
-            f"/api/threads/t1/runs/{rec.run_id}/stream")
+            f"/api/deerflow/threads/t1/runs/{rec.run_id}/stream")
 
     assert response.status_code == 200
     assert "event: end" in response.text
@@ -109,7 +113,7 @@ def test_join_unknown_run_without_active_task_ends() -> None:
 
     with TestClient(app) as client:
         response = client.get(
-            "/api/threads/t1/runs/ghost-run/stream")
+            "/api/deerflow/threads/t1/runs/ghost-run/stream")
 
     assert response.status_code == 200
     assert "event: end" in response.text
@@ -141,7 +145,7 @@ def test_join_unknown_run_with_active_task_still_waits() -> None:
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://test") as client:
                 resp_task = asyncio.create_task(
-                    client.get("/api/threads/t1/runs/ghost-run/stream"))
+                    client.get("/api/deerflow/threads/t1/runs/ghost-run/stream"))
                 # 0.3 秒内不应返回（live 阶段挂起，只可能有心跳帧）
                 await asyncio.sleep(0.3)
                 assert not resp_task.done()

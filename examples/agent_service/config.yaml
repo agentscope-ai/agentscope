@@ -88,6 +88,9 @@ models:
   # parameters 中的字段会透传给对应 ChatModel 的 Parameters 模型，
   # 例如 DeepSeekChatModel.Parameters 支持:
   #   temperature / max_tokens / top_p / thinking_enable / reasoning_effort
+  #
+  # supports_thinking 供 deer-flow 前端模型选择器展示 thinking 开关
+  #（默认 false）；仅影响前端展示，后端以 parameters 为准。
   - provider_id: deepseek
     display_name: "DeepSeek Chat"
     provider_type: deepseek
@@ -96,6 +99,7 @@ models:
     base_url: https://api.deepseek.com
     is_active: true
     supports_multimodal: false
+    supports_thinking: true
     parameters:
       temperature: 0.7
       max_tokens: 4096
@@ -110,6 +114,7 @@ models:
   #   base_url: https://api.deepseek.com
   #   is_active: false
   #   supports_multimodal: false
+  #   supports_thinking: true
   #   parameters:
   #     thinking_enable: true
   #     reasoning_effort: high

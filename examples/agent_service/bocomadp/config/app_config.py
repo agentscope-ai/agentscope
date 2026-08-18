@@ -226,6 +226,10 @@ class ModelEntry(BaseModel):
     base_url: str = Field(default="", description="API base URL，留空用默认")
     is_active: bool = Field(default=False, description="是否设为活跃模型")
     supports_multimodal: bool = Field(default=False, description="是否支持多模态")
+    supports_thinking: bool = Field(
+        default=False,
+        description="是否支持 thinking 模式（deer-flow 前端据此展示开关）",
+    )
     parameters: dict[str, Any] = Field(
         default_factory=dict,
         description="透传给 ChatModel.Parameters 的额外参数",
@@ -568,6 +572,9 @@ def build_model_instance(entry: ModelEntry):
     # 仅当 credential 类有 base_url 字段时才传入
     if entry.base_url and "base_url" in credential_cls.model_fields:
         credential_kwargs["base_url"] = entry.base_url
+    # 仅当 credential 类有 model 字段时才传入（如 ELLMCredential 必填）
+    if "model" in credential_cls.model_fields:
+        credential_kwargs["model"] = entry.model_name or entry.provider_id
     credential = credential_cls(**credential_kwargs)
 
     model_cls = credential_cls.get_chat_model_class()

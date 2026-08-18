@@ -73,11 +73,15 @@ def _make_app(
     chat_service: FakeChatService,
     run_manager: FakeRunManager,
 ) -> FastAPI:
+    # 与 main.py 一致：router 挂到子应用，再 mount 到 /api（对外路径不变）；
+    # state 必须设在子应用上（挂载后 request.app 是子应用）。
+    api = FastAPI()
+    api.state.storage = storage
+    api.state.chat_service = chat_service
+    api.state.run_manager = run_manager
+    api.include_router(threads_router)
     app = FastAPI()
-    app.state.storage = storage
-    app.state.chat_service = chat_service
-    app.state.run_manager = run_manager
-    app.include_router(threads_router)
+    app.mount("/api", api)
     return app
 
 
@@ -93,7 +97,7 @@ def test_delete_thread_removes_session(monkeypatch) -> None:
     run_manager = FakeRunManager()
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage, chat_service, run_manager)) as client:
-        response = client.delete("/api/threads/t1")
+        response = client.delete("/api/deerflow/threads/t1")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -111,7 +115,7 @@ def test_delete_thread_interrupts_active_run(monkeypatch) -> None:
     run_manager = FakeRunManager(active_record=record)
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage, chat_service, run_manager)) as client:
-        response = client.delete("/api/threads/t1")
+        response = client.delete("/api/deerflow/threads/t1")
 
     assert response.status_code == 200
     assert response.json()["success"] is True
@@ -127,7 +131,7 @@ def test_delete_thread_skips_interrupt_without_active_run(monkeypatch) -> None:
     run_manager = FakeRunManager(active_record=None)
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage, chat_service, run_manager)) as client:
-        response = client.delete("/api/threads/t1")
+        response = client.delete("/api/deerflow/threads/t1")
 
     assert response.status_code == 200
     assert response.json()["success"] is True
@@ -142,7 +146,7 @@ def test_delete_thread_idempotent_when_missing(monkeypatch) -> None:
     run_manager = FakeRunManager()
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage, chat_service, run_manager)) as client:
-        response = client.delete("/api/threads/ghost")
+        response = client.delete("/api/deerflow/threads/ghost")
 
     assert response.status_code == 200
     assert response.json() == {

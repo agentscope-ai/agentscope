@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 
 import main
 
-with TestClient(main.app) as client:
+with TestClient(main.root_app) as client:
     # 1. 无任何前置：直接 stream（agent_id=customer_service，session 不存在）
     r = client.post(
-        "/api/threads/probe1/runs/stream",
+        "/api/deerflow/threads/probe1/runs/stream",
         json={"agent_id": "customer_service", "input": {"name": "user", "role": "user", "content": [{"type": "text", "text": "hi"}]}},
         headers={"x-user-id": "u1"},
     )
@@ -21,14 +21,14 @@ with TestClient(main.app) as client:
 
     # 2. 缺 x-user-id header
     r2 = client.post(
-        "/api/threads/probe2/runs/stream",
+        "/api/deerflow/threads/probe2/runs/stream",
         json={"agent_id": "customer_service", "input": "hi"},
     )
     print("probe2 no x-user-id:", r2.status_code)
 
     # 3. 带 SDK 风格 payload（assistant_id + input.messages，无 agent_id）
     r3 = client.post(
-        "/api/threads/probe3/runs/stream",
+        "/api/deerflow/threads/probe3/runs/stream",
         json={
             "assistant_id": "lead_agent",
             "input": {"messages": [{"type": "human", "content": [{"type": "text", "text": "hi"}]}]},
@@ -54,7 +54,7 @@ with TestClient(main.app) as client:
     )
     print("probe4 create agent:", r4a.status_code, r4a.text[:200])
     r4b = client.post(
-        "/api/threads/probe4/runs/stream",
+        "/api/deerflow/threads/probe4/runs/stream",
         json={"agent_id": "probe_agent", "input": "hi"},
         headers={"x-user-id": "u1"},
     )
