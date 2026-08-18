@@ -245,8 +245,8 @@ class DashScopeChatModel(ChatModelBase):
             request_kwargs["tool_choice"] = fmt_tool_choice
 
         extra_body: dict[str, Any] = {}
-        if self.parameters.thinking_enable is not None:
-            extra_body["enable_thinking"] = self.parameters.thinking_enable
+        if self.parameters.thinking_enable:
+            extra_body["enable_thinking"] = True
         if self.parameters.thinking_budget is not None:
             extra_body["thinking_budget"] = self.parameters.thinking_budget
         if self.parameters.top_k is not None:
