@@ -226,7 +226,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         )
 
     async def test_chat_formatter_image_before_tool_call_kept(self) -> None:
-        """Images accumulated before a tool call are flushed, not dropped."""
+        """Images accumulated before a tool call stay on the same message."""
         fmt = OllamaChatFormatter()
         msgs = [
             AssistantMsg(
@@ -254,10 +254,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": "Let me look.",
                     "images": [self.image_b64],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
                     "tool_calls": [
                         {
                             "function": {
