@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import time
 from typing import Any
 
@@ -79,6 +80,21 @@ def _pool_slot_index(pod_name: str) -> int | None:
         return int(pod_name.rsplit("-", 1)[1])
     except (ValueError, IndexError):
         return None
+
+
+_K8S_LABEL_UNSAFE_RE = re.compile(r"[^a-zA-Z0-9-_.]")
+
+
+def _k8s_safe_label(value: str, max_len: int = 63) -> str:
+    """清洗 K8s label 值：仅保留字母数字与 ``- _ .``，首尾必须字母数字。
+
+    原始 agent_id / session_id / workspace_id 可能含空格、Unicode
+    连字符（如 U+2011）等非法字符，直接写入 label 会被 API server
+    以 422 拒绝。写入与按 label 查询两侧必须使用本函数保证一致。
+    """
+    cleaned = _K8S_LABEL_UNSAFE_RE.sub("-", value)
+    cleaned = cleaned.strip("-._")
+    return (cleaned or "x")[:max_len].rstrip("-._")
 
 
 class SharedPvcK8sWorkspace(K8sWorkspace):
@@ -389,7 +405,7 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
                 namespace=self._namespace,
                 labels={
                     "app.kubernetes.io/managed-by": "agentscope",
-                    "agentscope.workspace.id": self.workspace_id,
+                    "agentscope.workspace.id": _k8s_safe_label(self.workspace_id),
                 },
             ),
             spec=k8s_client.V1PersistentVolumeClaimSpec(**spec_kwargs),
@@ -479,7 +495,7 @@ class SharedPvcK8sWorkspace(K8sWorkspace):
                 labels={
                     "app.kubernetes.io/managed-by": "agentscope",
                     "agentscope.workspace": "true",
-                    "agentscope.workspace.id": self.workspace_id,
+                    "agentscope.workspace.id": _k8s_safe_label(self.workspace_id),
                 },
             ),
             spec=k8s_client.V1PodSpec(**spec_kwargs),
@@ -1015,7 +1031,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                 namespace=self._namespace,
                 labels={
                     "app.kubernetes.io/managed-by": "agentscope",
-                    "agentscope.agent_id": agent_id,
+                    "agentscope.agent_id": _k8s_safe_label(agent_id),
                 },
             ),
             spec=k8s_client.V1PersistentVolumeClaimSpec(**spec_kwargs),
@@ -1124,7 +1140,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                 labels={
                     "app.kubernetes.io/managed-by": "agentscope",
                     "agentscope.workspace": "true",
-                    "agentscope.agent_id": agent_id,
+                    "agentscope.agent_id": _k8s_safe_label(agent_id),
                     self.POOL_LABEL_AGENT: agent_hash,
                     self.POOL_LABEL_SLOT: self.POOL_SLOT_AVAILABLE,
                 },
@@ -1206,7 +1222,9 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
                                     pod.metadata.resource_version
                                 ),
                                 "labels": {
-                                    self.POOL_LABEL_SLOT: session_id,
+                                    self.POOL_LABEL_SLOT: _k8s_safe_label(
+                                        session_id,
+                                    ),
                                 },
                             },
                         },
@@ -1234,7 +1252,7 @@ class SharedPvcK8sWorkspaceManager(K8sWorkspaceManager):
         await self._k8s_connect()
         from kubernetes_asyncio.client.rest import ApiException
 
-        agent_label = f"agentscope.agent_id={agent_id}"
+        agent_label = f"agentscope.agent_id={_k8s_safe_label(agent_id)}"
 
         # 1. 删除所有池 Pod
         try:
