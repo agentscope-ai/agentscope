@@ -130,5 +130,9 @@ class TTSModelCard(BaseModel):
             output_types=config.get("output_types", ["audio/wav"]),
             realtime=config.get("realtime", False),
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides={
+                k: v
+                for k, v in config.get("parameter_overrides", {}).items()
+                if v is not None
+            },
         )
