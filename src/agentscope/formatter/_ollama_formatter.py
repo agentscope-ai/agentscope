@@ -186,32 +186,41 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     pass
 
                 elif isinstance(block, ToolCallBlock):
-                    messages.append(
-                        {
-                            "role": msg.role,
-                            "content": "\n".join(content_parts)
-                            if content_parts
-                            else "",
-                            "tool_calls": [
-                                {
-                                    "function": {
-                                        "name": block.name,
-                                        # Ollama SDK expects a dict, not a
-                                        # JSON string. Use the repair helper
-                                        # so a truncated input (from
-                                        # interrupted streaming or context
-                                        # compression) degrades to {} instead
-                                        # of raising JSONDecodeError.
-                                        "arguments": _json_loads_with_repair(
-                                            block.input or "{}",
-                                        ),
-                                    },
+                    tool_call_msg = {
+                        "role": msg.role,
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": block.name,
+                                    # Ollama SDK expects a dict, not a
+                                    # JSON string. Use the repair helper
+                                    # so a truncated input (from
+                                    # interrupted streaming or context
+                                    # compression) degrades to {} instead
+                                    # of raising JSONDecodeError.
+                                    "arguments": _json_loads_with_repair(
+                                        block.input or "{}",
+                                    ),
                                 },
-                            ],
-                        },
-                    )
-                    content_parts = []
-                    images = []
+                            },
+                        ],
+                    }
+                    if images:
+                        msg_flush = {
+                            "role": msg.role,
+                            "content": "\n".join(content_parts),
+                        }
+                        msg_flush["images"] = images
+                        messages.append(msg_flush)
+                        content_parts = []
+                        images = []
+                    else:
+                        tool_call_msg["content"] = (
+                            "\n".join(content_parts) if content_parts else ""
+                        )
+                        content_parts = []
+                    messages.append(tool_call_msg)
 
                 elif isinstance(block, ToolResultBlock):
                     if content_parts or images:
