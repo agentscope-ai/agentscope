@@ -152,6 +152,44 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "resp-openai-1")
 
+    async def test_reasoning_effort_forwarded_without_thinking(
+        self,
+    ) -> None:
+        """reasoning_effort is sent even when thinking is disabled."""
+        model = OpenAIResponseModel(
+            credential=OpenAICredential(api_key="test"),
+            model="o4-mini",
+            stream=False,
+            context_size=200_000,
+            parameters=OpenAIResponseModel.Parameters(
+                reasoning_effort="high",
+                thinking_enable=False,
+            ),
+        )
+        model.client = self.mock_client
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.responses.create = mock_create
+
+        await model([])
+
+        self.assertEqual(
+            mock_create.call_args.kwargs["reasoning"],
+            {"effort": "high"},
+        )
+
+    async def test_reasoning_effort_omitted_by_default(self) -> None:
+        """Default parameters send no reasoning field."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.responses.create = mock_create
+
+        await self.model([])
+
+        self.assertNotIn("reasoning", mock_create.call_args.kwargs)
+
     async def test_tool_call_response(
         self,
     ) -> None:

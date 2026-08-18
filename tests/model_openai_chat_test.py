@@ -210,6 +210,44 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
 
         self.assertNotIn("extra_body", mock_create.call_args.kwargs)
 
+    async def test_reasoning_effort_forwarded_without_thinking(
+        self,
+    ) -> None:
+        """reasoning_effort is sent even when thinking is disabled."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="o3",
+            stream=False,
+            context_size=200_000,
+            parameters=OpenAIChatModel.Parameters(
+                reasoning_effort="low",
+                thinking_enable=False,
+            ),
+        )
+        model.client = self.mock_client
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertEqual(
+            mock_create.call_args.kwargs["reasoning_effort"],
+            "low",
+        )
+
+    async def test_reasoning_effort_omitted_by_default(self) -> None:
+        """Default parameters send no reasoning_effort field."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertNotIn("reasoning_effort", mock_create.call_args.kwargs)
+
     async def test_constructor_extra_body_forwarded(
         self,
     ) -> None:

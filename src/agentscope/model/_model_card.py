@@ -157,5 +157,9 @@ class ModelCard(BaseModel):
             context_size=config["context_size"],
             output_size=config["output_size"],
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides={
+                k: v
+                for k, v in config.get("parameter_overrides", {}).items()
+                if v is not None
+            },
         )

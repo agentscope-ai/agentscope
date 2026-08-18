@@ -206,10 +206,7 @@ class XAIChatModel(ChatModelBase):
             create_kwargs["temperature"] = self.parameters.temperature
         if self.parameters.top_p is not None:
             create_kwargs["top_p"] = self.parameters.top_p
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.reasoning_effort is not None:
             create_kwargs[
                 "reasoning_effort"
             ] = self.parameters.reasoning_effort
