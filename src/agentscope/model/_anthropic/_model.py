@@ -409,102 +409,108 @@ class AnthropicChatModel(ChatModelBase):
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
 
-        async for event in response:
-            delta_res = ChatResponse(content=[], is_last=False, id=response_id)
+        async with response as stream:
+            async for event in stream:
+                delta_res = ChatResponse(
+                    content=[], is_last=False, id=response_id
+                )
 
-            if event.type == "message_start":
-                message = event.message
+                if event.type == "message_start":
+                    message = event.message
 
-                # Update the response ID if exists
-                response_id = getattr(message, "id", None) or response_id
-                delta_res.id = response_id
+                    # Update the response ID if exists
+                    response_id = getattr(message, "id", None) or response_id
+                    delta_res.id = response_id
 
-                if message.usage:
-                    u = message.usage
-                    usage = ChatUsage(
-                        input_tokens=u.input_tokens,
-                        output_tokens=getattr(u, "output_tokens", 0),
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_creation_input_tokens=getattr(
-                            u,
-                            "cache_creation_input_tokens",
-                            0,
-                        ),
-                        cache_input_tokens=getattr(
-                            u,
-                            "cache_read_input_tokens",
-                            0,
-                        ),
-                    )
+                    if message.usage:
+                        u = message.usage
+                        usage = ChatUsage(
+                            input_tokens=u.input_tokens,
+                            output_tokens=getattr(u, "output_tokens", 0),
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_creation_input_tokens=getattr(
+                                u,
+                                "cache_creation_input_tokens",
+                                0,
+                            ),
+                            cache_input_tokens=getattr(
+                                u,
+                                "cache_read_input_tokens",
+                                0,
+                            ),
+                        )
 
-            elif event.type == "content_block_start":
-                if event.content_block.type == "tool_use":
-                    tool_block = event.content_block
-                    # Record the id and name
-                    tool_call_mapping[event.index] = (
-                        tool_block.id,
-                        tool_block.name,
-                    )
-                    # New tool call block with empty input
-                    delta_res.append_tool_call(
-                        block_id=tool_block.id,
-                        name=tool_block.name,
-                        input="",
-                    )
+                elif event.type == "content_block_start":
+                    if event.content_block.type == "tool_use":
+                        tool_block = event.content_block
+                        # Record the id and name
+                        tool_call_mapping[event.index] = (
+                            tool_block.id,
+                            tool_block.name,
+                        )
+                        # New tool call block with empty input
+                        delta_res.append_tool_call(
+                            block_id=tool_block.id,
+                            name=tool_block.name,
+                            input="",
+                        )
 
-                elif event.content_block.type == "redacted_thinking":
-                    delta_res.append_thinking(
-                        "",
-                        block_id=_generate_id(),
-                        redacted_thinking_data=getattr(
-                            event.content_block,
-                            "data",
+                    elif event.content_block.type == "redacted_thinking":
+                        delta_res.append_thinking(
                             "",
-                        ),
-                    )
+                            block_id=_generate_id(),
+                            redacted_thinking_data=getattr(
+                                event.content_block,
+                                "data",
+                                "",
+                            ),
+                        )
 
-            elif event.type == "content_block_delta":
-                block_index = event.index
-                delta = event.delta
+                elif event.type == "content_block_delta":
+                    block_index = event.index
+                    delta = event.delta
 
-                # Text block
-                if delta.type == "text_delta":
-                    delta_res.append_text(delta.text, block_id=text_id)
+                    # Text block
+                    if delta.type == "text_delta":
+                        delta_res.append_text(delta.text, block_id=text_id)
 
-                # Thinking block
-                elif delta.type == "thinking_delta":
-                    delta_res.append_thinking(
-                        delta.thinking,
-                        block_id=thinking_id,
-                    )
+                    # Thinking block
+                    elif delta.type == "thinking_delta":
+                        delta_res.append_thinking(
+                            delta.thinking,
+                            block_id=thinking_id,
+                        )
 
-                # Special handling for Anthropic API that requires signature
-                elif delta.type == "signature_delta":
-                    delta_res.append_thinking(
-                        "",
-                        block_id=thinking_id,
-                        signature=delta.signature,
-                    )
+                    # Special handling for Anthropic API that requires
+                    # signature
+                    elif delta.type == "signature_delta":
+                        delta_res.append_thinking(
+                            "",
+                            block_id=thinking_id,
+                            signature=delta.signature,
+                        )
 
-                # Tool call block
-                elif (
-                    delta.type == "input_json_delta"
-                    and block_index in tool_call_mapping
-                ):
-                    block_id, name = tool_call_mapping[block_index]
-                    delta_res.append_tool_call(
-                        block_id=block_id,
-                        name=name,
-                        input=delta.partial_json or "",
-                    )
+                    # Tool call block
+                    elif (
+                        delta.type == "input_json_delta"
+                        and block_index in tool_call_mapping
+                    ):
+                        block_id, name = tool_call_mapping[block_index]
+                        delta_res.append_tool_call(
+                            block_id=block_id,
+                            name=name,
+                            input=delta.partial_json or "",
+                        )
 
-            elif event.type == "message_delta":
-                if event.usage and usage:
-                    usage.output_tokens = event.usage.output_tokens
+                elif event.type == "message_delta":
+                    if event.usage and usage:
+                        usage.output_tokens = event.usage.output_tokens
 
-            if delta_res.content:
-                delta_res.usage = usage
-                yield delta_res
+                if delta_res.content:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _format_tools(
         self,
