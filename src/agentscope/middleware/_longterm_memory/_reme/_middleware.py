@@ -256,9 +256,24 @@ class ReMeMiddleware(MiddlewareBase):
         # ``default`` config ships it off (BM25 keyword search only), so we
         # wire the file store to the default embedding store when — and
         # only when — a model is available to build the vectors.
+        #
+        # ReMe's ``default.yaml`` leaves the ``as_embedding`` /
+        # ``embedding_store`` components *commented out* (embeddings are
+        # disabled by default since reme-ai 0.4.1.0), so merely referencing
+        # ``embedding_store: default`` from ``file_store`` is not enough —
+        # the two components must be declared here or they are never
+        # instantiated and ``update_component`` in ``_ensure_started``
+        # raises ``KeyError: Component 'default' not found in as_embedding``.
+        # The injected model is set on the component via ``update_component``
+        # before ``start()``, so the ``backend`` below only has to name a
+        # registered wrapper type; it is never used to build a model.
         if self._parameters.embedding_model is not None:
             app_kwargs["components"] = {
                 "file_store": {"default": {"embedding_store": "default"}},
+                "as_embedding": {"default": {"backend": "openai"}},
+                "embedding_store": {
+                    "default": {"backend": "local", "as_embedding": "default"},
+                },
             }
         app_config = resolve_app_config(**app_kwargs)
         return ReMe(**app_config)

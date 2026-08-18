@@ -500,7 +500,13 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             captured["components"],
-            {"file_store": {"default": {"embedding_store": "default"}}},
+            {
+                "file_store": {"default": {"embedding_store": "default"}},
+                "as_embedding": {"default": {"backend": "openai"}},
+                "embedding_store": {
+                    "default": {"backend": "local", "as_embedding": "default"},
+                },
+            },
         )
         self.assertEqual(captured["workspace_dir"], "/real/ws")
         self.assertEqual(captured["config"], "mycfg")
