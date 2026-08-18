@@ -36,6 +36,7 @@ from logging.handlers import TimedRotatingFileHandler
 from typing import Any
 
 import uvicorn
+from fastapi import FastAPI
 from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -72,8 +73,10 @@ from bocomadp.middleware.registry import MiddlewareRegistry
 from bocomadp.middleware.request_log import AccessLogMiddleware
 from bocomadp.providers import ProviderManager
 from bocomadp.deerflow import BusBridge, RunManager
+from bocomadp.deerflow.credentials import ensure_default_credentials
 from bocomadp.deerflow.routers.auth_stub import auth_stub_router
 from bocomadp.deerflow.routers.deerflow_chat import deerflow_router
+from bocomadp.deerflow.routers.models import deerflow_models_router
 from bocomadp.deerflow.routers.threads import threads_router
 from bocomadp.routers.uploads import uploads_router
 from bocomadp.routers.channels import channels_router
@@ -95,7 +98,7 @@ from bocomadp.toolkit_whitelist import patch_get_toolkit
 # 框架内置路由（credential / knowledge_bases / agent / session / schedule /
 # skill / mcp / hub / workspace / tts_model / model / chat）全部由 create_app()
 # 统一注册，本文件无需 import 或 include；框架 chat_router(POST /chat/) 与
-# deerflow_router(POST /api/threads/...) 路径不同，互不冲突。
+# deerflow_router(POST /deerflow/threads/...) 路径不同，互不冲突。
 from bocomadp.mcp import McpRegistry
 from bocomadp.skills import ExternalSkillHub
 from bocomadp.skills.bocom_skill_hub import BocomSkillHub
@@ -839,6 +842,9 @@ async def _lifespan_with_builtin_agents(app):
             logger.warning("pool concurrency sync skipped: %s", e)
         await _register_builtin_agents()
         await _seed_agents_from_yaml()
+        # config.yaml 模型条目作为 default 用户默认凭证入库（deerflow
+        # 模型名解析的默认参数单一来源；幂等，失败仅告警不阻断启动）
+        await ensure_default_credentials(storage)
         # 框架 get_toolkit 全量注入 Task/Team/workspace/middleware 工具，
         # 在首次 chat run 前包一层，按每智能体白名单过滤所有工具来源。
         patch_get_toolkit()
@@ -869,7 +875,9 @@ app.include_router(stats_router)
 app.include_router(session_usage_router)
 app.include_router(agent_tools_router)
 app.include_router(deerflow_router)
-# deer-flow 前端认证桩（/api/v1/auth/me、/api/v1/auth/setup-status 固定用户）
+# deer-flow 模型列表（GET /api/deerflow/models，deer-flow Model 格式）
+app.include_router(deerflow_models_router)
+# deer-flow 前端认证桩（/api/deerflow/v1/auth/me、/api/deerflow/v1/auth/setup-status 固定用户）
 app.include_router(auth_stub_router)
 # deer-flow 渠道兼容占位路由（providers/connections 恒空，前端优雅降级）
 app.include_router(channels_router)
@@ -890,6 +898,30 @@ app.include_router(oss_download_router)
 app.include_router(credential_model_router)
 
 
+# ---------------------------------------------------------------------------
+# 8. 统一 /api 前缀：把完整 app 挂载为子应用
+# ---------------------------------------------------------------------------
+# 所有路由统一挂到 /api 下，与 webui 前端契约一致（client.ts：后端自带
+# /api 前缀，nginx / vite 代理均不剥前缀直接透传）：
+#   内置 /chat、/agent...        → /api/chat、/api/agent...
+#   bocomadp /agents、/files...  → /api/agents、/api/files...
+#   deerflow /deerflow/threads、/deerflow/v1/auth → /api/deerflow/threads...
+
+
+@asynccontextmanager
+async def _root_lifespan(root):
+    # Starlette mount 不会自动传播子应用 lifespan，这里手动运行子应用
+    # （框架资源生命周期 + 内置智能体注册均在 app 的 lifespan 中）。
+    async with app.router.lifespan_context(app):
+        yield
+
+
+root_app = FastAPI(title="BocomADP", lifespan=_root_lifespan)
+# 健康检查保留根层副本：K8s 探针直打 /healthz、/readyz，不受 /api 影响
+root_app.include_router(health_router)
+root_app.mount("/api", app)
+
+
 if __name__ == "__main__":
     logger.info(
         "Starting BocomADP on %s:%s (trace_enhance=%s, format=%s, reload=%s)",
@@ -900,7 +932,7 @@ if __name__ == "__main__":
         config.service.reload,
     )
     uvicorn.run(
-        "main:app",
+        "main:root_app",
         host=config.service.host,
         port=config.service.port,
         reload=config.service.reload,

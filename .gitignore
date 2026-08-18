@@ -172,3 +172,4 @@ lerna-debug.log*
 .qoder/
 
 /examples/agent_service/workspaces
+Docker-agentscope/logs/events.log.2026-08-14

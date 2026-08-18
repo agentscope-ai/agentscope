@@ -134,14 +134,18 @@ def _make_app(
     registry: FakeChatRunRegistry,
     storage: FakeStorage,
 ) -> FastAPI:
+    # 与 main.py 一致：router 挂到子应用，再 mount 到 /api（对外路径不变）；
+    # state 必须设在子应用上（挂载后 request.app 是子应用）。
+    api = FastAPI()
+    api.state.run_manager = run_manager
+    api.state.bus_bridge = BusBridge(bus)
+    api.state.chat_service = FakeChatService(bus)
+    api.state.chat_run_registry = registry
+    api.state.storage = storage
+    api.state.workspace_manager = FakeWorkspaceManager()
+    api.include_router(deerflow_router)
     app = FastAPI()
-    app.state.run_manager = run_manager
-    app.state.bus_bridge = BusBridge(bus)
-    app.state.chat_service = FakeChatService(bus)
-    app.state.chat_run_registry = registry
-    app.state.storage = storage
-    app.state.workspace_manager = FakeWorkspaceManager()
-    app.include_router(deerflow_router)
+    app.mount("/api", api)
     return app
 
 
@@ -186,7 +190,7 @@ def test_create_run_stream_echoes_human_message_first() -> None:
                     },
                 }
                 resp = await client.post(
-                    f"/api/threads/{THREAD_ID}/runs/stream",
+                    f"/api/deerflow/threads/{THREAD_ID}/runs/stream",
                     json=payload,
                 )
                 return _parse_sse(resp.text) if resp.status_code == 200 else []
@@ -236,7 +240,7 @@ def test_join_run_stream_echoes_human_messages() -> None:
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    f"/api/threads/{THREAD_ID}/runs/ghost-run/stream",
+                    f"/api/deerflow/threads/{THREAD_ID}/runs/ghost-run/stream",
                 )
                 return _parse_sse(resp.text) if resp.status_code == 200 else []
         finally:

@@ -8,8 +8,8 @@ bocomadp 未实现 IM 渠道（telegram/slack/discord/feishu/dingtalk/wechat/wec
 
 契约对齐 deer-flow ``backend/app/gateway/routers/channel_connections.py``：
 
-- ``GET /api/channels/providers``   → ``{enabled: bool, providers: [...]}``
-- ``GET /api/channels/connections`` → ``{connections: [...]}``
+- ``GET /api/deerflow/channels/providers``   → ``{enabled: bool, providers: [...]}``
+- ``GET /api/deerflow/channels/connections`` → ``{connections: [...]}``
 
 前端消费方（frontend/src/core/channels/hooks.ts）：``useChannelProviders``
 与 ``useChannelConnections`` 无条件并行请求两个端点，任一 404 都会触发
@@ -24,7 +24,11 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-channels_router = APIRouter(prefix="/api/channels", tags=["deerflow-channels"])
+channels_router = APIRouter(prefix="/deerflow/channels", tags=["deerflow-channels"])
+
+# 注意：本路由挂载在 main.py 的 /api 子应用下，对外路径为
+# /api/deerflow/channels/...；deer-flow 前端旧路径 /api/channels/... 由
+# nginx 网关 rewrite 兼容。
 
 
 # ── 响应模型（字段契约与 deer-flow 完全对齐）─────────────────────────

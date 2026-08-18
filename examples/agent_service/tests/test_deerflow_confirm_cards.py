@@ -94,9 +94,13 @@ def _asking_state(extra: dict | None = None) -> AgentState:
 
 
 def _make_app(storage: FakeStorage) -> FastAPI:
+    # 与 main.py 一致：router 挂到子应用，再 mount 到 /api（对外路径不变）；
+    # state 必须设在子应用上（挂载后 request.app 是子应用）。
+    api = FastAPI()
+    api.state.storage = storage
+    api.include_router(threads_router)
     app = FastAPI()
-    app.state.storage = storage
-    app.include_router(threads_router)
+    app.mount("/api", api)
     return app
 
 
@@ -142,7 +146,7 @@ def test_state_endpoint_appends_rebuilt_card(monkeypatch) -> None:
     storage = FakeStorage(_messages("user", "assistant"), _asking_state())
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage)) as client:
-        response = client.get("/api/threads/t1/state")
+        response = client.get("/api/deerflow/threads/t1/state")
 
     assert response.status_code == 200
     messages = response.json()["values"]["messages"]
@@ -158,7 +162,7 @@ def test_history_endpoint_appends_rebuilt_card(monkeypatch) -> None:
     storage = FakeStorage(_messages("user"), _asking_state())
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage)) as client:
-        response = client.post("/api/threads/t1/history", json={})
+        response = client.post("/api/deerflow/threads/t1/history", json={})
 
     assert response.status_code == 200
     checkpoints = response.json()
@@ -173,7 +177,7 @@ def test_messages_page_appends_card_on_latest_page(monkeypatch) -> None:
     storage = FakeStorage(_messages("user"), _asking_state())
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage)) as client:
-        response = client.get("/api/threads/t1/messages/page")
+        response = client.get("/api/deerflow/threads/t1/messages/page")
 
     assert response.status_code == 200
     body = response.json()
@@ -189,7 +193,7 @@ def test_messages_page_skips_card_when_paging_backward(monkeypatch) -> None:
     storage = FakeStorage(_messages("user", "assistant"), _asking_state())
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage)) as client:
-        response = client.get("/api/threads/t1/messages/page?before_seq=1")
+        response = client.get("/api/deerflow/threads/t1/messages/page?before_seq=1")
 
     assert response.status_code == 200
     assert response.json()["data"] == []
@@ -200,8 +204,8 @@ def test_no_card_when_no_pending_confirmation(monkeypatch) -> None:
     storage = FakeStorage(_messages("user"), AgentState(context=[]))
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage)) as client:
-        state_resp = client.get("/api/threads/t1/state")
-        page_resp = client.get("/api/threads/t1/messages/page")
+        state_resp = client.get("/api/deerflow/threads/t1/state")
+        page_resp = client.get("/api/deerflow/threads/t1/messages/page")
 
     assert [m["type"] for m in state_resp.json()["values"]["messages"]] == [
         "human",
@@ -228,7 +232,7 @@ def test_card_options_include_confirm_always_with_rules(monkeypatch) -> None:
     storage = FakeStorage(_messages("user"), state)
     _patch_agents(monkeypatch)
     with TestClient(_make_app(storage)) as client:
-        response = client.get("/api/threads/t1/state")
+        response = client.get("/api/deerflow/threads/t1/state")
 
     card = response.json()["values"]["messages"][-1]
     options = card["artifact"]["human_input"]["options"]

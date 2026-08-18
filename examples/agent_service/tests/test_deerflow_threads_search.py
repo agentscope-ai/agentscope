@@ -67,9 +67,13 @@ class FakeStorage:
 
 
 def _make_app(storage: FakeStorage) -> FastAPI:
+    # 与 main.py 一致：router 挂到子应用，再 mount 到 /api（对外路径不变）；
+    # state 必须设在子应用上（挂载后 request.app 是子应用）。
+    api = FastAPI()
+    api.state.storage = storage
+    api.include_router(threads_router)
     app = FastAPI()
-    app.state.storage = storage
-    app.include_router(threads_router)
+    app.mount("/api", api)
     return app
 
 
@@ -80,7 +84,7 @@ def _patch_agents(monkeypatch) -> None:
 
 
 def _search(client: TestClient, body: dict[str, Any]) -> list[dict[str, Any]]:
-    response = client.post("/api/threads/search", json=body)
+    response = client.post("/api/deerflow/threads/search", json=body)
     assert response.status_code == 200
     return response.json()
 

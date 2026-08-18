@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """deer-flow 前端认证桩：bocomadp 无独立用户体系，返回固定管理员用户。
 
-deer-flow 前端的 SSR 鉴权（/api/v1/auth/me）与初始化探测
-（/api/v1/auth/setup-status）在后端替换为 bocomadp 后不再有真实实现，
+deer-flow 前端的 SSR 鉴权（/api/deerflow/v1/auth/me）与初始化探测
+（/api/deerflow/v1/auth/setup-status）在后端替换为 bocomadp 后不再有真实实现，
 此处提供与前端 ``AUTH_DISABLED_USER``（frontend/src/core/auth/auth-disabled-user.ts）
 同构的固定用户，保证前端零改动可用。单租户/本地联调适用；生产接入
 真实认证后应删除本模块。
@@ -12,7 +12,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-auth_stub_router = APIRouter(prefix="/api/v1/auth", tags=["deerflow-auth-stub"])
+auth_stub_router = APIRouter(
+    prefix="/deerflow/v1/auth", tags=["deerflow-auth-stub"]
+)
+
+# 注意：本路由挂载在 main.py 的 /api 子应用下，对外路径为
+# /api/deerflow/v1/auth/...；deer-flow 前端旧路径 /api/v1/auth/... 由
+# nginx 网关 rewrite 兼容。
 
 # 与前端 auth-disabled-user.ts 的 AUTH_DISABLED_USER 保持一致：
 # id=default、email 合法、system_role=admin，needs_setup=False。
