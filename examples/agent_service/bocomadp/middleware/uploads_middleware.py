@@ -82,7 +82,8 @@ class UploadsMiddleware(MiddlewareBase):
                 "\n\n提示：要列出本会话全部已上传文件，可调用 "
                 "list_uploaded_files()（框架会自动注入当前 user_id / session_id）；"
                 "需读取全文时调用 read_uploaded_file(virtual_path=...)，并同样传入"
-                "当前会话的 user_id / session_id。"
+                "当前会话的 user_id / session_id；图片文件请调用 "
+                "view_image_tool(virtual_path=..., question=用户的问题)。"
             )
             injection = (
                 "<context name=\"files\">\n"
@@ -156,6 +157,16 @@ class UploadsMiddleware(MiddlewareBase):
                     f"  虚拟路径: {virtual_path}\n"
                     f"  (暂无可预览文本，请使用工具读取原始文件)"
                 )
+
+        if record and record.is_image:
+            # 图片：上传时已固化为 base64（view_image_tool 从元数据直读），
+            # 正文不可内联预览，提示 Agent 调用图片解析工具。
+            return (
+                f"- 文件: {filename} [图片]\n"
+                f"  虚拟路径: {virtual_path}\n"
+                f"  (图片内容不可内联预览；如需解析图片，请调用 "
+                f"view_image_tool 并传入上述 virtual_path 与用户的问题)"
+            )
 
         if record and record.markdown:
             outline = create_outline_text(record.markdown).strip()

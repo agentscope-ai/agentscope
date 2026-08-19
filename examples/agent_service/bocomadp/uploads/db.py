@@ -37,6 +37,8 @@ class UploadedFileCreate(BaseModel):
     convert_format: Optional[str] = None
     convert_error: Optional[str] = None
     markdown: Optional[str] = None
+    base64: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class UploadedFile(BaseModel):
@@ -56,9 +58,16 @@ class UploadedFile(BaseModel):
     convert_format: Optional[str] = None
     convert_error: Optional[str] = None
     markdown: Optional[str] = None
+    base64: Optional[str] = None
+    mime_type: Optional[str] = None
     created_at: str
 
     model_config = {"from_attributes": True}
+
+    @property
+    def is_image(self) -> bool:
+        """是否为图片上传（上传时已固化为 base64）。"""
+        return bool(self.base64) and bool(self.mime_type)
 
 
 _DB_PATH = BASE_DIR / "data" / "uploads.db"
@@ -92,6 +101,8 @@ class UploadsDB:
                 convert_format TEXT,
                 convert_error TEXT,
                 markdown      TEXT,
+                base64        TEXT,
+                mime_type     TEXT,
                 created_at    TEXT NOT NULL
             )
             """,
@@ -100,7 +111,21 @@ class UploadsDB:
             "CREATE INDEX IF NOT EXISTS idx_uploads_session "
             "ON uploaded_files (user_id, agent_id, session_id)",
         )
+        self._ensure_columns()
         self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        """轻量迁移：旧库缺 base64 / mime_type 列时补列（幂等）。"""
+        existing = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(uploaded_files)")
+        }
+        for column, ddl in (
+            ("base64", "ALTER TABLE uploaded_files ADD COLUMN base64 TEXT"),
+            ("mime_type", "ALTER TABLE uploaded_files ADD COLUMN mime_type TEXT"),
+        ):
+            if column not in existing:
+                self._conn.execute(ddl)
 
     @staticmethod
     def _now() -> str:
@@ -112,8 +137,9 @@ class UploadsDB:
             INSERT INTO uploaded_files (
                 user_id, agent_id, session_id, workspace_id, original_name,
                 stored_name, virtual_path, size_bytes, content_type, converted,
-                convert_format, convert_error, markdown, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                convert_format, convert_error, markdown, base64, mime_type,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.user_id,
@@ -129,6 +155,8 @@ class UploadsDB:
                 data.convert_format,
                 data.convert_error,
                 data.markdown,
+                data.base64,
+                data.mime_type,
                 self._now(),
             ),
         )

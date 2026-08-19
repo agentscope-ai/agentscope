@@ -147,6 +147,49 @@ def is_image(content_type: str | None, filename: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 图片支持（上传时固化为 base64，供 view_image_tool 解析）
+# ---------------------------------------------------------------------------
+# 仅支持视觉模型可消费的常见格式（对齐 deer-flow view_image_tool）：
+# jpg / jpeg / png / webp。gif/bmp/svg/tiff 等虽被 is_image 识别，
+# 但不做 base64 固化（上传记录 is_image 为 True 但 base64 为空，
+# 中间件提示"暂不支持解析"）。
+_IMAGE_EXT_TO_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+
+
+def image_ext_to_mime(filename: str) -> str | None:
+    """按扩展名返回支持的图片 MIME；不支持返回 ``None``。"""
+    ext = filename.lower().rsplit(".", 1)[-1]
+    return _IMAGE_EXT_TO_MIME.get(f".{ext}")
+
+
+def detect_image_mime(data: bytes) -> str | None:
+    """按 magic bytes 检测图片 MIME（与扩展名校验配合防伪冒）。"""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if (
+        len(data) >= 12
+        and data.startswith(b"RIFF")
+        and data[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    return None
+
+
+def encode_image_base64(data: bytes) -> str:
+    """图片字节 → base64 字符串（上传时固化进元数据）。"""
+    import base64
+
+    return base64.b64encode(data).decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
 # 虚拟路径协议（与 builtin 工具 / 中间件 / 下载逻辑兼容）
 # ---------------------------------------------------------------------------
 # 方案 A：虚拟路径与下载同源，采用 workdir 相对范式，不编码 agent/user/session
@@ -231,6 +274,9 @@ __all__ = [
     "validate_path_traversal",
     "claim_unique_filename",
     "is_image",
+    "image_ext_to_mime",
+    "detect_image_mime",
+    "encode_image_base64",
     "to_virtual_path",
     "to_upload_rel_path",
     "resolve_upload_parts",

@@ -75,9 +75,14 @@ const SERVER_PROCESSED_EXT = new Set([
 	'.htm',
 ]);
 
-/** Image types keep the existing inline-attachment behaviour (not server-uploaded). */
+/**
+ * Files handled server-side by the BocomADP upload endpoint:
+ * convertible docs (→ Markdown outline) and images (→ base64 fixed into
+ * uploads metadata, read by the view_image_tool). Both are referenced via
+ * the `files` field instead of being inlined into the message body.
+ */
 export function isServerProcessedFile(file: File): boolean {
-	if (file.type.startsWith('image/')) return false;
+	if (file.type.startsWith('image/')) return true;
 	const ext = '.' + (file.name.split('.').pop() ?? '').toLowerCase();
 	return SERVER_PROCESSED_EXT.has(ext);
 }

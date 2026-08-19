@@ -52,7 +52,7 @@ import { useTranslation } from '@/i18n/useI18n';
  * button is disabled based on the model's declared multimodal capabilities.
  */
 const ACCEPT_TYPES_FOR_PICKER: string[] = [
-	// Images (inline attachments)
+	// Images (uploaded server-side; analyzed by the view_image_tool)
 	'image/*',
 	// Text / data
 	'text/*',
@@ -728,11 +728,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								// the model accepts" (the latter only gates the button).
 								acceptTypes={ACCEPT_TYPES_FOR_PICKER}
 							fileProcessor={async (file) => {
-									// Server-processed uploads (docs/sheets/pdf/txt/csv/html…):
-									// push to the BocomADP upload endpoint, then attach via the
-									// `files` field rather than inlining the content. Return null
-									// so the block is not added to the message body.
-									if (isServerProcessedFile(file)) {
+								// Server-processed uploads (docs/sheets/pdf/txt/csv/html… and
+								// images): push to the BocomADP upload endpoint, then attach via
+								// the `files` field rather than inlining the content. Return null
+								// so the block is not added to the message body.
+								if (isServerProcessedFile(file)) {
 										const ref = await queueUpload(file);
 										if (ref) return null;
 										// Upload failed: fall back to inline handling below.

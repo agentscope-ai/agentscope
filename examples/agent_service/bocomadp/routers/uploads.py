@@ -41,6 +41,9 @@ from bocomadp.uploads.manager import (
     PathTraversalError,
     TooManyFiles,
     UploadError,
+    detect_image_mime,
+    encode_image_base64,
+    image_ext_to_mime,
     is_image,
     normalize_filename,
     to_upload_rel_path,
@@ -197,10 +200,24 @@ async def upload_file(
     convert_format = None
     convert_error = None
     markdown = None
+    base64 = None
+    mime_type = None
     content_type = file.content_type
     is_img = is_image(content_type, stored_name)
     try:
-        if file_conversion.is_supported_format(stored_name) and not is_img:
+        if is_img:
+            # 图片：前端已校验图片格式，后端直接固化为 base64 存入元数据，
+            # 供 view_image_tool 直接解析（不生成 .md，不内联进消息正文）。
+            # MIME 以文件头实测为准（内容优先，兼容扩展名与实际内容不一致
+            # 的真实文件，如 JPEG 内容存成 .png 名），实测不到时按扩展名兜底。
+            mime_type = detect_image_mime(data) or image_ext_to_mime(stored_name)
+            if mime_type is None:
+                convert_error = (
+                    "unsupported image format; supported: jpg, jpeg, png, webp"
+                )
+            else:
+                base64 = encode_image_base64(data)
+        elif file_conversion.is_supported_format(stored_name):
             fmt, md_text = file_conversion.convert_file_bytes(
                 stored_name, data, content_type,
             )
@@ -231,6 +248,8 @@ async def upload_file(
             convert_format=convert_format,
             convert_error=convert_error,
             markdown=markdown,
+            base64=base64,
+            mime_type=mime_type,
         ),
     )
     return record

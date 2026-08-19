@@ -8,8 +8,8 @@ import { uploadsApi, type ChatFileRef, type UploadedFile } from '@/api/uploads';
  * then injects their converted outlines into the human message.
  *
  * Call `queueUpload` from the chat `fileProcessor`: for server-processed file
- * types it uploads and stores a virtual-path ref, for other types (images,
- * plain text) it returns `null` so the caller falls back to inline blocks.
+ * types (convertible docs and images) it uploads and stores a virtual-path ref;
+ * for other types it returns `null` so the caller falls back to inline blocks.
  */
 export function useChatUpload(
 	agentId: string | null | undefined,

@@ -119,6 +119,34 @@ models:
   #     thinking_enable: true
   #     reasoning_effort: high
 
+  # === 多模态模型（工具专用） ===
+  # 本节点条目仅后端消费：view_image_tool 图片解析工具按 supports_multimodal: true
+  # 定位并独立构建视觉模型实例，主对话模型不受影响。
+  # 图片解析链路：上传图片（jpg/jpeg/png/webp）→ 上传时转 base64 固化到
+  # 上传元数据（SQLite）→ Agent 调用 list_uploaded_files 发现文件（列表中
+  # 图片标注为 [图片] 并带 virtual_path）→ 调用 view_image_tool(virtual_path,
+  # question) → 工具从元数据直读 base64 并调用本模型解析。
+  # 注意：不要在 providers/_models/ 中添加对应候选卡——前端凭证表单的 model
+  # 下拉来自候选卡；该模型由后端配置注入，不应出现在前端（前端只配主模型）。
+  # 行内/行外配置共存，通过注释切换：_get_vision_model() 只取第一个
+  # supports_multimodal: true 条目，切勿同时启用两个。
+  #
+  # --- 行内（企业 ELLM 网关；行内部署时取消注释启用） ---
+  - provider_id: qwen3-vl-30b
+    display_name: "Qwen3 VL 30B A3B Instruct (多模态)"
+    provider_type: bocom_ellm
+    model_name: Qwen3-VL-30B-A3B-Instruct
+    api_key: ${ELLM_API_KEY}
+    base_url: ${ELLM_BASE_URL}
+    scene_code: ${ELLM_SCENE_CODE}
+    api_key_url: ${ELLM_API_KEY_URL}
+    is_active: false
+    supports_multimodal: true
+    parameters:
+      temperature: 0.3
+      max_tokens: 8192
+  
+
   # - provider_id: openai
   #   display_name: "GPT-4o"
   #   provider_type: openai
@@ -136,31 +164,31 @@ models:
 # 幂等同步进框架 StorageBase（chat / deerflow 可见）。
 # model_provider 留空时使用 ProviderManager 的全局 active provider。
 # enabled_skills 为技能白名单（匹配技能 frontmatter name 或目录名），空 = 全部技能。
-agents:
-  - agent_id: default
-    name: "通用助手"
-    system_prompt: "You are a helpful AI assistant. Use the available tools to answer user questions."
-    model_provider: ""
-    model_name: ""
-    max_iters: 20
-    enabled_tools: []
-    enabled_skills: []
+# agents:
+#   - agent_id: default
+#     name: "通用助手"
+#     system_prompt: "You are a helpful AI assistant. Use the available tools to answer user questions."
+#     model_provider: ""
+#     model_name: ""
+#     max_iters: 20
+#     enabled_tools: []
+#     enabled_skills: []
 
-  - agent_id: customer_service
-    name: "客服助手"
-    system_prompt: "你是交通银行智能客服助手。请礼貌、简洁地回答客户问题；涉及余额、流水等敏感信息时，必须先确认客户身份。"
-    model_provider: deepseek
-    model_name: deepseek-chat
-    max_iters: 20
-    enabled_tools: []
+#   - agent_id: customer_service
+#     name: "客服助手"
+#     system_prompt: "你是交通银行智能客服助手。请礼貌、简洁地回答客户问题；涉及余额、流水等敏感信息时，必须先确认客户身份。"
+#     model_provider: deepseek
+#     model_name: deepseek-chat
+#     max_iters: 20
+#     enabled_tools: []
 
-  - agent_id: risk_control
-    name: "风控分析助手"
-    system_prompt: "你是银行风控分析专家。请基于给定数据给出严谨的风险评估结论，明确标注数据来源与不确定性，禁止编造指标。"
-    model_provider: deepseek
-    model_name: deepseek-chat
-    max_iters: 30
-    enabled_tools: []
+#   - agent_id: risk_control
+#     name: "风控分析助手"
+#     system_prompt: "你是银行风控分析专家。请基于给定数据给出严谨的风险评估结论，明确标注数据来源与不确定性，禁止编造指标。"
+#     model_provider: deepseek
+#     model_name: deepseek-chat
+#     max_iters: 30
+#     enabled_tools: []
 
 # ---------- 审计（Audit） ----------
 audit:
