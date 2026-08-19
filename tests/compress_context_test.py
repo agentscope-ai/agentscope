@@ -1480,9 +1480,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(ctx[0].content[0], HintBlock)
         self.assertEqual(
             ctx[0].content[0].hint,
-            "<system-reminder>The image named 'img1' is removed from the "
-            "context since the number of images exceeds the limit (2)."
-            "</system-reminder>",
+            "<system-reminder>The image named 'img1' is removed for "
+            "context management.</system-reminder>",
         )
 
         # img2: inside tool result -> TextBlock
@@ -1491,9 +1490,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(tool_result.output[1], TextBlock)
         self.assertEqual(
             tool_result.output[1].text,
-            "<system-reminder>The image named 'img2' is removed from the "
-            "context since the number of images exceeds the limit (2)."
-            "</system-reminder>",
+            "<system-reminder>The image named 'img2' is removed for "
+            "context management.</system-reminder>",
         )
 
         # img3: inside hint block -> TextBlock
@@ -1502,9 +1500,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(hint.hint[1], TextBlock)
         self.assertEqual(
             hint.hint[1].text,
-            "<system-reminder>The image named 'img3' is removed from the "
-            "context since the number of images exceeds the limit (2)."
-            "</system-reminder>",
+            "<system-reminder>The image named 'img3' is removed for "
+            "context management.</system-reminder>",
         )
 
         # The audio block is untouched, and the last two images are reserved
@@ -1546,9 +1543,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             self.assertIsInstance(block, HintBlock)
             self.assertRegex(
                 block.hint,
-                r"^<system-reminder>The image named 'img1' is removed from "
-                r"the context since the number of images exceeds the limit "
-                r"\(1\)\. It is saved into workspace:///data/[0-9a-f]+\.png, "
+                r"^<system-reminder>The image named 'img1' is removed for "
+                r"context management\. It is saved into "
+                r"workspace:///data/[0-9a-f]+\.png, "
                 r"you can refer to it when needed\.</system-reminder>$",
             )
             rel = block.hint.split("workspace:///")[1].split(",")[0]
@@ -1568,26 +1565,26 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             self.assertIsInstance(ctx[2].content[1], HintBlock)
             self.assertEqual(
                 ctx[2].content[1].hint,
-                "<system-reminder>The image named 'img4' is removed from the "
-                "context since the number of images exceeds the limit (1). "
-                "It is saved into https://example.com/img4.png, you can "
-                "refer to it when needed.</system-reminder>",
+                "<system-reminder>The image named 'img4' is removed for "
+                "context management. It is saved into "
+                "https://example.com/img4.png, you can refer to it when "
+                "needed.</system-reminder>",
             )
 
             # img5 is reserved
             self.assertIsInstance(ctx[2].content[2], DataBlock)
             self.assertEqual(ctx[2].content[2].name, "img5")
 
-    async def test_max_image_num_disabled(self) -> None:
-        """No image is removed when ``max_image_num`` is None."""
+    async def test_max_image_num_default(self) -> None:
+        """The default limit is 5, so no image is removed for 5 images."""
         agent = Agent(
             name="Friday",
             system_prompt="You're a helpful assistant.",
             model=MockModel(context_size=100000),
-            context_config=ContextConfig(),
             state=AgentState(session_id="123", context=_build_image_context()),
             toolkit=Toolkit(),
         )
+        self.assertEqual(agent.context_config.max_image_num, 5)
         await agent.compress_context()
         self.assertIsInstance(agent.state.context[0].content[0], DataBlock)
 

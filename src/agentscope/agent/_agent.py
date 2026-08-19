@@ -652,8 +652,6 @@ class Agent:
                 The context config that provides ``max_image_num``.
         """
         max_image_num = cfg.max_image_num
-        if max_image_num is None:
-            return
 
         def _is_image(block: Any) -> bool:
             """Check whether the given block is an image data block."""
@@ -713,16 +711,14 @@ class Agent:
             name = f"named '{block.name}' " if block.name else ""
             if url:
                 text = (
-                    f"<system-reminder>The image {name}is removed from the "
-                    f"context since the number of images exceeds the limit "
-                    f"({max_image_num}). It is saved into {url}, you can "
+                    f"<system-reminder>The image {name}is removed for "
+                    f"context management. It is saved into {url}, you can "
                     f"refer to it when needed.</system-reminder>"
                 )
             else:
                 text = (
-                    f"<system-reminder>The image {name}is removed from the "
-                    f"context since the number of images exceeds the limit "
-                    f"({max_image_num}).</system-reminder>"
+                    f"<system-reminder>The image {name}is removed for "
+                    f"context management.</system-reminder>"
                 )
 
             new_block: HintBlock | TextBlock
