@@ -24,7 +24,6 @@ export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;
 	tool_result_limit?: number;
-	max_image_num?: number;
 	compression_prompt?: string;
 	summary_template?: string;
 }

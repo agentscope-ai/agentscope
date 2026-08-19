@@ -105,129 +105,6 @@ def _build_image_context() -> list[Msg]:
     ]
 
 
-def _text_dump(text: str) -> dict:
-    """The expected dump of a text block."""
-    return {
-        "type": "text",
-        "text": text,
-        "id": AnyString(),
-        "created_at": AnyString(),
-        "finished_at": None,
-    }
-
-
-def _hint_dump(hint: str | list[dict]) -> dict:
-    """The expected dump of a hint block."""
-    return {
-        "type": "hint",
-        "hint": hint,
-        "id": AnyString(),
-        "source": None,
-        "created_at": AnyString(),
-        "finished_at": AnyString(),
-    }
-
-
-def _image_dump(name: str | None, source: dict | None = None) -> dict:
-    """The expected dump of an image data block."""
-    return {
-        "type": "data",
-        "id": AnyString(),
-        "source": source
-        or {
-            "type": "base64",
-            "data": _PNG_BASE64,
-            "media_type": "image/png",
-        },
-        "name": name,
-        "created_at": AnyString(),
-        "finished_at": None,
-    }
-
-
-def _audio_dump() -> dict:
-    """The expected dump of the audio data block."""
-    return {
-        "type": "data",
-        "id": AnyString(),
-        "source": {
-            "type": "base64",
-            "data": "AAAA",
-            "media_type": "audio/wav",
-        },
-        "name": None,
-        "created_at": AnyString(),
-        "finished_at": None,
-    }
-
-
-def _url_image_dump(name: str, url: str) -> dict:
-    """The expected dump of a URL image data block."""
-    return _image_dump(
-        name,
-        {"type": "url", "url": url, "media_type": "image/png"},
-    )
-
-
-def _tool_blocks_dump(output: list[dict]) -> list[dict]:
-    """The expected dump of the tool call and tool result blocks."""
-    return [
-        {
-            "type": "tool_call",
-            "id": "call_1",
-            "name": "view",
-            "input": "{}",
-            "state": "pending",
-            "suggested_rules": [],
-            "created_at": AnyString(),
-            "finished_at": None,
-        },
-        {
-            "type": "tool_result",
-            "id": "call_1",
-            "name": "view",
-            "output": output,
-            "state": "success",
-            "metadata": {},
-            "created_at": AnyString(),
-            "finished_at": None,
-        },
-    ]
-
-
-def _msg_dump(msg_id: str, role: str, content: list[dict]) -> dict:
-    """The expected dump of a message."""
-    return {
-        "name": "User" if role == "user" else "Friday",
-        "content": content,
-        "role": role,
-        "id": msg_id,
-        "metadata": {},
-        "created_at": AnyString(),
-        "usage": None,
-        "finished_at": AnyString() if role == "user" else None,
-        "finished_reason": None,
-        "structured_output": None,
-        "error": None,
-    }
-
-
-def _removed(name: str) -> str:
-    """The hint text for a removed image without offloading."""
-    return (
-        f"<system-reminder>The image named '{name}' is removed to free up "
-        f"context space.</system-reminder>"
-    )
-
-
-def _offloaded(name: str, url: str) -> str:
-    """The hint text for an offloaded image."""
-    return (
-        f"<system-reminder>The image named '{name}' is offloaded into "
-        f"{url}, you can refer to it when needed.</system-reminder>"
-    )
-
-
 class RecordingStructuredMockModel(MockModel):
     """A mock model that records structured-output compression calls."""
 
@@ -1603,36 +1480,180 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         await agent.compress_context()
 
         expected = [
-            _msg_dump(
-                "1",
-                "user",
-                [_text_dump(_removed("img1")), _text_dump("hello")],
-            ),
-            _msg_dump(
-                "2",
-                "assistant",
-                _tool_blocks_dump(
-                    [_text_dump("the image:"), _text_dump(_removed("img2"))],
-                )
-                + [
-                    _hint_dump(
-                        [
-                            _text_dump("a hint image:"),
-                            _text_dump(_removed("img3")),
+            {
+                "name": "User",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "<system-reminder>The image named 'img1' is "
+                            "removed to free up context "
+                            "space.</system-reminder>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": "1",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": "call_1",
+                        "name": "view",
+                        "input": "{}",
+                        "state": "pending",
+                        "suggested_rules": [],
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "tool_result",
+                        "id": "call_1",
+                        "name": "view",
+                        "output": [
+                            {
+                                "type": "text",
+                                "text": "the image:",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img2' "
+                                    "is removed to free up context "
+                                    "space.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
                         ],
-                    ),
-                    _hint_dump(_removed("img4")),
+                        "state": "success",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "hint",
+                        "hint": [
+                            {
+                                "type": "text",
+                                "text": "a hint image:",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img3' "
+                                    "is removed to free up context "
+                                    "space.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "id": AnyString(),
+                        "source": None,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
+                    },
+                    {
+                        "type": "hint",
+                        "hint": (
+                            "<system-reminder>The image named 'img4' is "
+                            "removed to free up context "
+                            "space.</system-reminder>"
+                        ),
+                        "id": AnyString(),
+                        "source": None,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
+                    },
                 ],
-            ),
-            _msg_dump(
-                "3",
-                "user",
-                [
-                    _audio_dump(),
-                    _url_image_dump("img5", "https://example.com/img5.png"),
-                    _image_dump("img6"),
+                "role": "assistant",
+                "id": "2",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "User",
+                "content": [
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": "AAAA",
+                            "media_type": "audio/wav",
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/img5.png",
+                            "media_type": "image/png",
+                        },
+                        "name": "img5",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_BASE64,
+                            "media_type": "image/png",
+                        },
+                        "name": "img6",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
-            ),
+                "role": "user",
+                "id": "3",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
         ]
         self.assertListEqual(
             [_.model_dump() for _ in agent.state.context],
@@ -1677,47 +1698,189 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             self.assertListEqual(
                 [_.model_dump() for _ in agent.state.context],
                 [
-                    _msg_dump(
-                        "1",
-                        "user",
-                        [
-                            _text_dump(_offloaded("img1", url)),
-                            _text_dump("hello"),
-                        ],
-                    ),
-                    _msg_dump(
-                        "2",
-                        "assistant",
-                        _tool_blocks_dump(
-                            [
-                                _text_dump("the image:"),
-                                _text_dump(_offloaded("img2", url)),
-                            ],
-                        )
-                        + [
-                            _hint_dump(
-                                [
-                                    _text_dump("a hint image:"),
-                                    _text_dump(_offloaded("img3", url)),
-                                ],
-                            ),
-                            _hint_dump(_offloaded("img4", url)),
-                        ],
-                    ),
-                    _msg_dump(
-                        "3",
-                        "user",
-                        [
-                            _audio_dump(),
-                            _text_dump(
-                                _offloaded(
-                                    "img5",
-                                    "https://example.com/img5.png",
+                    {
+                        "name": "User",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img1' "
+                                    "is offloaded into "
+                                    + url
+                                    + ", you can refer to it when "
+                                    "needed.</system-reminder>"
                                 ),
-                            ),
-                            _image_dump("img6"),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": "hello",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
                         ],
-                    ),
+                        "role": "user",
+                        "id": "1",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "Friday",
+                        "content": [
+                            {
+                                "type": "tool_call",
+                                "id": "call_1",
+                                "name": "view",
+                                "input": "{}",
+                                "state": "pending",
+                                "suggested_rules": [],
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "tool_result",
+                                "id": "call_1",
+                                "name": "view",
+                                "output": [
+                                    {
+                                        "type": "text",
+                                        "text": "the image:",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "<system-reminder>The image named "
+                                            "'img2' is offloaded into "
+                                            + url
+                                            + ", you can refer to it when "
+                                            "needed.</system-reminder>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "state": "success",
+                                "metadata": {},
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "hint",
+                                "hint": [
+                                    {
+                                        "type": "text",
+                                        "text": "a hint image:",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "<system-reminder>The image named "
+                                            "'img3' is offloaded into "
+                                            + url
+                                            + ", you can refer to it when "
+                                            "needed.</system-reminder>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "id": AnyString(),
+                                "source": None,
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                            {
+                                "type": "hint",
+                                "hint": (
+                                    "<system-reminder>The image named 'img4' "
+                                    "is offloaded into "
+                                    + url
+                                    + ", you can refer to it when "
+                                    "needed.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "source": None,
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                        ],
+                        "role": "assistant",
+                        "id": "2",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": None,
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "User",
+                        "content": [
+                            {
+                                "type": "data",
+                                "id": AnyString(),
+                                "source": {
+                                    "type": "base64",
+                                    "data": "AAAA",
+                                    "media_type": "audio/wav",
+                                },
+                                "name": None,
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img5' "
+                                    "is offloaded into "
+                                    "https://example.com/img5.png, you can "
+                                    "refer to it when needed."
+                                    "</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "data",
+                                "id": AnyString(),
+                                "source": {
+                                    "type": "base64",
+                                    "data": _PNG_BASE64,
+                                    "media_type": "image/png",
+                                },
+                                "name": "img6",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "user",
+                        "id": "3",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
                 ],
             )
 
@@ -1738,36 +1901,182 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [_.model_dump() for _ in agent.state.context],
             [
-                _msg_dump(
-                    "1",
-                    "user",
-                    [_text_dump(_removed("img1")), _text_dump("hello")],
-                ),
-                _msg_dump(
-                    "2",
-                    "assistant",
-                    _tool_blocks_dump(
-                        [_text_dump("the image:"), _image_dump("img2")],
-                    )
-                    + [
-                        _hint_dump(
-                            [_text_dump("a hint image:"), _image_dump("img3")],
-                        ),
-                        _image_dump("img4"),
+                {
+                    "name": "User",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<system-reminder>The image named 'img1' is "
+                                "removed to free up context "
+                                "space.</system-reminder>"
+                            ),
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "text",
+                            "text": "hello",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
                     ],
-                ),
-                _msg_dump(
-                    "3",
-                    "user",
-                    [
-                        _audio_dump(),
-                        _url_image_dump(
-                            "img5",
-                            "https://example.com/img5.png",
-                        ),
-                        _image_dump("img6"),
+                    "role": "user",
+                    "id": "1",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "Friday",
+                    "content": [
+                        {
+                            "type": "tool_call",
+                            "id": "call_1",
+                            "name": "view",
+                            "input": "{}",
+                            "state": "pending",
+                            "suggested_rules": [],
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "tool_result",
+                            "id": "call_1",
+                            "name": "view",
+                            "output": [
+                                {
+                                    "type": "text",
+                                    "text": "the image:",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                {
+                                    "type": "data",
+                                    "id": AnyString(),
+                                    "source": {
+                                        "type": "base64",
+                                        "data": _PNG_BASE64,
+                                        "media_type": "image/png",
+                                    },
+                                    "name": "img2",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "hint",
+                            "hint": [
+                                {
+                                    "type": "text",
+                                    "text": "a hint image:",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                {
+                                    "type": "data",
+                                    "id": AnyString(),
+                                    "source": {
+                                        "type": "base64",
+                                        "data": _PNG_BASE64,
+                                        "media_type": "image/png",
+                                    },
+                                    "name": "img3",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "id": AnyString(),
+                            "source": None,
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": _PNG_BASE64,
+                                "media_type": "image/png",
+                            },
+                            "name": "img4",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
                     ],
-                ),
+                    "role": "assistant",
+                    "id": "2",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "User",
+                    "content": [
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": "AAAA",
+                                "media_type": "audio/wav",
+                            },
+                            "name": None,
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/img5.png",
+                                "media_type": "image/png",
+                            },
+                            "name": "img5",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": _PNG_BASE64,
+                                "media_type": "image/png",
+                            },
+                            "name": "img6",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "user",
+                    "id": "3",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
             ],
         )
 

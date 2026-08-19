@@ -143,9 +143,8 @@ class ContextConfig(BaseModel):
         default=5,
         ge=0,
         description=(
-            "The maximum number of images kept in the context. When "
-            "exceeded, the oldest images will be offloaded (if an offloader "
-            "is provided) and replaced by a hint."
+            "The maximum number of images kept in the context. The oldest "
+            "images exceeding the limit will be removed."
         ),
     )
     """The maximum number of images kept in the context. When the number of
