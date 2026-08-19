@@ -37,6 +37,12 @@ from ._registry import ChannelTypeRegistry
 RESPONSE_TIMEOUT_SECS = 60.0
 # TTL (seconds) of a node's per-channel status heartbeat.
 LIVENESS_TTL_SECS = 30
+# Shared lease held while one worker normalizes a webhook message.
+WEBHOOK_DEDUPE_LOCK_TTL_SECS = 300
+# One worker drains one webhook job at a time to preserve queue order.
+WEBHOOK_DRAIN_LOCK_TTL_SECS = 300
+# Keep processed WhatsApp message ids bounded in the shared registry.
+WEBHOOK_DEDUPE_TTL_SECS = 7 * 24 * 60 * 60
 
 # Events that end a reply's event stream.
 _TERMINAL_EVENTS = frozenset(
@@ -81,6 +87,7 @@ class ChannelLifecycleDispatcher:
         self._node_id = _generate_id()
         self._tasks: list[asyncio.Task] = []
         self._forward_tasks: set[asyncio.Task] = set()
+        self._webhook_tasks: set[asyncio.Task] = set()
 
     def get_local_channel(self, channel_id: str) -> ChannelBase | None:
         """Return this node's live channel for ``channel_id``, if running —
@@ -101,14 +108,28 @@ class ChannelLifecycleDispatcher:
             asyncio.create_task(self._periodic(), name="channel-heartbeat"),
             asyncio.create_task(self._outbound(), name="channel-outbound"),
         ]
+        if self._types.has_type("whatsapp"):
+            webhook_ready = asyncio.Event()
+            self._tasks.append(
+                asyncio.create_task(
+                    self._consume_webhook_signals(webhook_ready),
+                    name="channel-webhook-signals",
+                ),
+            )
+            await webhook_ready.wait()
         try:
             yield
         finally:
-            for task in (*self._tasks, *self._forward_tasks):
+            for task in (
+                *self._tasks,
+                *self._forward_tasks,
+                *self._webhook_tasks,
+            ):
                 task.cancel()
             await asyncio.gather(
                 *self._tasks,
                 *self._forward_tasks,
+                *self._webhook_tasks,
                 return_exceptions=True,
             )
             for cid in set(self._instances):
@@ -149,12 +170,7 @@ class ChannelLifecycleDispatcher:
             record (`ChannelRecord`): The enabled channel to start.
         """
         try:
-            channel = self._types.create_channel(
-                channel_type=record.channel_type,
-                channel_id=record.id,
-                credentials=record.credentials,
-                config=record.platform_config,
-            )
+            channel = self._types.create_channel_from_record(record)
             task = asyncio.create_task(
                 channel.start_listening(self._gateway.process),
                 name=f"channel-listener:{record.id}",
@@ -229,6 +245,146 @@ class ChannelLifecycleDispatcher:
                 logger.warning("channel outbound subscription lost")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
+
+    async def _consume_webhook_signals(
+        self,
+        ready: asyncio.Event,
+    ) -> None:
+        """Subscribe before draining so startup cannot miss a wake signal."""
+        backoff = 1.0
+        while True:
+            def on_ready() -> None:
+                """Expose subscription readiness and drain persisted work."""
+                ready.set()
+                self._spawn_existing_webhook_drains()
+
+            try:
+                async for signal in self._bus.subscribe(
+                    MessageBusKeys.channel_webhook_signal(),
+                    on_ready=on_ready,
+                ):
+                    backoff = 1.0
+                    for channel_id in signal.get("channel_ids", []):
+                        self._spawn_webhook_drain(str(channel_id))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pylint: disable=broad-except
+                ready.set()
+                logger.warning("channel webhook subscription lost")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+
+    def _track_webhook_task(self, task: asyncio.Task) -> None:
+        """Track one background webhook task for clean shutdown."""
+        self._webhook_tasks.add(task)
+        task.add_done_callback(self._webhook_tasks.discard)
+
+    def _spawn_existing_webhook_drains(self) -> None:
+        """Drain persisted per-channel queues after each subscription."""
+        task = asyncio.create_task(
+            self._drain_existing_webhook_queues(),
+            name="channel-webhook-existing",
+        )
+        self._track_webhook_task(task)
+
+    async def _drain_existing_webhook_queues(self) -> None:
+        """Schedule drains for all enabled WhatsApp channel records."""
+        try:
+            records = await self._storage.list_all_channels()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("channel webhook startup drain failed")
+            return
+        for record in records:
+            if record.enabled and record.channel_type == "whatsapp":
+                self._spawn_webhook_drain(record.id)
+
+    def _spawn_webhook_drain(self, channel_id: str) -> None:
+        """Start an ordered drain for one channel without blocking others."""
+        if not channel_id:
+            return
+        task = asyncio.create_task(
+            self._drain_webhook_queue(channel_id),
+            name=f"channel-webhook-drain:{channel_id}",
+        )
+        self._track_webhook_task(task)
+
+    async def _drain_webhook_queue(self, channel_id: str) -> None:
+        """Drain one channel's webhook messages in queue order.
+
+        A per-channel distributed lock preserves ordering across workers while
+        allowing unrelated channels to download media concurrently.
+        """
+        drain_lock = MessageBusKeys.channel_webhook_drain_lock(channel_id)
+        async with self._bus.acquire_lock(
+            drain_lock,
+            ttl_secs=WEBHOOK_DRAIN_LOCK_TTL_SECS,
+        ):
+            while True:
+                try:
+                    jobs = await self._bus.queue_drain(
+                        MessageBusKeys.channel_webhook_queue(channel_id),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("channel webhook drain failed")
+                    return
+                if not jobs:
+                    return
+                for _entry_id, job in jobs:
+                    await self._process_webhook_job(job)
+
+    async def _process_webhook_job(self, job: dict) -> None:
+        """Normalize one shared webhook payload and route its events."""
+        channel_id = str(job.get("channel_id", ""))
+        message_id = str(job.get("message_id", ""))
+        if not channel_id or not message_id:
+            return
+        record = await self._storage.get_channel(channel_id)
+        if record is None or not record.enabled:
+            return
+        lock_key = MessageBusKeys.channel_webhook_dedupe_lock(
+            channel_id,
+            message_id,
+        )
+        if not await self._bus.try_lock(
+            lock_key,
+            ttl_secs=WEBHOOK_DEDUPE_LOCK_TTL_SECS,
+        ):
+            return
+        try:
+            dedupe_namespace = MessageBusKeys.channel_webhook_dedupe(
+                channel_id,
+            )
+            if await self._bus.registry_exists(
+                dedupe_namespace,
+                message_id,
+            ):
+                return
+            channel = self._types.create_channel_from_record(record)
+            normalize = getattr(channel, "normalize_webhook", None)
+            if normalize is None:
+                logger.error(
+                    "Channel %s does not support webhook normalization",
+                    record.channel_type,
+                )
+                return
+            events = await normalize(job.get("payload", {}))
+            for event in events:
+                if not await self._gateway.process_with_result(event):
+                    return
+            await self._bus.registry_set(
+                dedupe_namespace,
+                message_id,
+                "1",
+                ttl_secs=WEBHOOK_DEDUPE_TTL_SECS,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "channel webhook processing failed for %s/%s",
+                channel_id,
+                message_id,
+            )
+        finally:
+            await self._bus.unlock(lock_key)
 
     async def _drain_outbound(self) -> None:
         """Forward every queued output signal this node can serve."""

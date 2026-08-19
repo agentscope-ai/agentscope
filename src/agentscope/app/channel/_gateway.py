@@ -73,17 +73,40 @@ class ChannelGateway:
         Args:
             event (`ChannelEvent | ChannelConfirmationResultEvent`): The
                 inbound message or card-click decision.
+
+        Errors are logged and swallowed to preserve the channel callback
+        contract used by :meth:`ChannelBase.start_listening`.
+        """
+        await self.process_with_result(event)
+
+    async def process_with_result(
+        self,
+        event: ChannelEvent | ChannelConfirmationResultEvent,
+    ) -> bool:
+        """Handle one inbound event and report whether it succeeded.
+
+        This result-aware entry point is used by the webhook consumer so a
+        failed Gateway call is not recorded as successfully deduplicated.
+
+        Args:
+            event (`ChannelEvent | ChannelConfirmationResultEvent`): The
+                inbound message or card-click decision.
+
+        Returns:
+            `bool`: Whether the event was handled without an exception.
         """
         try:
             if isinstance(event, ChannelConfirmationResultEvent):
                 await self._handle_decision(event)
             else:
                 await self._handle_message(event)
+            return True
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "ChannelGateway.process failed for channel %s",
                 event.channel_id,
             )
+            return False
 
     async def _handle_decision(
         self,

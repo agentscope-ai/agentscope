@@ -5,7 +5,6 @@ import os
 import uvicorn
 from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
-from whatsapp_webhook import router as whatsapp_webhook_router
 
 from agentscope.app import create_app, SubAgentTemplate
 from agentscope.app.channel import (
@@ -163,7 +162,6 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
         WhatsAppChannel,
     ],
 )
-app.include_router(whatsapp_webhook_router)
 
 
 if __name__ == "__main__":
