@@ -60,6 +60,11 @@ _PARK_INTERVAL = 30.0
 # How many times to wait out a 429 before giving the call up.
 _RATE_LIMIT_RETRIES = 2
 
+# Outcomes of the start-up identity lookup.
+_IDENTITY_OK = "ok"
+_IDENTITY_REFUSED = "refused"
+_IDENTITY_UNAVAILABLE = "unavailable"
+
 # Message subtypes that are still a person talking. Anything else (joins,
 # edits, deletions, bot posts) is not input for the agent.
 _USER_SUBTYPES = frozenset({"file_share", "thread_broadcast"})
@@ -175,6 +180,7 @@ class SlackChannel(ChannelBase):
         try:
             from slack_sdk.http_retry.builtin_async_handlers import (
                 AsyncRateLimitErrorRetryHandler,
+                async_default_handlers,
             )
             from slack_sdk.socket_mode.aiohttp import SocketModeClient
             from slack_sdk.web.async_client import AsyncWebClient
@@ -193,9 +199,12 @@ class SlackChannel(ChannelBase):
         try:
             self._web = AsyncWebClient(
                 token=self._bot_token,
-                # Lets the SDK wait out a 429 for us, honouring the
-                # Retry-After header rather than dropping the call.
+                # Passing this list replaces the client's defaults, so keep
+                # them: they carry the connection-error retries that ride
+                # out a transient blip. The added handler waits out a 429
+                # per its Retry-After rather than dropping the call.
                 retry_handlers=[
+                    *async_default_handlers(),
                     AsyncRateLimitErrorRetryHandler(
                         max_retry_count=_RATE_LIMIT_RETRIES,
                     ),
@@ -204,9 +213,21 @@ class SlackChannel(ChannelBase):
             # Identify ourselves up front: needed to drop our own messages
             # and to recognise an @mention. A bad bot token fails here,
             # which is a cleaner signal than the socket's silent retry loop.
-            if not await self._load_identity():
+            identity = await self._load_identity()
+            if identity == _IDENTITY_REFUSED:
                 self.status.state = "failed"
                 await self._park()
+                return
+            if identity == _IDENTITY_UNAVAILABLE:
+                # Slack was never reached, so this says nothing about the
+                # token. Ending the listener lets the dispatcher's next
+                # reconcile start a fresh one, rather than parking the
+                # channel until somebody edits it.
+                logger.warning(
+                    "Slack '%s' start-up deferred, will retry: %s",
+                    self._channel_id,
+                    self.status.last_error,
+                )
                 return
 
             client = SocketModeClient(
@@ -301,24 +322,43 @@ class SlackChannel(ChannelBase):
         while not self._stopped:
             await asyncio.sleep(_PARK_INTERVAL)
 
-    async def _load_identity(self) -> bool:
+    async def _load_identity(self) -> str:
         """Resolve and cache the bot's own user id via ``auth.test``.
 
+        Distinguishes a refusal from an unreachable Slack: the first is a
+        verdict on the credentials and worth parking on, the second is a
+        transient failure that retrying can fix.
+
         Returns:
-            `bool`: ``True`` when the bot token works.
+            `str`: ``_IDENTITY_OK`` when the identity is known,
+            ``_IDENTITY_REFUSED`` when Slack answered and rejected the
+            token, ``_IDENTITY_UNAVAILABLE`` when the call never got an
+            answer.
         """
+        from slack_sdk.errors import SlackApiError
+
         try:
             auth = await self._web.auth_test()
-            self._bot_user_id = auth.get("user_id") or ""
-            return bool(self._bot_user_id)
-        except Exception as e:  # pylint: disable=broad-except
-            self.status.last_error = f"auth.test failed: {e}"
+        except SlackApiError as e:
+            self.status.last_error = f"auth.test rejected the token: {e}"
             logger.error(
                 "Slack '%s' bot token rejected: %s",
                 self._channel_id,
                 e,
             )
-            return False
+            return _IDENTITY_REFUSED
+        except Exception as e:  # pylint: disable=broad-except
+            self.status.last_error = f"auth.test could not reach Slack: {e}"
+            return _IDENTITY_UNAVAILABLE
+        self._bot_user_id = auth.get("user_id") or ""
+        if not self._bot_user_id:
+            self.status.last_error = "auth.test returned no user id"
+            logger.error(
+                "Slack '%s' identity lookup returned no user id",
+                self._channel_id,
+            )
+            return _IDENTITY_REFUSED
+        return _IDENTITY_OK
 
     # -- Inbound --
 
