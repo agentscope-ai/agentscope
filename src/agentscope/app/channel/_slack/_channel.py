@@ -238,6 +238,15 @@ class SlackChannel(ChannelBase):
                 # Socket Mode not enabled. Park so the dispatcher leaves us
                 # alone until the channel is edited.
                 if time.monotonic() - started >= _MAX_CONNECT_SECS:
+                    # Tear the socket down before announcing the failure.
+                    # connect() retries forever and _park() does not return
+                    # until the channel is stopped, so leaving it running
+                    # would keep dialling; doing this first also means the
+                    # status is never observably 'failed' while the socket
+                    # is still live and able to start handling events.
+                    await self._shutdown_socket(connect_task, client)
+                    connect_task, client = None, None
+                    self._client = None
                     self.status.state = "failed"
                     self.status.last_error = (
                         "socket did not connect; check the app-level token "
@@ -248,14 +257,6 @@ class SlackChannel(ChannelBase):
                         self._channel_id,
                         self.status.last_error,
                     )
-                    # Tear the socket down *before* parking. connect()
-                    # retries forever and _park() does not return until the
-                    # channel is stopped, so leaving it running would keep
-                    # dialling — and could come up and start handling
-                    # events while we report 'failed'.
-                    await self._shutdown_socket(connect_task, client)
-                    connect_task, client = None, None
-                    self._client = None
                     await self._park()
                     break
                 self.status.state = "connecting"

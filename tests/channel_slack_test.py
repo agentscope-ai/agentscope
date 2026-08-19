@@ -719,8 +719,8 @@ class ConnectDeadlineTest(IsolatedAsyncioTestCase):
             else:
                 self.fail("channel never gave up")
 
-            # Still parked: the socket must already be torn down, or it
-            # would keep dialling behind a 'failed' status.
+            # 'failed' is only published after teardown, so observing it
+            # is enough: the socket cannot still be dialling behind it.
             self.assertEqual(channel.status.state, "failed")
             self.assertEqual(len(sockets), 1)
             self.assertTrue(sockets[0].cancelled)
