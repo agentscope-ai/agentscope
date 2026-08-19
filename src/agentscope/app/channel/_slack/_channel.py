@@ -57,6 +57,8 @@ _MAX_CONNECT_SECS = 60.0
 _POLL_INTERVAL = 5.0
 # How often a given-up channel wakes to notice it has been stopped.
 _PARK_INTERVAL = 30.0
+# How many times to wait out a 429 before giving the call up.
+_RATE_LIMIT_RETRIES = 2
 
 # Message subtypes that are still a person talking. Anything else (joins,
 # edits, deletions, bot posts) is not input for the agent.
@@ -171,6 +173,9 @@ class SlackChannel(ChannelBase):
             emit (`Callable`): Gateway callback for inbound events.
         """
         try:
+            from slack_sdk.http_retry.builtin_async_handlers import (
+                AsyncRateLimitErrorRetryHandler,
+            )
             from slack_sdk.socket_mode.aiohttp import SocketModeClient
             from slack_sdk.web.async_client import AsyncWebClient
         except ImportError as e:
@@ -186,7 +191,16 @@ class SlackChannel(ChannelBase):
         client: Any = None
         connect_task: asyncio.Task | None = None
         try:
-            self._web = AsyncWebClient(token=self._bot_token)
+            self._web = AsyncWebClient(
+                token=self._bot_token,
+                # Lets the SDK wait out a 429 for us, honouring the
+                # Retry-After header rather than dropping the call.
+                retry_handlers=[
+                    AsyncRateLimitErrorRetryHandler(
+                        max_retry_count=_RATE_LIMIT_RETRIES,
+                    ),
+                ],
+            )
             # Identify ourselves up front: needed to drop our own messages
             # and to recognise an @mention. A bad bot token fails here,
             # which is a cleaner signal than the socket's silent retry loop.
@@ -234,25 +248,47 @@ class SlackChannel(ChannelBase):
                         self._channel_id,
                         self.status.last_error,
                     )
+                    # Tear the socket down *before* parking. connect()
+                    # retries forever and _park() does not return until the
+                    # channel is stopped, so leaving it running would keep
+                    # dialling — and could come up and start handling
+                    # events while we report 'failed'.
+                    await self._shutdown_socket(connect_task, client)
+                    connect_task, client = None, None
+                    self._client = None
                     await self._park()
                     break
                 self.status.state = "connecting"
         finally:
             self._stopped = True
             self.status.state = "stopped"
-            if connect_task is not None:
-                connect_task.cancel()
-                await asyncio.gather(connect_task, return_exceptions=True)
-            if client is not None:
-                try:
-                    await client.close()
-                except Exception:  # pylint: disable=broad-except
-                    logger.debug(
-                        "Slack '%s' close failed",
-                        self._channel_id,
-                    )
+            await self._shutdown_socket(connect_task, client)
             self._client = None
             self._web = None
+
+    async def _shutdown_socket(
+        self,
+        connect_task: "asyncio.Task | None",
+        client: Any,
+    ) -> None:
+        """Stop the connect retry loop and close the socket.
+
+        Safe to call twice: the give-up path uses it before parking and
+        then hands the finalizer ``None``.
+
+        Args:
+            connect_task (`asyncio.Task | None`): The running connect
+                task, if one was started.
+            client (`Any`): The Socket Mode client, if one was built.
+        """
+        if connect_task is not None:
+            connect_task.cancel()
+            await asyncio.gather(connect_task, return_exceptions=True)
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Slack '%s' close failed", self._channel_id)
 
     async def _park(self) -> None:
         """Sleep until stopped, holding the listener task open.
@@ -754,6 +790,46 @@ class SlackChannel(ChannelBase):
             if isinstance(b, TextBlock)
         )
 
+    async def _send_segments(
+        self,
+        chat_id: str,
+        parts: list[str],
+        *,
+        pace_first: bool = False,
+    ) -> dict:
+        """Post ``parts`` in order, pacing and checking each one.
+
+        Slack allows roughly one write per second per conversation, and a
+        rejected segment must stop the rest rather than leaving a reply
+        with a hole in it.
+
+        Args:
+            chat_id (`str`): The conversation to post to.
+            parts (`list[str]`): The message segments, in order.
+            pace_first (`bool`): Wait before the first segment too, when
+                the caller has just written to this conversation.
+
+        Returns:
+            `dict`: ``{"ok": bool, "sent_ts": [...], "segments": int}``,
+            plus ``"error"`` and ``"failed_segment"`` on a partial send.
+        """
+        sent: list[str] = []
+        for index, part in enumerate(parts):
+            if index or pace_first:
+                await asyncio.sleep(_STREAM_MIN_INTERVAL)
+            ts = await self._post(chat_id, part)
+            if ts is None:
+                return {
+                    "ok": False,
+                    "error": self.status.last_error
+                    or "the platform rejected the request",
+                    "sent_ts": sent,
+                    "failed_segment": index,
+                    "segments": len(parts),
+                }
+            sent.append(ts)
+        return {"ok": True, "sent_ts": sent, "segments": len(parts)}
+
     async def _finish(
         self,
         chat_id: str,
@@ -762,8 +838,10 @@ class SlackChannel(ChannelBase):
     ) -> None:
         """Write the complete reply, splitting anything over the limit.
 
-        The first chunk replaces the streamed message when there is one;
-        the rest follow as new messages.
+        The first segment replaces the streamed message when that edit
+        lands; when it does not, the streamed message is left stale and
+        the whole reply goes out as new messages instead, so no segment is
+        dropped on the strength of an edit that never happened.
 
         Args:
             chat_id (`str`): The conversation to write to.
@@ -773,11 +851,28 @@ class SlackChannel(ChannelBase):
         parts = [p for p in self._split_long_message(text) if p]
         if not parts:
             return
+        edited = False
         if ts is not None:
-            await self._update(chat_id, ts, parts[0])
-            parts = parts[1:]
-        for part in parts:
-            await self._post(chat_id, part)
+            edited = await self._update(chat_id, ts, parts[0])
+            if edited:
+                parts = parts[1:]
+            else:
+                logger.warning(
+                    "Slack '%s' could not finalise the streamed message; "
+                    "posting the reply instead",
+                    chat_id,
+                )
+        if not parts:
+            return
+        result = await self._send_segments(chat_id, parts, pace_first=edited)
+        if not result["ok"]:
+            logger.warning(
+                "Slack '%s' delivered %d of %d reply segments: %s",
+                chat_id,
+                len(result["sent_ts"]),
+                result["segments"],
+                result["error"],
+            )
 
     async def _send_data_block(self, chat_id: str, block: DataBlock) -> None:
         """Upload a reply attachment to ``chat_id``.
@@ -879,23 +974,7 @@ class SlackChannel(ChannelBase):
                 "sent_ts": [],
                 "segments": 0,
             }
-        sent: list[str] = []
-        for index, part in enumerate(parts):
-            if index:
-                # Same per-channel write limit the streaming edits respect.
-                await asyncio.sleep(_STREAM_MIN_INTERVAL)
-            ts = await self._post(chat_id, part)
-            if ts is None:
-                return {
-                    "ok": False,
-                    "error": self.status.last_error
-                    or "the platform rejected the request",
-                    "sent_ts": sent,
-                    "failed_segment": index,
-                    "segments": len(parts),
-                }
-            sent.append(ts)
-        return {"ok": True, "sent_ts": sent, "segments": len(parts)}
+        return await self._send_segments(chat_id, parts)
 
     async def upload_file(
         self,
@@ -970,7 +1049,7 @@ class SlackChannel(ChannelBase):
         ts: str,
         text: str,
         blocks: list[dict] | None = None,
-    ) -> None:
+    ) -> bool:
         """Edit an already-posted message in place.
 
         Args:
@@ -978,6 +1057,11 @@ class SlackChannel(ChannelBase):
             ts (`str`): The message timestamp to edit.
             text (`str`): The replacement text.
             blocks (`list[dict] | None`): Replacement blocks, if any.
+
+        Returns:
+            `bool`: Whether the edit landed. Callers mid-stream can ignore
+            this, but the final write has to know: a failed edit leaves a
+            stale message that something else must replace.
         """
         try:
             extra = {"blocks": blocks} if blocks else {}
@@ -987,5 +1071,7 @@ class SlackChannel(ChannelBase):
                 text=text,
                 **extra,
             )
+            return True
         except Exception as e:  # pylint: disable=broad-except
             logger.debug("Slack update in '%s' failed: %s", chat_id, e)
+            return False

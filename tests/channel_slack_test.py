@@ -49,8 +49,9 @@ _BOT = "U0BOT"
 class _FakeWeb:
     """Records every Slack Web API call the channel makes."""
 
-    def __init__(self, token: str = "") -> None:
+    def __init__(self, token: str = "", **kwargs: Any) -> None:
         self.token = token
+        self.client_kwargs = kwargs
         self.posts: list[dict] = []
         self.updates: list[dict] = []
         self.uploads: list[dict] = []
@@ -648,3 +649,142 @@ class ProactiveSendTest(IsolatedAsyncioTestCase):
         result = await channel.send_message_to("C1", "")
         self.assertFalse(result["ok"])
         self.assertEqual(web.posts, [])
+
+
+class _FakeSocket:
+    """A Socket Mode client whose connect() retries forever, as the real
+    one does, so the give-up path has something to cancel."""
+
+    def __init__(self, app_token: str = "", web_client: Any = None) -> None:
+        self.socket_mode_request_listeners: list = []
+        self.cancelled = False
+        self.closed = False
+        self.connected = False
+
+    async def connect(self) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+    async def is_connected(self) -> bool:
+        return self.connected
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class ConnectDeadlineTest(IsolatedAsyncioTestCase):
+    """Giving up stops dialling instead of leaving connect() running."""
+
+    async def test_connect_task_is_cancelled_before_parking(self) -> None:
+        channel = SlackChannel(
+            "chan-1",
+            SlackChannel.Credentials(
+                app_id="A1",
+                bot_token="xoxb-x",
+                app_token="xapp-x",
+            ),
+            SlackChannel.Config(),
+        )
+        sockets: list[_FakeSocket] = []
+
+        def _make(**kwargs: Any) -> _FakeSocket:
+            socket = _FakeSocket(**kwargs)
+            sockets.append(socket)
+            return socket
+
+        async def _emit(event: Any) -> None:
+            pass
+
+        with patch(
+            "slack_sdk.web.async_client.AsyncWebClient",
+            _FakeWeb,
+        ), patch(
+            "slack_sdk.socket_mode.aiohttp.SocketModeClient",
+            _make,
+        ), patch(
+            "agentscope.app.channel._slack._channel._POLL_INTERVAL",
+            0.01,
+        ), patch(
+            "agentscope.app.channel._slack._channel._MAX_CONNECT_SECS",
+            0.0,
+        ):
+            task = asyncio.create_task(channel.start_listening(_emit))
+            for _ in range(200):
+                if channel.status.state == "failed":
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                self.fail("channel never gave up")
+
+            # Still parked: the socket must already be torn down, or it
+            # would keep dialling behind a 'failed' status.
+            self.assertEqual(channel.status.state, "failed")
+            self.assertEqual(len(sockets), 1)
+            self.assertTrue(sockets[0].cancelled)
+            self.assertTrue(sockets[0].closed)
+            self.assertIsNone(channel._client)
+
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        self.assertEqual(channel.status.state, "stopped")
+
+
+class FinishTest(IsolatedAsyncioTestCase):
+    """The final write never drops a segment on a failed edit."""
+
+    async def test_failed_final_update_posts_the_whole_reply(self) -> None:
+        channel, web = _channel()
+
+        async def _no_update(*args: Any, **kwargs: Any) -> bool:
+            return False
+
+        setattr(channel, "_update", _no_update)
+        await channel._finish("C1", "1.0001", "the complete reply")
+        # The first segment is posted rather than discarded.
+        self.assertEqual(len(web.posts), 1)
+        self.assertEqual(web.posts[0]["text"], "the complete reply")
+
+    async def test_successful_update_does_not_repost(self) -> None:
+        channel, web = _channel()
+        await channel._finish("C1", "1.0001", "short reply")
+        self.assertEqual(len(web.updates), 1)
+        self.assertEqual(web.posts, [])
+
+    async def test_follow_up_failure_stops_the_rest(self) -> None:
+        channel, _ = _channel()
+        attempts: list[str] = []
+
+        async def _flaky(chat_id: str, text: str, blocks: Any = None) -> Any:
+            attempts.append(text)
+            return None if len(attempts) == 2 else "1.0001"
+
+        setattr(channel, "_post", _flaky)
+        result = await channel._send_segments("C1", ["a", "b", "c"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failed_segment"], 1)
+        # The third segment is never attempted.
+        self.assertEqual(attempts, ["a", "b"])
+
+    async def test_segments_are_paced(self) -> None:
+        channel, _ = _channel()
+        waits: list[float] = []
+        real_sleep = asyncio.sleep
+
+        async def _record(delay: float) -> None:
+            waits.append(delay)
+            await real_sleep(0)
+
+        with patch(
+            "agentscope.app.channel._slack._channel.asyncio.sleep",
+            _record,
+        ):
+            await channel._send_segments("C1", ["a", "b", "c"])
+            self.assertEqual(waits, [_STREAM_MIN_INTERVAL] * 2)
+            waits.clear()
+            # pace_first covers the caller having just edited the message.
+            await channel._send_segments("C1", ["a"], pace_first=True)
+            self.assertEqual(waits, [_STREAM_MIN_INTERVAL])
