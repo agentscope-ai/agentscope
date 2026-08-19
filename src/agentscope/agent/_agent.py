@@ -446,34 +446,13 @@ class Agent:
             context_config (`ContextConfig | None`, optional):
                 The context config to use. Defaults to the agent's config.
         """
-        cfg = context_config or self.context_config
-        if (
-            not cfg.self_compact_enabled
-            or not self.state.context
-            or self.state.cur_iter < cfg.self_compact_min_react_rounds
-        ):
+        prepared = await self._prepare_self_compaction_if_eligible(
+            context_config,
+        )
+        if prepared is None:
             return
-
-        try:
-            kwargs = await self._prepare_model_input()
-            estimated_tokens = await self.model.count_tokens(**kwargs)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "[AGENT %s]: Failed to estimate context usage, skipping "
-                "optional reply-end compression: %s",
-                self.name,
-                e,
-            )
-            return
-
-        context_size = self.model.context_size
-        min_threshold = cfg.self_compact_min_ratio * context_size
-        hard_threshold = cfg.trigger_ratio * context_size
-        if (
-            estimated_tokens < min_threshold
-            or estimated_tokens >= hard_threshold
-        ):
-            return
+        cfg, kwargs, estimated_tokens = prepared
+        hard_threshold = cfg.trigger_ratio * self.model.context_size
 
         try:
             should_compact = await self._should_self_compact(
@@ -517,6 +496,46 @@ class Agent:
                 self.name,
                 e,
             )
+
+    async def _prepare_self_compaction_if_eligible(
+        self,
+        context_config: ContextConfig | None = None,
+    ) -> tuple[ContextConfig, dict[str, Any], int] | None:
+        """Prepare model input when adaptive compaction is eligible.
+
+        The caller may discard the returned snapshot when it only needs an
+        eligibility check. ``self_compact_context`` calls this method again
+        after reply middleware cleanup so that its decision uses fresh state.
+        """
+        cfg = context_config or self.context_config
+        if (
+            not cfg.self_compact_enabled
+            or not self.state.context
+            or self.state.cur_iter < cfg.self_compact_min_react_rounds
+        ):
+            return None
+
+        try:
+            kwargs = await self._prepare_model_input()
+            estimated_tokens = await self.model.count_tokens(**kwargs)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Failed to estimate context usage, skipping "
+                "optional reply-end compression: %s",
+                self.name,
+                e,
+            )
+            return None
+
+        context_size = self.model.context_size
+        if not (
+            cfg.self_compact_min_ratio * context_size
+            <= estimated_tokens
+            < cfg.trigger_ratio * context_size
+        ):
+            return None
+
+        return cfg, kwargs, estimated_tokens
 
     async def _compress_context_impl(
         self,
@@ -1070,7 +1089,10 @@ class Agent:
             if (
                 isinstance(item, ReplyEndEvent)
                 and item.finished_reason == ReplyFinishedReason.COMPLETED
-                and self.context_config.self_compact_enabled
+                and (
+                    await self._prepare_self_compaction_if_eligible()
+                    is not None
+                )
             ):
                 # Defer the terminal event until the reply generator is fully
                 # drained. This lets on_reply middleware finish its post-yield
@@ -1645,7 +1667,19 @@ class Agent:
                     self.context_config.self_compact_min_ratio,
                 )
 
-            if input_tokens >= awareness_ratio * self.model.context_size:
+            awareness_threshold = awareness_ratio * self.model.context_size
+            if self.context_config.self_compact_enabled:
+                should_inject_context_length = (
+                    input_tokens >= awareness_threshold
+                )
+            else:
+                # Preserve the original context-awareness boundary while
+                # adaptive self-compaction is disabled.
+                should_inject_context_length = (
+                    input_tokens > awareness_threshold
+                )
+
+            if should_inject_context_length:
                 if self.context_config.self_compact_enabled:
                     injections["context-length"] = (
                         f"Your current context contains {input_tokens} "

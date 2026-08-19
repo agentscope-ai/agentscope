@@ -1768,6 +1768,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+        model.count_tokens = AsyncMock(return_value=100)
         agent = Agent(
             name="Friday",
             system_prompt="You are helpful.",
@@ -1795,6 +1796,70 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(order, ["cleanup", "compact", "consumer"])
         agent.self_compact_context.assert_awaited_once_with()
+
+        # Outside the adaptive eligibility window, retain the original
+        # lifecycle: consumers see ReplyEndEvent before middleware post-yield
+        # cleanup, and adaptive compaction is not invoked.
+        legacy_order: list[str] = []
+
+        class LegacyCleanupMiddleware(MiddlewareBase):
+            """Record reply-end ordering outside adaptive eligibility."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                try:
+                    async for item in next_handler(**input_kwargs):
+                        yield item
+                finally:
+                    legacy_order.append("cleanup")
+
+        for case, tokens in (("below-minimum", 79), ("hard-threshold", 160)):
+            with self.subTest(case=case):
+                legacy_order = []
+                legacy_model = MockModel(context_size=200, stream=False)
+                legacy_model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[TextBlock(text="done")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                legacy_model.count_tokens = AsyncMock(return_value=tokens)
+                legacy_agent = Agent(
+                    name="Friday",
+                    system_prompt="You are helpful.",
+                    model=legacy_model,
+                    middlewares=[LegacyCleanupMiddleware()],
+                    context_config=ContextConfig(
+                        trigger_ratio=0.8,
+                        reserve_ratio=0.1,
+                        self_compact_enabled=True,
+                        self_compact_min_ratio=0.4,
+                        self_compact_min_react_rounds=0,
+                    ),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                    toolkit=Toolkit(),
+                )
+                legacy_agent.self_compact_context = AsyncMock()
+
+                legacy_stream = legacy_agent.reply_stream(
+                    UserMsg("User", "go"),
+                )
+                async for event in legacy_stream:
+                    if isinstance(event, ReplyEndEvent):
+                        legacy_order.append("consumer")
+                        break
+                self.assertEqual(legacy_order, ["consumer"])
+                legacy_agent.self_compact_context.assert_not_awaited()
+
+                await legacy_stream.aclose()
 
         class FailingCleanupMiddleware(MiddlewareBase):
             """Raise while cleaning up after a completed reply."""

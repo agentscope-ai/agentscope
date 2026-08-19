@@ -171,6 +171,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
         agent.self_compact_context = AsyncMock()
+        agent._prepare_self_compaction_if_eligible = AsyncMock(
+            return_value=(agent.context_config, {}, 0),
+        )
 
         events, final_msg = [], None
         async for item in agent.reply_stream(

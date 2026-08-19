@@ -366,6 +366,20 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             [evt.model_dump() for evt in events],
         )
 
+    async def test_disabled_self_compaction_keeps_awareness_boundary(
+        self,
+    ) -> None:
+        """Disabled self-compaction retains the original strict boundary."""
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        # Exactly max(0, 0.8 - 0.2) * 1000; the original behavior requires
+        # token usage to be strictly greater than this boundary.
+        self.model.count_tokens = AsyncMock(return_value=600)
+
+        events = await self._run_injection()
+
+        self.assertEqual([], events)
+
     async def test_template_without_placeholder_is_rejected(self) -> None:
         """A template that would silently drop the injected fields should be
         rejected at the config level."""
