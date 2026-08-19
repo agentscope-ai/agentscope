@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
+import asyncio
 import inspect
 import json
 import re
@@ -118,8 +119,16 @@ class FunctionTool(ToolBase):
         """
         if inspect.iscoroutinefunction(self._func):
             result = await self._func(**kwargs)
-        else:
+        elif inspect.isasyncgenfunction(
+            self._func,
+        ) or inspect.isgeneratorfunction(self._func):
+            # Calling a generator function only creates the generator without
+            # running its body, so no need to offload to a thread here.
             result = self._func(**kwargs)
+        else:
+            # Run the sync function in a worker thread so its execution
+            # doesn't block the event loop.
+            result = await asyncio.to_thread(self._func, **kwargs)
 
         if isinstance(result, AsyncGenerator):
 
@@ -135,7 +144,17 @@ class FunctionTool(ToolBase):
         if isinstance(result, Generator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                for chunk in result:
+                # Pull each chunk in a worker thread: the generator body runs
+                # between `next` calls and would otherwise block the loop.
+                sentinel = object()
+                while True:
+                    chunk = await asyncio.to_thread(
+                        next,  # type: ignore[arg-type]
+                        result,
+                        sentinel,
+                    )
+                    if chunk is sentinel:
+                        break
                     if isinstance(chunk, ToolChunk):
                         yield chunk
                     else:

@@ -308,10 +308,17 @@ class Toolkit:
 
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)
-            else:
-                # When `tool_func.original_func` is Async generator function or
-                # Sync function
+            elif inspect.isasyncgenfunction(tool_func.__call__):
+                # Calling an async generator function only creates the
+                # generator without running its body
                 res = tool_func(**kwargs)
+            else:
+                # Run the sync `__call__` in a worker thread so it doesn't
+                # block the event loop
+                res = await asyncio.to_thread(
+                    tool_func,  # type: ignore[arg-type]
+                    **kwargs,
+                )
 
             if isinstance(res, ToolChunk):
                 yield res
@@ -325,7 +332,17 @@ class Toolkit:
 
             # If return a sync generator
             elif isinstance(res, Generator):
-                for chunk in res:
+                # Pull each chunk in a worker thread: the generator body runs
+                # between `next` calls and would otherwise block the loop
+                sentinel = object()
+                while True:
+                    chunk = await asyncio.to_thread(
+                        next,  # type: ignore[arg-type]
+                        res,
+                        sentinel,
+                    )
+                    if chunk is sentinel:
+                        break
                     yield chunk
                     tool_response.append_chunk(chunk)
 

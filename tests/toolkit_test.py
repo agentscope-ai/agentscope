@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """Toolkit test case."""
+import asyncio
 import base64
 import json
+import time
 from typing import Any, AsyncGenerator, Generator
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -1129,6 +1131,58 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             response.content[0].text,
             f"started{expected_dict_text}",
         )
+
+
+class SyncToolNonBlockingTest(IsolatedAsyncioTestCase):
+    """Sync tool functions must run in a worker thread so their execution
+    doesn't block the event loop."""
+
+    async def _ticks_while_calling(self, toolkit: Toolkit, name: str) -> int:
+        """Call the tool while a heartbeat task ticks on the event loop;
+        return the number of ticks observed during the call."""
+        ticks = 0
+
+        async def heartbeat() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        task = asyncio.create_task(heartbeat())
+        try:
+            tool_call = ToolCallBlock(id="test_id", name=name, input="{}")
+            async for _ in toolkit.call_tool(tool_call, AgentState()):
+                pass
+        finally:
+            task.cancel()
+        return ticks
+
+    async def test_sync_function_does_not_block_event_loop(self) -> None:
+        """A blocking sync function should not starve the event loop."""
+
+        def slow_tool() -> ToolChunk:
+            """A slow sync tool."""
+            time.sleep(0.2)
+            return ToolChunk(content=[TextBlock(text="done")])
+
+        toolkit = Toolkit(tools=[FunctionTool(slow_tool)])
+        ticks = await self._ticks_while_calling(toolkit, "slow_tool")
+        # If the sync function ran on the loop thread, the heartbeat would
+        # only tick after the tool finished (0-1 ticks)
+        self.assertGreaterEqual(ticks, 3)
+
+    async def test_sync_generator_does_not_block_event_loop(self) -> None:
+        """A blocking sync generator should not starve the event loop."""
+
+        def slow_stream() -> Generator[ToolChunk, None, None]:
+            """A slow sync streaming tool."""
+            for i in range(4):
+                time.sleep(0.05)
+                yield ToolChunk(content=[TextBlock(text=str(i))])
+
+        toolkit = Toolkit(tools=[FunctionTool(slow_stream)])
+        ticks = await self._ticks_while_calling(toolkit, "slow_stream")
+        self.assertGreaterEqual(ticks, 3)
 
 
 class ToolGroupTest(IsolatedAsyncioTestCase):
