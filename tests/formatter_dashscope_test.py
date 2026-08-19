@@ -400,7 +400,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_audio",
                             "input_audio": {
-                                "data": "data:;base64,UklGRg==",
+                                "data": "data:audio/wav;base64,UklGRg==",
                                 "format": "wav",
                             },
                         },
@@ -437,7 +437,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_audio",
                             "input_audio": {
-                                "data": "data:;base64,SUQz",
+                                "data": "data:audio/mpeg;base64,SUQz",
                                 "format": "mp3",
                             },
                         },
@@ -478,7 +478,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_audio",
                             "input_audio": {
-                                "data": "data:;base64,UklGRg==",
+                                "data": "data:audio/wav;base64,UklGRg==",
                                 "format": "wav",
                             },
                         },

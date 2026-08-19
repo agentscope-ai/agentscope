@@ -188,6 +188,39 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "req-1")
 
+    async def test_default_thinking_not_sent(self) -> None:
+        """Thinking disabled by default sends no enable_thinking flag."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        model = DashScopeChatModel(
+            credential=DashScopeCredential(api_key="test"),
+            model="qwen3-max",
+            parameters=DashScopeChatModel.Parameters(
+                max_tokens=1000,
+            ),
+        )
+        model.client = self.mock_client
+
+        await model([])
+
+        extra_body = mock_create.call_args.kwargs.get("extra_body", {})
+        self.assertNotIn("enable_thinking", extra_body)
+
+    async def test_thinking_enabled_sent(self) -> None:
+        """Explicitly enabled thinking sends enable_thinking true."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        extra_body = mock_create.call_args.kwargs.get("extra_body", {})
+        self.assertEqual(extra_body.get("enable_thinking"), True)
+
     async def test_tool_call_response(
         self,
     ) -> None:

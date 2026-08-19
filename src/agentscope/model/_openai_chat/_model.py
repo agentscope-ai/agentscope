@@ -230,10 +230,7 @@ class OpenAIChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.reasoning_effort is not None:
             kwargs["reasoning_effort"] = self.parameters.reasoning_effort
 
         if self.parameters.voice is not None:
