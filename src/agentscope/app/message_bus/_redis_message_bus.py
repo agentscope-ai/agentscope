@@ -449,6 +449,25 @@ class RedisMessageBus(MessageBus):
         """
         return await self._client.hgetall(namespace) or {}
 
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return a single field value from the Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Field to retrieve.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` if absent.
+        """
+        return await self._client.hget(namespace, field)
+
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire Hash at ``namespace``.
 
@@ -639,3 +658,13 @@ class RedisMessageBus(MessageBus):
         """
         result = await self._client.exists(key)
         return bool(result)
+
+    async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
+        """Non-blocking claim via ``SET key NX EX``. See base."""
+        return bool(
+            await self._client.set(key, "1", nx=True, ex=ttl_secs),
+        )
+
+    async def unlock(self, key: str) -> None:
+        """Release a ``try_lock`` claim (best-effort ``DEL``)."""
+        await self._client.delete(key)

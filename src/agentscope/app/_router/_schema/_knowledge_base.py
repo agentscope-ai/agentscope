@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from ...storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
@@ -28,6 +29,15 @@ class CreateKnowledgeBaseRequest(BaseModel):
             "Embedding model used both at indexing and at query time. "
             "Cannot be changed after creation — switching would "
             "invalidate every previously inserted vector."
+        ),
+    )
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "Chunker configuration determining how uploaded documents "
+            "are split into chunks.  Pinned at creation time and "
+            "cannot be changed afterwards.  Defaults to the first "
+            "configured chunker with its default parameters."
         ),
     )
 
@@ -271,4 +281,24 @@ class ListSupportedContentTypesResponse(BaseModel):
             "sorted.  Derived from `mimetypes` by the base parser; "
             "subclasses may override the default."
         ),
+    )
+
+
+class ChunkerInfo(BaseModel):
+    """One available chunker type and its parameter schema."""
+
+    type: str = Field(description="The chunker type identifier.")
+    parameter_schema: dict = Field(
+        description=(
+            "JSON Schema produced by `ChunkerBase.Parameters."
+            "model_json_schema()`, used to render the parameter form."
+        ),
+    )
+
+
+class ListChunkersResponse(BaseModel):
+    """Response body listing the available chunker types."""
+
+    chunkers: list[ChunkerInfo] = Field(
+        description="The available chunker types, in configured order.",
     )

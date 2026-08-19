@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -358,6 +358,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context)
+        self.assertEqual(self.agent.state.cur_iter, 1)
 
         # Test reply interface
         self.model.cnt = 0  # Reset mock model response index
@@ -683,6 +684,48 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
 
+    async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:
+        """A tool round consumes one iteration before final reasoning."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent.react_config = ReActConfig(max_iters=2)
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tool_call_1",
+                            name="mock_sequential_tool",
+                            input='{"input": "x"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(msg.finished_reason, ReplyFinishedReason.COMPLETED)
+        self.assertEqual(
+            [block.text for block in msg.get_content_blocks("text")],
+            ["done"],
+        )
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
+        tool_results = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(
+            tool_results[0].output[0].text,
+            "Sequential result: x",
+        )
+
     async def test_thinking_only_response_continues_reasoning(self) -> None:
         """A thinking-only response should not end with an empty reply."""
         self.model.set_responses(
@@ -702,6 +745,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         # The thinking-only turn must trigger a second reasoning round
         self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
         # The final reply message only carries the visible text answer
         self.assertDictEqual(
@@ -1063,6 +1107,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
@@ -1662,6 +1707,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
+        self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

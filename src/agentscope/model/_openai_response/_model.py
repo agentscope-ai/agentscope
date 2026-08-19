@@ -152,6 +152,14 @@ class OpenAIResponseModel(ChatModelBase):
             openai.InternalServerError,
         )
 
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
+
     async def _call_api(
         self,
         model_name: str,
@@ -264,89 +272,96 @@ class OpenAIResponseModel(ChatModelBase):
         # call block.
         tool_call_mapping: dict = OrderedDict()
 
-        async for event in response:
-            event_type = event.type
-            delta_res = ChatResponse(
-                content=[],
-                is_last=False,
-                id=response_id,
-            )
-
-            if event_type == "response.reasoning_summary_text.delta":
-                # Reasoning summary text is NOT emitted by all models.
-                # As of 2026-05, o1 and o4-mini do not stream reasoning
-                # summary deltas. This handler exists for forward
-                # compatibility with models that do expose it.
-                delta_res.append_thinking(
-                    event.delta,
-                    block_id=thinking_id,
+        async with response as stream:
+            async for event in stream:
+                event_type = event.type
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
                 )
 
-            elif event_type == "response.output_text.delta":
-                delta_res.append_text(event.delta, block_id=text_id)
-
-            elif event_type == "response.output_item.added":
-                item = event.item
-                if getattr(item, "type", None) == "function_call":
-                    # item.call_id (call_xxx) is used as ToolCallBlock.id
-                    # so the formatter can echo it back as
-                    # function_call.call_id / function_call_output.call_id.
-                    # Only record the mapping here — do NOT emit an
-                    # empty-input delta so downstream consumers don't see
-                    # a leading no-op chunk. The block is created on the
-                    # first argument delta below.
-                    tool_call_mapping[item.id] = (
-                        item.call_id,
-                        getattr(item, "name", "") or "unknown",
+                if event_type == "response.reasoning_summary_text.delta":
+                    # Reasoning summary text is NOT emitted by all models.
+                    # As of 2026-05, o1 and o4-mini do not stream reasoning
+                    # summary deltas. This handler exists for forward
+                    # compatibility with models that do expose it.
+                    delta_res.append_thinking(
+                        event.delta,
+                        block_id=thinking_id,
                     )
 
-            elif event_type == "response.function_call_arguments.delta":
-                item_id = event.item_id
-                if item_id in tool_call_mapping:
-                    call_id, name = tool_call_mapping[item_id]
-                    delta_res.append_tool_call(
-                        block_id=call_id,
-                        name=name,
-                        input=event.delta or "",
-                    )
+                elif event_type == "response.output_text.delta":
+                    delta_res.append_text(event.delta, block_id=text_id)
 
-            elif event_type == "response.completed":
-                resp = event.response
-                if resp.usage:
-                    u = resp.usage
-                    details = getattr(u, "input_tokens_details", None)
-                    usage = ChatUsage(
-                        input_tokens=u.input_tokens,
-                        output_tokens=u.output_tokens,
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_input_tokens=getattr(
-                            details,
-                            "cached_tokens",
-                            0,
+                elif event_type == "response.output_item.added":
+                    item = event.item
+                    if getattr(item, "type", None) == "function_call":
+                        # item.call_id (call_xxx) is used as ToolCallBlock.id
+                        # so the formatter can echo it back as
+                        # function_call.call_id / function_call_output.call_id.
+                        # Only record the mapping here — do NOT emit an
+                        # empty-input delta so downstream consumers don't see
+                        # a leading no-op chunk. The block is created on the
+                        # first argument delta below.
+                        tool_call_mapping[item.id] = (
+                            item.call_id,
+                            getattr(item, "name", "") or "unknown",
                         )
-                        if details
-                        else 0,
-                    )
-                # Attach reasoning item id metadata from the completed
-                # response so the formatter can echo it back in
-                # multi-turn history. The Responses API requires every
-                # function_call item to be accompanied by its preceding
-                # reasoning item (see the function-calling guide); the
-                # reasoning item may have an empty summary when the model
-                # does not expose it (e.g. o1/o4-mini as of 2026-05).
-                for output_item in getattr(resp, "output", []):
-                    if getattr(output_item, "type", None) == "reasoning":
-                        reasoning_item_id = getattr(output_item, "id", None)
-                        if reasoning_item_id:
-                            delta_res.append_thinking(
-                                thinking="",
-                                block_id=thinking_id,
-                                reasoning_item_id=reasoning_item_id,
-                            )
 
-            if delta_res.content or usage:
-                delta_res.usage = usage
-                yield delta_res
+                elif event_type == "response.function_call_arguments.delta":
+                    item_id = event.item_id
+                    if item_id in tool_call_mapping:
+                        call_id, name = tool_call_mapping[item_id]
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=name,
+                            input=event.delta or "",
+                        )
+
+                elif event_type == "response.completed":
+                    resp = event.response
+                    if resp.usage:
+                        u = resp.usage
+                        details = getattr(u, "input_tokens_details", None)
+                        usage = ChatUsage(
+                            input_tokens=u.input_tokens,
+                            output_tokens=u.output_tokens,
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_input_tokens=getattr(
+                                details,
+                                "cached_tokens",
+                                0,
+                            )
+                            if details
+                            else 0,
+                        )
+                    # Attach reasoning item id metadata from the completed
+                    # response so the formatter can echo it back in
+                    # multi-turn history. The Responses API requires every
+                    # function_call item to be accompanied by its preceding
+                    # reasoning item (see the function-calling guide); the
+                    # reasoning item may have an empty summary when the model
+                    # does not expose it (e.g. o1/o4-mini as of 2026-05).
+                    for output_item in getattr(resp, "output", []):
+                        if getattr(output_item, "type", None) == "reasoning":
+                            reasoning_item_id = getattr(
+                                output_item,
+                                "id",
+                                None,
+                            )
+                            if reasoning_item_id:
+                                delta_res.append_thinking(
+                                    thinking="",
+                                    block_id=thinking_id,
+                                    reasoning_item_id=reasoning_item_id,
+                                )
+
+                if delta_res.content or usage:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _parse_completion_response(
         self,

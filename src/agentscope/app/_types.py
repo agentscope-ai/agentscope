@@ -11,18 +11,24 @@ from ..middleware import MiddlewareBase
 from ..permission import PermissionContext
 from ..state import TaskContext
 from ..tool import ToolBase
+from ..workspace import WorkspaceBase
 
 if TYPE_CHECKING:
     from ._service._session_projection import SessionProjection
     from .storage import AgentRecord, SessionRecord
 
 
-AgentMiddlewareFactory = Callable[
-    [str, str, str],
-    Awaitable[list[MiddlewareBase]],
-]
-# Async factory signature: ``(user_id, agent_id, session_id)`` →
-# awaitable of :class:`~agentscope.middleware.MiddlewareBase` instances.
+AgentMiddlewareFactory = (
+    Callable[[str, str, str], Awaitable[list[MiddlewareBase]]]
+    | Callable[
+        [str, str, str, WorkspaceBase],
+        Awaitable[list[MiddlewareBase]],
+    ]
+)
+# Async factory: ``(user_id, agent_id, session_id, workspace)`` → awaitable
+# of :class:`~agentscope.middleware.MiddlewareBase` instances. The legacy
+# three-argument form stays supported — ``ChatService`` probes the signature
+# and only passes ``workspace`` to factories that accept it.
 
 AgentToolFactory = Callable[
     [str, str, str],
