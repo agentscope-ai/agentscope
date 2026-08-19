@@ -426,6 +426,10 @@ class Agent:
         """
         cfg: ContextConfig = context_config or self.context_config
 
+        # Limit the number of images in the context first, so that the token
+        # counting below reflects the images that actually remain
+        await self._limit_context_images(cfg)
+
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
@@ -630,6 +634,106 @@ class Agent:
         except asyncio.CancelledError:
             await apply_task
             raise
+
+    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+        """Limit the number of images in the context according to
+        ``cfg.max_image_num``. The oldest images exceeding the limit are
+        offloaded to the workspace (if an offloader is provided) and replaced
+        by a hint recording the offloaded path; otherwise they are dropped and
+        replaced by a hint without path information.
+
+        Image data blocks at the top level of a message are replaced by
+        :class:`HintBlock`, while those nested inside a
+        :class:`ToolResultBlock` or a :class:`HintBlock` are replaced by
+        :class:`TextBlock` (as required by their type constraints).
+
+        Args:
+            cfg (`ContextConfig`):
+                The context config that provides ``max_image_num``.
+        """
+        max_image_num = cfg.max_image_num
+        if max_image_num is None:
+            return
+
+        def _is_image(block: Any) -> bool:
+            """Check whether the given block is an image data block."""
+            return isinstance(
+                block,
+                DataBlock,
+            ) and block.source.media_type.startswith("image/")
+
+        # Collect all the image data blocks in chronological order, recorded
+        # as (container list, index, block, is_top_level)
+        images: list[tuple[list, int, DataBlock, bool]] = []
+        for msg in self.state.context:
+            for i, block in enumerate(msg.content):
+                if _is_image(block):
+                    images.append((msg.content, i, block, True))
+                elif isinstance(block, ToolResultBlock) and isinstance(
+                    block.output,
+                    list,
+                ):
+                    for j, sub in enumerate(block.output):
+                        if _is_image(sub):
+                            images.append((block.output, j, sub, False))
+                elif isinstance(block, HintBlock) and isinstance(
+                    block.hint,
+                    list,
+                ):
+                    for j, sub in enumerate(block.hint):
+                        if _is_image(sub):
+                            images.append((block.hint, j, sub, False))
+
+        n_exceed = len(images) - max_image_num
+        if n_exceed <= 0:
+            return
+
+        logger.info(
+            "[AGENT %s]: The number of images in context (%d) exceeds the "
+            "limit (%d), removing the oldest %d image(s).",
+            self.name,
+            len(images),
+            max_image_num,
+            n_exceed,
+        )
+
+        # Offload the images first (which may involve I/O), and then apply
+        # the replacements together to avoid partial modification on
+        # interruption
+        replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
+        for container, idx, block, is_top_level in images[:n_exceed]:
+            url = ""
+            if isinstance(block.source, URLSource):
+                url = str(block.source.url)
+            elif self.offloader is not None:
+                saved = await self.offloader.offload_data_block(block)
+                if isinstance(saved.source, URLSource):
+                    url = str(saved.source.url)
+
+            name = f"named '{block.name}' " if block.name else ""
+            if url:
+                text = (
+                    f"<system-reminder>The image {name}is removed from the "
+                    f"context since the number of images exceeds the limit "
+                    f"({max_image_num}). It is saved into {url}, you can "
+                    f"refer to it when needed.</system-reminder>"
+                )
+            else:
+                text = (
+                    f"<system-reminder>The image {name}is removed from the "
+                    f"context since the number of images exceeds the limit "
+                    f"({max_image_num}).</system-reminder>"
+                )
+
+            new_block: HintBlock | TextBlock
+            if is_top_level:
+                new_block = HintBlock(hint=text)
+            else:
+                new_block = TextBlock(type="text", text=text)
+            replacements.append((container, idx, new_block))
+
+        for container, idx, new_block in replacements:
+            container[idx] = new_block
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.

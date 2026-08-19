@@ -22,8 +22,80 @@ from agentscope.message import (
     ToolResultState,
     HintBlock,
     Msg,
+    DataBlock,
+    Base64Source,
+    URLSource,
 )
 from agentscope.tool import Toolkit
+from agentscope.workspace import LocalWorkspace
+
+
+# A 1x1 transparent PNG image
+_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB"
+    "0C8AAAAASUVORK5CYII="
+)
+
+
+def _image_block(name: str | None = None) -> DataBlock:
+    """Create a base64 image data block."""
+    return DataBlock(
+        source=Base64Source(data=_PNG_BASE64, media_type="image/png"),
+        name=name,
+    )
+
+
+def _build_image_context() -> list[Msg]:
+    """Build a context with 5 images located at the message top level,
+    inside a tool result and inside a hint block, plus one audio block."""
+    return [
+        UserMsg("User", [_image_block("img1")], id="1"),
+        AssistantMsg(
+            "Friday",
+            [
+                ToolCallBlock(
+                    type="tool_call",
+                    id="call_1",
+                    name="view",
+                    input="{}",
+                ),
+                ToolResultBlock(
+                    type="tool_result",
+                    id="call_1",
+                    name="view",
+                    output=[
+                        TextBlock(type="text", text="the image:"),
+                        _image_block("img2"),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+                HintBlock(
+                    hint=[
+                        TextBlock(type="text", text="a hint image:"),
+                        _image_block("img3"),
+                    ],
+                ),
+            ],
+            id="2",
+        ),
+        UserMsg(
+            "User",
+            [
+                DataBlock(
+                    source=Base64Source(data="AAAA", media_type="audio/wav"),
+                ),
+                DataBlock(
+                    source=URLSource(
+                        url="https://example.com/img4.png",
+                        media_type="image/png",
+                    ),
+                    name="img4",
+                ),
+                _image_block("img5"),
+            ],
+            id="3",
+        ),
+    ]
 
 
 class RecordingStructuredMockModel(MockModel):
@@ -1383,6 +1455,141 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 instructions,
             ),
         )
+
+    async def test_max_image_num_without_offloader(self) -> None:
+        """The oldest images exceeding the limit are dropped and replaced by
+        hints without path information when no offloader is provided."""
+        model = MockModel(context_size=100000)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You're a helpful assistant.",
+            model=model,
+            context_config=ContextConfig(max_image_num=2),
+            state=AgentState(session_id="123", context=_build_image_context()),
+            toolkit=Toolkit(),
+        )
+
+        # The token count is far below the trigger threshold, so only the
+        # image limitation takes effect
+        await agent.compress_context()
+
+        ctx = agent.state.context
+        self.assertEqual(len(ctx), 3)
+
+        # img1: top-level DataBlock -> HintBlock
+        self.assertIsInstance(ctx[0].content[0], HintBlock)
+        self.assertEqual(
+            ctx[0].content[0].hint,
+            "<system-reminder>The image named 'img1' is removed from the "
+            "context since the number of images exceeds the limit (2)."
+            "</system-reminder>",
+        )
+
+        # img2: inside tool result -> TextBlock
+        tool_result = ctx[1].content[1]
+        self.assertIsInstance(tool_result, ToolResultBlock)
+        self.assertIsInstance(tool_result.output[1], TextBlock)
+        self.assertEqual(
+            tool_result.output[1].text,
+            "<system-reminder>The image named 'img2' is removed from the "
+            "context since the number of images exceeds the limit (2)."
+            "</system-reminder>",
+        )
+
+        # img3: inside hint block -> TextBlock
+        hint = ctx[1].content[2]
+        self.assertIsInstance(hint, HintBlock)
+        self.assertIsInstance(hint.hint[1], TextBlock)
+        self.assertEqual(
+            hint.hint[1].text,
+            "<system-reminder>The image named 'img3' is removed from the "
+            "context since the number of images exceeds the limit (2)."
+            "</system-reminder>",
+        )
+
+        # The audio block is untouched, and the last two images are reserved
+        self.assertIsInstance(ctx[2].content[0], DataBlock)
+        self.assertEqual(ctx[2].content[0].source.media_type, "audio/wav")
+        self.assertIsInstance(ctx[2].content[1], DataBlock)
+        self.assertEqual(ctx[2].content[1].name, "img4")
+        self.assertIsInstance(ctx[2].content[2], DataBlock)
+        self.assertEqual(ctx[2].content[2].name, "img5")
+
+        # Calling again should be a no-op
+        await agent.compress_context()
+        self.assertEqual(agent.state.context[2].content[2].name, "img5")
+
+    async def test_max_image_num_with_offloader(self) -> None:
+        """The oldest images exceeding the limit are offloaded and replaced
+        by hints recording the offloaded path when an offloader is
+        provided; URL images keep their original URL."""
+        with tempfile.TemporaryDirectory() as workdir:
+            model = MockModel(context_size=100000)
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're a helpful assistant.",
+                model=model,
+                context_config=ContextConfig(max_image_num=1),
+                state=AgentState(
+                    session_id="123",
+                    context=_build_image_context(),
+                ),
+                toolkit=Toolkit(),
+                offloader=LocalWorkspace(workdir=workdir),
+            )
+
+            await agent.compress_context()
+
+            ctx = agent.state.context
+            # img1: offloaded and replaced by a HintBlock with the path
+            block = ctx[0].content[0]
+            self.assertIsInstance(block, HintBlock)
+            self.assertRegex(
+                block.hint,
+                r"^<system-reminder>The image named 'img1' is removed from "
+                r"the context since the number of images exceeds the limit "
+                r"\(1\)\. It is saved into workspace:///data/[0-9a-f]+\.png, "
+                r"you can refer to it when needed\.</system-reminder>$",
+            )
+            rel = block.hint.split("workspace:///")[1].split(",")[0]
+            self.assertTrue(os.path.exists(os.path.join(workdir, rel)))
+
+            # img2 and img3 are offloaded to the same file (same content)
+            self.assertIn(
+                f"workspace:///{rel}",
+                ctx[1].content[1].output[1].text,
+            )
+            self.assertIn(
+                f"workspace:///{rel}",
+                ctx[1].content[2].hint[1].text,
+            )
+
+            # img4: URL image, keeps the original URL without offloading
+            self.assertIsInstance(ctx[2].content[1], HintBlock)
+            self.assertEqual(
+                ctx[2].content[1].hint,
+                "<system-reminder>The image named 'img4' is removed from the "
+                "context since the number of images exceeds the limit (1). "
+                "It is saved into https://example.com/img4.png, you can "
+                "refer to it when needed.</system-reminder>",
+            )
+
+            # img5 is reserved
+            self.assertIsInstance(ctx[2].content[2], DataBlock)
+            self.assertEqual(ctx[2].content[2].name, "img5")
+
+    async def test_max_image_num_disabled(self) -> None:
+        """No image is removed when ``max_image_num`` is None."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You're a helpful assistant.",
+            model=MockModel(context_size=100000),
+            context_config=ContextConfig(),
+            state=AgentState(session_id="123", context=_build_image_context()),
+            toolkit=Toolkit(),
+        )
+        await agent.compress_context()
+        self.assertIsInstance(agent.state.context[0].content[0], DataBlock)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
