@@ -7,8 +7,12 @@ gating, the post-then-edit streaming reply, pagination of the discovery
 calls, and the approval-card click round trip.
 """
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
+import asyncio
+from contextlib import suppress
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.app.channel._base import ChannelEvent, ChatKind
 from agentscope.app.channel._slack._card_templates import (
@@ -45,7 +49,8 @@ _BOT = "U0BOT"
 class _FakeWeb:
     """Records every Slack Web API call the channel makes."""
 
-    def __init__(self) -> None:
+    def __init__(self, token: str = "") -> None:
+        self.token = token
         self.posts: list[dict] = []
         self.updates: list[dict] = []
         self.uploads: list[dict] = []
@@ -373,6 +378,8 @@ class InteractionTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.agent_id, "agent-1")
         self.assertEqual(decision.session_id, "sess-1")
         self.assertEqual(decision.channel_user_id, "U9")
+        # Who actually clicked, recorded for auditing.
+        self.assertEqual(decision.actor, "U9")
         self.assertTrue(decision.approved)
         self.assertEqual(len(web.updates), 1)
         self.assertEqual(web.updates[0]["ts"], "42.0001")
@@ -466,3 +473,178 @@ class DiscoveryTest(IsolatedAsyncioTestCase):
                 {"user_id": "U2", "name": "NameU2"},
             ],
         )
+
+
+def _request(**over: Any) -> Any:
+    """A stand-in for the SDK's SocketModeRequest."""
+    fields: dict[str, Any] = {
+        "type": "events_api",
+        "envelope_id": "env-1",
+        "retry_attempt": 0,
+        "retry_reason": "",
+        "payload": {"event_id": "Ev123", "event": _event()},
+    }
+    fields.update(over)
+    return SimpleNamespace(**fields)
+
+
+class DeliveryMetadataTest(IsolatedAsyncioTestCase):
+    """The envelope's identifiers survive onto the emitted event."""
+
+    async def test_identifiers_are_preserved(self) -> None:
+        channel, _ = _channel()
+        emitted: list = []
+
+        async def _emit(event: Any) -> None:
+            emitted.append(event)
+
+        channel._emit = _emit
+        await channel._on_event(
+            _request(retry_attempt=2, retry_reason="http_timeout"),
+        )
+        self.assertEqual(len(emitted), 1)
+        meta = emitted[0].metadata
+        self.assertEqual(meta["event_id"], "Ev123")
+        self.assertEqual(meta["envelope_id"], "env-1")
+        self.assertEqual(meta["retry_attempt"], 2)
+        self.assertEqual(meta["retry_reason"], "http_timeout")
+        # The existing routing key is untouched.
+        self.assertEqual(meta["chat_type"], "channel")
+
+    async def test_non_message_events_are_skipped(self) -> None:
+        channel, _ = _channel()
+        emitted: list = []
+
+        async def _emit(event: Any) -> None:
+            emitted.append(event)
+
+        channel._emit = _emit
+        await channel._on_event(
+            _request(payload={"event": {"type": "reaction_added"}}),
+        )
+        self.assertEqual(emitted, [])
+
+
+class _FailingWeb(_FakeWeb):
+    """A web client whose auth.test rejects the bot token."""
+
+    async def auth_test(self) -> dict:
+        raise RuntimeError("invalid_auth")
+
+
+class LifecycleTest(IsolatedAsyncioTestCase):
+    """Start-up failures still run the finalizer and clear state."""
+
+    def _channel(self) -> SlackChannel:
+        return SlackChannel(
+            "chan-1",
+            SlackChannel.Credentials(
+                app_id="A1",
+                bot_token="xoxb-x",
+                app_token="xapp-x",
+            ),
+            SlackChannel.Config(),
+        )
+
+    async def _wait_for(self, channel: SlackChannel, state: str) -> None:
+        for _ in range(200):
+            if channel.status.state == state:
+                return
+            await asyncio.sleep(0.01)
+        self.fail(f"channel never reached {state!r}")
+
+    async def test_cancel_while_parked_on_bad_auth(self) -> None:
+        channel = self._channel()
+
+        async def _emit(event: Any) -> None:
+            pass
+
+        with patch(
+            "slack_sdk.web.async_client.AsyncWebClient",
+            _FailingWeb,
+        ):
+            task = asyncio.create_task(channel.start_listening(_emit))
+            # It parks in 'failed' rather than returning, so the dispatcher
+            # does not immediately restart it.
+            await self._wait_for(channel, "failed")
+            self.assertIn("invalid_auth", channel.status.last_error)
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        # Cancellation still reaches the finalizer.
+        self.assertEqual(channel.status.state, "stopped")
+        self.assertIsNone(channel._web)
+        self.assertIsNone(channel._client)
+
+    async def test_socket_client_construction_failure_is_cleaned_up(
+        self,
+    ) -> None:
+        channel = self._channel()
+
+        async def _emit(event: Any) -> None:
+            pass
+
+        def _boom(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("socket mode unavailable")
+
+        with patch(
+            "slack_sdk.web.async_client.AsyncWebClient",
+            _FakeWeb,
+        ), patch(
+            "slack_sdk.socket_mode.aiohttp.SocketModeClient",
+            _boom,
+        ):
+            with self.assertRaises(RuntimeError):
+                await channel.start_listening(_emit)
+        self.assertEqual(channel.status.state, "stopped")
+        self.assertIsNone(channel._web)
+        self.assertIsNone(channel._client)
+
+
+class ProactiveSendTest(IsolatedAsyncioTestCase):
+    """send_message_to splits rather than truncating."""
+
+    async def test_long_message_is_split_not_truncated(self) -> None:
+        channel, web = _channel()
+        text = "a" * _MAX_LEN + "b" * 200
+        with patch.object(channel, "_post", wraps=channel._post) as post:
+            result = await channel.send_message_to("C1", text)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["segments"], 2)
+        self.assertEqual(len(result["sent_ts"]), 2)
+        self.assertEqual(post.call_count, 2)
+        # Nothing was dropped.
+        self.assertEqual(
+            "".join(call["text"] for call in web.posts),
+            text,
+        )
+
+    async def test_short_message_reports_one_segment(self) -> None:
+        channel, _ = _channel()
+        result = await channel.send_message_to("C1", "hi")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["segments"], 1)
+
+    async def test_partial_failure_reports_what_landed(self) -> None:
+        channel, _ = _channel()
+        calls: list[str] = []
+
+        async def _flaky(chat_id: str, text: str, blocks: Any = None) -> Any:
+            calls.append(text)
+            return None if len(calls) > 1 else "1.0001"
+
+        setattr(channel, "_post", _flaky)
+        result = await channel.send_message_to(
+            "C1",
+            "a" * _MAX_LEN + "b" * 200,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["sent_ts"], ["1.0001"])
+        self.assertEqual(result["failed_segment"], 1)
+        self.assertEqual(result["segments"], 2)
+
+    async def test_empty_message_is_refused(self) -> None:
+        channel, web = _channel()
+        result = await channel.send_message_to("C1", "")
+        self.assertFalse(result["ok"])
+        self.assertEqual(web.posts, [])

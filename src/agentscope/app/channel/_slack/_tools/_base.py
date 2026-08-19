@@ -17,15 +17,24 @@ if TYPE_CHECKING:
 def _ack(data: dict | None, what: str) -> ToolChunk:
     """Turn a Slack send result into a success/error chunk.
 
+    A message long enough to be split reports how many parts went out, and
+    a failure part-way through says how much of it landed, so the agent
+    never reads a partial delivery as a whole one.
+
     Args:
         data (`dict | None`): The channel's ``{"ok": ...}`` result.
         what (`str`): Short label of what was sent, for the message.
     """
-    if data and data.get("ok"):
-        return ToolChunk(content=[TextBlock(text=f"Sent {what}.")])
-    msg = (data or {}).get("error") or "the platform rejected the request"
+    result = data or {}
+    segments = result.get("segments") or 0
+    if result.get("ok"):
+        suffix = f" in {segments} messages" if segments > 1 else ""
+        return ToolChunk(content=[TextBlock(text=f"Sent {what}{suffix}.")])
+    msg = result.get("error") or "the platform rejected the request"
+    sent = len(result.get("sent_ts") or [])
+    progress = f" after {sent} of {segments} messages" if segments > 1 else ""
     return ToolChunk(
-        content=[TextBlock(text=f"Failed to send {what}: {msg}")],
+        content=[TextBlock(text=f"Failed to send {what}{progress}: {msg}")],
         state=ToolResultState.ERROR,
     )
 

@@ -55,6 +55,8 @@ _STREAM_MIN_INTERVAL = 1.0
 # so elapsed time is the only signal it gives us.
 _MAX_CONNECT_SECS = 60.0
 _POLL_INTERVAL = 5.0
+# How often a given-up channel wakes to notice it has been stopped.
+_PARK_INTERVAL = 30.0
 
 # Message subtypes that are still a person talking. Anything else (joins,
 # edits, deletions, bot posts) is not input for the agent.
@@ -179,31 +181,35 @@ class SlackChannel(ChannelBase):
 
         self._emit = emit
         self.status.state = "connecting"
-        self._web = AsyncWebClient(token=self._bot_token)
-        # Identify ourselves up front: needed to drop our own messages and
-        # to recognise an @mention. A bad bot token fails here, which is a
-        # cleaner signal than the socket's silent retry loop.
-        if not await self._load_identity():
-            self.status.state = "failed"
-            while not self._stopped:
-                await asyncio.sleep(30.0)
-            return
-
-        client = SocketModeClient(
-            app_token=self._app_token,
-            web_client=self._web,
-        )
-        client.socket_mode_request_listeners.append(self._on_request)
-        self._client = client
-        # connect() retries forever internally, so it would block here for
-        # as long as Slack stays unreachable — run it alongside the loop.
-        connect_task = asyncio.create_task(
-            client.connect(),
-            name=f"slack-connect:{self._channel_id}",
-        )
-        started = time.monotonic()
-        ever_connected = False
+        # Everything below is optional until it is built, so the finalizer
+        # can clean up whatever a partial start-up managed to create.
+        client: Any = None
+        connect_task: asyncio.Task | None = None
         try:
+            self._web = AsyncWebClient(token=self._bot_token)
+            # Identify ourselves up front: needed to drop our own messages
+            # and to recognise an @mention. A bad bot token fails here,
+            # which is a cleaner signal than the socket's silent retry loop.
+            if not await self._load_identity():
+                self.status.state = "failed"
+                await self._park()
+                return
+
+            client = SocketModeClient(
+                app_token=self._app_token,
+                web_client=self._web,
+            )
+            client.socket_mode_request_listeners.append(self._on_request)
+            self._client = client
+            # connect() retries forever internally, so it would block here
+            # for as long as Slack stays unreachable — run it alongside the
+            # supervising loop rather than awaiting it.
+            connect_task = asyncio.create_task(
+                client.connect(),
+                name=f"slack-connect:{self._channel_id}",
+            )
+            started = time.monotonic()
+            ever_connected = False
             while not self._stopped:
                 await asyncio.sleep(_POLL_INTERVAL)
                 if await client.is_connected():
@@ -228,21 +234,35 @@ class SlackChannel(ChannelBase):
                         self._channel_id,
                         self.status.last_error,
                     )
-                    while not self._stopped:
-                        await asyncio.sleep(30.0)
+                    await self._park()
                     break
                 self.status.state = "connecting"
         finally:
             self._stopped = True
             self.status.state = "stopped"
-            connect_task.cancel()
-            await asyncio.gather(connect_task, return_exceptions=True)
-            try:
-                await client.close()
-            except Exception:  # pylint: disable=broad-except
-                logger.debug("Slack '%s' close failed", self._channel_id)
+            if connect_task is not None:
+                connect_task.cancel()
+                await asyncio.gather(connect_task, return_exceptions=True)
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:  # pylint: disable=broad-except
+                    logger.debug(
+                        "Slack '%s' close failed",
+                        self._channel_id,
+                    )
             self._client = None
             self._web = None
+
+    async def _park(self) -> None:
+        """Sleep until stopped, holding the listener task open.
+
+        The dispatcher restarts any channel whose task has finished, so a
+        channel that has given up stays parked in ``failed`` instead of
+        returning; editing the channel is what retries it.
+        """
+        while not self._stopped:
+            await asyncio.sleep(_PARK_INTERVAL)
 
     async def _load_identity(self) -> bool:
         """Resolve and cache the bot's own user id via ``auth.test``.
@@ -287,10 +307,17 @@ class SlackChannel(ChannelBase):
                 SocketModeResponse(envelope_id=req.envelope_id),
             )
         except Exception:  # pylint: disable=broad-except
-            logger.debug("Slack '%s' ack failed", self._channel_id)
+            # Slack redelivers an unacknowledged envelope, so this is worth
+            # seeing. Carry on regardless: dropping the event here would
+            # turn a possible duplicate into a certain loss.
+            logger.warning(
+                "Slack '%s' failed to ack envelope %s",
+                self._channel_id,
+                req.envelope_id,
+            )
         try:
             if req.type == "events_api":
-                await self._on_event(req.payload or {})
+                await self._on_event(req)
             elif req.type == "interactive":
                 await self._on_interaction(req.payload or {})
         except Exception:  # pylint: disable=broad-except
@@ -299,25 +326,45 @@ class SlackChannel(ChannelBase):
                 self._channel_id,
             )
 
-    async def _on_event(self, payload: dict) -> None:
+    async def _on_event(self, req: "SocketModeRequest") -> None:
         """Normalise an Events API message and emit it.
 
         Args:
-            payload (`dict`): The ``events_api`` envelope payload.
+            req (`SocketModeRequest`): The envelope carrying the event.
         """
+        payload = req.payload or {}
         event = payload.get("event") or {}
         if event.get("type") != "message":
             return
-        channel_event = await self._normalize(event)
+        channel_event = await self._normalize(
+            event,
+            delivery={
+                # Slack repeats event_id across retries of the same event,
+                # so this is what a dedup would key on. Kept on the event
+                # rather than acted on here: doing it properly needs shared
+                # state across nodes, which is a framework-level concern.
+                "event_id": payload.get("event_id", ""),
+                "envelope_id": req.envelope_id or "",
+                "retry_attempt": req.retry_attempt or 0,
+                "retry_reason": req.retry_reason or "",
+            },
+        )
         if channel_event is not None and self._emit:
             await self._emit(channel_event)
 
-    async def _normalize(self, event: dict) -> ChannelEvent | None:
+    async def _normalize(
+        self,
+        event: dict,
+        delivery: dict | None = None,
+    ) -> ChannelEvent | None:
         """Convert an inbound Slack message into a ``ChannelEvent``,
         downloading files and honouring ``only_at_reply`` in channels.
 
         Args:
             event (`dict`): The Slack ``message`` event.
+            delivery (`dict | None`): Envelope identifiers (``event_id``,
+                ``envelope_id``, retry counters) to keep on the event, so a
+                redelivery stays identifiable downstream.
 
         Returns:
             `ChannelEvent | None`: The normalised event, or ``None`` when
@@ -363,7 +410,7 @@ class SlackChannel(ChannelBase):
             ),
             channel_message_id=event.get("ts") or "",
             content=content,
-            metadata={"chat_type": chat_type},
+            metadata={"chat_type": chat_type, **(delivery or {})},
         )
 
     def _gated_out(self, text: str, chat_type: str) -> bool:
@@ -464,16 +511,18 @@ class SlackChannel(ChannelBase):
         if parsed is None:
             return
         tool_call_id, chat_id, approved, agent_id, session_id = parsed
+        clicker = (payload.get("user") or {}).get("id", "")
         if self._emit:
             await self._emit(
                 ChannelConfirmationResultEvent(
                     channel_id=self._channel_id,
                     chat_id=chat_id,
-                    channel_user_id=(payload.get("user") or {}).get("id", ""),
+                    channel_user_id=clicker,
                     agent_id=agent_id,
                     session_id=session_id,
                     tool_call_id=tool_call_id,
                     approved=approved,
+                    actor=clicker,
                 ),
             )
         message = payload.get("message") or {}
@@ -809,17 +858,44 @@ class SlackChannel(ChannelBase):
     async def send_message_to(self, chat_id: str, text: str) -> dict:
         """Send a message to any conversation or user.
 
+        Long text is split the same way the reply path splits it, rather
+        than truncated, and every posted segment's timestamp is reported
+        so a partial delivery is visible to the caller.
+
         Args:
             chat_id (`str`): A conversation id, or a user id for a DM.
             text (`str`): The message text.
 
         Returns:
-            `dict`: ``{"ok": bool}``, with ``"error"`` when it failed.
+            `dict`: ``{"ok": bool, "sent_ts": [...], "segments": int}``,
+            plus ``"error"`` and ``"failed_segment"`` when a segment did
+            not go out.
         """
-        ts = await self._post(chat_id, text[:_MAX_LEN])
-        if ts is None:
-            return {"ok": False, "error": self.status.last_error or "failed"}
-        return {"ok": True}
+        parts = [p for p in self._split_long_message(text) if p]
+        if not parts:
+            return {
+                "ok": False,
+                "error": "there was no text to send",
+                "sent_ts": [],
+                "segments": 0,
+            }
+        sent: list[str] = []
+        for index, part in enumerate(parts):
+            if index:
+                # Same per-channel write limit the streaming edits respect.
+                await asyncio.sleep(_STREAM_MIN_INTERVAL)
+            ts = await self._post(chat_id, part)
+            if ts is None:
+                return {
+                    "ok": False,
+                    "error": self.status.last_error
+                    or "the platform rejected the request",
+                    "sent_ts": sent,
+                    "failed_segment": index,
+                    "segments": len(parts),
+                }
+            sent.append(ts)
+        return {"ok": True, "sent_ts": sent, "segments": len(parts)}
 
     async def upload_file(
         self,
