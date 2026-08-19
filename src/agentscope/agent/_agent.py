@@ -17,13 +17,18 @@ from typing import (
     List,
     TYPE_CHECKING,
     Type,
-    Literal,
 )
 
 import jsonschema
 from pydantic import BaseModel
 
-from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    InjectionConfig,
+    _SelfCompactDecision,
+)
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -108,12 +113,6 @@ if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
     MiddlewareBase = Any
-
-
-class _SelfCompactDecision(BaseModel):
-    """The model decision for adaptive context compaction."""
-
-    decision: Literal["COMPRESS", "CONTINUE"]
 
 
 class Agent:
@@ -505,6 +504,9 @@ class Agent:
         try:
             await self._run_compress_context(
                 context_config=cfg,
+                instructions=HintBlock(
+                    hint=cfg.self_compact_compression_instructions,
+                ),
                 force=True,
                 fallback_to_truncation=False,
             )
@@ -517,6 +519,39 @@ class Agent:
             )
 
     async def _compress_context_impl(
+        self,
+        context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
+        *,
+        force: bool = False,
+        fallback_to_truncation: bool = True,
+    ) -> None:
+        """Prepare images, then run context compression atomically."""
+        cfg = context_config or self.context_config
+        original_context = self.state.context
+        image_replacements = await self._limit_context_images(cfg)
+        try:
+            await self._compress_context_impl_after_image_limit(
+                context_config=cfg,
+                instructions=instructions,
+                force=force,
+                fallback_to_truncation=fallback_to_truncation,
+            )
+        except asyncio.CancelledError:
+            # A cancellation raised after the shielded state update must not
+            # undo a successfully committed compression.
+            if (
+                not fallback_to_truncation
+                and self.state.context is original_context
+            ):
+                self._restore_limited_context_images(image_replacements)
+            raise
+        except Exception:
+            if not fallback_to_truncation:
+                self._restore_limited_context_images(image_replacements)
+            raise
+
+    async def _compress_context_impl_after_image_limit(
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
@@ -538,10 +573,6 @@ class Agent:
         """
         cfg: ContextConfig = context_config or self.context_config
 
-        # Limit the number of images in the context first, so that the token
-        # counting below reflects the images that actually remain
-        await self._limit_context_images(cfg)
-
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
@@ -552,8 +583,8 @@ class Agent:
             return
 
         logger.info(
-            "[AGENT %s]: Current token count %d exceeds the threshold %d, "
-            "activating compression.",
+            "[AGENT %s]: Activating context compression at token count %d "
+            "with hard threshold %d.",
             self.name,
             int(estimated_tokens),
             int(threshold),
@@ -836,7 +867,10 @@ class Agent:
             prompt = prompt.replace(f"{{{name}}}", value)
         return prompt
 
-    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+    async def _limit_context_images(
+        self,
+        cfg: ContextConfig,
+    ) -> list[tuple[list, int, DataBlock]]:
         """Limit the number of images in the context according to
         ``cfg.max_image_num``. The oldest images exceeding the limit are
         offloaded to the workspace (if an offloader is provided) and replaced
@@ -890,7 +924,7 @@ class Agent:
 
         n_exceed = len(images) - max_image_num
         if n_exceed <= 0:
-            return
+            return []
 
         logger.info(
             "[AGENT %s]: The number of images in context (%d) exceeds the "
@@ -939,6 +973,19 @@ class Agent:
 
         for container, idx, new_block in replacements:
             container[idx] = new_block
+
+        return [
+            (container, idx, block)
+            for container, idx, block, _, _ in images[:n_exceed]
+        ]
+
+    @staticmethod
+    def _restore_limited_context_images(
+        replacements: list[tuple[list, int, DataBlock]],
+    ) -> None:
+        """Restore images replaced while preparing adaptive compression."""
+        for container, idx, block in replacements:
+            container[idx] = block
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
@@ -1598,7 +1645,7 @@ class Agent:
                     self.context_config.self_compact_min_ratio,
                 )
 
-            if input_tokens > awareness_ratio * self.model.context_size:
+            if input_tokens >= awareness_ratio * self.model.context_size:
                 if self.context_config.self_compact_enabled:
                     injections["context-length"] = (
                         f"Your current context contains {input_tokens} "

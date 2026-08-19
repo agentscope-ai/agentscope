@@ -342,7 +342,7 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<context-length>Your current context contains 550 tokens. "
+            "<context-length>Your current context contains 500 tokens. "
             "Adaptive context compaction may be considered after this reply. "
             "Hard threshold compression occurs at 800 tokens."
             "</context-length>\n"
@@ -356,9 +356,8 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         )
         self.agent.state.cur_iter = 0
         self._add_injection("2026-07-01T12:00:00")
-        # 550 is below the normal 60% awareness point but above the adaptive
-        # 50% eligibility ratio.
-        self.model.count_tokens = AsyncMock(return_value=550)
+        # The adaptive awareness boundary is inclusive.
+        self.model.count_tokens = AsyncMock(return_value=500)
 
         events = await self._run_injection()
 

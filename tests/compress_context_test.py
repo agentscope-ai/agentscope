@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 # pylint: disable=protected-access
+import asyncio
 import hashlib
 import json
 import os
@@ -12,7 +13,7 @@ from unittest.mock import AsyncMock
 
 from utils import MockModel, AnyString
 
-from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.model import ChatResponse, FinishedReason, StructuredResponse
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.event import ReplyEndEvent, UserInterruptEvent
 from agentscope.middleware import MiddlewareBase
@@ -1567,13 +1568,56 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 await agent.self_compact_context()
 
                 if should_compact:
-                    agent._run_compress_context.assert_awaited_once_with(
-                        context_config=agent.context_config,
-                        force=True,
-                        fallback_to_truncation=False,
+                    call = agent._run_compress_context.await_args
+                    self.assertEqual(
+                        call.kwargs["context_config"],
+                        agent.context_config,
+                    )
+                    self.assertIn(
+                        "reply that triggered this adaptive compression has "
+                        "completed",
+                        call.kwargs["instructions"].hint,
+                    )
+                    self.assertTrue(call.kwargs["force"])
+                    self.assertFalse(
+                        call.kwargs["fallback_to_truncation"],
                     )
                 else:
                     agent._run_compress_context.assert_not_awaited()
+
+        model = RecordingStructuredMockModel(context_size=200)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "task",
+                    "current_state": "complete",
+                    "important_discoveries": "none",
+                    "next_steps": "None",
+                    "context_to_preserve": "none",
+                },
+            ),
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "history", id="history")],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        await agent._run_compress_context(
+            force=True,
+            fallback_to_truncation=False,
+        )
+
+        self.assertIn("# Current State\ncomplete", agent.state.summary)
 
     async def test_self_compaction_eligibility(self) -> None:
         """Ineligible contexts do not invoke the model rubric."""
@@ -1617,7 +1661,6 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     agent._run_compress_context.side_effect = RuntimeError(
                         "summary",
                     )
-
                 await agent.self_compact_context()
 
                 self.assertEqual(agent.state.summary, "")
@@ -1625,6 +1668,39 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     [msg.id for msg in agent.state.context],
                     ["history"],
                 )
+
+        model = RecordingStructuredMockModel(
+            context_size=100000,
+            fail_structured_output_times=1,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                max_image_num=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                summary="existing summary",
+                context=_build_image_context(),
+            ),
+            toolkit=Toolkit(),
+        )
+        expected_state = agent.state.model_copy(deep=True)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "simulated compression overflow",
+        ):
+            await agent._run_compress_context(
+                force=True,
+                fallback_to_truncation=False,
+            )
+
+        self.assertEqual(agent.state, expected_state)
 
     async def test_self_compaction_rubric_is_non_persistent(self) -> None:
         """The rendered rubric is appended only to the model-call copy."""
@@ -1650,6 +1726,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             "50.0%",
             call.kwargs["messages"][-1].get_text_content(),
         )
+
+        model.generate_structured_output.return_value = StructuredResponse(
+            content={"decision": "CONTINUE"},
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+        with self.assertRaises(asyncio.CancelledError):
+            await agent._should_self_compact(
+                agent.context_config,
+                source_messages,
+                estimated_tokens=100,
+            )
 
     async def test_self_compaction_runs_after_middleware_cleanup(
         self,

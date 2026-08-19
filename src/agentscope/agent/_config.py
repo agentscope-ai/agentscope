@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..model import ChatModelBase
@@ -24,6 +26,19 @@ DEFAULT_SELF_COMPACT_RUBRIC_PROMPT = (
     "unresolved constraints or evidence. Return COMPRESS or CONTINUE."
     "</system-hint>"
 )
+
+
+DEFAULT_SELF_COMPACT_COMPRESSION_INSTRUCTIONS = (
+    "The reply that triggered this adaptive compression has completed. "
+    "Distinguish completed work from remaining work in the continuation "
+    "summary, and state explicitly when no work remains."
+)
+
+
+class _SelfCompactDecision(BaseModel):
+    """The model decision for adaptive context compaction."""
+
+    decision: Literal["COMPRESS", "CONTINUE"]
 
 
 class SummarySchema(BaseModel):
@@ -187,6 +202,12 @@ class ContextConfig(BaseModel):
         json_schema_extra={"format": "textarea"},
     )
     """The prompt used for the reply-end self-compaction decision."""
+
+    self_compact_compression_instructions: str = Field(
+        default=DEFAULT_SELF_COMPACT_COMPRESSION_INSTRUCTIONS,
+        json_schema_extra={"format": "textarea"},
+    )
+    """Additional summary instructions for adaptive compression."""
 
     @model_validator(mode="after")
     def _validate_self_compact_min_ratio(self) -> "ContextConfig":
