@@ -8,8 +8,10 @@ import zipfile
 from typing import Any, AsyncIterator
 from urllib.parse import quote
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, call, patch
 
 import fakeredis.aioredis
+import mcp.types as mcp_types
 from fastapi.testclient import TestClient
 
 from agentscope.app import create_app
@@ -24,6 +26,7 @@ from agentscope.app.hub import (
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.mcp import MCPClient
 
 HEADERS = {"X-User-ID": "alice"}
 
@@ -697,6 +700,224 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         # cause is what has to come through.
         self.assertNotIn("TaskGroup", detail)
 
+    def test_workspace_tool_toggle_management_view(self) -> None:
+        """Disabled tools stay manageable but leave the default view."""
+        added = self._client.post(
+            "/workspace/mcp",
+            params=self._scope,
+            json={
+                "name": "browser",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "https://browser.invalid/sse",
+                },
+            },
+            headers=HEADERS,
+        )
+        raw = mcp_types.Tool(
+            name="go.to:/page?#section",
+            description=None,
+            inputSchema={"type": "object"},
+        )
+        discovery = AsyncMock(return_value=[raw])
+
+        with patch.object(MCPClient, "list_all_raw_tools", discovery):
+            response = self._client.patch(
+                "/workspace/mcp/browser/tools",
+                params=self._scope,
+                json={"tool_name": raw.name, "enabled": False},
+                headers=HEADERS,
+            )
+
+            management = self._client.get(
+                "/workspace/mcp",
+                params={**self._scope, "include_disabled": True},
+                headers=HEADERS,
+            ).json()
+            default = self._client.get(
+                "/workspace/mcp",
+                params=self._scope,
+                headers=HEADERS,
+            )
+
+        self.assertEqual(
+            {
+                "added": {
+                    "status_code": added.status_code,
+                    "body": added.json(),
+                },
+                "updated": {
+                    "status_code": response.status_code,
+                    "body": response.content,
+                },
+                "management": management,
+                "default": {
+                    "status_code": default.status_code,
+                    "body": default.json(),
+                },
+                "discovery_calls": discovery.await_args_list,
+            },
+            {
+                "added": {
+                    "status_code": 201,
+                    "body": None,
+                },
+                "updated": {
+                    "status_code": 204,
+                    "body": b"",
+                },
+                "management": [
+                    {
+                        "name": "browser",
+                        "is_stateful": False,
+                        "mcp_config": {
+                            "type": "http_mcp",
+                            "url": "https://browser.invalid/sse",
+                            "headers": None,
+                            "timeout": 30.0,
+                        },
+                        "enable_tools": None,
+                        "disable_tools": [raw.name],
+                        "execution_timeout": None,
+                        "is_healthy": True,
+                        "tools": [
+                            {
+                                "name": (
+                                    "mcp__browser__" "goxtoxxpagexxsection"
+                                ),
+                                "raw_name": raw.name,
+                                "description": "",
+                                "enabled": False,
+                            },
+                        ],
+                        "error": None,
+                    },
+                ],
+                "default": {
+                    "status_code": 200,
+                    "body": [
+                        {
+                            "name": "browser",
+                            "is_stateful": False,
+                            "mcp_config": {
+                                "type": "http_mcp",
+                                "url": "https://browser.invalid/sse",
+                                "headers": None,
+                                "timeout": 30.0,
+                            },
+                            "enable_tools": None,
+                            "disable_tools": [raw.name],
+                            "execution_timeout": None,
+                            "is_healthy": True,
+                            "tools": [],
+                            "error": None,
+                        },
+                    ],
+                },
+                "discovery_calls": [call(), call(), call()],
+            },
+        )
+
+    def test_workspace_tool_toggle_errors(self) -> None:
+        """Unknown declarations/tools and discovery failures are distinct."""
+        missing_mcp = self._client.patch(
+            "/workspace/mcp/missing/tools",
+            params=self._scope,
+            json={"tool_name": "first", "enabled": False},
+            headers=HEADERS,
+        )
+        self.assertEqual(
+            {
+                "status_code": missing_mcp.status_code,
+                "body": missing_mcp.json(),
+            },
+            {
+                "status_code": 404,
+                "body": {
+                    "detail": (
+                        "MCP 'missing' is not configured in this session."
+                    ),
+                },
+            },
+        )
+
+        added = self._client.post(
+            "/workspace/mcp",
+            params=self._scope,
+            json={
+                "name": "browser",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "https://browser.invalid/sse",
+                },
+            },
+            headers=HEADERS,
+        )
+        with patch.object(
+            MCPClient,
+            "list_all_raw_tools",
+            AsyncMock(
+                return_value=[mcp_types.Tool(name="first", inputSchema={})],
+            ),
+        ):
+            missing_tool = self._client.patch(
+                "/workspace/mcp/browser/tools",
+                params=self._scope,
+                json={"tool_name": "missing", "enabled": False},
+                headers=HEADERS,
+            )
+        self.assertEqual(
+            {
+                "added": {
+                    "status_code": added.status_code,
+                    "body": added.json(),
+                },
+                "missing_tool": {
+                    "status_code": missing_tool.status_code,
+                    "body": missing_tool.json(),
+                },
+            },
+            {
+                "added": {
+                    "status_code": 201,
+                    "body": None,
+                },
+                "missing_tool": {
+                    "status_code": 404,
+                    "body": {
+                        "detail": (
+                            "Tool 'missing' was not reported by MCP "
+                            "'browser'."
+                        ),
+                    },
+                },
+            },
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_all_raw_tools",
+            AsyncMock(side_effect=OSError("connection failed")),
+        ):
+            unavailable = self._client.patch(
+                "/workspace/mcp/browser/tools",
+                params=self._scope,
+                json={"tool_name": "first", "enabled": False},
+                headers=HEADERS,
+            )
+        self.assertEqual(
+            {
+                "status_code": unavailable.status_code,
+                "body": unavailable.json(),
+            },
+            {
+                "status_code": 503,
+                "body": {"detail": "connection failed"},
+            },
+        )
+
     # ── install: skill ────────────────────────────────────────────
 
     def _install_skill(self, card_id: str, **params: str) -> Any:
@@ -854,7 +1075,6 @@ class HubRegistrationTest(IsolatedAsyncioTestCase):
         The sandboxed backends already enforced this; the local one used
         to append silently.
         """
-        from agentscope.mcp import MCPClient
         from agentscope.workspace import LocalWorkspace
 
         with tempfile.TemporaryDirectory() as tmp:

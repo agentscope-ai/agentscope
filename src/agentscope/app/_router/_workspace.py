@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
+import asyncio
 import mimetypes
 from urllib.parse import quote
 
@@ -28,7 +29,12 @@ from .._service import WorkspaceService, WorkspaceStatus
 from .._service._workspace import SkillUploadError, UploadManifest
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
+from ...mcp._utils import build_mcp_tool_name
 from ...skill import Skill
+from ...workspace._base import (
+    MCPConcurrentMutationError,
+    MCPPersistenceError,
+)
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
@@ -39,10 +45,14 @@ from ._schema import (
     DownloadTokenResponse,
     MCPClientStatus,
     ToolInfo,
+    UpdateMCPToolRequest,
 )
 from ..._utils._common import _describe_exception
+from ..._logging import logger
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
+
+_MCP_DISCOVERY_TIMEOUT_SECONDS = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +64,7 @@ workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
 async def list_mcps(
     agent_id: str = Query(...),
     session_id: str = Query(...),
+    include_disabled: bool = Query(False),
     user_id: str = Depends(get_current_user_id),
     workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> list[MCPClientStatus]:
@@ -68,32 +79,145 @@ async def list_mcps(
         session_id=session_id,
     )
 
-    results = []
-    for client in clients:
+    async def _collect(client: MCPClient) -> MCPClientStatus:
         base = client.model_dump()
         try:
-            mcp_tools = await client.list_tools()
+            if include_disabled:
+                raw_tools = await asyncio.wait_for(
+                    client.list_all_raw_tools(),
+                    timeout=_MCP_DISCOVERY_TIMEOUT_SECONDS,
+                )
+            else:
+                raw_tools = await asyncio.wait_for(
+                    client.list_raw_tools(),
+                    timeout=_MCP_DISCOVERY_TIMEOUT_SECONDS,
+                )
             tools = [
-                ToolInfo(name=t.name, description=t.description)
-                for t in mcp_tools
+                ToolInfo(
+                    name=build_mcp_tool_name(client.name, tool.name),
+                    raw_name=tool.name,
+                    description=tool.description or "",
+                    enabled=client.is_tool_enabled(tool.name),
+                )
+                for tool in raw_tools
             ]
-            results.append(
-                MCPClientStatus(
-                    **base,
-                    is_healthy=True,
-                    tools=tools,
+            return MCPClientStatus(
+                **base,
+                is_healthy=True,
+                tools=tools,
+            )
+        except TimeoutError:
+            logger.warning(
+                "MCP management discovery timed out: mcp=%r timeout=%r",
+                client.name,
+                _MCP_DISCOVERY_TIMEOUT_SECONDS,
+            )
+            return MCPClientStatus(
+                **base,
+                is_healthy=False,
+                error=(
+                    f"Tool discovery timed out after "
+                    f"{_MCP_DISCOVERY_TIMEOUT_SECONDS:g} seconds."
                 ),
             )
         except Exception as e:
-            results.append(
-                MCPClientStatus(
-                    **base,
-                    is_healthy=False,
-                    error=_describe_exception(e),
-                ),
+            return MCPClientStatus(
+                **base,
+                is_healthy=False,
+                error=_describe_exception(e),
             )
 
-    return results
+    return list(
+        await asyncio.gather(*[_collect(client) for client in clients]),
+    )
+
+
+@workspace_router.patch(
+    "/mcp/{mcp_name}/tools",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def set_mcp_tool_enabled(
+    mcp_name: str,
+    body: UpdateMCPToolRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> None:
+    """Update one raw MCP tool's state without rebuilding its connection."""
+    workspace = await workspace_service.resolve(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    declared = await workspace.get_mcp_spec(
+        mcp_name,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+    if declared is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MCP {mcp_name!r} is not configured in this session.",
+        )
+
+    clients = await workspace.list_mcps(
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+    client = next((item for item in clients if item.name == mcp_name), None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"MCP {mcp_name!r} is currently unavailable.",
+        )
+
+    try:
+        tools = await asyncio.wait_for(
+            client.list_all_raw_tools(),
+            timeout=_MCP_DISCOVERY_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Tool discovery for MCP {mcp_name!r} timed out after "
+                f"{_MCP_DISCOVERY_TIMEOUT_SECONDS:g} seconds."
+            ),
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_describe_exception(e),
+        ) from e
+
+    if not any(tool.name == body.tool_name for tool in tools):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Tool {body.tool_name!r} was not reported by MCP "
+                f"{mcp_name!r}."
+            ),
+        )
+
+    try:
+        await workspace.set_mcp_tool_enabled(
+            mcp_name,
+            body.tool_name,
+            body.enabled,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+    except MCPConcurrentMutationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
+    except MCPPersistenceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist the MCP tool state.",
+        ) from e
 
 
 @workspace_router.post("/mcp", status_code=status.HTTP_201_CREATED)

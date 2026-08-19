@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """Backend abstraction for builtin tools.
 
 Provides a :class:`BackendBase` abstract base class that captures the
@@ -43,6 +44,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, AsyncIterator
+from uuid import uuid4
 
 import aiofiles
 
@@ -341,6 +343,39 @@ class BackendBase(ABC):
             data (`bytes`):
                 The raw bytes to write.
         """
+
+    async def write_file_atomic(self, path: str, data: bytes) -> None:
+        """Atomically replace one file with complete new contents.
+
+        The default implementation targets POSIX backends. It writes a
+        uniquely named sibling and then uses ``mv`` so the replacement stays
+        on the same filesystem. Backends with non-POSIX path or process
+        semantics must override this method.
+
+        Args:
+            path (`str`):
+                Destination path inside the backend environment.
+            data (`bytes`):
+                The complete replacement contents.
+
+        Raises:
+            OSError:
+                The sibling file could not replace the destination.
+        """
+        temporary = f"{path}.tmp-{uuid4().hex}"
+        try:
+            await self.write_file(temporary, data)
+            result = await self.exec_shell(["mv", "-f", temporary, path])
+            if not result.ok():
+                detail = result.stderr.decode("utf-8", errors="replace")
+                raise OSError(
+                    f"Atomic replace failed for {path!r}: {detail}",
+                )
+        finally:
+            try:
+                await self.delete_path(temporary)
+            except Exception:  # noqa: BLE001
+                pass
 
     async def write_stream(
         self,
@@ -844,6 +879,25 @@ class LocalBackend(BackendBase):
             os.makedirs(parent, exist_ok=True)
         async with aiofiles.open(path, mode="wb") as f:
             await f.write(data)
+
+    async def write_file_atomic(self, path: str, data: bytes) -> None:
+        """Atomically replace a local file on Windows, Linux, or macOS.
+
+        Args:
+            path (`str`):
+                Destination path on the local filesystem.
+            data (`bytes`):
+                The complete replacement contents.
+        """
+        temporary = f"{path}.tmp-{uuid4().hex}"
+        try:
+            await self.write_file(temporary, data)
+            os.replace(temporary, path)
+        finally:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
 
     async def write_stream(
         self,

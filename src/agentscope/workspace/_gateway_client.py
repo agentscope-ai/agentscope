@@ -12,7 +12,7 @@ Three classes:
   ``connect`` / ``close`` / ``list_raw_tools`` / ``get_tool`` all
   round-trip through ``/mcps``.
 * :class:`GatewayMCPTool` — :class:`ToolBase` whose ``__call__``
-  invokes the upstream tool via ``POST /mcps/{name}/tools/{tool}``.
+  invokes the upstream tool via ``POST /mcps/{name}/tools/call``.
 
 Every request runs inside the sandbox: the host writes an optional
 body to a sandbox tempfile, spawns a small Python shim via
@@ -35,6 +35,7 @@ from pydantic import PrivateAttr
 
 from .._logging import logger
 from ..mcp import MCPClient
+from ..mcp._utils import build_mcp_tool_name
 from ..message import ToolResultState
 from ..permission import (
     PermissionBehavior,
@@ -99,7 +100,7 @@ class GatewayMCPTool(ToolBase):
         self.mcp_name = mcp_name
         self._agent_id = agent_id
         self._session_id = session_id
-        self.name = f"mcp__{mcp_name}__{tool.name}"
+        self.name = build_mcp_tool_name(mcp_name, tool.name)
         self.description = tool.description or ""
 
         schema = dict(tool.inputSchema) if tool.inputSchema else {}
@@ -137,7 +138,7 @@ class GatewayMCPTool(ToolBase):
         )
 
     async def __call__(self, **kwargs: Any) -> ToolChunk:
-        """Relay ``POST /mcps/{mcp}/tools/{tool}`` to the gateway.
+        """Relay ``POST /mcps/{mcp}/tools/call`` to the gateway.
 
         4xx / 5xx responses come back as ``ToolChunk(state=ERROR)`` so
         the agent loop can reason about failure. Raises
@@ -146,12 +147,15 @@ class GatewayMCPTool(ToolBase):
         """
         status, body = await self._gateway.exec_request(
             "POST",
-            f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            f"/mcps/{self.mcp_name}/tools/call",
             params={
                 "agent_id": self._agent_id,
                 "session_id": self._session_id,
             },
-            body={"arguments": kwargs},
+            body={
+                "tool_name": self._tool.name,
+                "arguments": kwargs,
+            },
         )
         if status >= 400:
             return ToolChunk(
@@ -317,6 +321,20 @@ class GatewayMCPClient(MCPClient):
             `RuntimeError`:
                 Gateway returned non-2xx.
         """
+        raw_tools = await self.list_all_raw_tools()
+        return [tool for tool in raw_tools if self.is_tool_enabled(tool.name)]
+
+    async def list_all_raw_tools(self) -> list[mcp.types.Tool]:
+        """Fetch the unfiltered upstream tool list through the gateway.
+
+        Returns:
+            `list[mcp.types.Tool]`:
+                A shallow copy of every upstream tool descriptor.
+
+        Raises:
+            RuntimeError:
+                Gateway returned non-2xx.
+        """
         assert self._gateway is not None
         status, body = await self._gateway.exec_request(
             "GET",
@@ -324,6 +342,7 @@ class GatewayMCPClient(MCPClient):
             params={
                 "agent_id": self._agent_id,
                 "session_id": self._session_id,
+                "include_disabled": "true",
             },
         )
         if status >= 400:
@@ -335,16 +354,7 @@ class GatewayMCPClient(MCPClient):
 
         raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
         self._cached_tools = raw_tools
-
-        # Gateway returns the unfiltered upstream view; honour the same
-        # enable/disable filtering ``MCPClient`` applies locally.
-        if self.enable_tools is not None:
-            raw_tools = [t for t in raw_tools if t.name in self.enable_tools]
-        if self.disable_tools is not None:
-            raw_tools = [
-                t for t in raw_tools if t.name not in self.disable_tools
-            ]
-        return raw_tools
+        return list(raw_tools)
 
     async def get_tool(  # type: ignore[override]
         self,

@@ -20,10 +20,16 @@ import tempfile
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import ExecResult, LocalBackend
+from agentscope.tool import BackendBase, ExecResult, LocalBackend
 from agentscope.tool._builtin._backend import _normalize_newlines
 
 _IS_WINDOWS = sys.platform == "win32"
+
+
+class _DefaultAtomicLocalBackend(LocalBackend):
+    """Exercise the POSIX base implementation against local files."""
+
+    write_file_atomic = BackendBase.write_file_atomic
 
 
 class TestNormalizeNewlines(unittest.TestCase):
@@ -181,6 +187,79 @@ class TestLocalBackendFileIO(IsolatedAsyncioTestCase):
         payload = b"a\r\nb\x00\xffc"
         await self.backend.write_file(path, payload)
         self.assertEqual(await self.backend.read_file(path), payload)
+
+    async def test_atomic_write_replaces_complete_file(self) -> None:
+        """Atomic writes replace the destination and remove staging data."""
+        path = os.path.join(self.temp_dir.name, "config.json")
+        await self.backend.write_file(path, b"old")
+
+        await self.backend.write_file_atomic(path, b"new contents")
+
+        self.assertEqual(
+            {
+                "content": await self.backend.read_file(path),
+                "staging_files": [
+                    name
+                    for name in os.listdir(self.temp_dir.name)
+                    if ".tmp-" in name
+                ],
+            },
+            {
+                "content": b"new contents",
+                "staging_files": [],
+            },
+        )
+
+    @unittest.skipIf(_IS_WINDOWS, "The base atomic implementation uses mv")
+    async def test_default_posix_atomic_write(self) -> None:
+        """The implementation inherited by sandbox backends replaces files."""
+        backend = _DefaultAtomicLocalBackend()
+        path = os.path.join(self.temp_dir.name, "sandbox-config.json")
+        await backend.write_file(path, b"old")
+
+        await backend.write_file_atomic(path, b"new")
+
+        self.assertEqual(
+            {
+                "content": await backend.read_file(path),
+                "staging_files": [
+                    name
+                    for name in os.listdir(self.temp_dir.name)
+                    if ".tmp-" in name
+                ],
+            },
+            {
+                "content": b"new",
+                "staging_files": [],
+            },
+        )
+
+    async def test_atomic_replace_failure_preserves_destination(self) -> None:
+        """A failed replace keeps the old destination untouched."""
+        path = os.path.join(self.temp_dir.name, "config.json")
+        await self.backend.write_file(path, b"old")
+
+        with unittest.mock.patch(
+            "agentscope.tool._builtin._backend.os.replace",
+            side_effect=OSError("replace failed"),
+        ):
+            with self.assertRaises(OSError):
+                await self.backend.write_file_atomic(path, b"new")
+
+        self.assertEqual(
+            {
+                "content": await self.backend.read_file(path),
+                "staging_files": [
+                    name
+                    for name in os.listdir(self.temp_dir.name)
+                    if ".tmp-" in name
+                ],
+            },
+            {
+                "content": b"old",
+                "staging_files": [],
+            },
+        )
 
     async def test_read_missing_file_raises(self) -> None:
         """Reading a non-existent file raises ``FileNotFoundError``."""

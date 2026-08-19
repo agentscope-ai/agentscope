@@ -16,7 +16,7 @@ Endpoints::
     POST   /mcps                       # body: MCPClient.model_dump()
     DELETE /mcps/{name}
     GET    /mcps/{name}/tools
-    POST   /mcps/{name}/tools/{tool}   # body: {arguments: {...}}
+    POST   /mcps/{name}/tools/call     # body: tool name + arguments
 
 Every endpoint except ``/health`` takes ``?agent_id=&session_id=``.
 Upstream sessions are kept per agent, session and MCP name, so two
@@ -159,12 +159,46 @@ def _build_app(
         name: str,
         agent_id: str = "",
         session_id: str = "",
+        include_disabled: bool = False,
     ) -> list[dict[str, Any]]:
         client = _lookup(agent_id, session_id, name)
-        raw = await client.list_raw_tools()
+        if include_disabled:
+            raw = await client.list_all_raw_tools()
+        else:
+            raw = await client.list_raw_tools()
         return [t.model_dump(mode="json") for t in raw]
 
-    @app.post("/mcps/{name}/tools/{tool}")
+    async def _execute_tool(
+        client: MCPClient,
+        tool: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute one upstream tool and serialize its result."""
+        try:
+            tool_obj = await client.get_tool(tool)
+            chunk = await tool_obj(**arguments)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, str(e)) from e
+        return {"chunk": chunk.model_dump(mode="json")}
+
+    @app.post("/mcps/{name}/tools/call")
+    async def _call_tool_from_body(
+        name: str,
+        request: Request,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        client = _lookup(agent_id, session_id, name)
+        body = await request.json()
+        tool = body.get("tool_name")
+        if not isinstance(tool, str) or not tool:
+            raise HTTPException(400, "tool_name required")
+        arguments = body.get("arguments") or {}
+        return await _execute_tool(client, tool, arguments)
+
+    @app.post("/mcps/{name}/tools/{tool}", deprecated=True)
     async def _call_tool(
         name: str,
         tool: str,
@@ -175,14 +209,7 @@ def _build_app(
         client = _lookup(agent_id, session_id, name)
         body = await request.json()
         arguments = body.get("arguments") or {}
-        try:
-            tool_obj = await client.get_tool(tool)
-            chunk = await tool_obj(**arguments)
-        except ValueError as e:
-            raise HTTPException(404, str(e)) from e
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(500, str(e)) from e
-        return {"chunk": chunk.model_dump(mode="json")}
+        return await _execute_tool(client, tool, arguments)
 
     return app
 

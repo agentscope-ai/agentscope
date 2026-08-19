@@ -473,11 +473,16 @@ export interface MCPClient {
 	name: string;
 	is_stateful: boolean;
 	mcp_config: StdioMCPConfig | HttpMCPConfig;
+	enable_tools?: string[] | null;
+	disable_tools?: string[] | null;
+	execution_timeout?: number | null;
 }
 
 export interface ToolInfo {
 	name: string;
+	raw_name: string;
 	description?: string | null;
+	enabled: boolean;
 }
 
 export interface MCPClientStatus extends MCPClient {

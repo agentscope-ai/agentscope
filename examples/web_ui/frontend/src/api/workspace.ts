@@ -137,6 +137,26 @@ export const workspaceApi = {
 				session_id: sessionId,
 			}),
 
+		listForManagement: (agentId: string, sessionId: string) =>
+			client.get<MCPClientStatus[]>('/workspace/mcp', {
+				agent_id: agentId,
+				session_id: sessionId,
+				include_disabled: 'true',
+			}),
+
+		setToolEnabled: (
+			agentId: string,
+			sessionId: string,
+			mcpName: string,
+			toolName: string,
+			enabled: boolean,
+		) =>
+			client.patch<void>(
+				`/workspace/mcp/${mcpName}/tools`,
+				{ tool_name: toolName, enabled },
+				{ agent_id: agentId, session_id: sessionId },
+			),
+
 		add: (agentId: string, sessionId: string, mcp: MCPClient) =>
 			client.post<void>('/workspace/mcp', mcp, { agent_id: agentId, session_id: sessionId }),
 

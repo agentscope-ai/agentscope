@@ -103,6 +103,15 @@ class _FakeProcess:
         elif self.fs is not None and args[:2] == ["test", "-d"]:
             path = args[2]
             exit_code = 0 if path in self.fs.dirs else 1
+        elif self.fs is not None and args[:2] == ["mv", "-f"]:
+            source, target = args[2:4]
+            if source in self.fs.files:
+                self.fs.files[target] = self.fs.files.pop(source)
+            else:
+                exit_code = 1
+        elif self.fs is not None and args[:2] == ["rm", "-rf"]:
+            self.fs.files.pop(args[2], None)
+            self.fs.dirs.discard(args[2])
         return SimpleNamespace(
             exit_code=exit_code,
             result="",

@@ -314,6 +314,19 @@ class MCPClient(BaseModel):
         Raises:
             RuntimeError: If not connected (for stateful connections).
         """
+        tools = await self.list_all_raw_tools()
+        return [tool for tool in tools if self.is_tool_enabled(tool.name)]
+
+    async def list_all_raw_tools(self) -> list[mcp.types.Tool]:
+        """List every tool without applying client-side filters.
+
+        Returns:
+            `list[mcp.types.Tool]`:
+                A shallow copy of the tools reported by the MCP server.
+
+        Raises:
+            RuntimeError: If not connected (for stateful connections).
+        """
         if not self.is_stateful:
             # Stateless: create temporary session
             async with self._get_client_gen() as cli:
@@ -331,18 +344,49 @@ class MCPClient(BaseModel):
             res = await self._session.list_tools()
             self._cached_tools = res.tools
 
-        available_tools: list = self._cached_tools
-        if self.enable_tools is not None:
-            available_tools = [
-                tool
-                for tool in available_tools
-                if tool.name in self.enable_tools
-            ]
-        if self.disable_tools is not None:
-            available_tools = [
-                _ for _ in available_tools if _.name not in self.disable_tools
-            ]
-        return available_tools
+        assert self._cached_tools is not None
+        return list(self._cached_tools)
+
+    def is_tool_enabled(self, name: str) -> bool:
+        """Return whether a raw MCP tool name passes current filters."""
+        enable_tools = self.enable_tools
+        disable_tools = self.disable_tools
+        enabled = enable_tools is None or name in enable_tools
+        disabled = disable_tools is not None and name in disable_tools
+        return enabled and not disabled
+
+    def set_tool_enabled(self, name: str, enabled: bool) -> None:
+        """Update the effective state of one raw MCP tool name.
+
+        Args:
+            name (`str`):
+                The raw name reported by the MCP server.
+            enabled (`bool`):
+                Whether the tool should be available.
+        """
+        enable_tools = (
+            None if self.enable_tools is None else list(self.enable_tools)
+        )
+        disable_tools = (
+            [] if self.disable_tools is None else list(self.disable_tools)
+        )
+
+        if enable_tools is None:
+            if enabled:
+                disable_tools = [
+                    tool for tool in disable_tools if tool != name
+                ]
+            elif name not in disable_tools:
+                disable_tools.append(name)
+        else:
+            if enabled and name not in enable_tools:
+                enable_tools.append(name)
+            elif not enabled:
+                enable_tools = [tool for tool in enable_tools if tool != name]
+            disable_tools = [tool for tool in disable_tools if tool != name]
+
+        self.enable_tools = enable_tools
+        self.disable_tools = disable_tools or None
 
     async def list_tools(self) -> list[ToolBase]:
         """List available tools from the MCP server as wrapped

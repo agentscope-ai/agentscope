@@ -1,31 +1,47 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { workspaceApi } from '@/api';
 import type { MCPClient, MCPClientStatus, Skill } from '@/api';
+import { ApiError } from '@/api/client';
 import type { UploadOptions } from '@/api/workspace';
 
 export function useWorkspace(agentId: string | null, sessionId: string | null) {
 	const [mcps, setMcps] = useState<MCPClientStatus[]>([]);
 	const [skills, setSkills] = useState<Skill[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [refreshing, setRefreshing] = useState(false);
 	const [skillsLoading, setSkillsLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
+	const mcpRequestGeneration = useRef(0);
+
+	const fetchMcps = useCallback(
+		async (generation: number, initial: boolean) => {
+			if (!agentId || !sessionId) {
+				return;
+			}
+			if (initial) setLoading(true);
+			else setRefreshing(true);
+			setError(null);
+			try {
+				const result = await workspaceApi.mcp.listForManagement(agentId, sessionId);
+				if (generation === mcpRequestGeneration.current) setMcps(result);
+			} catch (e) {
+				if (generation === mcpRequestGeneration.current) setError(e as Error);
+			} finally {
+				if (generation === mcpRequestGeneration.current) {
+					setLoading(false);
+					setRefreshing(false);
+				}
+			}
+		},
+		[agentId, sessionId],
+	);
+
 	const refetch = useCallback(async () => {
-		if (!agentId || !sessionId) {
-			setMcps([]);
-			return;
-		}
-		setLoading(true);
-		setError(null);
-		try {
-			setMcps(await workspaceApi.mcp.list(agentId, sessionId));
-		} catch (e) {
-			setError(e as Error);
-		} finally {
-			setLoading(false);
-		}
-	}, [agentId, sessionId]);
+		const generation = ++mcpRequestGeneration.current;
+		await fetchMcps(generation, false);
+	}, [fetchMcps]);
 
 	const refetchSkills = useCallback(async () => {
 		if (!agentId || !sessionId) {
@@ -43,8 +59,19 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 	}, [agentId, sessionId]);
 
 	useEffect(() => {
-		refetch();
-	}, [refetch]);
+		const generation = ++mcpRequestGeneration.current;
+		setMcps([]);
+		setRefreshing(false);
+		if (!agentId || !sessionId) {
+			setLoading(false);
+			return;
+		}
+		setLoading(true);
+		const timer = window.setTimeout(() => {
+			void fetchMcps(generation, true);
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [agentId, sessionId, fetchMcps]);
 	useEffect(() => {
 		refetchSkills();
 	}, [refetchSkills]);
@@ -97,6 +124,60 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 		[agentId, sessionId, refetch],
 	);
 
+	const setMcpToolEnabled = useCallback(
+		async (mcpName: string, toolName: string, enabled: boolean) => {
+			if (!agentId || !sessionId) throw new Error('No agent/session selected');
+			const generation = mcpRequestGeneration.current;
+			const previous = mcps
+				.find((mcp) => mcp.name === mcpName)
+				?.tools.find((tool) => tool.raw_name === toolName)?.enabled;
+			setMcps((current) =>
+				current.map((mcp) => {
+					if (mcp.name !== mcpName) return mcp;
+					return {
+						...mcp,
+						tools: mcp.tools.map((tool) => {
+							if (tool.raw_name !== toolName) return tool;
+							return { ...tool, enabled };
+						}),
+					};
+				}),
+			);
+
+			try {
+				await workspaceApi.mcp.setToolEnabled(
+					agentId,
+					sessionId,
+					mcpName,
+					toolName,
+					enabled,
+				);
+			} catch (e) {
+				if (generation === mcpRequestGeneration.current && previous !== undefined) {
+					setMcps((current) =>
+						current.map((mcp) =>
+							mcp.name !== mcpName
+								? mcp
+								: {
+										...mcp,
+										tools: mcp.tools.map((tool) =>
+											tool.raw_name === toolName
+												? { ...tool, enabled: previous }
+												: tool,
+										),
+									},
+						),
+					);
+					if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+						await refetch();
+					}
+				}
+				throw e;
+			}
+		},
+		[agentId, sessionId, mcps, refetch],
+	);
+
 	const uploadSkill = useCallback(
 		async (files: File[], options: UploadOptions = {}) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
@@ -133,11 +214,13 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 	return {
 		mcps,
 		loading,
+		refreshing,
 		error,
 		refetch,
 		addMcps,
 		addMcpsFromLibrary,
 		removeMcp,
+		setMcpToolEnabled,
 		skills,
 		skillsLoading,
 		uploadSkill,

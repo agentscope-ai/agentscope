@@ -2,7 +2,6 @@
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import inspect
 import json
-import re
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
@@ -19,6 +18,7 @@ from ..permission import (
 from ._response import ToolChunk
 from ._utils import _extract_func_description, _extract_input_schema
 from .._logging import logger
+from ..mcp._utils import build_mcp_tool_name
 from ..message import (
     TextBlock,
     DataBlock,
@@ -215,9 +215,8 @@ class MCPTool(ToolBase):
         # colons, etc. — replace illegal chars with "x" (not "_")
         # to avoid collisions with the "__" separator.
         # self._tool.name retains the original for server-side calls.
-        sanitized_tool = re.sub(r"[^a-zA-Z0-9_-]", "x", tool.name)
-        self.name = f"mcp__{mcp_name}__{sanitized_tool}"
-        if sanitized_tool != tool.name:
+        self.name = build_mcp_tool_name(mcp_name, tool.name)
+        if not self.name.endswith(f"__{tool.name}"):
             logger.debug(
                 "MCP tool name sanitized: '%s' -> '%s'.",
                 tool.name,

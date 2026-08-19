@@ -106,7 +106,16 @@ class ToolInfo(BaseModel):
     """The tool info."""
 
     name: str
+    raw_name: str
     description: str | None = None
+    enabled: bool = True
+
+
+class UpdateMCPToolRequest(BaseModel):
+    """Request to change one raw MCP tool's effective state."""
+
+    tool_name: str = Field(min_length=1)
+    enabled: bool
 
 
 class MCPClientStatus(MCPClient):

@@ -1,6 +1,8 @@
 import {
 	ChevronRight,
+	CircleOff,
 	PlusCircle,
+	RefreshCw,
 	Search,
 	SearchX,
 	Trash,
@@ -15,6 +17,7 @@ import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { PanelEmpty } from '@/components/panel/PanelEmpty';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
 	Collapsible,
@@ -31,6 +34,8 @@ import {
 	ItemMedia,
 	ItemTitle,
 } from '@/components/ui/item';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { useMCPs } from '@/hooks/useMCPs.ts';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
@@ -39,6 +44,8 @@ interface McpPanelProps {
 	mcps: MCPClientStatus[];
 	/** Whether the MCP list is still loading. */
 	loading?: boolean;
+	/** Whether existing MCP data is being refreshed. */
+	refreshing?: boolean;
 	/**
 	 * Add one or more MCP servers to the workspace.
 	 *
@@ -52,6 +59,8 @@ interface McpPanelProps {
 	 * @param name - The MCP server name to remove.
 	 */
 	onRemove: (name: string) => Promise<void>;
+	/** Update one raw MCP tool without reconnecting its server. */
+	onSetToolEnabled: (mcpName: string, toolName: string, enabled: boolean) => Promise<void>;
 }
 
 interface McpRowProps {
@@ -64,6 +73,8 @@ interface McpRowProps {
 	 */
 	installed?: MCPView;
 	onDelete: () => void;
+	onToolToggle: (toolName: string, enabled: boolean) => void;
+	isToolPending: (toolName: string) => boolean;
 }
 
 /**
@@ -73,9 +84,11 @@ interface McpRowProps {
  * behind a count. A failed MCP has no tools to show, so it gets the
  * reason instead.
  */
-function McpRow({ mcp, installed, onDelete }: McpRowProps) {
+function McpRow({ mcp, installed, onDelete, onToolToggle, isToolPending }: McpRowProps) {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
+	const enabledCount = mcp.tools.filter((tool) => tool.enabled).length;
+	const allowlistMode = mcp.enable_tools !== null && mcp.enable_tools !== undefined;
 
 	return (
 		<Item variant="outline" className="group/mcp">
@@ -95,6 +108,15 @@ function McpRow({ mcp, installed, onDelete }: McpRowProps) {
 			<ItemContent>
 				<ItemTitle>
 					<div className="truncate font-medium">{mcp.name}</div>
+					{allowlistMode && (
+						<Badge
+							variant="outline"
+							className="shrink-0 font-normal text-muted-foreground"
+							title={t('panel.mcp.allowlistModeDescription')}
+						>
+							{t('panel.mcp.allowlistMode')}
+						</Badge>
+					)}
 					{installed?.author && (
 						<span className="text-xs text-muted-foreground">@{installed.author}</span>
 					)}
@@ -135,30 +157,61 @@ function McpRow({ mcp, installed, onDelete }: McpRowProps) {
 								className="w-full justify-between text-muted-foreground"
 								size="sm"
 							>
-								{t('panel.mcp.tools', { count: mcp.tools.length })}
+								{t('panel.mcp.toolsCount', {
+									enabled: enabledCount,
+									total: mcp.tools.length,
+								})}
 								<ChevronRight
 									className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
 								/>
 							</Button>
 						</CollapsibleTrigger>
-						<CollapsibleContent className="flex w-full flex-col gap-y-1 px-3 py-2">
-							{mcp.tools.map((tool) => (
-								<div key={tool.name} className="flex min-w-0 flex-col gap-y-0.5">
-									{/* Names run long and are unbroken, so they must
-								    be allowed to shrink before truncating. */}
-									<span
-										className="min-w-0 truncate font-mono text-xs"
-										title={tool.name}
-									>
-										{tool.name}
-									</span>
-									{tool.description && (
-										<span className="line-clamp-2 text-xs text-muted-foreground">
-											{tool.description}
-										</span>
-									)}
+						<CollapsibleContent className="flex w-full flex-col gap-y-1.5 px-3 py-2">
+							{mcp.tools.length > 0 && enabledCount === 0 && (
+								<div className="flex items-start gap-2 rounded-md border border-border/70 bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+									<CircleOff className="mt-0.5 size-3.5 shrink-0" />
+									<span>{t('panel.mcp.allToolsDisabled')}</span>
 								</div>
-							))}
+							)}
+							{mcp.tools.map((tool) => {
+								const pending = isToolPending(tool.raw_name);
+								return (
+									<div
+										key={tool.raw_name}
+										className="flex min-w-0 items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/50"
+									>
+										<div
+											className={`min-w-0 flex-1 ${tool.enabled ? '' : 'opacity-60'}`}
+										>
+											<span
+												className="block min-w-0 truncate font-mono text-xs"
+												title={tool.name}
+											>
+												{tool.name}
+											</span>
+											{tool.description && (
+												<span className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+													{tool.description}
+												</span>
+											)}
+										</div>
+										<Switch
+											size="sm"
+											checked={tool.enabled}
+											disabled={pending}
+											onCheckedChange={(enabled) =>
+												onToolToggle(tool.raw_name, enabled)
+											}
+											aria-label={t(
+												tool.enabled
+													? 'panel.mcp.disableTool'
+													: 'panel.mcp.enableTool',
+												{ name: tool.name },
+											)}
+										/>
+									</div>
+								);
+							})}
 						</CollapsibleContent>
 					</Collapsible>
 				) : (
@@ -197,14 +250,17 @@ function McpRow({ mcp, installed, onDelete }: McpRowProps) {
 export function McpPanel({
 	mcps,
 	loading = false,
+	refreshing = false,
 	onAdd,
 	onAddFromLibrary,
 	onRemove,
+	onSetToolEnabled,
 }: McpPanelProps) {
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+	const [pendingTools, setPendingTools] = useState<Set<string>>(new Set());
 	// The workspace stores only what it takes to connect, so the display
 	// fields are looked up in the library, matched on the shared name.
 	const { mcps: library } = useMCPs();
@@ -214,9 +270,33 @@ export function McpPanel({
 		? mcps.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()))
 		: mcps;
 
+	const toggleTool = async (mcpName: string, toolName: string, enabled: boolean) => {
+		const key = `${mcpName}:${toolName}`;
+		setPendingTools((current) => new Set(current).add(key));
+		try {
+			await onSetToolEnabled(mcpName, toolName, enabled);
+		} catch {
+			// The API client reports the error and the hook restores this tool.
+		} finally {
+			setPendingTools((current) => {
+				const next = new Set(current);
+				next.delete(key);
+				return next;
+			});
+		}
+	};
+
 	return (
 		<div className="flex flex-col flex-1 min-h-0 gap-y-2">
-			<span className="text-muted-foreground text-sm">{t('panel.mcp.description')}</span>
+			<div className="flex items-center justify-between gap-2">
+				<span className="text-muted-foreground text-sm">{t('panel.mcp.description')}</span>
+				{refreshing && (
+					<span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+						<RefreshCw className="size-3" />
+						{t('panel.mcp.refreshing')}
+					</span>
+				)}
+			</div>
 			<InputGroup>
 				<InputGroupInput
 					placeholder={t('panel.mcp.searchPlaceholder')}
@@ -228,9 +308,19 @@ export function McpPanel({
 				</InputGroupAddon>
 			</InputGroup>
 
-			{loading ? (
-				<div className="flex flex-1 items-center justify-center">
-					<p className="text-muted-foreground text-sm">{t('panel.loading')}</p>
+			{loading && mcps.length === 0 ? (
+				<div className="flex flex-col gap-2" aria-label={t('panel.loading')}>
+					{[0, 1, 2].map((item) => (
+						<div key={item} className="rounded-lg border p-3">
+							<div className="flex items-center gap-3">
+								<Skeleton className="size-9 rounded-md" />
+								<div className="flex min-w-0 flex-1 flex-col gap-2">
+									<Skeleton className="h-3.5 w-2/5" />
+									<Skeleton className="h-3 w-3/4" />
+								</div>
+							</div>
+						</div>
+					))}
 				</div>
 			) : filtered.length === 0 ? (
 				<PanelEmpty
@@ -253,6 +343,12 @@ export function McpPanel({
 								setDeleteTarget(mcp.name);
 								setDeleteOpen(true);
 							}}
+							onToolToggle={(toolName, enabled) => {
+								void toggleTool(mcp.name, toolName, enabled);
+							}}
+							isToolPending={(toolName) =>
+								pendingTools.has(`${mcp.name}:${toolName}`)
+							}
 						/>
 					))}
 				</div>

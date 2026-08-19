@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=unused-argument
+# pylint: disable=protected-access,unused-argument
 """Toolkit test case."""
 import base64
 import json
 from typing import Any, AsyncGenerator, Generator
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
-
+import mcp.types
 from utils import AnyString
 
 from agentscope.mcp import HttpMCPConfig, MCPClient
@@ -1387,6 +1388,102 @@ The tool instructions are a collection of suggestions, rules and notifications a
         )
 
         self.assertEqual(await toolkit.get_tool_schemas(), [])
+
+    async def test_disabling_mcp_tool_updates_schema_and_dispatch(
+        self,
+    ) -> None:
+        """A live filter change is re-read for schema and call dispatch."""
+        client = MCPClient(
+            name="browser",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(url="http://localhost/mcp"),
+        )
+        raw = mcp.types.Tool(
+            name="navigate",
+            description="Navigate",
+            inputSchema={"type": "object"},
+        )
+        client._cached_tools = [raw]
+        toolkit = Toolkit(mcps=[client])
+
+        with patch.object(
+            MCPClient,
+            "list_all_raw_tools",
+            AsyncMock(return_value=[raw]),
+        ):
+            schemas = await toolkit.get_tool_schemas()
+            self.assertEqual(
+                schemas,
+                [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__browser__navigate",
+                            "description": "Navigate",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "required": [],
+                            },
+                        },
+                    },
+                ],
+            )
+
+            client.set_tool_enabled(raw.name, False)
+            self.assertEqual(await toolkit.get_tool_schemas(), [])
+            results = [
+                result
+                async for result in toolkit.call_tool(
+                    ToolCallBlock(
+                        id="call",
+                        name="mcp__browser__navigate",
+                        input=json.dumps({}),
+                    ),
+                    AgentState(),
+                )
+            ]
+
+        self.assertEqual(
+            [result.model_dump() for result in results],
+            [
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "ToolNotFoundError: The tool named "
+                                "'mcp__browser__navigate' doesn't exist."
+                            ),
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "state": "error",
+                    "is_last": True,
+                    "metadata": {},
+                    "id": AnyString(),
+                },
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "ToolNotFoundError: The tool named "
+                                "'mcp__browser__navigate' doesn't exist."
+                            ),
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "state": "error",
+                    "metadata": {},
+                    "id": "call",
+                },
+            ],
+        )
 
 
 class RemoveTitleFieldTest(TestCase):

@@ -25,6 +25,7 @@ from ._workspace import (
     DownloadTokenResponse,
     MCPClientStatus,
     ToolInfo,
+    UpdateMCPToolRequest,
 )
 from ._embedding_model import (
     ListEmbeddingModelsResponse,
@@ -106,6 +107,7 @@ __all__ = [
     "DownloadTokenResponse",
     "MCPClientStatus",
     "ToolInfo",
+    "UpdateMCPToolRequest",
     # Agent
     "AgentSchemaResponse",
     "AgentSchemaV2Response",

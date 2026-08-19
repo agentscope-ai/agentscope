@@ -240,9 +240,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const {
 		mcps,
 		loading: mcpsLoading,
+		refreshing: mcpsRefreshing,
 		addMcps,
 		addMcpsFromLibrary,
 		removeMcp,
+		setMcpToolEnabled,
 		skills,
 		skillsLoading,
 		uploadSkill,
@@ -365,9 +367,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					<McpPanel
 						mcps={mcps}
 						loading={mcpsLoading}
+						refreshing={mcpsRefreshing}
 						onAdd={addMcps}
 						onAddFromLibrary={addMcpsFromLibrary}
 						onRemove={removeMcp}
+						onSetToolEnabled={setMcpToolEnabled}
 					/>
 				),
 			},
@@ -446,9 +450,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			tasksContext,
 			mcps,
 			mcpsLoading,
+			mcpsRefreshing,
 			addMcps,
 			addMcpsFromLibrary,
 			removeMcp,
+			setMcpToolEnabled,
 			skills,
 			skillsLoading,
 			uploadSkill,

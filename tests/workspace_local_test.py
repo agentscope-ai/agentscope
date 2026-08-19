@@ -33,6 +33,7 @@ from agentscope.tool import (
 )
 from agentscope.permission import PermissionDecision, PermissionBehavior
 from agentscope.workspace import LocalWorkspace, WorkspaceBase
+from agentscope.workspace._base import MCPPersistenceError
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
@@ -1620,6 +1621,181 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
 
         # A scope that only read defaults leaves no trace on disk.
         self.assertFalse(os.path.exists(self.mcp_file))
+
+    async def test_tool_state_update_is_scoped_and_persistent(self) -> None:
+        """A tool toggle materializes only its session declaration."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        current = (
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
+        )[0]
+
+        await ws.set_mcp_tool_enabled(
+            "seed",
+            "hidden-tool",
+            False,
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+
+        updated = (
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
+        )[0]
+        untouched = (
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-2")
+        )[0]
+        self.assertIs(updated, current)
+        self.assertEqual(
+            {
+                "updated": updated.model_dump(mode="json"),
+                "untouched": untouched.model_dump(mode="json"),
+                "persisted": self._read_mcp_file(),
+            },
+            {
+                "updated": {
+                    "name": "seed",
+                    "is_stateful": False,
+                    "mcp_config": {
+                        "type": "http_mcp",
+                        "url": "http://127.0.0.1:1/seed",
+                        "headers": None,
+                        "timeout": 30.0,
+                    },
+                    "enable_tools": None,
+                    "disable_tools": ["hidden-tool"],
+                    "execution_timeout": None,
+                },
+                "untouched": {
+                    "name": "seed",
+                    "is_stateful": False,
+                    "mcp_config": {
+                        "type": "http_mcp",
+                        "url": "http://127.0.0.1:1/seed",
+                        "headers": None,
+                        "timeout": 30.0,
+                    },
+                    "enable_tools": None,
+                    "disable_tools": None,
+                    "execution_timeout": None,
+                },
+                "persisted": {
+                    "version": 2,
+                    "mcps": {
+                        "agent-A": {
+                            "sess-1": [
+                                {
+                                    "name": "seed",
+                                    "is_stateful": False,
+                                    "mcp_config": {
+                                        "type": "http_mcp",
+                                        "url": ("http://127.0.0.1:1/seed"),
+                                        "headers": None,
+                                        "timeout": 30.0,
+                                    },
+                                    "enable_tools": None,
+                                    "disable_tools": ["hidden-tool"],
+                                    "execution_timeout": None,
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        )
+
+        await ws.close()
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        restored = (
+            await ws2.list_mcps(agent_id="agent-A", session_id="sess-1")
+        )[0]
+        self.assertEqual(
+            restored.model_dump(mode="json"),
+            {
+                "name": "seed",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "http://127.0.0.1:1/seed",
+                    "headers": None,
+                    "timeout": 30.0,
+                },
+                "enable_tools": None,
+                "disable_tools": ["hidden-tool"],
+                "execution_timeout": None,
+            },
+        )
+
+    async def test_tool_state_persistence_failure_does_not_commit(
+        self,
+    ) -> None:
+        """A strict write failure leaves declarations and live state old."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        live = (await ws.list_mcps(agent_id="agent-A", session_id="sess-1"))[0]
+        backend = ws.get_backend()
+
+        persistence = AsyncMock(side_effect=OSError("replace failed"))
+        with patch.object(
+            backend,
+            "write_file_atomic",
+            persistence,
+        ):
+            with self.assertRaises(MCPPersistenceError):
+                await ws.set_mcp_tool_enabled(
+                    "seed",
+                    "hidden-tool",
+                    False,
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+
+        self.assertEqual(
+            {
+                "live": live.model_dump(mode="json"),
+                "specs": ws._mcp_specs,
+                "file_exists": os.path.exists(self.mcp_file),
+                "write_path": persistence.await_args.args[0],
+                "candidate": json.loads(persistence.await_args.args[1]),
+            },
+            {
+                "live": {
+                    "name": "seed",
+                    "is_stateful": False,
+                    "mcp_config": {
+                        "type": "http_mcp",
+                        "url": "http://127.0.0.1:1/seed",
+                        "headers": None,
+                        "timeout": 30.0,
+                    },
+                    "enable_tools": None,
+                    "disable_tools": None,
+                    "execution_timeout": None,
+                },
+                "specs": {},
+                "file_exists": False,
+                "write_path": self.mcp_file,
+                "candidate": {
+                    "version": 2,
+                    "mcps": {
+                        "agent-A": {
+                            "sess-1": [
+                                {
+                                    "name": "seed",
+                                    "is_stateful": False,
+                                    "mcp_config": {
+                                        "type": "http_mcp",
+                                        "url": ("http://127.0.0.1:1/seed"),
+                                        "headers": None,
+                                        "timeout": 30.0,
+                                    },
+                                    "enable_tools": None,
+                                    "disable_tools": ["hidden-tool"],
+                                    "execution_timeout": None,
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        )
 
     async def test_add_and_remove_are_scoped(self) -> None:
         """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-lines
+# pylint: disable=too-many-lines,too-many-public-methods
 """WorkspaceBase — abstract interface and shared backend-driven impl.
 
 A workspace provides:
@@ -218,6 +218,14 @@ _EXTRACT_ARCHIVE_SHIM = (
 
 #: Ceiling on what an archive may expand to inside the sandbox.
 DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
+
+
+class MCPPersistenceError(RuntimeError):
+    """Raised when a candidate MCP configuration cannot be persisted."""
+
+
+class MCPConcurrentMutationError(RuntimeError):
+    """Raised when an MCP disappears before an update can commit."""
 
 
 class WorkspaceBase:
@@ -656,6 +664,113 @@ class WorkspaceBase:
             # not jump to the end.
             return [live[s.name] for s in specs if s.name in live]
 
+    async def get_mcp_spec(
+        self,
+        name: str,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> MCPClient | None:
+        """Return a detached declaration for one session MCP.
+
+        This query includes declarations whose live connection could not be
+        started, allowing management APIs to distinguish an unknown MCP from
+        a configured but currently unavailable one.
+
+        Args:
+            name (`str`):
+                MCP name to find.
+            agent_id (`str | None`, optional):
+                Owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                Owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient | None`:
+                A detached declaration, or ``None`` when not configured.
+        """
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            for spec in self._declared_specs(agent_id, session_id):
+                if spec.name == name:
+                    return MCPClient.model_validate(
+                        spec.model_dump(mode="json"),
+                    )
+        return None
+
+    async def set_mcp_tool_enabled(
+        self,
+        mcp_name: str,
+        tool_name: str,
+        enabled: bool,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Set one MCP tool state without rebuilding its connection.
+
+        Tool existence must be validated by the caller before entering this
+        method. The declaration is checked again under the MCP lock so a
+        concurrent removal cannot recreate a deleted MCP.
+
+        Args:
+            mcp_name (`str`):
+                MCP whose filter should change.
+            tool_name (`str`):
+                Raw MCP tool name.
+            enabled (`bool`):
+                Whether the tool should be available.
+            agent_id (`str | None`, optional):
+                Owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                Owning session. ``None`` means the legacy ``""``.
+
+        Raises:
+            MCPConcurrentMutationError:
+                The MCP was removed before the update acquired the lock.
+            MCPPersistenceError:
+                The candidate declaration could not be atomically persisted.
+        """
+        agent_id, session_id = agent_id or "", session_id or ""
+        key = (agent_id, session_id)
+        async with self._mcp_lock:
+            current_specs = self._declared_specs(agent_id, session_id)
+            if not any(spec.name == mcp_name for spec in current_specs):
+                raise MCPConcurrentMutationError(
+                    f"MCP {mcp_name!r} was removed before the update.",
+                )
+
+            candidate_session = [
+                MCPClient.model_validate(spec.model_dump(mode="json"))
+                for spec in current_specs
+            ]
+            candidate_spec = next(
+                spec for spec in candidate_session if spec.name == mcp_name
+            )
+            candidate_spec.set_tool_enabled(tool_name, enabled)
+
+            candidate_mapping = dict(self._mcp_specs)
+            candidate_mapping[key] = candidate_session
+            await self._persist_mcp_specs(
+                candidate_mapping,
+                raise_on_error=True,
+            )
+
+            self._mcp_specs = candidate_mapping
+            live = self._mcp_instances.get(key, {}).get(mcp_name)
+            if live is not None:
+                live.set_tool_enabled(tool_name, enabled)
+
+            logger.info(
+                "MCP tool state updated: agent=%r session=%r mcp=%r "
+                "tool=%r enabled=%r",
+                agent_id,
+                session_id,
+                mcp_name,
+                tool_name,
+                enabled,
+            )
+
     # ── for User: dynamic MCP management ───────────────────────────
 
     @abstractmethod
@@ -897,15 +1012,42 @@ class WorkspaceBase:
 
         Callers are expected to hold :attr:`_mcp_lock` already.
         """
+        await self._persist_mcp_specs(
+            self._mcp_specs,
+            raise_on_error=False,
+        )
+
+    async def _persist_mcp_specs(
+        self,
+        specs_mapping: dict[tuple[str, str], list[MCPClient]],
+        *,
+        raise_on_error: bool,
+    ) -> None:
+        """Atomically persist a candidate MCP declaration mapping.
+
+        Args:
+            specs_mapping (`dict[tuple[str, str], list[MCPClient]]`):
+                Complete candidate declaration state.
+            raise_on_error (`bool`):
+                Whether to surface failure as :class:`MCPPersistenceError`.
+
+        Raises:
+            MCPPersistenceError:
+                Persistence failed and ``raise_on_error`` is true.
+        """
         if not self.is_persistent:
             return
         backend = self._backend
         if backend is None:
+            if raise_on_error:
+                raise MCPPersistenceError(
+                    f"Workspace {self.workspace_id!r} has no backend.",
+                )
             return
         # Nested {agent_id: {session_id: [...]}} on disk rather than a
         # joined key, so no separator can collide with an id.
         mcps: dict[str, dict[str, list[dict]]] = {}
-        for (agent_id, session_id), specs in self._mcp_specs.items():
+        for (agent_id, session_id), specs in specs_mapping.items():
             mcps.setdefault(agent_id, {})[session_id] = [
                 m.model_dump(mode="json") for m in specs
             ]
@@ -915,13 +1057,19 @@ class WorkspaceBase:
             ensure_ascii=False,
         ).encode("utf-8")
         try:
-            await backend.write_file(self._mcp_file, payload)
+            await backend.write_file_atomic(self._mcp_file, payload)
         except Exception as e:
-            logger.warning(
-                "Failed to save MCP file at %s: %s",
+            logger.error(
+                "Failed to save MCP file for workspace=%r at %s: %s",
+                self.workspace_id,
                 self._mcp_file,
                 e,
             )
+            if raise_on_error:
+                raise MCPPersistenceError(
+                    f"Failed to persist MCP configuration for workspace "
+                    f"{self.workspace_id!r}.",
+                ) from e
 
     async def _restore_mcp_specs(
         self,
