@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 # pylint: disable=protected-access
+import hashlib
 import json
 import os
 import tempfile
@@ -37,7 +38,7 @@ _PNG_BASE64 = (
 )
 
 
-def _image_block(name: str | None = None) -> DataBlock:
+def _image_block(name: str) -> DataBlock:
     """Create a base64 image data block."""
     return DataBlock(
         source=Base64Source(data=_PNG_BASE64, media_type="image/png"),
@@ -46,10 +47,15 @@ def _image_block(name: str | None = None) -> DataBlock:
 
 
 def _build_image_context() -> list[Msg]:
-    """Build a context with 5 images located at the message top level,
-    inside a tool result and inside a hint block, plus one audio block."""
+    """Build a context with 6 images located at the message top level (user
+    and assistant), inside a tool result and inside a hint block, plus one
+    audio block."""
     return [
-        UserMsg("User", [_image_block("img1")], id="1"),
+        UserMsg(
+            "User",
+            [_image_block("img1"), TextBlock(type="text", text="hello")],
+            id="1",
+        ),
         AssistantMsg(
             "Friday",
             [
@@ -75,6 +81,7 @@ def _build_image_context() -> list[Msg]:
                         _image_block("img3"),
                     ],
                 ),
+                _image_block("img4"),
             ],
             id="2",
         ),
@@ -86,16 +93,139 @@ def _build_image_context() -> list[Msg]:
                 ),
                 DataBlock(
                     source=URLSource(
-                        url="https://example.com/img4.png",
+                        url="https://example.com/img5.png",
                         media_type="image/png",
                     ),
-                    name="img4",
+                    name="img5",
                 ),
-                _image_block("img5"),
+                _image_block("img6"),
             ],
             id="3",
         ),
     ]
+
+
+def _text_dump(text: str) -> dict:
+    """The expected dump of a text block."""
+    return {
+        "type": "text",
+        "text": text,
+        "id": AnyString(),
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+
+def _hint_dump(hint: str | list[dict]) -> dict:
+    """The expected dump of a hint block."""
+    return {
+        "type": "hint",
+        "hint": hint,
+        "id": AnyString(),
+        "source": None,
+        "created_at": AnyString(),
+        "finished_at": AnyString(),
+    }
+
+
+def _image_dump(name: str | None, source: dict | None = None) -> dict:
+    """The expected dump of an image data block."""
+    return {
+        "type": "data",
+        "id": AnyString(),
+        "source": source
+        or {
+            "type": "base64",
+            "data": _PNG_BASE64,
+            "media_type": "image/png",
+        },
+        "name": name,
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+
+def _audio_dump() -> dict:
+    """The expected dump of the audio data block."""
+    return {
+        "type": "data",
+        "id": AnyString(),
+        "source": {
+            "type": "base64",
+            "data": "AAAA",
+            "media_type": "audio/wav",
+        },
+        "name": None,
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+
+def _url_image_dump(name: str, url: str) -> dict:
+    """The expected dump of a URL image data block."""
+    return _image_dump(
+        name,
+        {"type": "url", "url": url, "media_type": "image/png"},
+    )
+
+
+def _tool_blocks_dump(output: list[dict]) -> list[dict]:
+    """The expected dump of the tool call and tool result blocks."""
+    return [
+        {
+            "type": "tool_call",
+            "id": "call_1",
+            "name": "view",
+            "input": "{}",
+            "state": "pending",
+            "suggested_rules": [],
+            "created_at": AnyString(),
+            "finished_at": None,
+        },
+        {
+            "type": "tool_result",
+            "id": "call_1",
+            "name": "view",
+            "output": output,
+            "state": "success",
+            "metadata": {},
+            "created_at": AnyString(),
+            "finished_at": None,
+        },
+    ]
+
+
+def _msg_dump(msg_id: str, role: str, content: list[dict]) -> dict:
+    """The expected dump of a message."""
+    return {
+        "name": "User" if role == "user" else "Friday",
+        "content": content,
+        "role": role,
+        "id": msg_id,
+        "metadata": {},
+        "created_at": AnyString(),
+        "usage": None,
+        "finished_at": AnyString() if role == "user" else None,
+        "finished_reason": None,
+        "structured_output": None,
+        "error": None,
+    }
+
+
+def _removed(name: str) -> str:
+    """The hint text for a removed image without offloading."""
+    return (
+        f"<system-reminder>The image named '{name}' is removed to free up "
+        f"context space.</system-reminder>"
+    )
+
+
+def _offloaded(name: str, url: str) -> str:
+    """The hint text for an offloaded image."""
+    return (
+        f"<system-reminder>The image named '{name}' is offloaded into "
+        f"{url}, you can refer to it when needed.</system-reminder>"
+    )
 
 
 class RecordingStructuredMockModel(MockModel):
@@ -1459,11 +1589,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
     async def test_max_image_num_without_offloader(self) -> None:
         """The oldest images exceeding the limit are dropped and replaced by
         hints without path information when no offloader is provided."""
-        model = MockModel(context_size=100000)
         agent = Agent(
             name="Friday",
             system_prompt="You're a helpful assistant.",
-            model=model,
+            model=MockModel(context_size=100000),
             context_config=ContextConfig(max_image_num=2),
             state=AgentState(session_id="123", context=_build_image_context()),
             toolkit=Toolkit(),
@@ -1473,59 +1602,59 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         # image limitation takes effect
         await agent.compress_context()
 
-        ctx = agent.state.context
-        self.assertEqual(len(ctx), 3)
-
-        # img1: top-level DataBlock -> HintBlock
-        self.assertIsInstance(ctx[0].content[0], HintBlock)
-        self.assertEqual(
-            ctx[0].content[0].hint,
-            "<system-reminder>The image named 'img1' is removed for "
-            "context management.</system-reminder>",
+        expected = [
+            _msg_dump(
+                "1",
+                "user",
+                [_text_dump(_removed("img1")), _text_dump("hello")],
+            ),
+            _msg_dump(
+                "2",
+                "assistant",
+                _tool_blocks_dump(
+                    [_text_dump("the image:"), _text_dump(_removed("img2"))],
+                )
+                + [
+                    _hint_dump(
+                        [
+                            _text_dump("a hint image:"),
+                            _text_dump(_removed("img3")),
+                        ],
+                    ),
+                    _hint_dump(_removed("img4")),
+                ],
+            ),
+            _msg_dump(
+                "3",
+                "user",
+                [
+                    _audio_dump(),
+                    _url_image_dump("img5", "https://example.com/img5.png"),
+                    _image_dump("img6"),
+                ],
+            ),
+        ]
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            expected,
         )
-
-        # img2: inside tool result -> TextBlock
-        tool_result = ctx[1].content[1]
-        self.assertIsInstance(tool_result, ToolResultBlock)
-        self.assertIsInstance(tool_result.output[1], TextBlock)
-        self.assertEqual(
-            tool_result.output[1].text,
-            "<system-reminder>The image named 'img2' is removed for "
-            "context management.</system-reminder>",
-        )
-
-        # img3: inside hint block -> TextBlock
-        hint = ctx[1].content[2]
-        self.assertIsInstance(hint, HintBlock)
-        self.assertIsInstance(hint.hint[1], TextBlock)
-        self.assertEqual(
-            hint.hint[1].text,
-            "<system-reminder>The image named 'img3' is removed for "
-            "context management.</system-reminder>",
-        )
-
-        # The audio block is untouched, and the last two images are reserved
-        self.assertIsInstance(ctx[2].content[0], DataBlock)
-        self.assertEqual(ctx[2].content[0].source.media_type, "audio/wav")
-        self.assertIsInstance(ctx[2].content[1], DataBlock)
-        self.assertEqual(ctx[2].content[1].name, "img4")
-        self.assertIsInstance(ctx[2].content[2], DataBlock)
-        self.assertEqual(ctx[2].content[2].name, "img5")
 
         # Calling again should be a no-op
         await agent.compress_context()
-        self.assertEqual(agent.state.context[2].content[2].name, "img5")
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            expected,
+        )
 
     async def test_max_image_num_with_offloader(self) -> None:
         """The oldest images exceeding the limit are offloaded and replaced
         by hints recording the offloaded path when an offloader is
         provided; URL images keep their original URL."""
         with tempfile.TemporaryDirectory() as workdir:
-            model = MockModel(context_size=100000)
             agent = Agent(
                 name="Friday",
                 system_prompt="You're a helpful assistant.",
-                model=model,
+                model=MockModel(context_size=100000),
                 context_config=ContextConfig(max_image_num=1),
                 state=AgentState(
                     session_id="123",
@@ -1537,46 +1666,64 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
             await agent.compress_context()
 
-            ctx = agent.state.context
-            # img1: offloaded and replaced by a HintBlock with the path
-            block = ctx[0].content[0]
-            self.assertIsInstance(block, HintBlock)
-            self.assertRegex(
-                block.hint,
-                r"^<system-reminder>The image named 'img1' is removed for "
-                r"context management\. It is saved into "
-                r"workspace:///data/[0-9a-f]+\.png, "
-                r"you can refer to it when needed\.</system-reminder>$",
-            )
-            rel = block.hint.split("workspace:///")[1].split(",")[0]
-            self.assertTrue(os.path.exists(os.path.join(workdir, rel)))
-
-            # img2 and img3 are offloaded to the same file (same content)
-            self.assertIn(
-                f"workspace:///{rel}",
-                ctx[1].content[1].output[1].text,
-            )
-            self.assertIn(
-                f"workspace:///{rel}",
-                ctx[1].content[2].hint[1].text,
+            # All the base64 images share the same content, thus the same
+            # offloaded path
+            rel = "data/" + hashlib.sha256(_PNG_BASE64.encode()).hexdigest()
+            url = f"workspace:///{rel}.png"
+            self.assertTrue(
+                os.path.exists(os.path.join(workdir, rel + ".png")),
             )
 
-            # img4: URL image, keeps the original URL without offloading
-            self.assertIsInstance(ctx[2].content[1], HintBlock)
-            self.assertEqual(
-                ctx[2].content[1].hint,
-                "<system-reminder>The image named 'img4' is removed for "
-                "context management. It is saved into "
-                "https://example.com/img4.png, you can refer to it when "
-                "needed.</system-reminder>",
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [
+                    _msg_dump(
+                        "1",
+                        "user",
+                        [
+                            _text_dump(_offloaded("img1", url)),
+                            _text_dump("hello"),
+                        ],
+                    ),
+                    _msg_dump(
+                        "2",
+                        "assistant",
+                        _tool_blocks_dump(
+                            [
+                                _text_dump("the image:"),
+                                _text_dump(_offloaded("img2", url)),
+                            ],
+                        )
+                        + [
+                            _hint_dump(
+                                [
+                                    _text_dump("a hint image:"),
+                                    _text_dump(_offloaded("img3", url)),
+                                ],
+                            ),
+                            _hint_dump(_offloaded("img4", url)),
+                        ],
+                    ),
+                    _msg_dump(
+                        "3",
+                        "user",
+                        [
+                            _audio_dump(),
+                            _text_dump(
+                                _offloaded(
+                                    "img5",
+                                    "https://example.com/img5.png",
+                                ),
+                            ),
+                            _image_dump("img6"),
+                        ],
+                    ),
+                ],
             )
-
-            # img5 is reserved
-            self.assertIsInstance(ctx[2].content[2], DataBlock)
-            self.assertEqual(ctx[2].content[2].name, "img5")
 
     async def test_max_image_num_default(self) -> None:
-        """The default limit is 5, so no image is removed for 5 images."""
+        """The default limit is 5, so only the oldest image is removed for a
+        context with 6 images."""
         agent = Agent(
             name="Friday",
             system_prompt="You're a helpful assistant.",
@@ -1585,8 +1732,44 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             toolkit=Toolkit(),
         )
         self.assertEqual(agent.context_config.max_image_num, 5)
+
         await agent.compress_context()
-        self.assertIsInstance(agent.state.context[0].content[0], DataBlock)
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                _msg_dump(
+                    "1",
+                    "user",
+                    [_text_dump(_removed("img1")), _text_dump("hello")],
+                ),
+                _msg_dump(
+                    "2",
+                    "assistant",
+                    _tool_blocks_dump(
+                        [_text_dump("the image:"), _image_dump("img2")],
+                    )
+                    + [
+                        _hint_dump(
+                            [_text_dump("a hint image:"), _image_dump("img3")],
+                        ),
+                        _image_dump("img4"),
+                    ],
+                ),
+                _msg_dump(
+                    "3",
+                    "user",
+                    [
+                        _audio_dump(),
+                        _url_image_dump(
+                            "img5",
+                            "https://example.com/img5.png",
+                        ),
+                        _image_dump("img6"),
+                    ],
+                ),
+            ],
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

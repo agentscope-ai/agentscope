@@ -642,10 +642,11 @@ class Agent:
         by a hint recording the offloaded path; otherwise they are dropped and
         replaced by a hint without path information.
 
-        Image data blocks at the top level of a message are replaced by
-        :class:`HintBlock`, while those nested inside a
-        :class:`ToolResultBlock` or a :class:`HintBlock` are replaced by
-        :class:`TextBlock` (as required by their type constraints).
+        Image data blocks at the top level of a non-user message are
+        replaced by :class:`HintBlock`, while those in user messages or
+        nested inside a :class:`ToolResultBlock` / :class:`HintBlock` are
+        replaced by :class:`TextBlock` (as required by their type
+        constraints).
 
         Args:
             cfg (`ContextConfig`):
@@ -661,26 +662,30 @@ class Agent:
             ) and block.source.media_type.startswith("image/")
 
         # Collect all the image data blocks in chronological order, recorded
-        # as (container list, index, block, is_top_level)
-        images: list[tuple[list, int, DataBlock, bool]] = []
+        # as (container list, index, block, is_top_level, role)
+        images: list[tuple[list, int, DataBlock, bool, str]] = []
         for msg in self.state.context:
             for i, block in enumerate(msg.content):
                 if _is_image(block):
-                    images.append((msg.content, i, block, True))
+                    images.append((msg.content, i, block, True, msg.role))
                 elif isinstance(block, ToolResultBlock) and isinstance(
                     block.output,
                     list,
                 ):
                     for j, sub in enumerate(block.output):
                         if _is_image(sub):
-                            images.append((block.output, j, sub, False))
+                            images.append(
+                                (block.output, j, sub, False, msg.role),
+                            )
                 elif isinstance(block, HintBlock) and isinstance(
                     block.hint,
                     list,
                 ):
                     for j, sub in enumerate(block.hint):
                         if _is_image(sub):
-                            images.append((block.hint, j, sub, False))
+                            images.append(
+                                (block.hint, j, sub, False, msg.role),
+                            )
 
         n_exceed = len(images) - max_image_num
         if n_exceed <= 0:
@@ -699,7 +704,7 @@ class Agent:
         # the replacements together to avoid partial modification on
         # interruption
         replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
-        for container, idx, block, is_top_level in images[:n_exceed]:
+        for container, idx, block, is_top_level, role in images[:n_exceed]:
             url = ""
             if isinstance(block.source, URLSource):
                 url = str(block.source.url)
@@ -711,20 +716,23 @@ class Agent:
             name = f"named '{block.name}' " if block.name else ""
             if url:
                 text = (
-                    f"<system-reminder>The image {name}is removed for "
-                    f"context management. It is saved into {url}, you can "
-                    f"refer to it when needed.</system-reminder>"
+                    f"<system-reminder>The image {name}is offloaded into "
+                    f"{url}, you can refer to it when needed."
+                    f"</system-reminder>"
                 )
             else:
                 text = (
-                    f"<system-reminder>The image {name}is removed for "
-                    f"context management.</system-reminder>"
+                    f"<system-reminder>The image {name}is removed to free "
+                    f"up context space.</system-reminder>"
                 )
 
             new_block: HintBlock | TextBlock
-            if is_top_level:
+            if is_top_level and role != "user":
                 new_block = HintBlock(hint=text)
             else:
+                # User messages only accept text/data blocks (see the
+                # validator in Msg), and a hint block is equivalent to a user
+                # text block for the model anyway.
                 new_block = TextBlock(type="text", text=text)
             replacements.append((container, idx, new_block))
 
