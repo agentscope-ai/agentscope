@@ -3,19 +3,20 @@
 import asyncio
 import base64
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
 from agentscope.app.channel._base import ChannelConfirmationResultEvent
 from agentscope.app.channel import WhatsAppChannel
+from agentscope.app.channel._whatsapp._channel import WhatsAppAPIError
 from agentscope.app.channel._whatsapp._tools import (
     ListChatMembers,
     ListChats,
     SendMessage,
 )
-from agentscope.message import Base64Source, DataBlock
+from agentscope.message import Base64Source, DataBlock, TextBlock
 
 
 def _channel() -> WhatsAppChannel:
@@ -399,6 +400,46 @@ def test_failed_media_download_can_be_retried() -> None:
     asyncio.run(run())
 
 
+def test_shared_webhook_media_failure_is_not_normalized() -> None:
+    """Surface media failures so shared dedupe is not committed."""
+
+    async def run() -> None:
+        channel = _channel()
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "wamid-media-failed",
+                                        "from": "8613800138000",
+                                        "type": "image",
+                                        "image": {
+                                            "id": "media-failed",
+                                            "mime_type": "image/png",
+                                            "caption": "Keep this caption",
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+        with patch.object(
+            channel,
+            "_download_media",
+            new=AsyncMock(return_value=None),
+        ):
+            with pytest.raises(RuntimeError, match="media-failed"):
+                await channel.normalize_webhook(payload)
+
+    asyncio.run(run())
+
+
 def test_confirmation_reply_is_normalized() -> None:
     """Turn WhatsApp approval replies into confirmation result events."""
 
@@ -437,5 +478,79 @@ def test_confirmation_reply_is_normalized() -> None:
         assert event.agent_id == "agent-1"
         assert event.session_id == "session-1"
         assert event.approved
+
+    asyncio.run(run())
+
+
+def test_media_caption_is_preserved_with_downloaded_media() -> None:
+    """Keep a media caption as text so the gateway processes it immediately."""
+
+    async def run() -> None:
+        channel = _channel()
+        media = DataBlock(
+            source=Base64Source(
+                data=base64.b64encode(b"image").decode(),
+                media_type="image/png",
+            ),
+            name="image.png",
+        )
+        message = {
+            "id": "wamid-caption-1",
+            "from": "8613800138000",
+            "type": "image",
+            "image": {
+                "id": "media-caption-1",
+                "mime_type": "image/png",
+                "caption": "Please inspect this label",
+            },
+        }
+        with patch.object(
+            channel,
+            "_download_media",
+            new=AsyncMock(return_value=media),
+        ):
+            event = await channel._normalize_message(message, {})
+        assert event is not None
+        assert isinstance(event.content[0], TextBlock)
+        assert event.content[0].text == "Please inspect this label"
+        assert event.content[1] == media
+
+    asyncio.run(run())
+
+
+def test_send_json_surfaces_graph_api_errors() -> None:
+    """Do not treat an unsuccessful Graph API response as a send success."""
+
+    async def run() -> None:
+        channel = _channel()
+        response = MagicMock()
+        response.status_code = 400
+        response.json.return_value = {
+            "error": {"code": 100, "message": "Invalid recipient"},
+        }
+        response.raise_for_status.side_effect = RuntimeError("HTTP 400")
+        channel._http = AsyncMock()  # pylint: disable=protected-access
+        channel._http.post.return_value = response
+
+        with pytest.raises(WhatsAppAPIError, match="Invalid recipient"):
+            await channel._send_json({"type": "text"})
+        assert "Invalid recipient" in channel.status.last_error
+        assert "HTTP status 400" in channel.status.last_error
+
+    asyncio.run(run())
+
+
+def test_send_json_allows_empty_error_field_on_success() -> None:
+    """An empty optional error field is not an API failure by itself."""
+
+    async def run() -> None:
+        channel = _channel()
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"error": {}}
+        channel._http = AsyncMock()  # pylint: disable=protected-access
+        channel._http.post.return_value = response
+
+        assert await channel._send_json({"type": "text"}) == {"error": {}}
 
     asyncio.run(run())

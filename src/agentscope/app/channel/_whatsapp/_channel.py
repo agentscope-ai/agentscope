@@ -15,7 +15,13 @@ import hmac
 import json
 import mimetypes
 from collections import OrderedDict
-from typing import AsyncIterator, Awaitable, Callable, TYPE_CHECKING
+from typing import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    TYPE_CHECKING,
+)
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -36,6 +42,23 @@ if TYPE_CHECKING:
     import httpx
     from ....tool import ToolBase
     from ....workspace import WorkspaceBase
+
+
+class WhatsAppAPIError(RuntimeError):
+    """A WhatsApp Graph API request was rejected or returned an error."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class _WhatsAppMediaDownloadError(RuntimeError):
+    """A webhook media attachment could not be downloaded."""
 
 
 class WhatsAppChannel(ChannelBase):
@@ -176,6 +199,46 @@ class WhatsAppChannel(ChannelBase):
                 await self._http.aclose()
                 self._http = None
 
+    @staticmethod
+    def _webhook_messages(
+        payload: dict,
+    ) -> Iterator[tuple[dict, dict]]:
+        """Yield ``(message, value)`` pairs from a Meta webhook payload."""
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+                for message in value.get("messages", []):
+                    yield message, value
+
+    async def normalize_webhook(
+        self,
+        payload: dict,
+    ) -> list[ChannelEvent | ChannelConfirmationResultEvent]:
+        """Normalize webhook messages without requiring a local listener.
+
+        The normal channel listener owns its HTTP client.  A shared webhook
+        consumer may instead create a short-lived channel on a different
+        worker, so this method owns a temporary client when necessary.
+        """
+        import httpx
+
+        owns_http = self._http is None
+        if owns_http:
+            self._http = httpx.AsyncClient(timeout=30.0)
+        try:
+            events: list[
+                ChannelEvent | ChannelConfirmationResultEvent
+            ] = []
+            for message, value in self._webhook_messages(payload):
+                event = await self._normalize_message(message, value)
+                if event is not None:
+                    events.append(event)
+            return events
+        finally:
+            if owns_http and self._http:
+                await self._http.aclose()
+                self._http = None
+
     async def handle_webhook(self, payload: dict) -> int:
         """Parse a Meta webhook payload and enqueue supported messages.
 
@@ -183,22 +246,24 @@ class WhatsAppChannel(ChannelBase):
         before calling this method.  Duplicate message ids are ignored.
         """
         count = 0
-        for entry in payload.get("entry", []):
-            for change in entry.get("changes", []):
-                value = change.get("value", {})
-                for message in value.get("messages", []):
-                    message_id = str(message.get("id", ""))
-                    if message_id and not self._claim_message(message_id):
-                        continue
-                    try:
-                        event = await self._normalize_message(message, value)
-                        if event:
-                            await self._queue.put(event)
-                            if message_id:
-                                self._remember_message(message_id)
-                            count += 1
-                    finally:
-                        self._processing_message_ids.discard(message_id)
+        for message, value in self._webhook_messages(payload):
+            message_id = str(message.get("id", ""))
+            if message_id and not self._claim_message(message_id):
+                continue
+            try:
+                event = await self._normalize_message(message, value)
+                if event:
+                    await self._queue.put(event)
+                    if message_id:
+                        self._remember_message(message_id)
+                    count += 1
+            except _WhatsAppMediaDownloadError:
+                logger.warning(
+                    "WhatsApp media message %s could not be normalized",
+                    message_id,
+                )
+            finally:
+                self._processing_message_ids.discard(message_id)
         return count
 
     def _claim_message(self, message_id: str) -> bool:
@@ -246,13 +311,19 @@ class WhatsAppChannel(ChannelBase):
                 content = [TextBlock(text=text)]
         elif msg_type in {"image", "document", "audio", "video"}:
             media = message.get(msg_type, {})
+            caption = str(media.get("caption") or "").strip()
             block = await self._download_media(
                 media.get("id", ""),
                 media.get("mime_type", "application/octet-stream"),
                 media.get("filename", msg_type),
             )
-            if block:
-                content = [block]
+            if block is None:
+                raise _WhatsAppMediaDownloadError(
+                    f"Failed to download WhatsApp media {media.get('id', '')}",
+                )
+            if caption:
+                content.append(TextBlock(text=caption))
+            content.append(block)
         if not content:
             return None
         profile = (value.get("contacts") or [{}])[0]
@@ -669,10 +740,67 @@ class WhatsAppChannel(ChannelBase):
                 headers={"Authorization": f"Bearer {self._access_token}"},
                 json=body,
             )
-            return response.json()
-        except Exception:  # pylint: disable=broad-except
+            try:
+                payload = response.json()
+            except Exception as exc:  # pylint: disable=broad-except
+                status_code = getattr(response, "status_code", "unknown")
+                message = (
+                    "WhatsApp API returned invalid JSON "
+                    f"(HTTP status {status_code})."
+                )
+                self.status.last_error = message
+                raise WhatsAppAPIError(
+                    message,
+                    status_code=getattr(response, "status_code", None),
+                ) from exc
+            try:
+                response.raise_for_status()
+            except Exception as exc:  # pylint: disable=broad-except
+                message = self._api_error_message(payload, response)
+                self.status.last_error = message
+                raise WhatsAppAPIError(
+                    message,
+                    status_code=getattr(response, "status_code", None),
+                ) from exc
+            if isinstance(payload, dict) and payload.get("error"):
+                message = self._api_error_message(payload, response)
+                self.status.last_error = message
+                raise WhatsAppAPIError(
+                    message,
+                    status_code=getattr(response, "status_code", None),
+                )
+            if not isinstance(payload, dict):
+                status_code = getattr(response, "status_code", "unknown")
+                message = (
+                    "WhatsApp API returned a non-object response "
+                    f"(HTTP status {status_code})."
+                )
+                self.status.last_error = message
+                raise WhatsAppAPIError(
+                    message,
+                    status_code=getattr(response, "status_code", None),
+                )
+            return payload
+        except WhatsAppAPIError:
             logger.exception("WhatsApp API request failed")
-            return None
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            self.status.last_error = str(exc)
+            logger.exception("WhatsApp API request failed")
+            raise WhatsAppAPIError(str(exc)) from exc
+
+    @staticmethod
+    def _api_error_message(payload: object, response: object) -> str:
+        """Build a safe, useful message from a Graph API response."""
+        error = payload.get("error") if isinstance(payload, dict) else None
+        status_code = getattr(response, "status_code", "unknown")
+        if isinstance(error, dict):
+            code = error.get("code")
+            message = str(error.get("message") or "Graph API request failed")
+            if code is not None:
+                message = f"Graph API error {code}: {message}"
+            return f"HTTP status {status_code}: {message}"
+        return f"Graph API request failed with HTTP status {status_code}."
 
     async def _get_json(
         self,
