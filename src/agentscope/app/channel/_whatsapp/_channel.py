@@ -54,7 +54,8 @@ class WhatsAppChannel(ChannelBase):
 
         phone_number_id: str = Field(title="Phone Number ID")
         access_token: str = Field(
-            title="Access Token", json_schema_extra={"format": "password"}
+            title="Access Token",
+            json_schema_extra={"format": "password"},
         )
         meta_app_secret: str = Field(
             title="Meta App Secret",
@@ -72,7 +73,8 @@ class WhatsAppChannel(ChannelBase):
 
         api_version: str = Field(default="v25.0", title="Graph API version")
         show_tool_process: bool = Field(
-            default=False, title="Show tool process"
+            default=False,
+            title="Show tool process",
         )
         show_thinking: bool = Field(default=False, title="Show thinking")
 
@@ -127,12 +129,17 @@ class WhatsAppChannel(ChannelBase):
         if not signature_header or not signature_header.startswith("sha256="):
             return False
         expected = hmac.new(
-            self._app_secret.encode(), raw_body, hashlib.sha256
+            self._app_secret.encode(),
+            raw_body,
+            hashlib.sha256,
         ).hexdigest()
         return hmac.compare_digest(signature_header[7:], expected)
 
     def verify_webhook(
-        self, mode: str, token: str, challenge: str
+        self,
+        mode: str,
+        token: str,
+        challenge: str,
     ) -> str | None:
         """Return Meta's challenge when a webhook verification is valid."""
         return (
@@ -144,7 +151,8 @@ class WhatsAppChannel(ChannelBase):
     async def start_listening(
         self,
         emit: Callable[
-            [ChannelEvent | ChannelConfirmationResultEvent], Awaitable[None]
+            [ChannelEvent | ChannelConfirmationResultEvent],
+            Awaitable[None],
         ],
     ) -> None:
         """Consume events queued by the embedding service's webhook route."""
@@ -210,7 +218,9 @@ class WhatsAppChannel(ChannelBase):
             self._message_ids.popitem(last=False)
 
     async def _normalize_message(
-        self, message: dict, value: dict
+        self,
+        message: dict,
+        value: dict,
     ) -> ChannelEvent | ChannelConfirmationResultEvent | None:
         sender = str(message.get("from") or message.get("from_user_id") or "")
         if not sender:
@@ -257,7 +267,8 @@ class WhatsAppChannel(ChannelBase):
                 "chat_type": chat_type,
                 "chat_name": chat_name,
                 "display_phone_number": value.get("metadata", {}).get(
-                    "display_phone_number", ""
+                    "display_phone_number",
+                    "",
                 ),
             },
         )
@@ -291,7 +302,7 @@ class WhatsAppChannel(ChannelBase):
             group.get("name")
             or message.get("group_name")
             or value.get("group_name")
-            or ""
+            or "",
         )
         return group_id, "group", group_name
 
@@ -318,7 +329,7 @@ class WhatsAppChannel(ChannelBase):
         if message.get("type") == "interactive":
             interactive = message.get("interactive") or {}
             command = str(
-                (interactive.get("button_reply") or {}).get("id", "")
+                (interactive.get("button_reply") or {}).get("id", ""),
             )
         elif message.get("type") == "text":
             command = str((message.get("text") or {}).get("body", "")).strip()
@@ -368,7 +379,9 @@ class WhatsAppChannel(ChannelBase):
         return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
     async def send_response(
-        self, event: ChannelEvent, events: AsyncIterator[dict]
+        self,
+        event: ChannelEvent,
+        events: AsyncIterator[dict],
     ) -> None:
         reply: Msg | None = None
         confirm: RequireUserConfirmEvent | None = None
@@ -402,7 +415,7 @@ class WhatsAppChannel(ChannelBase):
                             "to": event.chat_id,
                             "type": "text",
                             "text": {"body": part},
-                        }
+                        },
                     )
             elif isinstance(block, DataBlock):
                 data, name = await self._data_bytes(block)
@@ -517,7 +530,7 @@ class WhatsAppChannel(ChannelBase):
                     "chat_type": "group",
                 }
             after = str(
-                payload.get("paging", {}).get("cursors", {}).get("after", "")
+                payload.get("paging", {}).get("cursors", {}).get("after", ""),
             )
             if not after:
                 break
@@ -537,10 +550,10 @@ class WhatsAppChannel(ChannelBase):
                     member.get("wa_id")
                     or member.get("user_id")
                     or member.get("username")
-                    or ""
+                    or "",
                 ),
                 "name": str(
-                    member.get("username") or member.get("wa_id") or ""
+                    member.get("username") or member.get("wa_id") or "",
                 ),
             }
             for member in payload.get("participants", [])
@@ -598,7 +611,7 @@ class WhatsAppChannel(ChannelBase):
                 "to": to,
                 "type": "text",
                 "text": {"body": text},
-            }
+            },
         )
 
     async def send_file_to(
@@ -618,7 +631,7 @@ class WhatsAppChannel(ChannelBase):
                     "to": to,
                     "type": "document",
                     "document": {"id": media_id, "filename": file_name},
-                }
+                },
             )
             if media_id
             else None
@@ -641,7 +654,7 @@ class WhatsAppChannel(ChannelBase):
                     "to": to,
                     "type": "image",
                     "image": {"id": media_id},
-                }
+                },
             )
             if media_id
             else None
@@ -702,7 +715,10 @@ class WhatsAppChannel(ChannelBase):
             return None
 
     async def _download_media(
-        self, media_id: str, media_type: str, name: str
+        self,
+        media_id: str,
+        media_type: str,
+        name: str,
     ) -> DataBlock | None:
         if not self._http or not media_id:
             return None
@@ -712,7 +728,8 @@ class WhatsAppChannel(ChannelBase):
             if not url:
                 return None
             response = await self._http.get(
-                url, headers={"Authorization": f"Bearer {self._access_token}"}
+                url,
+                headers={"Authorization": f"Bearer {self._access_token}"},
             )
             response.raise_for_status()
             return DataBlock(

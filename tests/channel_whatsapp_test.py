@@ -67,12 +67,12 @@ def test_webhook_normalizes_text_and_deduplicates() -> None:
                                         "from": "8613800138000",
                                         "type": "text",
                                         "text": {"body": "hello"},
-                                    }
+                                    },
                                 ],
                             },
-                        }
+                        },
                     ],
-                }
+                },
             ],
         }
         assert await channel.handle_webhook(payload) == 1
@@ -171,12 +171,12 @@ def test_webhook_supports_group_chat_context() -> None:
                                         "type": "text",
                                         "text": {"body": "hello group"},
                                         "group_id": "group-1",
-                                    }
+                                    },
                                 ],
                             },
-                        }
+                        },
                     ],
-                }
+                },
             ],
         }
         assert await channel.handle_webhook(payload) == 1
@@ -185,7 +185,7 @@ def test_webhook_supports_group_chat_context() -> None:
         assert received[0].metadata["chat_type"] == "group"
         assert await channel.chat_kind("group-1") == "group"
         assert await channel.list_bot_chats() == [
-            {"chat_id": "group-1", "name": "group-1", "chat_type": "group"}
+            {"chat_id": "group-1", "name": "group-1", "chat_type": "group"},
         ]
         listener.cancel()
         try:

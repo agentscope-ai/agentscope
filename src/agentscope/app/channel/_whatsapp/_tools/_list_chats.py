@@ -46,5 +46,5 @@ directory. Copy ``to`` and ``recipient_type`` into a Send* tool."""
             if not needle or needle in (chat.get("name", "") or "").lower()
         ]
         return ToolChunk(
-            content=[TextBlock(text=json.dumps(items, ensure_ascii=False))]
+            content=[TextBlock(text=json.dumps(items, ensure_ascii=False))],
         )
