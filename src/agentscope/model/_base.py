@@ -5,6 +5,8 @@ import inspect
 import json
 from abc import abstractmethod
 from copy import deepcopy
+from fnmatch import fnmatch
+from functools import cached_property
 from pathlib import Path
 from typing import Type, Any, AsyncGenerator
 
@@ -95,6 +97,36 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+
+    @cached_property
+    def model_card(self) -> ModelCard | None:
+        """Return the model card matching :attr:`model`, if one is known.
+
+        Model discovery reads and parses the provider's YAML files, so cache
+        the lookup on the model instance instead of repeating it in hot paths
+        such as token estimation and context compression.
+        """
+        return next(
+            (card for card in self.list_models() if card.name == self.model),
+            None,
+        )
+
+    def accepts_data_block(self, block: DataBlock) -> bool:
+        """Whether the configured model accepts the given data block.
+
+        An unknown model is treated conservatively as accepting the block.
+        This avoids irreversibly dropping media for dated model snapshots and
+        custom OpenAI-compatible endpoints that do not have bundled cards.
+        """
+        if self.model_card is None:
+            return True
+
+        media_type = block.source.media_type
+        return any(
+            input_type not in ("text/plain", "application/x-thinking")
+            and fnmatch(media_type, input_type)
+            for input_type in self.model_card.input_types
+        )
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -419,10 +451,14 @@ class ChatModelBase:
         if tools:
             acc_texts.append(json.dumps(tools, ensure_ascii=False))
 
-        # Add the multimodal tokens. Binary payloads are not consumed by
-        # multimodal models as base64 text, and file URLs should not count as
-        # only a path string. Use a stable flat estimate for all DataBlocks.
-        cnt += len(data_blocks) * _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE
+        # Add multimodal tokens only for data the configured model accepts.
+        # Binary payloads are not consumed as base64 text, and file URLs
+        # should not count as only a path string. Unknown models retain the
+        # conservative estimate because their media capability is unknown.
+        cnt += (
+            sum(self.accepts_data_block(block) for block in data_blocks)
+            * _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE
+        )
 
         # Count the text tokens
         acc_text = "".join(acc_texts)
