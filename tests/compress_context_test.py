@@ -160,6 +160,63 @@ class RecordingStructuredMockModel(MockModel):
         )
 
 
+class FixedPathOffloader:
+    """Return one stable offload path for reminder tests."""
+
+    async def offload_context(
+        self,
+        session_id: str,
+        msgs: list[Msg],
+    ) -> str:
+        """Return the fixed path without persisting test messages."""
+        del session_id, msgs
+        return "sessions/123/context.jsonl"
+
+
+def _make_failing_compression_agent(
+    summary: str = "",
+    offloader: Any = None,
+) -> tuple[Agent, RecordingStructuredMockModel]:
+    """Build an agent whose summary generation fails once."""
+    model = RecordingStructuredMockModel(
+        context_size=100,
+        fail_structured_output_times=1,
+    )
+    agent = Agent(
+        name="Friday",
+        system_prompt="".join(["0" for _ in range(20 * 4)]),
+        model=model,
+        context_config=ContextConfig(
+            trigger_ratio=0.7,
+            reserve_ratio=0.4,
+        ),
+        state=AgentState(
+            session_id="123",
+            summary=summary,
+            context=[
+                UserMsg(
+                    "User",
+                    "".join(["1" for _ in range(30 * 4)]),
+                    id="1",
+                ),
+                AssistantMsg(
+                    "Friday",
+                    "".join(["2" for _ in range(10 * 4)]),
+                    id="2",
+                ),
+                UserMsg(
+                    "User",
+                    "".join(["3" for _ in range(10 * 4)]),
+                    id="3",
+                ),
+            ],
+        ),
+        offloader=offloader,
+        toolkit=Toolkit(),
+    )
+    return agent, model
+
+
 def _has_instruction_hint(
     messages: list[Msg],
     instructions: HintBlock,
@@ -2079,6 +2136,38 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_summary_failure_truncates_context(self) -> None:
+        """Summary failures fall back to lossy context truncation."""
+        agent, _ = _make_failing_compression_agent()
+        expected_state = agent.state.model_copy(deep=True)
+        expected_state.context = expected_state.context[1:]
+        expected_state.summary = (
+            "<system-info>Some earlier messages were truncated for limited "
+            "context.</system-info>"
+        )
+
+        await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
+
+    async def test_offload_reminder_is_not_duplicated(self) -> None:
+        """Repeated fallback preserves one reminder for a stable path."""
+        reminder = (
+            "<system-reminder>The compressed context is offloaded to "
+            "'sessions/123/context.jsonl', you can refer to it when "
+            "needed.</system-reminder>"
+        )
+        agent, _ = _make_failing_compression_agent(
+            summary=reminder,
+            offloader=FixedPathOffloader(),
+        )
+        expected_state = agent.state.model_copy(deep=True)
+        expected_state.context = []
+
+        await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

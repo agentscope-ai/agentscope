@@ -548,13 +548,14 @@ class Agent:
             context_overflow = True
 
         # Compress the messages
+        res = None
         try:
             res = await self.model.generate_structured_output(
                 messages=messages,
                 structured_model=cfg.summary_schema,
             )
 
-        except Exception as e:
+        except Exception as error:
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -587,15 +588,25 @@ class Agent:
                     ):
                         break
 
-                res = await self.model.generate_structured_output(
-                    messages=messages,
-                    structured_model=cfg.summary_schema,
+                try:
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+                except Exception as retry_error:
+                    error = retry_error
+
+            if res is None:
+                logger.warning(
+                    "[AGENT %s]: Summary generation failed: %s. "
+                    "Falling back to context truncation.",
+                    self.name,
+                    error,
                 )
 
-            else:
-                raise e from None
-
-        if res.finished_reason == FinishedReason.INTERRUPTED:
+        if res is not None and (
+            res.finished_reason == FinishedReason.INTERRUPTED
+        ):
             logger.warning(
                 "The context compression was interrupted and skipped. ",
             )
@@ -604,22 +615,45 @@ class Agent:
         # Update the summary
         async def _apply_change() -> None:
             """Apply the context change with interruption protection."""
-            new_summary = cfg.summary_template.format(**res.content)
+            if res is not None:
+                new_summary = cfg.summary_template.format(**res.content)
+            else:
+                # Keep the previous summary if the compression failed
+                new_summary = self.state.summary or (
+                    "<system-info>Some earlier messages were truncated for "
+                    "limited context.</system-info>"
+                )
+
+            # Offload the compressed context if offloader is provided
             if self.offloader:
                 path = await self.offloader.offload_context(
                     self.state.session_id,
                     msgs=msgs_to_compress,
                 )
-                new_summary += (
-                    f"\n<system-reminder>The compressed context is offloaded "
-                    f"to '{path}', you can refer to it when needed."
-                    f"</system-reminder>"
+                offload_reminder = (
+                    f"<system-reminder>The compressed context"
+                    f" is offloaded to '{path}', you can refer"
+                    f" to it when needed.</system-reminder>"
                 )
+                # Avoid duplicating the reminder when the previous summary
+                # is reused after a failed compression
+                if isinstance(new_summary, list):
+                    if not any(
+                        isinstance(block, TextBlock)
+                        and block.text == offload_reminder
+                        for block in new_summary
+                    ):
+                        new_summary = [
+                            *new_summary,
+                            TextBlock(text=offload_reminder),
+                        ]
+                elif offload_reminder not in new_summary:
+                    new_summary += f"\n{offload_reminder}"
 
-            # Protected from interruption
+            # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
-            # Update the context
+            # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
 

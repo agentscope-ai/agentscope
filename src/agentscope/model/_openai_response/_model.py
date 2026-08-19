@@ -152,6 +152,14 @@ class OpenAIResponseModel(ChatModelBase):
             openai.InternalServerError,
         )
 
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
+
     async def _call_api(
         self,
         model_name: str,
