@@ -191,13 +191,10 @@ class ContextConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_self_compact_min_ratio(self) -> "ContextConfig":
         """Validate the ordering of context compression ratios."""
-        if (
-            self.self_compact_enabled
-            and not (
-                self.reserve_ratio
-                < self.self_compact_min_ratio
-                < self.trigger_ratio
-            )
+        if self.self_compact_enabled and not (
+            self.reserve_ratio
+            < self.self_compact_min_ratio
+            < self.trigger_ratio
         ):
             raise ValueError(
                 "Expected reserve_ratio < self_compact_min_ratio < "

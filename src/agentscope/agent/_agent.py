@@ -440,7 +440,7 @@ class Agent:
 
         This adaptive path only runs below the hard compression threshold.
         It asks the model for a rubric-based ``COMPRESS`` or ``CONTINUE``
-        decision and reuses :meth:`compress_context` when compaction is
+        decision and uses the shared compression runner when compaction is
         requested.
 
         Args:
@@ -511,7 +511,7 @@ class Agent:
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "[AGENT %s]: Optional reply-end self-compaction failed, "
-                "keeping the original context: %s",
+                "skipping adaptive compression: %s",
                 self.name,
                 e,
             )
