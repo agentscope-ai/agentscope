@@ -17,18 +17,13 @@ from typing import (
     List,
     TYPE_CHECKING,
     Type,
+    Literal,
 )
 
 import jsonschema
 from pydantic import BaseModel
 
-from ._config import (
-    ContextConfig,
-    ReActConfig,
-    ModelConfig,
-    InjectionConfig,
-    SELF_COMPACT_DECISION_SCHEMA,
-)
+from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -113,6 +108,12 @@ if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
     MiddlewareBase = Any
+
+
+class _SelfCompactDecision(BaseModel):
+    """The model decision for adaptive context compaction."""
+
+    decision: Literal["COMPRESS", "CONTINUE"]
 
 
 class Agent:
@@ -361,8 +362,6 @@ class Agent:
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
-        *,
-        _fallback_to_truncation: bool = True,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -376,18 +375,27 @@ class Agent:
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
         """
+        await self._run_compress_context(
+            context_config=context_config,
+            instructions=instructions,
+        )
+
+    async def _run_compress_context(
+        self,
+        context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
+        *,
+        force: bool = False,
+        fallback_to_truncation: bool = True,
+    ) -> None:
+        """Run context compression through its middleware chain."""
         if not self._compress_context_middlewares:
-            if _fallback_to_truncation:
-                await self._compress_context_impl(
-                    context_config=context_config,
-                    instructions=instructions,
-                )
-            else:
-                await self._compress_context_impl(
-                    context_config=context_config,
-                    instructions=instructions,
-                    fallback_to_truncation=False,
-                )
+            await self._compress_context_impl(
+                context_config=context_config,
+                instructions=instructions,
+                force=force,
+                fallback_to_truncation=fallback_to_truncation,
+            )
         else:
 
             async def execute_chain(
@@ -397,17 +405,12 @@ class Agent:
             ) -> None:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
-                    if _fallback_to_truncation:
-                        await self._compress_context_impl(
-                            context_config=context_config,
-                            instructions=instructions,
-                        )
-                    else:
-                        await self._compress_context_impl(
-                            context_config=context_config,
-                            instructions=instructions,
-                            fallback_to_truncation=False,
-                        )
+                    await self._compress_context_impl(
+                        context_config=context_config,
+                        instructions=instructions,
+                        force=force,
+                        fallback_to_truncation=fallback_to_truncation,
+                    )
                 else:
                     mw = self._compress_context_middlewares[index]
                     input_kwargs = {
@@ -448,7 +451,7 @@ class Agent:
         if (
             not cfg.self_compact_enabled
             or not self.state.context
-            or self.state.cur_iter < cfg.self_compact_min_tool_rounds
+            or self.state.cur_iter < cfg.self_compact_min_react_rounds
         ):
             return
 
@@ -499,20 +502,11 @@ class Agent:
             int(hard_threshold),
         )
 
-        # Reuse the regular compression path, including its middlewares and
-        # interruption protection, by temporarily lowering its threshold to
-        # one token below the usage evaluated by the rubric. The one-token
-        # margin avoids floating-point roundoff making the reconstructed
-        # threshold slightly larger than ``estimated_tokens``.
-        forced_cfg = cfg.model_copy(
-            update={
-                "trigger_ratio": (estimated_tokens - 1) / context_size,
-            },
-        )
         try:
-            await self.compress_context(
-                context_config=forced_cfg,
-                _fallback_to_truncation=False,
+            await self._run_compress_context(
+                context_config=cfg,
+                force=True,
+                fallback_to_truncation=False,
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning(
@@ -527,6 +521,7 @@ class Agent:
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
         *,
+        force: bool = False,
         fallback_to_truncation: bool = True,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
@@ -553,7 +548,7 @@ class Agent:
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
-        if estimated_tokens < threshold:
+        if not force and estimated_tokens < threshold:
             return
 
         logger.info(
@@ -810,7 +805,7 @@ class Agent:
                     content=prompt,
                 ),
             ],
-            structured_model=SELF_COMPACT_DECISION_SCHEMA,
+            structured_model=_SelfCompactDecision,
         )
         if response.finished_reason == FinishedReason.INTERRUPTED:
             raise asyncio.CancelledError()
@@ -836,13 +831,6 @@ class Agent:
                 f"{100 * context_config.self_compact_min_ratio:.1f}"
             ),
             "trigger_percent": f"{100 * context_config.trigger_ratio:.1f}",
-            "context_usage_ratio": f"{usage_ratio:.3f}",
-            "self_compact_min_ratio": (
-                f"{context_config.self_compact_min_ratio:.3f}"
-            ),
-            "trigger_ratio": f"{context_config.trigger_ratio:.3f}",
-            "estimated_tokens": str(int(estimated_tokens)),
-            "context_size": str(int(context_size)),
         }
         for name, value in replacements.items():
             prompt = prompt.replace(f"{{{name}}}", value)

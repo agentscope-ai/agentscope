@@ -166,7 +166,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             middlewares=[SwallowOnceMiddleware()],
             context_config=ContextConfig(
                 self_compact_enabled=True,
-                self_compact_min_tool_rounds=0,
+                self_compact_min_react_rounds=0,
             ),
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
@@ -1272,6 +1272,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=instructions,
+                force=False,
+                fallback_to_truncation=True,
             )
 
         # Verify onion execution order: mw1_pre -> mw2_pre -> mw2_post ->
@@ -1333,6 +1335,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=replacement,
+                force=False,
+                fallback_to_truncation=True,
             )
 
     async def test_on_compress_context_middleware_short_circuit(
@@ -1425,6 +1429,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=None,
+                force=False,
+                fallback_to_truncation=True,
             )
 
     async def asyncTearDown(self) -> None:

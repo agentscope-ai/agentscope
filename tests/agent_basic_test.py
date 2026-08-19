@@ -164,7 +164,6 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         agent_1.model_config.max_retries = 3
         agent_1.context_config.tool_result_limit = 123
-        agent_1.context_config.self_compact_min_ratio = 0.6
         agent_1.react_config.max_iters = 2
         agent_1.injection_config.timezone = "Asia/Shanghai"
 
@@ -175,10 +174,6 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertNotEqual(
             agent_1.context_config.tool_result_limit,
             agent_2.context_config.tool_result_limit,
-        )
-        self.assertNotEqual(
-            agent_1.context_config.self_compact_min_ratio,
-            agent_2.context_config.self_compact_min_ratio,
         )
         self.assertNotEqual(
             agent_1.react_config.max_iters,

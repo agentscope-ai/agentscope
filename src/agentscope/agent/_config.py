@@ -21,27 +21,9 @@ DEFAULT_SELF_COMPACT_RUBRIC_PROMPT = (
     "when exact older details are still likely to be needed verbatim, the "
     "work remains tightly coupled across the full trajectory, there is too "
     "little useful history to summarize, or compression risks losing "
-    "unresolved constraints or evidence. Return COMPRESS or CONTINUE with a "
-    "concise reason.</system-hint>"
+    "unresolved constraints or evidence. Return COMPRESS or CONTINUE."
+    "</system-hint>"
 )
-
-
-SELF_COMPACT_DECISION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "reason": {
-            "type": "string",
-            "description": "A concise reason for the decision.",
-        },
-        "decision": {
-            "type": "string",
-            "enum": ["COMPRESS", "CONTINUE"],
-            "description": "Whether to compact the current context.",
-        },
-    },
-    "required": ["reason", "decision"],
-    "additionalProperties": False,
-}
 
 
 class SummarySchema(BaseModel):
@@ -190,15 +172,15 @@ class ContextConfig(BaseModel):
     """The minimum context usage ratio at which the reply-end compaction
     rubric is considered."""
 
-    self_compact_min_tool_rounds: int = Field(
+    self_compact_min_react_rounds: int = Field(
         default=1,
         ge=0,
         description=(
             "Skip reply-end self-compaction until the completed reply has "
-            "run at least this many reasoning-acting tool rounds."
+            "run at least this many ReAct rounds."
         ),
     )
-    """The minimum number of completed tool rounds before probing."""
+    """The minimum number of completed ReAct rounds before probing."""
 
     self_compact_rubric_prompt: str = Field(
         default=DEFAULT_SELF_COMPACT_RUBRIC_PROMPT,
@@ -208,22 +190,18 @@ class ContextConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_self_compact_min_ratio(self) -> "ContextConfig":
-        """Ensure adaptive compaction is considered before the hard
-        compression threshold."""
+        """Validate the ordering of context compression ratios."""
         if (
             self.self_compact_enabled
-            and self.self_compact_min_ratio >= self.trigger_ratio
-        ):
-            raise ValueError(
-                "self_compact_min_ratio must be smaller than trigger_ratio.",
+            and not (
+                self.reserve_ratio
+                < self.self_compact_min_ratio
+                < self.trigger_ratio
             )
-        if (
-            self.self_compact_enabled
-            and self.reserve_ratio >= self.self_compact_min_ratio
         ):
             raise ValueError(
-                "reserve_ratio must be smaller than "
-                "self_compact_min_ratio when self-compaction is enabled.",
+                "Expected reserve_ratio < self_compact_min_ratio < "
+                "trigger_ratio when self-compaction is enabled.",
             )
         return self
 
