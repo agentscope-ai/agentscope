@@ -483,10 +483,15 @@ class MCPClient(BaseModel):
                 "Call close() before reconnecting.",
             )
 
-        # Create HTTP client if needed
-        if self._client is None and self.mcp_config.type == "http_mcp":
-            self._client = self._create_http_client()
+        # Transports are one-shot context managers. Recreate them before every
+        # connection so connect() -> close() -> connect() starts a fresh one.
+        if self._client is None:
+            if self.mcp_config.type == "http_mcp":
+                self._client = self._create_http_client()
+            else:
+                self._initialize_client()
 
+        assert self._client is not None
         self._stack = AsyncExitStack()
 
         try:
@@ -501,6 +506,7 @@ class MCPClient(BaseModel):
         except Exception:
             await self._stack.aclose()
             self._stack = None
+            self._client = None
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
@@ -538,6 +544,7 @@ class MCPClient(BaseModel):
                 str(e),
             )
         finally:
+            self._client = None
             self._stack = None
             self._session = None
             self._is_connected = False
