@@ -360,7 +360,7 @@ def _memory_components(
     return components
 
 
-def build_reme_app_config(
+def _build_reme_app_config(
     *,
     workspace_dir: str,
     embedding_dimensions: int | None = None,
@@ -374,6 +374,3 @@ def build_reme_app_config(
         "jobs": _memory_jobs(),
         "components": _memory_components(embedding_dimensions),
     }
-
-
-__all__ = ["build_reme_app_config"]

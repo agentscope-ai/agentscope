@@ -48,7 +48,7 @@ from ...._logging import logger
 from ....embedding import EmbeddingModelBase
 from ....message import AssistantMsg, HintBlock, Msg
 from ....model import ChatModelBase
-from ._config import build_reme_app_config
+from ._config import _build_reme_app_config
 from ._tools import _build_memory_tools
 from ._utils import _extract_memory_texts, _extract_query_text
 
@@ -243,7 +243,7 @@ class ReMeMiddleware(MiddlewareBase):
         embedding_dimensions = None
         if self._parameters.embedding_model is not None:
             embedding_dimensions = self._parameters.embedding_model.dimensions
-        app_config = build_reme_app_config(
+        app_config = _build_reme_app_config(
             workspace_dir=self._workspace_dir,
             embedding_dimensions=embedding_dimensions,
         )
