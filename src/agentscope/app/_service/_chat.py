@@ -13,7 +13,8 @@ that wants them subscribes through the
 """
 import asyncio
 import inspect
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Literal, TYPE_CHECKING
 
 from fastapi import HTTPException
 
@@ -70,6 +71,17 @@ from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
     from ..channel import ChannelLifecycleDispatcher
+
+
+@dataclass
+class _TeamContext:
+    """Team identity resolved once per chat run; ``leader_*`` fields are
+    set for workers only, and stay ``None`` when the leader is gone."""
+
+    role: Literal["leader", "worker"]
+    leader_session_id: str | None = None
+    leader_agent_id: str | None = None
+    leader_name: str | None = None
 
 
 class ChatService:
@@ -588,6 +600,66 @@ optional):
                     )
 
                 # -------------------------------------------------------------
+                # 1b. Resolve team identity + channel binding ONCE; all
+                # downstream consumers reuse these instead of re-fetching.
+                # -------------------------------------------------------------
+                team_ctx: _TeamContext | None = None
+                if session_record.team_id is not None:
+                    team = await self._storage.get_team(
+                        user_id,
+                        session_record.team_id,
+                    )
+                    if team is None:
+                        logger.warning(
+                            "Session %r points at team %r which no longer "
+                            "exists; running teamless.",
+                            session_id,
+                            session_record.team_id,
+                        )
+                    elif team.session_id == session_record.id:
+                        team_ctx = _TeamContext(role="leader")
+                    else:
+                        team_ctx = _TeamContext(role="worker")
+                        leader_session = await self._storage.get_session(
+                            user_id,
+                            "",
+                            team.session_id,
+                        )
+                        leader_agent = (
+                            await self._storage.get_agent(
+                                user_id,
+                                leader_session.agent_id,
+                            )
+                            if leader_session is not None
+                            else None
+                        )
+                        if leader_agent is None:
+                            logger.warning(
+                                "Worker session %r cannot resolve its team "
+                                "leader; running without the team-loop "
+                                "middleware.",
+                                session_id,
+                            )
+                        else:
+                            team_ctx.leader_session_id = team.session_id
+                            team_ctx.leader_agent_id = leader_agent.id
+                            team_ctx.leader_name = leader_agent.data.name
+
+                channel = (
+                    self._channel_dispatcher.get_local_channel(
+                        session_record.source_channel_id,
+                    )
+                    if session_record.source_channel_id
+                    and self._channel_dispatcher is not None
+                    else None
+                )
+                channel_tools = (
+                    await channel.list_tools(workspace)
+                    if channel is not None
+                    else []
+                )
+
+                # -------------------------------------------------------------
                 # 2. Middlewares — framework-supplied first, then caller
                 # extras. Background-tool completions deliver their results
                 # via ``message_bus.inbox_push + enqueue_wakeup``, so the
@@ -608,31 +680,16 @@ optional):
                     ),
                 ]
                 # Equip the member middleware for loop control
-                if session_record.team_id is not None:
-                    team = await self._storage.get_team(
-                        user_id,
-                        session_record.team_id,
+                if (
+                    team_ctx is not None
+                    and team_ctx.role == "worker"
+                    and team_ctx.leader_name is not None
+                ):
+                    middlewares.append(
+                        TeamMemberLoopMiddleware(
+                            leader_name=team_ctx.leader_name,
+                        ),
                     )
-                    if (
-                        team is not None
-                        and team.session_id != session_record.id
-                    ):
-                        leader_session = await self._storage.get_session(
-                            user_id,
-                            "",
-                            team.session_id,
-                        )
-                        if leader_session:
-                            leader_agent = await self._storage.get_agent(
-                                user_id,
-                                leader_session.agent_id,
-                            )
-                            if leader_agent:
-                                middlewares.append(
-                                    TeamMemberLoopMiddleware(
-                                        leader_name=leader_agent.data.name,
-                                    ),
-                                )
 
                 if self._extra_agent_middlewares is not None:
                     factory_args: tuple = (user_id, agent_id, session_id)
@@ -729,7 +786,8 @@ optional):
                     resource_access_service=self._access,
                     extra_factory=self._extra_agent_tools,
                     sub_agent_templates=self._sub_agent_templates,
-                    channel_dispatcher=self._channel_dispatcher,
+                    team_role=team_ctx.role if team_ctx else None,
+                    channel_tools=channel_tools,
                 )
 
                 # -------------------------------------------------------------
@@ -759,44 +817,35 @@ optional):
                 attachment = f"You're within a session (id={session_id})."
 
                 # Channel-bound sessions: tell the agent which chat it serves.
-                if (
-                    session_record.source_channel_id
-                    and self._channel_dispatcher is not None
-                ):
-                    channel = self._channel_dispatcher.get_local_channel(
-                        session_record.source_channel_id,
+                if channel is not None:
+                    tools = ", ".join(t.name for t in channel_tools)
+                    chat_id = session_record.source_chat_id or ""
+                    kind = await channel.chat_kind(chat_id)
+                    name = await channel.chat_name(chat_id)
+                    where = f' named "{name}"' if name else ""
+                    attachment += (
+                        f" This session is bound to a chat{where} on the "
+                        f"{channel.display_name} platform: the messages, "
+                        f"images and files people send there are relayed "
+                        f"to you here, and your replies are delivered "
+                        f"back to that same chat."
                     )
-                    if channel is not None:
-                        tools = ", ".join(
-                            t.name for t in await channel.list_tools(workspace)
-                        )
-                        chat_id = session_record.source_chat_id or ""
-                        kind = await channel.chat_kind(chat_id)
-                        name = await channel.chat_name(chat_id)
-                        where = f' named "{name}"' if name else ""
+                    if kind is ChatKind.GROUP:
                         attachment += (
-                            f" This session is bound to a chat{where} on the "
-                            f"{channel.display_name} platform: the messages, "
-                            f"images and files people send there are relayed "
-                            f"to you here, and your replies are delivered "
-                            f"back to that same chat."
+                            " It is a group chat, so messages may come "
+                            "from several different people; each incoming "
+                            "user turn is labelled with its sender."
                         )
-                        if kind is ChatKind.GROUP:
-                            attachment += (
-                                " It is a group chat, so messages may come "
-                                "from several different people; each incoming "
-                                "user turn is labelled with its sender."
-                            )
-                        elif kind is ChatKind.PRIVATE:
-                            attachment += (
-                                " It is a one-to-one private chat with a "
-                                "single user."
-                            )
-                        if tools:
-                            attachment += (
-                                f" You also have these {channel.display_name} "
-                                f"tools available: {tools}."
-                            )
+                    elif kind is ChatKind.PRIVATE:
+                        attachment += (
+                            " It is a one-to-one private chat with a "
+                            "single user."
+                        )
+                    if tools:
+                        attachment += (
+                            f" You also have these {channel.display_name} "
+                            f"tools available: {tools}."
+                        )
 
                 attachment = (
                     f"<system-notification>{attachment}</system-notification>"
