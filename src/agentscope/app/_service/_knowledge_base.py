@@ -520,9 +520,7 @@ class KnowledgeBaseService:
             records = [r for r in records if r.id == document_id]
         if keywords is not None:
             needle = keywords.lower()
-            records = [
-                r for r in records if needle in r.data.filename.lower()
-            ]
+            records = [r for r in records if needle in r.data.filename.lower()]
         if doc_status is not None:
             records = [r for r in records if r.status == doc_status]
         total = len(records)

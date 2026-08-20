@@ -297,4 +297,3 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             [],
         )
         self.client.search.assert_not_awaited()
-

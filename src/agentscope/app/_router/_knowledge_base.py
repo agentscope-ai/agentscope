@@ -318,7 +318,8 @@ async def list_knowledge_bases(
             "doubles as get-single, RAGFlow style."
         ),
     ),
-    name: str | None = Query(
+    name: str
+    | None = Query(
         default=None,
         description="Case-insensitive substring filter on the name.",
     ),
@@ -478,7 +479,8 @@ async def list_knowledge_documents(
         default=None,
         description="Filter down to one document by id.",
     ),
-    keywords: str | None = Query(
+    keywords: str
+    | None = Query(
         default=None,
         description="Case-insensitive substring filter on the filename.",
     ),
@@ -934,21 +936,17 @@ async def read_knowledge_document(
         document_id=document_id,
     )
     data = record.data
-    media_type = (
-        (data.content_type or "").split(";")[0].strip().lower()
-        or "application/octet-stream"
-    )
+    media_type = (data.content_type or "").split(";")[
+        0
+    ].strip().lower() or "application/octet-stream"
     inline = not download and (
-        media_type in _INLINE_MEDIA_TYPES
-        or media_type.startswith("image/")
+        media_type in _INLINE_MEDIA_TYPES or media_type.startswith("image/")
     )
     disposition = "inline" if inline else "attachment"
     filename = quote(data.filename or "download")
     headers = {
         "Content-Length": str(data.size),
-        "Content-Disposition": (
-            f"{disposition}; filename*=UTF-8''{filename}"
-        ),
+        "Content-Disposition": (f"{disposition}; filename*=UTF-8''{filename}"),
         "Cache-Control": "private, max-age=60",
     }
     return StreamingResponse(
@@ -956,4 +954,3 @@ async def read_knowledge_document(
         media_type=media_type,
         headers=headers,
     )
-

@@ -511,6 +511,4 @@ class MongoDBStore(VectorStoreBase):
             .skip(offset)
             .limit(limit)
         )
-        return [
-            Chunk.model_validate(row["chunk"]) async for row in cursor
-        ]
+        return [Chunk.model_validate(row["chunk"]) async for row in cursor]

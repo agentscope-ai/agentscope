@@ -24,6 +24,14 @@ from unittest.async_case import IsolatedAsyncioTestCase
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
+from service_knowledge_base_upload_test import (
+    _FakeKbManager,
+    _FakeVectorStore,
+    _NoopWorkspaceManager,
+    _make_bus,
+    _make_storage,
+)
+
 from agentscope.app import create_app
 from agentscope.app.rag.blob_store import LocalBlobStore
 from agentscope.app.storage import (
@@ -38,14 +46,6 @@ from agentscope.message import TextBlock
 from agentscope.rag import Chunk
 from agentscope.rag._vdb._vector_store import VectorRecord
 
-from service_knowledge_base_upload_test import (
-    _FakeKbManager,
-    _FakeVectorStore,
-    _NoopWorkspaceManager,
-    _make_bus,
-    _make_storage,
-)
-
 
 class _NoChunkListingVectorStore(_FakeVectorStore):
     """Fake store that pretends chunk listing is unsupported."""
@@ -59,6 +59,7 @@ class _NoChunkListingVectorStore(_FakeVectorStore):
         limit: int = 30,
         metadata_filter: dict[str, Any] | None = None,
     ) -> list:
+        """Refuse — models a backend predating ``list_chunks``."""
         raise NotImplementedError("no chunk listing here")
 
 
@@ -68,6 +69,8 @@ class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
     vector_store_cls: type[_FakeVectorStore] = _FakeVectorStore
 
     async def asyncSetUp(self) -> None:
+        """Boot the app and seed a KB, a ready document and chunks."""
+        # pylint: disable=consider-using-with
         self._tmp = tempfile.TemporaryDirectory()
         self._fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self._vector_store = self.vector_store_cls()
@@ -158,6 +161,7 @@ class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
         storage._client = None
 
     async def asyncTearDown(self) -> None:
+        """Release fakeredis and the temporary blob directory."""
         await self._fr.aclose()
         self._tmp.cleanup()
 
@@ -166,6 +170,7 @@ class DocumentChunkBrowsingTest(_KnowledgeBaseDetailTestBase):
     """``GET .../documents/{doc}/chunks`` behaviour."""
 
     def test_pages_are_ordered_and_stable(self) -> None:
+        """Pages come back chunk_index-ascending with a stable window."""
         headers = {"X-User-ID": "user-1"}
         with TestClient(self._app) as client:
             first = client.get(
@@ -203,6 +208,7 @@ class DocumentChunkBrowsingTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(past_end.json()["total"], 5)
 
     def test_missing_document_and_foreign_viewer_are_404(self) -> None:
+        """Unknown documents and invisible KBs both surface 404."""
         with TestClient(self._app) as client:
             missing = client.get(
                 f"/knowledge_bases/{self._kb_id}/documents/nope/chunks",
@@ -223,6 +229,7 @@ class DocumentChunkBrowsingUnsupportedTest(_KnowledgeBaseDetailTestBase):
     vector_store_cls = _NoChunkListingVectorStore
 
     def test_not_implemented_maps_to_501(self) -> None:
+        """A store without list_chunks maps to HTTP 501."""
         with TestClient(self._app) as client:
             response = client.get(
                 f"/knowledge_bases/{self._kb_id}/documents/doc-1/chunks",
@@ -235,6 +242,7 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
     """``GET .../documents/{doc}`` raw-file streaming behaviour."""
 
     def test_header_auth_streams_inline(self) -> None:
+        """Header-authenticated fetch streams the bytes inline."""
         with TestClient(self._app) as client:
             response = client.get(
                 f"/knowledge_bases/{self._kb_id}/documents/doc-1",
@@ -262,6 +270,7 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
             )
 
     def test_download_flag_forces_attachment(self) -> None:
+        """``download=true`` switches the disposition to attachment."""
         with TestClient(self._app) as client:
             response = client.get(
                 f"/knowledge_bases/{self._kb_id}/documents/doc-1",
@@ -275,6 +284,8 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
             )
 
     def test_scriptable_media_type_is_never_inline(self) -> None:
+        """Scriptable media types are forced to attachment."""
+
         async def _seed_html_document() -> None:
             async with self._blob_store as blob_store:
                 blob_uri = await blob_store.write_stream(
@@ -313,6 +324,7 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
             )
 
     def test_missing_auth_is_401_and_foreign_viewer_404(self) -> None:
+        """No credentials is 401; an invisible KB is 404."""
         with TestClient(self._app) as client:
             anonymous = client.get(
                 f"/knowledge_bases/{self._kb_id}/documents/doc-1",
@@ -326,6 +338,8 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(foreign.status_code, 404)
 
     def test_missing_blob_is_404(self) -> None:
+        """A record whose blob is gone yields 404, not a 500."""
+
         async def _seed_blobless_document() -> None:
             # Lifespan has already bound the storage client.
             await self._app.state.storage.upsert_knowledge_document(
@@ -358,6 +372,7 @@ class DocumentDownloadTokenTest(_KnowledgeBaseDetailTestBase):
     """``POST .../download_token`` mint + token-authenticated fetch."""
 
     def test_token_round_trip(self) -> None:
+        """A minted token fetches the file with no header at all."""
         with TestClient(self._app) as client:
             minted = client.post(
                 f"/knowledge_bases/{self._kb_id}"
@@ -375,6 +390,7 @@ class DocumentDownloadTokenTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(fetched.content, self._file_bytes)
 
     def test_token_is_bound_to_one_document(self) -> None:
+        """Tokens replayed against another document or garbage are 401."""
         with TestClient(self._app) as client:
             minted = client.post(
                 f"/knowledge_bases/{self._kb_id}"
@@ -396,6 +412,7 @@ class DocumentDownloadTokenTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(garbage.status_code, 401)
 
     def test_mint_requires_visibility(self) -> None:
+        """Minting is gated by the same 404 visibility rule."""
         with TestClient(self._app) as client:
             foreign = client.post(
                 f"/knowledge_bases/{self._kb_id}"
@@ -409,6 +426,7 @@ class KnowledgeBaseListEnrichmentTest(_KnowledgeBaseDetailTestBase):
     """``GET /knowledge_bases/`` filters, pagination and enrichment."""
 
     def test_list_serves_counts_and_credential_name(self) -> None:
+        """The list carries counts and the resolved credential name."""
         with TestClient(self._app) as client:
             response = client.get(
                 "/knowledge_bases/",
@@ -428,6 +446,7 @@ class KnowledgeBaseListEnrichmentTest(_KnowledgeBaseDetailTestBase):
             self.assertNotIn("api_key", str(body))
 
     def test_status_counts_are_opt_in(self) -> None:
+        """Per-status counts appear only when explicitly requested."""
         with TestClient(self._app) as client:
             response = client.get(
                 "/knowledge_bases/",
@@ -439,6 +458,7 @@ class KnowledgeBaseListEnrichmentTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(counts["error"], 0)
 
     def test_id_filter_doubles_as_get_single(self) -> None:
+        """``?id=`` narrows the list to one knowledge base."""
         with TestClient(self._app) as client:
             hit = client.get(
                 "/knowledge_bases/",
@@ -456,6 +476,7 @@ class KnowledgeBaseListEnrichmentTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(miss.json()["knowledge_bases"], [])
 
     def test_name_filter_and_pagination_window(self) -> None:
+        """Name filtering and page windows behave as documented."""
         with TestClient(self._app) as client:
             named = client.get(
                 "/knowledge_bases/",
@@ -477,6 +498,7 @@ class KnowledgeDocumentListFilterTest(_KnowledgeBaseDetailTestBase):
     """``GET .../documents`` filters and pagination."""
 
     def test_filters_and_pagination(self) -> None:
+        """Document filters, status validation and paging all work."""
         headers = {"X-User-ID": "user-1"}
         base = f"/knowledge_bases/{self._kb_id}/documents"
         with TestClient(self._app) as client:
@@ -532,4 +554,3 @@ class KnowledgeDocumentListFilterTest(_KnowledgeBaseDetailTestBase):
             )
             self.assertEqual(beyond.json()["documents"], [])
             self.assertEqual(beyond.json()["total"], 1)
-

@@ -154,6 +154,7 @@ class _FakeMongoCollection:
         projection: dict[str, Any] | None = None,
     ) -> "_FakeFindCursor":
         """Return a chainable cursor over matching documents."""
+        del projection  # the fake returns whole documents regardless
         matched = [
             doc
             for doc in self._docs.values()
@@ -797,4 +798,3 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             metadata_filter={"kb_scope": "kb-b"},
         )
         self.assertEqual(miss, [])
-

@@ -467,4 +467,3 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             metadata_filter={"kb_scope": "kb-b"},
         )
         self.assertEqual(miss, [])
-
