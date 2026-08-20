@@ -486,6 +486,9 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 
 			{detailTarget && (
 				<DocumentDetailDrawer
+					// Keyed so switching documents remounts the drawer —
+					// otherwise chunk page / preview state leaks across.
+					key={detailTarget.id}
 					open={detailTarget !== null}
 					onOpenChange={(open) => {
 						if (!open) setDetailTarget(null);

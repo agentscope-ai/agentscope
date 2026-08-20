@@ -35,6 +35,13 @@ const CHUNK_PAGE_SIZE = 20;
  */
 const INLINE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'];
 
+/**
+ * Largest text file rendered inline. Text previews pull the whole body
+ * into the tab, so a multi-hundred-megabyte upload would freeze it —
+ * past this the drawer offers a download instead.
+ */
+const MAX_INLINE_TEXT_BYTES = 2 * 1024 * 1024;
+
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -241,7 +248,11 @@ function ChunksTab({ open, knowledgeBaseId, document }: TabProps) {
 function PreviewTab({ open, knowledgeBaseId, document }: TabProps) {
 	const { t } = useTranslation();
 	const media = mediaType(document);
-	const isText = media === 'text/markdown' || media === 'text/plain';
+	// Oversized text falls through to the download branch rather than
+	// being streamed into the tab.
+	const isTextType = media === 'text/markdown' || media === 'text/plain';
+	const tooLargeToInline = isTextType && document.size > MAX_INLINE_TEXT_BYTES;
+	const isText = isTextType && !tooLargeToInline;
 	const isPdf = media === 'application/pdf';
 	const isImage = INLINE_IMAGE_TYPES.includes(media);
 
@@ -327,9 +338,19 @@ function PreviewTab({ open, knowledgeBaseId, document }: TabProps) {
 				<EmptyMedia variant="icon">
 					<Download />
 				</EmptyMedia>
-				<EmptyTitle>{t('knowledge.documentDetail.previewUnavailableTitle')}</EmptyTitle>
+				<EmptyTitle>
+					{t(
+						tooLargeToInline
+							? 'knowledge.documentDetail.previewTooLargeTitle'
+							: 'knowledge.documentDetail.previewUnavailableTitle',
+					)}
+				</EmptyTitle>
 				<EmptyDescription>
-					{t('knowledge.documentDetail.previewUnavailableDescription')}
+					{t(
+						tooLargeToInline
+							? 'knowledge.documentDetail.previewTooLargeDescription'
+							: 'knowledge.documentDetail.previewUnavailableDescription',
+					)}
 				</EmptyDescription>
 			</EmptyHeader>
 			<Button size="sm" variant="outline" onClick={handleDownload}>

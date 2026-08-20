@@ -884,11 +884,8 @@ export interface KnowledgeBaseView {
 	 * shared viewers see it too. `null` when the credential was deleted.
 	 */
 	credential_name: string | null;
-	/**
-	 * Per-indexing-status document counts. `null` unless the request
-	 * set `include_status_counts=true`.
-	 */
-	status_counts: KnowledgeBaseStatusCounts | null;
+	/** Per-indexing-status document counts; always served. */
+	status_counts: KnowledgeBaseStatusCounts;
 }
 
 /** Documents of one knowledge base, counted by indexing status. */
@@ -907,8 +904,6 @@ export interface ListKnowledgeBasesParams {
 	id?: string;
 	/** Case-insensitive substring filter on the name. */
 	name?: string;
-	/** Opt into per-status document counts (costs a scan per KB). */
-	include_status_counts?: boolean;
 	/** 1-based page number (default 1). */
 	page?: number;
 	/** Page size (default 30, max 128). */
@@ -1053,8 +1048,6 @@ export interface DocumentDownloadTokenResponse {
 	token: string;
 	/** Unix timestamp after which the token is refused. */
 	expires_at: number;
-	/** Relative URL with the token already applied. */
-	url: string;
 }
 
 /**

@@ -125,6 +125,19 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 	const embedding = knowledgeBase.embedding_model_config;
 	const chunker = knowledgeBase.chunker_config;
 
+	// Only worth showing when something is not ready — a KB where every
+	// document indexed cleanly says nothing extra beyond the totals.
+	const counts = knowledgeBase.status_counts;
+	const unfinished = counts.pending + counts.parsing + counts.chunking + counts.indexing;
+	const statusValue =
+		counts.error > 0 || unfinished > 0
+			? t('knowledge.config.statusValue', {
+					ready: counts.ready,
+					indexing: unfinished,
+					failed: counts.error,
+				})
+			: null;
+
 	const chunkerValue = chunker
 		? Object.keys(chunker.parameters).length > 0
 			? `${chunker.type} · ${Object.entries(chunker.parameters)
@@ -156,6 +169,9 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 						chunks: knowledgeBase.chunk_count,
 					})}
 				/>
+				{statusValue && (
+					<ConfigItem label={t('knowledge.config.status')} value={statusValue} />
+				)}
 				<ConfigItem
 					label={t('knowledge.config.createdAt')}
 					value={format(new Date(knowledgeBase.created_at), 'yyyy-MM-dd HH:mm')}

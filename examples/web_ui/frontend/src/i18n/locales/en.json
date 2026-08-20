@@ -389,6 +389,8 @@
 			"chunker": "Chunker",
 			"counts": "Contents",
 			"countsValue": "{{documents}} documents · {{chunks}} chunks",
+			"status": "Indexing",
+			"statusValue": "{{ready}} ready · {{indexing}} in progress · {{failed}} failed",
 			"createdAt": "Created"
 		},
 		"documentDetail": {
@@ -404,6 +406,8 @@
 			"pageIndicator": "Page {{page}} of {{pageCount}}",
 			"previewUnavailableTitle": "No inline preview",
 			"previewUnavailableDescription": "This file type cannot be previewed in the browser.",
+			"previewTooLargeTitle": "File too large to preview",
+			"previewTooLargeDescription": "This file exceeds the inline preview limit. Download it to view the original.",
 			"downloadButton": "Download original file"
 		}
 	},
