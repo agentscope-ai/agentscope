@@ -25,13 +25,9 @@ export function useKnowledgeBases() {
 		setLoading(true);
 		setError(null);
 		try {
-			// The sidebar shows every knowledge base — request the max
-			// page size (the backend paginates now; users with more than
-			// 128 knowledge bases are out of scope for this view).
-			const { knowledge_bases } = await knowledgeBaseApi.list({
-				page_size: 128,
-			});
-			setKnowledgeBases(knowledge_bases);
+			// The sidebar shows every knowledge base as one flat list,
+			// so drain all pages of the paginated endpoint.
+			setKnowledgeBases(await knowledgeBaseApi.listAll());
 		} catch (e) {
 			setError(e as Error);
 		} finally {

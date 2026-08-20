@@ -29,6 +29,30 @@ function toQuery(params: Record<string, unknown>): Record<string, string> {
 	return query;
 }
 
+/** The backend caps `page_size` at 128. */
+const MAX_PAGE_SIZE = 128;
+/** Hard stop for {@link fetchAllPages} — guards a buggy `total`. */
+const MAX_PAGES = 100;
+
+/**
+ * Drain a paginated endpoint into one flat array.
+ *
+ * Keeps requesting pages while the accumulated count is below the
+ * server-reported `total`. Stops early on an empty page (or after
+ * {@link MAX_PAGES}) so a lying `total` can never loop forever.
+ */
+async function fetchAllPages<T>(
+	fetchPage: (page: number, pageSize: number) => Promise<{ items: T[]; total: number }>,
+): Promise<T[]> {
+	const all: T[] = [];
+	for (let page = 1; page <= MAX_PAGES; page++) {
+		const { items, total } = await fetchPage(page, MAX_PAGE_SIZE);
+		all.push(...items);
+		if (items.length === 0 || all.length >= total) break;
+	}
+	return all;
+}
+
 /**
  * Callback invoked while bytes are pushed across the wire.
  *
@@ -134,6 +158,20 @@ export const knowledgeBaseApi = {
 	list: (params: ListKnowledgeBasesParams = {}) =>
 		client.get<ListKnowledgeBasesResponse>('/knowledge_bases/', toQuery({ ...params })),
 
+	/**
+	 * Fetch every visible knowledge base across all pages — for views
+	 * that render one flat list (e.g. the sidebar).
+	 */
+	listAll: (params: Omit<ListKnowledgeBasesParams, 'page' | 'page_size'> = {}) =>
+		fetchAllPages(async (page, pageSize) => {
+			const res = await knowledgeBaseApi.list({
+				...params,
+				page,
+				page_size: pageSize,
+			});
+			return { items: res.knowledge_bases, total: res.total };
+		}),
+
 	listEmbeddingModels: () =>
 		client.get<ListKbEmbeddingModelsResponse>('/knowledge_bases/embedding_models'),
 
@@ -163,6 +201,23 @@ export const knowledgeBaseApi = {
 			`/knowledge_bases/${knowledgeBaseId}/documents`,
 			toQuery({ ...params }),
 		),
+
+	/**
+	 * Fetch every document of a knowledge base across all pages — for
+	 * views that render one flat list (e.g. the documents panel).
+	 */
+	listAllDocuments: (
+		knowledgeBaseId: string,
+		params: Omit<ListKnowledgeDocumentsParams, 'page' | 'page_size'> = {},
+	) =>
+		fetchAllPages(async (page, pageSize) => {
+			const res = await knowledgeBaseApi.listDocuments(knowledgeBaseId, {
+				...params,
+				page,
+				page_size: pageSize,
+			});
+			return { items: res.documents, total: res.total };
+		}),
 
 	/** Browse one page of a document's chunks in `chunk_index` order. */
 	listDocumentChunks: (knowledgeBaseId: string, documentId: string, page = 1, pageSize = 30) =>
