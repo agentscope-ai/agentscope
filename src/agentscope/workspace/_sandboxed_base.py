@@ -17,6 +17,8 @@ add/remove routing, ``.mcp`` persistence, reset — lives here.
 """
 
 import asyncio
+import json
+import os
 import shlex
 import time
 from abc import abstractmethod
@@ -33,6 +35,34 @@ from ._utils import (
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
 )
+
+# ── HTTP MCP 直挂开关（MCP_HTTP_DIRECT）─────────────────────────────
+# 默认开启（"1"）：远程/非本地 MCP（HttpMCPConfig，业务 MCP）直接挂在
+# 主进程 _mcps（进程内 registry），不再经沙箱 gateway 代理，工具调用
+# 从 1-2s/次 降到 10-50ms/次。
+# 关闭（"0"/"false"/"no"/"off"）：恢复官方原行为，所有 MCP 一律走
+# in-sandbox gateway（stdio 型无论如何都走 gateway，不受本开关影响）。
+MCP_HTTP_DIRECT_ENABLED = os.getenv("MCP_HTTP_DIRECT", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+
+# ── gateway health 等待降级开关（AGENTSCOPE_GATEWAY_HEALTH_TIMEOUT）──
+# 直挂模式（MCP_HTTP_DIRECT=1）下业务 HTTP MCP 已挂宿主进程、不经 gateway，
+# health 等待纯属浪费（沙箱内 gateway python 加载 ~6s，期间 health 反复 502）。
+# 本配置控制直挂模式下的 health 等待秒数（默认 3s，设 0 则完全跳过），
+# 超时后降级为 warning 继续 initialize（gateway nohup 后台继续启动自愈，
+# stdio MCP 场景不受影响——非直挂模式保留官方 30s 硬失败语义）。
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    try:
+        return float(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+
+GATEWAY_HEALTH_TIMEOUT_DIRECT = _env_float("AGENTSCOPE_GATEWAY_HEALTH_TIMEOUT", 3.0)
 
 
 class SandboxedWorkspaceBase(WorkspaceBase):
@@ -169,6 +199,38 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
         return []
 
+    # ── fork 定制配置启动横幅（BusinessEmbedDemo 定制版）────────────
+    # 本 fork 相对官方 agentscope 存在多处行为改造。initialize 时把
+    # 当前生效的定制项以 [fork-config] 前缀逐行打印，便于运行态一眼
+    # 确认走的是哪条链路（直挂 / 降级 / 代理），避免按官方行为误判。
+    # 子类可 override 追加自身定制项（如 OpenSandbox 的 proxy-direct）。
+
+    def _fork_config_lines(self) -> list[str]:
+        lines: list[str] = []
+        if MCP_HTTP_DIRECT_ENABLED:
+            lines.append(
+                "MCP_HTTP_DIRECT=1（直挂模式 ON）：http_mcp 业务工具挂宿主进程内 _mcps，"
+                "不经沙箱 gateway/execd，工具调用 1-2s→10-50ms（实测 686ms、0 次 command）；"
+                "stdio MCP 仍走 gateway，不受本开关影响。关闭：MCP_HTTP_DIRECT=0",
+            )
+        else:
+            lines.append(
+                "MCP_HTTP_DIRECT=0（直挂模式 OFF）：http_mcp 走官方链路"
+                "（沙箱内 gateway 代理）。",
+            )
+        timeout_src = (
+            "env"
+            if os.getenv("AGENTSCOPE_GATEWAY_HEALTH_TIMEOUT") is not None
+            else "default"
+        )
+        lines.append(
+            f"AGENTSCOPE_GATEWAY_HEALTH_TIMEOUT={GATEWAY_HEALTH_TIMEOUT_DIRECT}s"
+            f" ({timeout_src})：直挂模式下 gateway health 等待降级，超时不再硬失败"
+            "（gateway nohup 后台自愈）；非直挂/stdio 模式保持官方 30s 严格语义。"
+            "0=完全跳过等待",
+        )
+        return lines
+
     # ── lifecycle template methods ────────────────────────────────
 
     async def initialize(self) -> None:
@@ -181,6 +243,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             self.workspace_id,
             self.__class__.__name__,
         )
+        logger.info("[fork-config] ========== BusinessEmbedDemo fork 定制配置 ==========")
+        for line in self._fork_config_lines():
+            logger.info("[fork-config] %s", line)
+        logger.info("[fork-config] ====================================================")
 
         if self.is_alive:
             return
@@ -261,6 +327,17 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── MCP management (gateway-routed) ───────────────────────────
 
+    def _mcp_persist(self, mcp: MCPClient) -> bool:
+        """Only stdio MCPs (gateway-attached) are persisted to ``.mcp``.
+
+        HTTP MCPs attached directly to the host process (direct-attach
+        mode, see ``MCP_HTTP_DIRECT``) are excluded, so the in-sandbox
+        gateway never re-attaches them on restart (double-mount).
+        """
+        if MCP_HTTP_DIRECT_ENABLED and mcp.mcp_config.type == "http_mcp":
+            return False
+        return True
+
     async def list_mcps(
         self,
         *,
@@ -336,6 +413,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 If the gateway is not attached or rejects the
                 registration.
         """
+        if MCP_HTTP_DIRECT_ENABLED and mcp_client.mcp_config.type == "http_mcp":
+            async with self._mcp_lock:
+                if any(m.name == mcp_client.name for m in self._mcps):
+                    raise ValueError(
+                        f"MCP {mcp_client.name!r} already exists in workspace.",
+                    )
+                if mcp_client.is_stateful and not mcp_client.is_connected:
+                    await mcp_client.connect()
+                self._mcps.append(mcp_client)
+            return
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
         agent_id, session_id = agent_id or "", session_id or ""
@@ -432,6 +519,20 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
+    async def _gateway_proxy_url(self) -> tuple[str, dict[str, str]] | None:
+        """Return ``(base_url, headers)`` when this backend supports a
+        host-side proxy-direct transport to the in-sandbox gateway, or
+        ``None`` to keep the legacy in-sandbox shim transport.
+
+        Only sandbox providers that expose a server-side proxy route
+        should override this (OpenSandbox's ``use_server_proxy``
+        endpoint is the canonical example). When a proxy route is
+        returned the gateway is launched with ``--host 0.0.0.0`` so the
+        provider's proxy can reach it through the sandbox container
+        address; otherwise the gateway keeps its loopback-only binding.
+        """
+        return None
+
     async def _setup_mcp_gateway(self) -> None:
         """Bootstrap (once) and launch the in-sandbox gateway.
 
@@ -440,10 +541,14 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         1. Bootstrap the venv + script if :attr:`_gateway_script` is
            missing (Docker's image already has it → fast-path).
         2. Kill any leftover gateway from a previous resume.
-        3. Launch a fresh gateway pointed at ``.mcp``.
+        3. Launch a fresh gateway pointed at ``.mcp`` (bound to
+           ``0.0.0.0`` when :meth:`_gateway_proxy_url` is non-``None``,
+           loopback otherwise).
         4. Bind :attr:`_gateway` and poll ``/health``.
         """
         backend = self.get_backend()
+        gateway_proxy = await self._gateway_proxy_url()
+        gateway_bind_host = "0.0.0.0" if gateway_proxy is not None else "127.0.0.1"
 
         # Provision the venv + script on first use. Fast-path skips
         # when the script already exists (Docker image build, E2B
@@ -495,6 +600,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             f"nohup {shlex.quote(self._gateway_python)} -u "
             f"{shlex.quote(self._gateway_script)} "
             f"--port {self.gateway_port} "
+            f"--host {gateway_bind_host} "
             f"> {shlex.quote(self._gateway_log)} 2>&1 &"
         )
         await backend.exec_shell(["sh", "-c", launch_cmd])
@@ -505,8 +611,18 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             gateway_port=self.gateway_port,
             timeout=30.0,
             gateway_log_path=self._gateway_log,
+            proxy_base_url=gateway_proxy[0] if gateway_proxy else None,
+            proxy_headers=gateway_proxy[1] if gateway_proxy else None,
         )
-        health_timeout = 30.0
+        # Direct-attach mode (MCP_HTTP_DIRECT=1) shortens the health
+        # wait: business HTTP MCPs are host-attached and never route
+        # through the gateway, so a slow gateway boot (python imports
+        # ~6s CPU) must not stall initialize for the full 30s. The
+        # gateway keeps booting in the background via nohup; stdio-only
+        # mode keeps the official strict 30s + hard-fail semantics.
+        health_timeout = (
+            GATEWAY_HEALTH_TIMEOUT_DIRECT if MCP_HTTP_DIRECT_ENABLED else 30.0
+        )
         deadline = asyncio.get_event_loop().time() + health_timeout
         delay = 0.1
         while asyncio.get_event_loop().time() < deadline:
@@ -520,9 +636,21 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 tail = log[-2000:].decode(errors="replace")
             except Exception:
                 tail = "<no gateway log available>"
-            raise RuntimeError(
-                f"gateway did not become healthy within {health_timeout}s. "
-                f"Tail of {self._gateway_log}:\n{tail}",
-            )
+            if MCP_HTTP_DIRECT_ENABLED:
+                logger.warning(
+                    "MCP gateway did not become healthy within %.1fs "
+                    "(direct-attach mode: business HTTP MCPs are "
+                    "host-attached and do not depend on the gateway; "
+                    "continuing — gateway keeps booting in background). "
+                    "Tail of %s:\n%s",
+                    health_timeout,
+                    self._gateway_log,
+                    tail,
+                )
+            else:
+                raise RuntimeError(
+                    f"gateway did not become healthy within {health_timeout}s. "
+                    f"Tail of {self._gateway_log}:\n{tail}",
+                )
 
         # Nothing is registered here — sessions register on demand.

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
 import re
+import time
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
 from typing import Any, TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -283,7 +284,33 @@ class MCPClient(BaseModel):
             )
 
         try:
-            await self._stack.aclose()
+            # ── [MCP-TIMING] split aclose into ClientSession vs transport ──
+            # AsyncExitStack.close() closes entries LIFO: ClientSession was
+            # entered last, so its __aexit__ runs first, then the transport
+            # context manager. We close them explicitly to attribute latency.
+            if self._session is not None:
+                _t0 = time.perf_counter()
+                try:
+                    await self._session.__aexit__(None, None, None)
+                except Exception as _e:
+                    logger.warning(
+                        "[MCP-TIMING] %s ClientSession.__aexit__ raised: %s",
+                        self.name,
+                        _e,
+                    )
+                logger.info(
+                    "[MCP-TIMING] %s ClientSession.__aexit__=%.3fs",
+                    self.name,
+                    time.perf_counter() - _t0,
+                )
+            _t1 = time.perf_counter()
+            if self._stack is not None:
+                await self._stack.aclose()
+            logger.info(
+                "[MCP-TIMING] %s transport.__aexit__(stack)=%.3fs",
+                self.name,
+                time.perf_counter() - _t1,
+            )
         except Exception as e:
             if not ignore_errors:
                 raise e

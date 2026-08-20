@@ -42,6 +42,8 @@ from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace import E2BWorkspace
 from ...workspace._e2b._constants import (
+    DEFAULT_API_URL,
+    DEFAULT_DOMAIN,
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
@@ -66,6 +68,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
+        api_url: str = DEFAULT_API_URL,
         timeout_seconds: int = DEFAULT_TIMEOUT,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
@@ -75,6 +78,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
+        skip_system_bootstrap: bool = False,
+        pypi_index_url: str | None = None,
     ) -> None:
         """Initialize the E2B workspace manager.
 
@@ -118,10 +123,21 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up
                 to look for idle workspaces. Defaults to 5 minutes.
+            skip_system_bootstrap (`bool`, defaults to ``False``):
+                Forwarded to every :class:`E2BWorkspace` created by
+                this manager. When ``True``, bypasses the ``apt-get``,
+                ``uv`` and ``pip install`` steps during sandbox
+                bootstrap — the sandbox template must already ship
+                ``python3``, ``agentscope``, ``mcp``, ``fastapi`` and
+                ``uvicorn`` at system level.
+            pypi_index_url (`str | None`, optional):
+                Forwarded to every :class:`E2BWorkspace` created by
+                this manager. See :class:`E2BWorkspace` for semantics.
         """
         self._template = template
         self._api_key = api_key
         self._domain = domain
+        self._api_url = api_url
         self._timeout_seconds = timeout_seconds
         self._gateway_port = gateway_port
         self._env = dict(env or {})
@@ -131,6 +147,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        self._skip_system_bootstrap = skip_system_bootstrap
+        self._pypi_index_url = pypi_index_url
         super().__init__(isolation=isolation)
 
         # workspace_id → (workspace, last_access_monotonic)
@@ -178,6 +196,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             template=self._template,
             api_key=self._api_key,
             domain=self._domain,
+            api_url=self._api_url,
             timeout_seconds=self._timeout_seconds,
             gateway_port=self._gateway_port,
             env=self._env,
@@ -185,6 +204,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             extra_pip=self._extra_pip,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
+            skip_system_bootstrap=self._skip_system_bootstrap,
+            pypi_index_url=self._pypi_index_url,
         )
         await ws.initialize()
         return ws

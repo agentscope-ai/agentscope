@@ -29,9 +29,11 @@ RUN apt-get update -qq \
         curl ca-certificates ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
-# uv — matches the bootstrap command exactly.
-RUN curl -LsSf https://astral.sh/uv/install.sh \
-  | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+# uv — matches the bootstrap command exactly (Aliyun PyPI mirror).
+RUN if ! command -v uv >/dev/null 2>&1; then \
+      python3 -m pip install --break-system-packages -q \
+        -i https://mirrors.aliyun.com/pypi/simple/ uv; \
+    fi
 
 # Keep in sync with agentscope.workspace._k8s._k8s_bootstrap.GATEWAY_HOME
 ENV GATEWAY_HOME=/root/.agentscope

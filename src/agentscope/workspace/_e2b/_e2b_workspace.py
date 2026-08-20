@@ -46,6 +46,8 @@ from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
+    DEFAULT_API_URL,
+    DEFAULT_DOMAIN,
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
@@ -79,6 +81,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
+        api_url: str = DEFAULT_API_URL,
         timeout_seconds: int = DEFAULT_TIMEOUT,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
@@ -87,6 +90,8 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        skip_system_bootstrap: bool = False,
+        pypi_index_url: str | None = None,
     ) -> None:
         """Construct an :class:`E2BWorkspace`.
 
@@ -121,6 +126,17 @@ class E2BWorkspace(SandboxedWorkspaceBase):
                 ``.mcp`` exists.
             skill_paths (`list[str] | None`, optional):
                 Local skill dirs seeded into ``skills/`` on first init.
+            skip_system_bootstrap (`bool`, defaults to ``False``):
+                When ``True``, skip the ``apt-get``, ``uv`` installation
+                and ``pip install`` steps during bootstrap. Use this with
+                a pre-built FC custom template or E2B template that already
+                has ``python3``, ``agentscope``, ``mcp``, ``fastapi`` and
+                ``uvicorn`` installed at system level.
+            pypi_index_url (`str | None`, defaults to ``None``):
+                PyPI index URL for ``uv pip install`` during bootstrap.
+                Set to a mirror URL (e.g. ``https://mirrors.aliyun.com/pypi/simple/``)
+                to accelerate package downloads in China. ``None`` uses the
+                default PyPI registry.
         """
         super().__init__(
             workspace_id=workspace_id,
@@ -133,6 +149,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         self.template = template
         self.api_key = api_key
         self.domain = domain
+        self._api_url = api_url
         self.timeout_seconds = timeout_seconds
         self.gateway_port = gateway_port
         self.env: dict[str, str] = dict(env or {})
@@ -142,6 +159,8 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             backend="E2B-based",
             workdir=self.workdir,
         )
+        self.skip_system_bootstrap = skip_system_bootstrap
+        self._pypi_index_url = pypi_index_url
 
         # ── runtime state (E2B-only) ────────────────────────────
         self._sandbox: Any = None  # e2b.AsyncSandbox
@@ -208,18 +227,30 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         "not yet routable" errors — typical on a paused sandbox that
         has just been auto-resumed via ``connect``.
         """
-        from e2b import AsyncSandbox
+        from e2b_code_interpreter import AsyncSandbox
 
         existing = await self._find_existing_sandbox()
 
         api_opts = self._api_opts()
+        connected = False
         if existing is not None:
-            self._sandbox = await AsyncSandbox.connect(
-                sandbox_id=existing.sandbox_id,
-                timeout=self.timeout_seconds,
-                **api_opts,
-            )
-        else:
+            from e2b import SandboxNotFoundException
+            try:
+                self._sandbox = await AsyncSandbox.connect(
+                    sandbox_id=existing.sandbox_id,
+                    timeout=self.timeout_seconds,
+                    **api_opts,
+                )
+                connected = True
+            except SandboxNotFoundException:
+                logger.warning(
+                    "E2BWorkspace: stale sandbox %s listed but not found "
+                    "— creating a new one for workspace %s",
+                    existing.sandbox_id,
+                    self.workspace_id,
+                )
+
+        if not connected:
             merged_metadata = {
                 METADATA_WORKSPACE_ID_KEY: self.workspace_id,
                 **self.sandbox_metadata,
@@ -279,7 +310,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         Returns the most recent :class:`SandboxInfo` (paused or
         running) or ``None`` if no match exists.
         """
-        from e2b import AsyncSandbox
+        from e2b_code_interpreter import AsyncSandbox
         from e2b.api.client.models.sandbox_state import SandboxState
         from e2b.sandbox.sandbox_api import SandboxQuery
 
@@ -314,15 +345,35 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         return candidates[0]
 
     def _api_opts(self) -> dict[str, Any]:
-        """Common ``api_key`` / ``domain`` opts forwarded to E2B SDK calls."""
+        """Common ``api_key`` / ``domain`` / ``api_url`` opts forwarded to E2B SDK calls."""
         opts: dict[str, Any] = {}
         if self.api_key:
             opts["api_key"] = self.api_key
         if self.domain:
             opts["domain"] = self.domain
+        if self._api_url:
+            opts["api_url"] = self._api_url
         return opts
 
     # ── internals: bootstrap ────────────────────────────────────
+
+    @property
+    def _gateway_python(self) -> str:
+        """Path to the Python interpreter inside the sandbox.
+
+        When :attr:`skip_system_bootstrap` is ``True``, the custom
+        template already has all gateway deps installed at system
+        level — no venv is needed.  Otherwise delegate to the base
+        class which points to the bootstrap-created venv inside
+        ``_gateway_home``.
+        """
+        if self.skip_system_bootstrap:
+            # ── matching the FC custom template Dockerfile.fc ──
+            # The template's system Python has agentscope / mcp /
+            # fastapi / uvicorn pre-installed, so the gateway script
+            # can run directly without a venv.
+            return "/usr/local/bin/python"
+        return super()._gateway_python
 
     def _bootstrap_commands(self) -> list[str]:
         """Shell commands that provision this E2B sandbox once.
@@ -331,6 +382,10 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         a prior bootstrap that was interrupted). Every step is
         idempotent so a resumed sandbox can re-run cleanly.
 
+        When :attr:`skip_system_bootstrap` is ``True``, returns an
+        empty list — the custom template already ships with all
+        gateway dependencies pre-installed.
+
         ``--no-deps`` on agentscope is mandatory: the gateway only
         imports :class:`agentscope.mcp.MCPClient` whose transitive
         needs (``mcp / pydantic / httpx``) are already installed via
@@ -338,25 +393,41 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         drags in heavy / Rust-built packages the E2B image cannot
         compile.
         """
+        if self.skip_system_bootstrap:
+            return []
+
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement string so entries with spaces or
         # shell metacharacters cannot break the ``sh -c`` command or
         # become a command-injection vector inside the sandbox.
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
+        # Build uv pip install command with optional PyPI index URL for
+        # Chinese mirror support.
+        pypi_index = ""
+        if self._pypi_index_url:
+            pypi_index = f" --index-url {self._pypi_index_url}"
+
         return [
-            # 1. System deps + uv installer, both via sudo so uv lands
-            # at /usr/local/bin (on PATH — no absolute-path plumbing
-            # needed downstream).
+            # 1. Replace Debian sources with Aliyun mirrors, then
+            # install system deps + uv via sudo so uv lands at
+            # /usr/local/bin (on PATH).
+            "sudo sed -i 's|deb.debian.org|mirrors.aliyun.com|g' "
+            "/etc/apt/sources.list.d/*.sources 2>/dev/null || true; "
+            "sudo sed -i "
+            "'s|http://deb.debian.org|http://mirrors.aliyun.com|g' "
+            "/etc/apt/sources.list 2>/dev/null || true; "
             "sudo apt-get update -qq "
             "&& sudo apt-get install -y --no-install-recommends ripgrep "
             "&& sudo rm -rf /var/lib/apt/lists/*",
-            "curl -LsSf https://astral.sh/uv/install.sh "
-            "| sudo env UV_INSTALL_DIR=/usr/local/bin "
-            "INSTALLER_NO_MODIFY_PATH=1 sh",
+            # uv → prefer pre-installed uv; otherwise install from the
+            # Aliyun PyPI mirror (astral.sh has no CN mirror).
+            "command -v uv >/dev/null 2>&1 || "
+            "sudo python3 -m pip install --break-system-packages -q "
+            "-i https://mirrors.aliyun.com/pypi/simple/ uv",
             # 2. Gateway venv + base requirements + agentscope.
             f"uv venv {self._gateway_venv}",
-            f"uv pip install --python {self._gateway_python} {pip_args}",
-            f"uv pip install --python {self._gateway_python} "
+            f"uv pip install{pypi_index} --python {self._gateway_python} {pip_args}",
+            f"uv pip install{pypi_index} --python {self._gateway_python} "
             f"--no-deps 'agentscope'",
         ]
