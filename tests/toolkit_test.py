@@ -1134,6 +1134,61 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             f"started{expected_dict_text}",
         )
 
+    async def test_custom_input_schema(self) -> None:
+        """Test overriding the auto-extracted schema with a custom one."""
+
+        def set_mode(mode: str) -> str:
+            """Set the working mode.
+
+            Args:
+                mode: The mode to use
+            """
+            return f"Mode set to {mode}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    set_mode,
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "description": "The mode to use",
+                                "enum": ["fast", "slow"],
+                            },
+                        },
+                        "required": ["mode"],
+                    },
+                ),
+            ],
+        )
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "set_mode",
+                        "description": "Set the working mode.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "mode": {
+                                    "type": "string",
+                                    "description": "The mode to use",
+                                    "enum": ["fast", "slow"],
+                                },
+                            },
+                            "required": ["mode"],
+                        },
+                    },
+                },
+            ],
+        )
+
 
 class ToolGroupTest(IsolatedAsyncioTestCase):
     """The tool group test case."""
