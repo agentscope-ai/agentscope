@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
+import json
 from typing import Any
 
 from pydantic import Field
 
 from ._constants import HANDLE_LEN
 from ._team_tool_base import _TeamToolBase
-from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox
 from ..storage._utils import _ensure_team_members
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
@@ -317,20 +317,20 @@ class TeamSay(_TeamToolBase):
                     f"{content}\n"
                     f"</team-message>"
                 ),
-                source=sender_name,
+                source=json.dumps(
+                    {"label": "team", "sublabel": sender_name},
+                    ensure_ascii=False,
+                ),
             )
             payload = hint.model_dump(mode="json")
 
             for sid, aid in recipients:
-                await self._message_bus.queue_push(
-                    MessageBusKeys.inbox(sid),
-                    payload,
-                )
-                await enqueue_run_trigger(
+                await deliver_to_inbox(
                     self._message_bus,
                     user_id=self._user_id,
                     session_id=sid,
                     agent_id=aid,
+                    payload=payload,
                 )
 
             count = len(recipients)

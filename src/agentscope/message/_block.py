@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Literal, List, TypeAlias, Any
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from ..permission import PermissionRule
 
 
@@ -17,6 +17,10 @@ class TextBlock(BaseModel):
     """The text content of the block."""
     id: str = Field(default_factory=_generate_id)
     """The unique identifier of the block."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """The creation time of the block"""
+    finished_at: str | None = None
+    """The finished time of the block"""
 
 
 class ThinkingBlock(BaseModel):
@@ -43,6 +47,10 @@ class ThinkingBlock(BaseModel):
     """The thinking content of the block."""
     id: str = Field(default_factory=_generate_id)
     """The unique identifier of the block."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """The creation time of the block"""
+    finished_at: str | None = None
+    """The finished time of the block"""
 
 
 class Base64Source(BaseModel):
@@ -84,6 +92,10 @@ class DataBlock(BaseModel):
     a URL."""
     name: str | None = None
     """The name of the data block, which is optional."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """The creation time of the block"""
+    finished_at: str | None = None
+    """The finished time of the block"""
 
 
 class HintBlock(BaseModel):
@@ -107,6 +119,10 @@ class HintBlock(BaseModel):
     """The sender or origin of this hint. For team messages this is the
     sender's display name (e.g. ``"alice"``); for system notifications
     it may be ``"system"`` or ``None``."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """The creation time of the block"""
+    finished_at: str | None = Field(default_factory=_generate_timestamp)
+    """The finished time of the block"""
 
 
 class ToolCallState(StrEnum):
@@ -160,6 +176,10 @@ class ToolCallBlock(BaseModel):
     suggested_rules: list[PermissionRule] = Field(default_factory=list)
     """The suggestions for this tool call when asking user, used to maintain
     the suggestions across requests."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """The creation time of the block"""
+    finished_at: str | None = None
+    """The finished time of the block"""
 
 
 class ToolResultState(StrEnum):
@@ -190,6 +210,10 @@ class ToolResultBlock(BaseModel):
     """The execution state of the tool."""
     metadata: dict[str, Any] = Field(default_factory=dict)
     """The metadata of the tool result block."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """The creation time of the block"""
+    finished_at: str | None = None
+    """The finished time of the block"""
 
 
 ContentBlock: TypeAlias = (

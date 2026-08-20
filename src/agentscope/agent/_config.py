@@ -138,6 +138,21 @@ class ContextConfig(BaseModel):
     )
     """The tool result limit to avoid tool result bursting."""
 
+    max_image_num: int = Field(
+        title="Max Image Number",
+        default=5,
+        ge=0,
+        description=(
+            "The maximum number of images kept in the context. The oldest "
+            "images exceeding the limit will be removed."
+        ),
+    )
+    """The maximum number of images kept in the context. When the number of
+    images exceeds this limit, the oldest images will be offloaded to the
+    workspace (if an offloader is provided) and replaced by a hint that
+    records the offloaded path; otherwise they are dropped and replaced by a
+    hint without path information."""
+
 
 class InjectionConfig(BaseModel):
     """The state injection related configuration in AgentScope."""

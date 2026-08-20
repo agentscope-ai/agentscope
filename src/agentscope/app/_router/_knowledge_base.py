@@ -23,15 +23,18 @@ from ..deps import (
     get_current_user_id,
     get_knowledge_base_manager,
     get_knowledge_base_service,
+    get_knowledge_chunkers,
     get_knowledge_parsers,
     get_resource_access_service,
 )
 from ._schema import (
+    ChunkerInfo,
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
     KnowledgeDocumentView,
+    ListChunkersResponse,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
     ListKnowledgeDocumentsResponse,
@@ -50,7 +53,7 @@ from .._service import (
     ResourceAccessService,
 )
 from ...middleware import RAGMiddleware
-from ...rag import ParserBase
+from ...rag import ChunkerBase, ParserBase
 
 
 knowledge_base_router = APIRouter(
@@ -127,6 +130,46 @@ async def list_kb_embedding_models(
         )
 
     return ListKbEmbeddingModelsResponse(providers=providers, policy=policy)
+
+
+@knowledge_base_router.get(
+    "/chunkers",
+    response_model=ListChunkersResponse,
+    summary="List available chunker types and their parameter schemas",
+)
+async def list_chunkers(
+    _: str = Depends(get_current_user_id),
+    chunker_classes: list[type[ChunkerBase]] = Depends(
+        get_knowledge_chunkers,
+    ),
+) -> ListChunkersResponse:
+    """List every available chunker type with its parameter schema.
+
+    The front-end uses this to populate the chunker selector and
+    to render a dynamic parameter form when creating a knowledge
+    base.
+
+    Args:
+        _ (`str`):
+            Injected authenticated user ID; only used to gate the
+            endpoint behind authentication.
+        chunker_classes (`list[type[ChunkerBase]]`):
+            The chunker classes configured via
+            ``create_app(knowledge_chunkers=...)``.
+
+    Returns:
+        `ListChunkersResponse`:
+            All available chunker types with their JSON Schemas.
+    """
+    return ListChunkersResponse(
+        chunkers=[
+            ChunkerInfo(
+                type=cls.chunker_type,
+                parameter_schema=cls.Parameters.model_json_schema(),
+            )
+            for cls in chunker_classes
+        ],
+    )
 
 
 @knowledge_base_router.get(
@@ -246,6 +289,7 @@ async def create_knowledge_base(
         name=body.name,
         description=body.description,
         embedding_model_config=body.embedding_model_config,
+        chunker_config=body.chunker_config,
     )
     return CreateKnowledgeBaseResponse(knowledge_base_id=record.id)
 

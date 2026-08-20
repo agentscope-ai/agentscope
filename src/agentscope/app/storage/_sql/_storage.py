@@ -26,10 +26,12 @@ from .._model import (
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
+    MCPRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
+    SkillRecord,
     TeamRecord,
 )
 from .._utils import _dump_with_secrets
@@ -40,9 +42,11 @@ from ._tables import (
     CredentialRow,
     KnowledgeBaseRow,
     KnowledgeDocumentRow,
+    MCPRow,
     MessageRow,
     ScheduleRow,
     SessionRow,
+    SkillRow,
     TeamRow,
 )
 from ....credential import CredentialBase
@@ -806,6 +810,171 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return result.rowcount > 0
 
     # ------------------------------------------------------------------
+    # Installed MCPs and skills
+    #
+    # ``(user_id, name)`` is unique on both tables. The pre-write lookup
+    # below turns the common case into the same ``ValueError`` the Redis
+    # backend raises; the constraint is the backstop that closes the
+    # read-then-write window between concurrent writers.
+    # ------------------------------------------------------------------
+
+    async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
+        """Create or update an installed-MCP record for *user_id*.
+
+        Same contract as :meth:`RedisStorage.upsert_mcp`.
+        """
+        holder = await self.get_mcp_by_name(user_id, mcp_record.name)
+        if holder is not None and holder.id != mcp_record.id:
+            raise ValueError(
+                f"An MCP named {mcp_record.name!r} already exists for "
+                f"this user.",
+            )
+        mcp_record.user_id = user_id
+        await self._write_row(MCPRow, mcp_record)
+        return mcp_record.id
+
+    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
+        """Return every installed-MCP record for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(MCPRow).where(MCPRow.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, MCPRecord) for r in rows]
+
+    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
+        """Fetch one installed-MCP record by id; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(MCPRow, mcp_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, MCPRecord)
+
+    async def get_mcp_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> MCPRecord | None:
+        """Fetch one installed-MCP record by its user-unique name."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            row = (
+                await sess.execute(
+                    select(MCPRow).where(
+                        MCPRow.user_id == user_id,
+                        MCPRow.name == name,
+                    ),
+                )
+            ).scalar_one_or_none()
+        return None if row is None else _to_record(row, MCPRecord)
+
+    async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
+        """Delete an installed-MCP record; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(MCPRow).where(
+                    MCPRow.id == mcp_id,
+                    MCPRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0
+
+    async def upsert_skill(
+        self,
+        user_id: str,
+        skill_record: SkillRecord,
+    ) -> str:
+        """Create or update an installed-skill record for *user_id*.
+
+        Same contract as :meth:`RedisStorage.upsert_skill`.
+        """
+        holder = await self.get_skill_by_name(user_id, skill_record.name)
+        if holder is not None and holder.id != skill_record.id:
+            raise ValueError(
+                f"A skill named {skill_record.name!r} already exists for "
+                f"this user.",
+            )
+        skill_record.user_id = user_id
+        await self._write_row(SkillRow, skill_record)
+        return skill_record.id
+
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
+        """Return every installed-skill record for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(SkillRow).where(SkillRow.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, SkillRecord) for r in rows]
+
+    async def get_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> SkillRecord | None:
+        """Fetch one installed-skill record by id; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(SkillRow, skill_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, SkillRecord)
+
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> SkillRecord | None:
+        """Fetch one installed-skill record by its user-unique name."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            row = (
+                await sess.execute(
+                    select(SkillRow).where(
+                        SkillRow.user_id == user_id,
+                        SkillRow.name == name,
+                    ),
+                )
+            ).scalar_one_or_none()
+        return None if row is None else _to_record(row, SkillRecord)
+
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete an installed-skill record; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(SkillRow).where(
+                    SkillRow.id == skill_id,
+                    SkillRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0
+
+    # ------------------------------------------------------------------
     # Agents
     # ------------------------------------------------------------------
 
@@ -881,6 +1050,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
         if session_id:
@@ -901,6 +1072,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
             config=config,
             source=source,
             source_schedule_id=source_schedule_id,
+            source_chat_id=source_chat_id,
+            source_channel_id=source_channel_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -1030,6 +1203,36 @@ class AsyncSQLAlchemyStorage(StorageBase):
                         .where(
                             SessionRow.user_id == user_id,
                             SessionRow.source_schedule_id == schedule_id,
+                        )
+                        .order_by(SessionRow.created_at.desc()),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, SessionRecord) for r in rows]
+
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Sessions derived from *channel_id* — newest first.
+
+        ``source_channel_id`` lives in the JSON payload (not a promoted
+        column), so it is matched inside the payload.
+        """
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(SessionRow)
+                        .where(
+                            SessionRow.user_id == user_id,
+                            SessionRow.payload["source_channel_id"].as_string()
+                            == channel_id,
                         )
                         .order_by(SessionRow.created_at.desc()),
                     )

@@ -36,6 +36,7 @@ from .._service import (
     ResourceAccessService,
     ChatService,
     SessionService,
+    SessionStatus,
     SessionProjection,
     SubagentHitlProjector,
 )
@@ -49,6 +50,7 @@ from ..storage import (
     TeamRecord,
 )
 from ...message import ToolCallState
+from ...state import ToolContext
 from ..storage._utils import _ensure_team_members
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
@@ -199,11 +201,15 @@ async def list_sessions(
     """Return all sessions for an agent as enriched
     :class:`SessionView` entries.
 
-    Each entry bundles three things the chat UI needs to render
-    without follow-up requests: the session record (incl.
-    ``state``), whether a chat run is currently active, and — when
+    Each entry bundles what the chat UI needs to render without
+    follow-up requests: the session record, its status, and — when
     the session participates in a team — the resolved team detail
     (leader agent + member agents with their session ids).
+
+    The record arrives trimmed: ``state.context``, ``state.summary``
+    and ``state.tool_context`` are cleared, since they hold the model's
+    conversation and every file it has read. Fetch a session's messages
+    from ``GET /sessions/{id}/messages`` instead.
 
     Args:
         agent_id (`str`):
@@ -244,12 +250,34 @@ async def list_sessions(
                     user_id,
                     team_record,
                 )
+        is_running = await message_bus.is_locked(
+            MessageBusKeys.session_lock(session.id),
+        )
+        # Derived before the trim below, which drops the context it reads.
+        session_status = (
+            SessionStatus.RUNNING
+            if is_running
+            else SessionService.derive_parked_status(session.state.context)
+        )
         views.append(
             SessionView(
-                session=session,
-                is_running=await message_bus.is_locked(
-                    MessageBusKeys.session_lock(session.id),
+                # ``context`` is the conversation the model sees,
+                # ``summary`` its compressed form, and ``tool_context``
+                # caches every file read — megabytes a session, none of
+                # which a sidebar renders.
+                session=session.model_copy(
+                    update={
+                        "state": session.state.model_copy(
+                            update={
+                                "context": [],
+                                "summary": "",
+                                "tool_context": ToolContext(),
+                            },
+                        ),
+                    },
                 ),
+                is_running=is_running,
+                status=session_status,
                 team=team_detail,
             ),
         )
@@ -431,8 +459,14 @@ async def update_session(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> SessionRecord:
-    """Update the model configuration of an existing session.
+    """Update the configuration of an existing session.
+
+    Rejected while a chat run holds the session: the agent snapshots
+    its configuration once at run start, so a mid-run change would be
+    ignored for the current reply anyway — and writing it would race
+    the run's own state persistence.
 
     Args:
         session_id (`str`): The session to update.
@@ -440,19 +474,33 @@ async def update_session(
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
         access (`ResourceAccessService`): Injected access service.
+        message_bus (`MessageBus`): Injected message bus; used to
+            detect an in-flight run.
 
     Returns:
         `SessionRecord`: The full session record after the update.
 
     Raises:
         `HTTPException`: 404 if the session does not exist, or if the
-            referenced credential / KB is not visible to the caller.
+            referenced credential / KB is not visible to the caller;
+            409 if a chat run is currently active on the session.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found.",
+        )
+
+    # Checked after the 404 so a missing session reports as missing, and
+    # before the validation round trips below so we fail fast.
+    if await message_bus.is_locked(MessageBusKeys.session_lock(session_id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot modify session configuration while the session "
+                "is running."
+            ),
         )
 
     await _ensure_credential_exists(access, user_id, body.chat_model_config)
@@ -468,7 +516,13 @@ async def update_session(
         body.knowledge_config,
     )
 
-    updated_state = existing.state
+    # ``None`` leaves the stored state untouched (see
+    # ``StorageBase.upsert_session``). ``permission_mode`` is the only
+    # request field living inside ``state``; every other field is a
+    # pure config write, and rewriting ``state`` for those would put
+    # this handler's opening snapshot back over whatever the run has
+    # persisted since.
+    updated_state = None
     if body.permission_mode is not None:
         updated_ctx = existing.state.permission_context.model_copy(
             update={"mode": body.permission_mode},

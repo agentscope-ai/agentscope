@@ -1,6 +1,7 @@
 name: kimi-k2.5
 label: Kimi K2.5
-status: active
+status: deprecated
+deprecated_at: "2026-08-31T00:00:00"
 
 input_types:
   - text/plain
