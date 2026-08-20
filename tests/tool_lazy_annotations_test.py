@@ -74,27 +74,72 @@ class LazyAnnotationsTest(TestCase):
             kwargs_tool,
             include_var_keyword=True,
         )
-        self.assertEqual(
-            schema["properties"]["kwargs"]["additionalProperties"],
-            {"type": "string", "description": "Extras"},
+        self.assertDictEqual(
+            schema,
+            {
+                "type": "object",
+                "properties": {
+                    "kwargs": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "description": "Extras",
+                        },
+                        "default": {},
+                    },
+                },
+            },
         )
 
     def test_pydantic_model_parameter(self) -> None:
         """Custom model types must be resolved from the defining module."""
         schema = _extract_input_schema(model_tool)
-        self.assertIn("Location", schema.get("$defs", {}))
-        self.assertEqual(
-            schema["properties"]["location"]["$ref"],
-            "#/$defs/Location",
+        self.assertDictEqual(
+            schema,
+            {
+                "type": "object",
+                "$defs": {
+                    "Location": {
+                        "type": "object",
+                        "description": (
+                            "A location model used as a parameter type."
+                        ),
+                        "properties": {
+                            "city": {
+                                "type": "string",
+                                "description": "The city name",
+                            },
+                        },
+                        "required": ["city"],
+                    },
+                },
+                "properties": {
+                    "location": {
+                        "$ref": "#/$defs/Location",
+                        "description": "Where to report the weather for.",
+                    },
+                },
+                "required": ["location"],
+            },
         )
 
     def test_function_tool_registration(self) -> None:
         """FunctionTool must expose the resolved schema end to end."""
         tool = FunctionTool(annotated_tool)
-        self.assertEqual(
-            tool.input_schema["properties"]["query"],
+        self.assertDictEqual(
+            tool.input_schema,
             {
-                "type": "string",
-                "description": "The search query",
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
             },
         )
