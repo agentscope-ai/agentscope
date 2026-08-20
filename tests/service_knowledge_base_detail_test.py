@@ -33,6 +33,12 @@ from service_knowledge_base_upload_test import (
 )
 
 from agentscope.app import create_app
+from agentscope.app.access import (
+    ResourceAccessPolicyBase,
+    ResourceKind,
+    ResourcePermission,
+    ResourceRef,
+)
 from agentscope.app.rag.blob_store import LocalBlobStore
 from agentscope.app.storage import (
     EmbeddingModelConfig,
@@ -63,6 +69,41 @@ class _NoChunkListingVectorStore(_FakeVectorStore):
         raise NotImplementedError("no chunk listing here")
 
 
+class _ShareToViewerPolicy(ResourceAccessPolicyBase):
+    """Grant ``user-shared`` read access to one knowledge base.
+
+    ``knowledge_base_id`` is filled in by the test setup once the
+    seeded record's id is known; every other viewer gets nothing, so
+    the foreign-viewer 404 tests keep their meaning.
+    """
+
+    def __init__(self) -> None:
+        self.knowledge_base_id: str | None = None
+
+    async def list_accessible(
+        self,
+        viewer_id: str,
+        kind: ResourceKind,
+        storage: object,
+    ) -> list[ResourceRef]:
+        """Return the single read grant for ``user-shared``."""
+        del storage  # static grant — nothing to look up
+        if (
+            viewer_id == "user-shared"
+            and kind == ResourceKind.KNOWLEDGE_BASE
+            and self.knowledge_base_id is not None
+        ):
+            return [
+                ResourceRef(
+                    kind=ResourceKind.KNOWLEDGE_BASE,
+                    owner_id="user-1",
+                    resource_id=self.knowledge_base_id,
+                    permission=ResourcePermission.READ,
+                ),
+            ]
+        return []
+
+
 class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
     """Shared app bootstrap + seed data for the detail endpoints."""
 
@@ -78,6 +119,7 @@ class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
         message_bus = _make_bus(self._fr)
         self._blob_store = LocalBlobStore(root_dir=self._tmp.name)
 
+        self._share_policy = _ShareToViewerPolicy()
         self._app = create_app(
             storage=storage,
             message_bus=message_bus,
@@ -87,6 +129,7 @@ class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
                 vector_store=self._vector_store,
             ),
             blob_store=self._blob_store,
+            resource_access_policy=self._share_policy,
         )
 
         # Seed a knowledge base, a ready document (blob included) and
@@ -109,6 +152,7 @@ class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
         collection = kb_record.data.collection_name
         await self._vector_store.create_collection(collection, 1)
         self._kb_id = kb_record.id
+        self._share_policy.knowledge_base_id = kb_record.id
 
         self._file_bytes = b"# Hello\n\nchunked markdown body\n"
         async with self._blob_store as blob_store:
@@ -554,3 +598,69 @@ class KnowledgeDocumentListFilterTest(_KnowledgeBaseDetailTestBase):
             )
             self.assertEqual(beyond.json()["documents"], [])
             self.assertEqual(beyond.json()["total"], 1)
+
+
+class SharedViewerAccessTest(_KnowledgeBaseDetailTestBase):
+    """A read-only shared viewer can use every new read endpoint."""
+
+    def test_shared_viewer_sees_enriched_list(self) -> None:
+        """The shared KB lists with counts + the owner's credential name."""
+        with TestClient(self._app) as client:
+            response = client.get(
+                "/knowledge_bases/",
+                headers={"X-User-ID": "user-shared"},
+            )
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["total"], 1)
+            view = body["knowledge_bases"][0]
+            self.assertEqual(view["id"], self._kb_id)
+            self.assertFalse(view["editable"])
+            self.assertEqual(view["document_count"], 1)
+            self.assertEqual(view["chunk_count"], 5)
+            self.assertEqual(view["credential_name"], "My OpenAI Key")
+            self.assertNotIn("api_key", str(body))
+
+    def test_shared_viewer_lists_documents_and_chunks(self) -> None:
+        """Documents and chunk pages resolve through the owner's data."""
+        headers = {"X-User-ID": "user-shared"}
+        with TestClient(self._app) as client:
+            documents = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                headers=headers,
+            )
+            self.assertEqual(documents.status_code, 200)
+            self.assertEqual(documents.json()["total"], 1)
+
+            chunks = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/doc-1/chunks",
+                params={"page": 1, "page_size": 2},
+                headers=headers,
+            )
+            self.assertEqual(chunks.status_code, 200)
+            self.assertEqual(chunks.json()["total"], 5)
+            self.assertEqual(
+                [c["chunk_index"] for c in chunks.json()["chunks"]],
+                [0, 1],
+            )
+
+    def test_shared_viewer_previews_and_mints_tokens(self) -> None:
+        """Raw-file fetch works via header auth and via a minted token."""
+        headers = {"X-User-ID": "user-shared"}
+        with TestClient(self._app) as client:
+            direct = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/doc-1",
+                headers=headers,
+            )
+            self.assertEqual(direct.status_code, 200)
+            self.assertEqual(direct.content, self._file_bytes)
+
+            minted = client.post(
+                f"/knowledge_bases/{self._kb_id}"
+                "/documents/doc-1/download_token",
+                headers=headers,
+            )
+            self.assertEqual(minted.status_code, 200)
+            fetched = client.get(minted.json()["url"])
+            self.assertEqual(fetched.status_code, 200)
+            self.assertEqual(fetched.content, self._file_bytes)
