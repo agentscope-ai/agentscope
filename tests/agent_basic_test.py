@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -1683,6 +1684,305 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_tool_arg_coercion_in_agent(self) -> None:
+        """Agent coerces type-mismatched tool arguments before validation,
+        and both permission checking and execution receive the coerced value.
+        """
+        permission_inputs: list[dict[str, Any]] = []
+        executed_args: list[Any] = []
+
+        class MockIntTool(ToolBase):
+            """A test tool that expects an integer parameter."""
+
+            name: str = "mock_int_tool"
+            description: str = "A tool with an integer parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer", "description": "An integer"},
+                },
+                "required": ["n"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                permission_inputs.append(dict(tool_input))
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, n: int, **kwargs: Any) -> ToolChunk:
+                executed_args.append(n)
+                return ToolChunk(
+                    content=[TextBlock(text=f"Got int: {n}")],
+                )
+
+        self.agent.toolkit = Toolkit(tools=[MockIntTool()])
+        tool_call_id = "tool_call_coerce"
+
+        # Model returns "42" as a string — type mismatch for integer param
+        tool_call = ToolCallBlock(
+            id=tool_call_id,
+            name="mock_int_tool",
+            input='{"n": "42"}',
+        )
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            TextBlock(text="Calling..."),
+                            tool_call,
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        # Permission and execution must both receive the coerced int value
+        self.assertEqual(
+            permission_inputs,
+            [{"n": 42}],
+            "Permission should receive coerced int, not str",
+        )
+        self.assertEqual(
+            executed_args,
+            [42],
+            "Tool should receive coerced int, not str",
+        )
+        self.assertIsInstance(
+            executed_args[0],
+            int,
+            "Tool argument must be int, not str",
+        )
+
+        # Tool result should be success
+        tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
+        self.assertTrue(
+            any(e["state"] == "success" for e in tool_result_end),
+        )
+
+    async def test_agent_rejects_unquoted_nan_tool_argument(self) -> None:
+        """Agent rejects non-finite numbers before tool execution."""
+        executed_args: list[float] = []
+
+        class MockBoundedNumberTool(ToolBase):
+            """A test tool that expects a number within a fixed range."""
+
+            name: str = "mock_bounded_number_tool"
+            description: str = "A tool with a bounded number parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                },
+                "required": ["x"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, x: float, **kwargs: Any) -> ToolChunk:
+                executed_args.append(x)
+                return ToolChunk(content=[TextBlock(text="Executed")])
+
+        self.agent.toolkit = Toolkit(tools=[MockBoundedNumberTool()])
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tool_call_nan",
+                                name="mock_bounded_number_tool",
+                                input='{"x": NaN}',
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        self.assertEqual(executed_args, [])
+        tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
+        self.assertTrue(any(e["state"] == "error" for e in tool_result_end))
+
+    async def test_agent_rejects_nan_for_string_tool_argument(self) -> None:
+        """Agent rejects NaN before string coercion can hide it."""
+        executed_args: list[str] = []
+
+        class MockStringTool(ToolBase):
+            """A test tool that expects a string parameter."""
+
+            name: str = "mock_string_tool"
+            description: str = "A tool with a string parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {"x": {"type": "string"}},
+                "required": ["x"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, x: str, **kwargs: Any) -> ToolChunk:
+                executed_args.append(x)
+                return ToolChunk(content=[TextBlock(text="Executed")])
+
+        self.agent.toolkit = Toolkit(tools=[MockStringTool()])
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tool_call_nan_string",
+                                name="mock_string_tool",
+                                input='{"x": NaN}',
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        self.assertEqual(executed_args, [])
+        tool_result_end = [e for e in events if e["type"] == "TOOL_RESULT_END"]
+        self.assertTrue(any(e["state"] == "error" for e in tool_result_end))
+
+    async def test_agent_preserves_invalid_original_tool_input(self) -> None:
+        """Failed validation does not overwrite the original tool input."""
+        executed = False
+
+        class MockBoundedIntegerTool(ToolBase):
+            """A test tool with an integer lower bound."""
+
+            name: str = "mock_bounded_integer_tool"
+            description: str = "A tool with a bounded integer parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {"n": {"type": "integer", "minimum": 100}},
+                "required": ["n"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, n: int, **kwargs: Any) -> ToolChunk:
+                nonlocal executed
+                executed = True
+                return ToolChunk(content=[TextBlock(text="Executed")])
+
+        self.agent.toolkit = Toolkit(tools=[MockBoundedIntegerTool()])
+        tool_call = ToolCallBlock(
+            id="tool_call_invalid_coercion",
+            name="mock_bounded_integer_tool",
+            input='{"n": "42"}',
+        )
+        self.model.set_responses(
+            [
+                [ChatResponse(content=[tool_call], is_last=True)],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        async for _ in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            pass
+
+        self.assertFalse(executed)
+        self.assertEqual(tool_call.input, '{"n": "42"}')
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The toolkit class for tool calls in AgentScope."""
+
 import asyncio
 import inspect
 from collections import OrderedDict
@@ -24,6 +25,7 @@ from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
 from .._utils._common import _describe_exception, _json_loads_with_repair
+from ._utils import _coerce_tool_args
 from ..exception import (
     DeveloperOrientedException,
     ToolNotFoundError,
@@ -38,7 +40,6 @@ from ..message import (
 from ._tool_group import ToolGroup
 from .._logging import logger
 from ..state import AgentState
-
 
 # pylint: disable=line-too-long
 DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}All tool groups are currently deactivated.{% else %}The currently activated tool group(s): {{ groups | map(attribute='name') | join(', ') }}.{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
@@ -88,8 +89,9 @@ class Toolkit:
     def __init__(
         self,
         tools: list[ToolBase] | None = None,
-        skills_or_loaders: Sequence[str | Skill | SkillLoaderBase]
-        | None = None,
+        skills_or_loaders: (
+            Sequence[str | Skill | SkillLoaderBase] | None
+        ) = None,
         mcps: list[MCPClient] | None = None,
         tool_groups: list[ToolGroup] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
@@ -297,6 +299,13 @@ class Toolkit:
         try:
             # Prepare keyword arguments
             kwargs = _json_loads_with_repair(tool_call.input)
+
+            # Best-effort type coercion based on the tool's input_schema.
+            # Also covers subclasses that override __call__ directly,
+            # where the base class coercion in ToolBase.__call__ is
+            # bypassed.
+            if kwargs and hasattr(tool_func, "input_schema"):
+                kwargs = _coerce_tool_args(kwargs, tool_func.input_schema)
 
             # State injection
             if (
