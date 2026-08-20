@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=unused-argument
 """Test schema extraction under PEP 563 lazy annotations.
 
 The ``from __future__ import annotations`` import below is the point of
