@@ -467,3 +467,42 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             metadata_filter={"kb_scope": "kb-b"},
         )
         self.assertEqual(miss, [])
+
+    async def test_list_chunks_deduplicates_reindex_duplicates(self) -> None:
+        """Re-indexing the same document never duplicates or drops chunks.
+
+        Stable record IDs make the second insert an in-place upsert; and
+        even against legacy duplicate rows the listing deduplicates by
+        ``chunk_index``, so a page is never ``[1, 2, 3, 3, 4]``.
+        """
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            for i in range(5)
+        ]
+        # Simulate the index worker crashing after the vector insert
+        # and retrying the whole pipeline.
+        await self.store.insert("kb-1", records)
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=5,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2, 3, 4])
+
+        window = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=1,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in window], [1, 2, 3])

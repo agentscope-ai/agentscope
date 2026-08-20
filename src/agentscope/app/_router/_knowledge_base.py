@@ -939,15 +939,16 @@ async def read_knowledge_document(
     media_type = (data.content_type or "").split(";")[
         0
     ].strip().lower() or "application/octet-stream"
-    inline = not download and (
-        media_type in _INLINE_MEDIA_TYPES or media_type.startswith("image/")
-    )
+    inline = not download and media_type in _INLINE_MEDIA_TYPES
     disposition = "inline" if inline else "attachment"
     filename = quote(data.filename or "download")
     headers = {
         "Content-Length": str(data.size),
         "Content-Disposition": (f"{disposition}; filename*=UTF-8''{filename}"),
         "Cache-Control": "private, max-age=60",
+        # The declared type is authoritative — never let the browser
+        # sniff a scriptable type out of the bytes.
+        "X-Content-Type-Options": "nosniff",
     }
     return StreamingResponse(
         content,

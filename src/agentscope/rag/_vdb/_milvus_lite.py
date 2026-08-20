@@ -6,9 +6,9 @@ started automatically when the URI points to a local ``.db`` file, so it
 is convenient for local development, tests, and small RAG workloads.
 """
 import asyncio
+import hashlib
 import json
 import os
-import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._vector_store import (
@@ -204,6 +204,11 @@ class MilvusLiteStore(VectorStoreBase):
         JSON field used by :meth:`search` and :meth:`list_documents` for
         flat equality filtering.
 
+        Entity IDs are derived deterministically from
+        ``(document_id, chunk_index)`` and written via ``upsert`` so
+        that re-indexing the same document after a mid-pipeline crash
+        replaces the previous records instead of duplicating them.
+
         Args:
             collection (`str`):
                 The target collection name.
@@ -217,11 +222,11 @@ class MilvusLiteStore(VectorStoreBase):
         for start in range(0, len(records), self._batch_size):
             batch = records[start : start + self._batch_size]
             await asyncio.to_thread(
-                self.get_client().insert,
+                self.get_client().upsert,
                 collection_name=collection,
                 data=[
                     {
-                        "id": str(uuid.uuid4()),
+                        "id": self._record_id(record),
                         "vector": record.vector,
                         "document_id": record.document_id,
                         "chunk": record.chunk.model_dump(mode="json"),
@@ -230,6 +235,26 @@ class MilvusLiteStore(VectorStoreBase):
                     for record in batch
                 ],
             )
+
+    @staticmethod
+    def _record_id(record: VectorRecord) -> str:
+        """Deterministic entity ID for ``(document_id, chunk_index)``.
+
+        Mirrors the Elasticsearch backend's recipe: a SHA-256 over the
+        ``\0``-joined pair, whose 64 hex chars exactly fit the
+        ``VARCHAR(64)`` primary key. Stable IDs make indexing retries
+        idempotent (via ``upsert``).
+
+        Args:
+            record (`VectorRecord`):
+                The record to derive an ID for.
+
+        Returns:
+            `str`:
+                The 64-character hex digest.
+        """
+        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def delete(
         self,
@@ -452,16 +477,23 @@ class MilvusLiteStore(VectorStoreBase):
         if meta_expr:
             clauses.append(meta_expr)
 
+        # Query the WHOLE index range (bounded: its width is `limit`)
+        # and deduplicate by chunk_index — collections written before
+        # deterministic entity IDs may hold duplicates from indexing
+        # retries, and truncating at `limit` raw rows could then drop a
+        # low index while returning a duplicate of a higher one.
         rows = await asyncio.to_thread(
             self.get_client().query,
             collection_name=collection,
             filter=" and ".join(clauses),
             output_fields=["chunk"],
-            limit=limit,
+            limit=16_384,
         )
-        chunks = [Chunk.model_validate(row["chunk"]) for row in rows]
-        chunks.sort(key=lambda chunk: chunk.chunk_index)
-        return chunks[:limit]
+        by_index: dict[int, Chunk] = {}
+        for row in rows:
+            chunk = Chunk.model_validate(row["chunk"])
+            by_index.setdefault(chunk.chunk_index, chunk)
+        return [by_index[index] for index in sorted(by_index)][:limit]
 
     @staticmethod
     def _build_document_filter(document_id: str) -> str:

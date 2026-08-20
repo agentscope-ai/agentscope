@@ -191,6 +191,11 @@ class QdrantStore(VectorStoreBase):
         :class:`Chunk` under the ``chunk`` key, so that :meth:`delete`
         can remove all records of one document.
 
+        Point IDs are derived deterministically from
+        ``(document_id, chunk_index)`` so that re-indexing the same
+        document after a mid-pipeline crash upserts over the previous
+        records instead of duplicating them.
+
         Args:
             collection (`str`):
                 The target collection name.
@@ -207,7 +212,7 @@ class QdrantStore(VectorStoreBase):
             collection_name=collection,
             points=[
                 models.PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=self._point_id(record),
                     vector=record.vector,
                     payload={
                         "document_id": record.document_id,
@@ -217,6 +222,26 @@ class QdrantStore(VectorStoreBase):
                 for record in records
             ],
         )
+
+    @staticmethod
+    def _point_id(record: VectorRecord) -> str:
+        """Deterministic point ID for ``(document_id, chunk_index)``.
+
+        ``\0`` separates the fields because it cannot occur in either,
+        so no pair can collide with another. Re-inserting the same
+        chunk therefore upserts in place — the idempotency the indexing
+        pipeline relies on when it retries after a crash.
+
+        Args:
+            record (`VectorRecord`):
+                The record to derive an ID for.
+
+        Returns:
+            `str`:
+                A UUIDv5 string (Qdrant requires UUID-shaped IDs).
+        """
+        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
     async def delete(
         self,
@@ -414,27 +439,30 @@ class QdrantStore(VectorStoreBase):
             conditions.extend(base_filter.must)
 
         client = self.get_client()
-        chunks: list[Chunk] = []
+        # Scroll the WHOLE index range (bounded: its width is `limit`)
+        # and deduplicate by chunk_index — collections written before
+        # deterministic point IDs may hold duplicates from indexing
+        # retries, and an early stop at `limit` raw points could then
+        # drop a low index while returning a duplicate of a higher one.
+        by_index: dict[int, Chunk] = {}
         scroll_offset: Any = None
         while True:
             points, next_offset = await client.scroll(
                 collection_name=collection,
                 scroll_filter=models.Filter(must=conditions),
-                limit=min(limit, 256),
+                limit=256,
                 offset=scroll_offset,
                 with_payload=True,
                 with_vectors=False,
             )
-            chunks.extend(
-                Chunk.model_validate(point.payload["chunk"])
-                for point in points
-            )
-            if next_offset is None or len(chunks) >= limit:
+            for point in points:
+                chunk = Chunk.model_validate(point.payload["chunk"])
+                by_index.setdefault(chunk.chunk_index, chunk)
+            if next_offset is None:
                 break
             scroll_offset = next_offset
 
-        chunks.sort(key=lambda chunk: chunk.chunk_index)
-        return chunks[:limit]
+        return [by_index[index] for index in sorted(by_index)][:limit]
 
     @staticmethod
     def _build_metadata_filter(

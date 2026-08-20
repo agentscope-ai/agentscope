@@ -289,12 +289,11 @@ class ElasticsearchStore(VectorStoreBase):
         the other backends this implementation cannot push the
         ``chunk_index`` range down to the server.  Instead it retrieves
         **all** chunks of the one document (a ``term`` query on the
-        indexed ``document_id`` field), sorts them in Python, and
-        slices the requested page — O(chunks of one document) per
-        page, which is bounded and acceptable for an interactive
-        detail view.  Mirroring :meth:`search`, retrieval is capped at
-        Elasticsearch's 10000-hit window; a single document with more
-        chunks than that raises :class:`RuntimeError`.
+        indexed ``document_id`` field, paged through a point-in-time
+        with ``_shard_doc`` / ``search_after`` so documents beyond the
+        10000-hit window still work), sorts them in Python, and slices
+        the requested page — O(chunks of one document) per page, which
+        is bounded and acceptable for an interactive detail view.
 
         Args:
             collection (`str`):
@@ -319,26 +318,39 @@ class ElasticsearchStore(VectorStoreBase):
         ]
         filters.extend(self._metadata_filters(metadata_filter))
 
-        response = await self.get_client().search(
+        client = self.get_client()
+        pit = await client.open_point_in_time(
             index=collection,
-            query={"bool": {"filter": filters}},
-            size=10_000,
-            track_total_hits=True,
-            source_includes=["chunk"],
+            keep_alive="1m",
         )
-        total = response["hits"]["total"]["value"]
-        if total > 10_000:
-            raise RuntimeError(
-                f"Document {document_id!r} has {total} chunks, which "
-                "exceeds Elasticsearch's 10000-hit retrieval window "
-                "for chunk listing.",
-            )
-        chunks = [
-            Chunk.model_validate(hit["_source"]["chunk"])
-            for hit in response["hits"]["hits"]
-        ]
-        chunks.sort(key=lambda chunk: chunk.chunk_index)
-        return chunks[offset : offset + limit]
+        pit_id = pit["id"]
+        by_index: dict[int, Chunk] = {}
+        try:
+            search_after: list[Any] | None = None
+            while True:
+                body: dict[str, Any] = {
+                    "query": {"bool": {"filter": filters}},
+                    "size": 1000,
+                    "pit": {"id": pit_id, "keep_alive": "1m"},
+                    "sort": [{"_shard_doc": "asc"}],
+                    "_source": ["chunk"],
+                }
+                if search_after is not None:
+                    body["search_after"] = search_after
+                response = await client.search(**body)
+                hits = response["hits"]["hits"]
+                if not hits:
+                    break
+                for hit in hits:
+                    chunk = Chunk.model_validate(hit["_source"]["chunk"])
+                    by_index.setdefault(chunk.chunk_index, chunk)
+                pit_id = response.get("pit_id", pit_id)
+                search_after = hits[-1]["sort"]
+        finally:
+            await client.close_point_in_time(id=pit_id)
+
+        ordered = [by_index[index] for index in sorted(by_index)]
+        return ordered[offset : offset + limit]
 
     @staticmethod
     def _record_id(record: VectorRecord) -> str:
