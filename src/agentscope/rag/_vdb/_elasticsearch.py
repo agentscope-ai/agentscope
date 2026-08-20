@@ -324,6 +324,11 @@ class ElasticsearchStore(VectorStoreBase):
             keep_alive="1m",
         )
         pit_id = pit["id"]
+        # Only the requested window is materialised: the scan still has
+        # to visit every hit of the document (``chunk`` is not
+        # filterable server-side), but chunks outside
+        # ``[offset, offset + limit)`` are discarded on sight, keeping
+        # memory O(page_size) regardless of the document's total size.
         by_index: dict[int, Chunk] = {}
         try:
             search_after: list[Any] | None = None
@@ -342,15 +347,24 @@ class ElasticsearchStore(VectorStoreBase):
                 if not hits:
                     break
                 for hit in hits:
-                    chunk = Chunk.model_validate(hit["_source"]["chunk"])
-                    by_index.setdefault(chunk.chunk_index, chunk)
+                    payload = hit["_source"]["chunk"]
+                    index = payload.get("chunk_index")
+                    if (
+                        not isinstance(index, int)
+                        or index < offset
+                        or index >= offset + limit
+                    ):
+                        continue
+                    by_index.setdefault(
+                        index,
+                        Chunk.model_validate(payload),
+                    )
                 pit_id = response.get("pit_id", pit_id)
                 search_after = hits[-1]["sort"]
         finally:
             await client.close_point_in_time(id=pit_id)
 
-        ordered = [by_index[index] for index in sorted(by_index)]
-        return ordered[offset : offset + limit]
+        return [by_index[index] for index in sorted(by_index)]
 
     @staticmethod
     def _record_id(record: VectorRecord) -> str:

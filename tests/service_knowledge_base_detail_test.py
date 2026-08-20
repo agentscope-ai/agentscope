@@ -367,6 +367,47 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
                 ),
             )
 
+    def test_raster_image_previews_inline(self) -> None:
+        """Safe raster formats (PNG here) are served inline for <img>."""
+
+        async def _seed_png_document() -> None:
+            async with self._blob_store as blob_store:
+                blob_uri = await blob_store.write_stream(
+                    key=f"kb/{self._kb_id}/doc-png",
+                    stream=io.BytesIO(b"\x89PNG fake bytes"),
+                )
+            await self._app.state.storage.upsert_knowledge_document(
+                "user-1",
+                KnowledgeDocumentRecord(
+                    id="doc-png",
+                    user_id="user-1",
+                    knowledge_base_id=self._kb_id,
+                    status="ready",
+                    data=KnowledgeDocumentData(
+                        filename="picture.png",
+                        size=15,
+                        content_type="image/png",
+                        blob_uri=blob_uri,
+                        chunk_count=0,
+                    ),
+                ),
+            )
+
+        with TestClient(self._app) as client:
+            client.portal.call(_seed_png_document)
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/doc-png",
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(
+                response.headers["content-disposition"].startswith("inline;"),
+            )
+            self.assertEqual(
+                response.headers["x-content-type-options"],
+                "nosniff",
+            )
+
     def test_svg_is_never_inline(self) -> None:
         """SVG can carry script, so it must always be an attachment."""
 
