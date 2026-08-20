@@ -380,6 +380,31 @@
 			"chunkPosition": "第 {{index}} / {{total}} 段",
 			"emptyTitle": "无匹配",
 			"emptyDescription": "本次查询没有返回任何分块。"
+		},
+		"config": {
+			"title": "配置信息",
+			"embeddingModel": "嵌入模型",
+			"dimensions": "向量维度",
+			"credential": "凭证",
+			"chunker": "分块器",
+			"counts": "内容",
+			"countsValue": "{{documents}} 个文档 · {{chunks}} 个分块",
+			"createdAt": "创建时间"
+		},
+		"documentDetail": {
+			"description": "已索引 {{count}} 个分块",
+			"chunksTab": "分块",
+			"previewTab": "预览",
+			"chunksEmptyTitle": "暂无分块",
+			"chunksEmptyDescription": "该文档尚未产生已索引的分块。",
+			"chunksUnsupportedTitle": "无法浏览分块",
+			"chunksUnsupportedDescription": "当前配置的向量数据库不支持分块列表。",
+			"previousPage": "上一页",
+			"nextPage": "下一页",
+			"pageIndicator": "第 {{page}} / {{pageCount}} 页",
+			"previewUnavailableTitle": "无法在线预览",
+			"previewUnavailableDescription": "该文件类型无法在浏览器中预览。",
+			"downloadButton": "下载源文件"
 		}
 	},
 	"llm-select": {

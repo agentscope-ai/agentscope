@@ -380,6 +380,31 @@
 			"chunkPosition": "Chunk {{index}} of {{total}}",
 			"emptyTitle": "No matches",
 			"emptyDescription": "No chunks scored above the threshold for this query."
+		},
+		"config": {
+			"title": "Configuration",
+			"embeddingModel": "Embedding model",
+			"dimensions": "Dimensions",
+			"credential": "Credential",
+			"chunker": "Chunker",
+			"counts": "Contents",
+			"countsValue": "{{documents}} documents · {{chunks}} chunks",
+			"createdAt": "Created"
+		},
+		"documentDetail": {
+			"description": "{{count}} indexed chunks",
+			"chunksTab": "Chunks",
+			"previewTab": "Preview",
+			"chunksEmptyTitle": "No chunks",
+			"chunksEmptyDescription": "This document has no indexed chunks yet.",
+			"chunksUnsupportedTitle": "Chunk browsing unavailable",
+			"chunksUnsupportedDescription": "The configured vector store does not support listing chunks.",
+			"previousPage": "Previous",
+			"nextPage": "Next",
+			"pageIndicator": "Page {{page}} of {{pageCount}}",
+			"previewUnavailableTitle": "No inline preview",
+			"previewUnavailableDescription": "This file type cannot be previewed in the browser.",
+			"downloadButton": "Download original file"
 		}
 	},
 	"llm-select": {

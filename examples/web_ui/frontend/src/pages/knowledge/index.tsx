@@ -1,3 +1,4 @@
+import { format } from 'date-fns';
 import { Ellipsis, Files, FlaskConical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -92,9 +93,73 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 
 			<Separator className="shrink-0" />
 
-			{/* Documents */}
+			{/* Configuration + documents */}
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
-				<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+				<div className="flex flex-col gap-y-6">
+					<ConfigCard knowledgeBase={knowledgeBase} />
+					<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function ConfigItem({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="flex min-w-0 flex-col gap-y-0.5">
+			<span className="text-muted-foreground text-xs">{label}</span>
+			<span className="truncate text-sm text-foreground" title={value}>
+				{value}
+			</span>
+		</div>
+	);
+}
+
+/**
+ * Read-only card surfacing the full configuration pinned at creation
+ * time — embedding model, chunker, credential — plus the aggregated
+ * counts the list endpoint now serves (#2360).
+ */
+function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
+	const { t } = useTranslation();
+	const embedding = knowledgeBase.embedding_model_config;
+	const chunker = knowledgeBase.chunker_config;
+
+	const chunkerValue = chunker
+		? Object.keys(chunker.parameters).length > 0
+			? `${chunker.type} · ${Object.entries(chunker.parameters)
+					.map(([k, v]) => `${k}=${String(v)}`)
+					.join(', ')}`
+			: chunker.type
+		: '—';
+
+	return (
+		<div className="flex flex-col gap-y-3">
+			<h3 className="text-[13.5px] font-medium text-foreground">
+				{t('knowledge.config.title')}
+			</h3>
+			<div className="border-border bg-card grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border p-3 sm:grid-cols-3">
+				<ConfigItem label={t('knowledge.config.embeddingModel')} value={embedding.model} />
+				<ConfigItem
+					label={t('knowledge.config.dimensions')}
+					value={String(embedding.dimensions)}
+				/>
+				<ConfigItem
+					label={t('knowledge.config.credential')}
+					value={knowledgeBase.credential_name ?? embedding.credential_id}
+				/>
+				<ConfigItem label={t('knowledge.config.chunker')} value={chunkerValue} />
+				<ConfigItem
+					label={t('knowledge.config.counts')}
+					value={t('knowledge.config.countsValue', {
+						documents: knowledgeBase.document_count,
+						chunks: knowledgeBase.chunk_count,
+					})}
+				/>
+				<ConfigItem
+					label={t('knowledge.config.createdAt')}
+					value={format(new Date(knowledgeBase.created_at), 'yyyy-MM-dd HH:mm')}
+				/>
 			</div>
 		</div>
 	);

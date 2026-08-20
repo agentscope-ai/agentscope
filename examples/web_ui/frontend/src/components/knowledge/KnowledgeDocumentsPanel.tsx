@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { knowledgeBaseApi } from '@/api';
 import type { KnowledgeDocumentStatus, KnowledgeDocumentView } from '@/api';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
+import { DocumentDetailDrawer } from '@/components/knowledge/DocumentDetailDrawer.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
 	Empty,
@@ -96,9 +97,10 @@ interface RowViewProps {
 	onCancel: (taskId: string) => void;
 	onDismiss: (taskId: string) => void;
 	onDelete: (doc: KnowledgeDocumentView) => void;
+	onOpen: (doc: KnowledgeDocumentView) => void;
 }
 
-function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
+function RowView({ row, onCancel, onDismiss, onDelete, onOpen }: RowViewProps) {
 	const { t } = useTranslation();
 
 	const filename = row.kind === 'server' ? row.doc.filename : row.task.filename;
@@ -155,8 +157,19 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 
 	const showProgress = phase !== 'ready' && phase !== 'cancelled';
 
+	// Ready server rows open the detail drawer (chunks + preview).
+	const openable = row.kind === 'server' && row.doc.status === 'ready';
+
 	return (
-		<div className="border-border bg-card flex flex-col gap-y-2 rounded-lg border p-3">
+		<div
+			className={cn(
+				'border-border bg-card flex flex-col gap-y-2 rounded-lg border p-3',
+				openable && 'hover:bg-accent/50 cursor-pointer transition-colors',
+			)}
+			onClick={
+				openable ? () => onOpen((row as Extract<Row, { kind: 'server' }>).doc) : undefined
+			}
+		>
 			<div className="flex items-start gap-x-3">
 				<FileText className="text-muted-foreground mt-0.5 size-4 shrink-0" />
 				<div className="flex min-w-0 flex-1 flex-col gap-y-0.5">
@@ -178,7 +191,10 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 						)}
 					</div>
 				</div>
-				<div className="flex shrink-0 items-center gap-x-1">
+				<div
+					className="flex shrink-0 items-center gap-x-1"
+					onClick={(e) => e.stopPropagation()}
+				>
 					{phase === 'queued' || phase === 'uploading' ? (
 						<Button
 							variant="ghost"
@@ -242,6 +258,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [dragOver, setDragOver] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<KnowledgeDocumentView | null>(null);
+	const [detailTarget, setDetailTarget] = useState<KnowledgeDocumentView | null>(null);
 
 	const { enqueue, cancel, dismiss, tasksForKb, clearFinishedForKb } = useUploadContext();
 	const { documents, refetch } = useKnowledgeDocuments(knowledgeBaseId);
@@ -460,11 +477,23 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 								onCancel={cancel}
 								onDismiss={dismiss}
 								onDelete={setDeleteTarget}
+								onOpen={setDetailTarget}
 							/>
 						))}
 					</div>
 				)}
 			</div>
+
+			{detailTarget && (
+				<DocumentDetailDrawer
+					open={detailTarget !== null}
+					onOpenChange={(open) => {
+						if (!open) setDetailTarget(null);
+					}}
+					knowledgeBaseId={knowledgeBaseId}
+					document={detailTarget}
+				/>
+			)}
 
 			<DeleteDialog
 				open={deleteTarget !== null}

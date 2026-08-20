@@ -28,7 +28,12 @@ export function useKnowledgeDocuments(knowledgeBaseId: string | null) {
 		setLoading(true);
 		setError(null);
 		try {
-			const { documents: list } = await knowledgeBaseApi.listDocuments(knowledgeBaseId);
+			// The panel merges rows with in-flight upload tasks and the
+			// status poller, so it renders one flat list — request the
+			// max page size instead of paginating for now.
+			const { documents: list } = await knowledgeBaseApi.listDocuments(knowledgeBaseId, {
+				page_size: 128,
+			});
 			if (seq !== requestSeq.current) return;
 			setDocuments(list);
 		} catch (e) {

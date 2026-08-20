@@ -2,11 +2,15 @@ import { ApiError, client, getBaseUrl, getUserId } from './client';
 import type {
 	CreateKnowledgeBaseRequest,
 	CreateKnowledgeBaseResponse,
+	DocumentDownloadTokenResponse,
 	KbMiddlewareParametersSchemaResponse,
 	KnowledgeBaseView,
 	ListChunkersResponse,
+	ListDocumentChunksResponse,
 	ListKbEmbeddingModelsResponse,
+	ListKnowledgeBasesParams,
 	ListKnowledgeBasesResponse,
+	ListKnowledgeDocumentsParams,
 	ListKnowledgeDocumentsResponse,
 	ListKnowledgeDocumentStatusResponse,
 	ListSupportedContentTypesResponse,
@@ -15,6 +19,15 @@ import type {
 	UpdateKnowledgeBaseRequest,
 	UploadKnowledgeDocumentResponse,
 } from './types';
+
+/** Drop undefined values and stringify the rest for `client` params. */
+function toQuery(params: Record<string, unknown>): Record<string, string> {
+	const query: Record<string, string> = {};
+	for (const [key, value] of Object.entries(params)) {
+		if (value !== undefined) query[key] = String(value);
+	}
+	return query;
+}
 
 /**
  * Callback invoked while bytes are pushed across the wire.
@@ -118,7 +131,8 @@ function uploadDocumentXhr(
  * Client for the `/knowledge_bases` router.
  */
 export const knowledgeBaseApi = {
-	list: () => client.get<ListKnowledgeBasesResponse>('/knowledge_bases/'),
+	list: (params: ListKnowledgeBasesParams = {}) =>
+		client.get<ListKnowledgeBasesResponse>('/knowledge_bases/', toQuery({ ...params })),
 
 	listEmbeddingModels: () =>
 		client.get<ListKbEmbeddingModelsResponse>('/knowledge_bases/embedding_models'),
@@ -143,9 +157,63 @@ export const knowledgeBaseApi = {
 
 	delete: (knowledgeBaseId: string) => client.delete(`/knowledge_bases/${knowledgeBaseId}`),
 
-	/** List every document registered against a knowledge base. */
-	listDocuments: (knowledgeBaseId: string) =>
-		client.get<ListKnowledgeDocumentsResponse>(`/knowledge_bases/${knowledgeBaseId}/documents`),
+	/** List one page of the documents registered against a knowledge base. */
+	listDocuments: (knowledgeBaseId: string, params: ListKnowledgeDocumentsParams = {}) =>
+		client.get<ListKnowledgeDocumentsResponse>(
+			`/knowledge_bases/${knowledgeBaseId}/documents`,
+			toQuery({ ...params }),
+		),
+
+	/** Browse one page of a document's chunks in `chunk_index` order. */
+	listDocumentChunks: (knowledgeBaseId: string, documentId: string, page = 1, pageSize = 30) =>
+		client.get<ListDocumentChunksResponse>(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}/chunks`,
+			toQuery({ page, page_size: pageSize }),
+			// 501 means the configured vector store cannot list chunks —
+			// the caller hides the chunk view instead of toasting.
+			{ silent: true },
+		),
+
+	/**
+	 * Mint a short-lived token so a browser-native fetch (`<iframe>`,
+	 * `<img>`, a download navigation) can retrieve the raw file
+	 * without the `X-User-ID` header.
+	 */
+	createDocumentDownloadToken: (knowledgeBaseId: string, documentId: string) =>
+		client.post<DocumentDownloadTokenResponse>(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}/download_token`,
+		),
+
+	/**
+	 * Absolute URL of a document's raw bytes, using a token minted via
+	 * `createDocumentDownloadToken`. Pass `download: true` to force a
+	 * `Content-Disposition: attachment`.
+	 */
+	documentContentUrl: (
+		knowledgeBaseId: string,
+		documentId: string,
+		token: string,
+		download = false,
+	) => {
+		const url = new URL(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`,
+			getBaseUrl(),
+		);
+		url.searchParams.set('token', token);
+		if (download) url.searchParams.set('download', 'true');
+		return url.toString();
+	},
+
+	/**
+	 * Fetch the raw file as text through the authenticated client —
+	 * for markdown / plain-text previews that render in-app.
+	 */
+	fetchDocumentText: async (knowledgeBaseId: string, documentId: string) => {
+		const res = await client.stream(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`,
+		);
+		return res.text();
+	},
 
 	/**
 	 * Batch-query lifecycle status for a list of documents.
