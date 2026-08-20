@@ -144,7 +144,7 @@ def create_whatsapp_webhook_router() -> Any:
     async def receive_whatsapp_webhook(
         request: Request,
     ) -> dict[str, Any]:
-        """Validate and enqueue a Meta WhatsApp webhook payload."""
+        """Validate and persist a Meta WhatsApp webhook payload."""
         raw_body = await request.body()
         payload = await request.json()
         deliveries = await _deliveries(request, payload)
@@ -169,7 +169,7 @@ def create_whatsapp_webhook_router() -> Any:
         for record, message_id, channel_payload in deliveries:
             if not message_id:
                 continue
-            await message_bus.queue_push(
+            await message_bus.log_append(
                 MessageBusKeys.channel_webhook_queue(record.id),
                 {
                     "channel_id": record.id,

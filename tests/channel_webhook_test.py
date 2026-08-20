@@ -4,9 +4,8 @@ import asyncio
 import hashlib
 import hmac
 import json
-from contextlib import asynccontextmanager
 from typing import AsyncIterator, Callable
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -23,7 +22,7 @@ from agentscope.app.channel import (
     ChannelTypeRegistry,
     WhatsAppChannel,
 )
-from agentscope.app.message_bus import MessageBusKeys
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
     ChannelBinding,
     ChannelRecord,
@@ -53,6 +52,16 @@ def _record() -> ChannelRecord:
     )
 
 
+def _dispatcher(bus: object, gateway: object | None = None) -> ChannelLifecycleDispatcher:
+    """Build a dispatcher around a test bus."""
+    return ChannelLifecycleDispatcher(
+        storage=AsyncMock(),
+        message_bus=bus,
+        type_registry=ChannelTypeRegistry([WhatsAppChannel]),
+        gateway=gateway or AsyncMock(),
+    )
+
+
 def _signed_body(payload: dict) -> tuple[bytes, str]:
     """Serialize a payload exactly as the request body and sign it."""
     raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -60,8 +69,8 @@ def _signed_body(payload: dict) -> tuple[bytes, str]:
     return raw, f"sha256={digest}"
 
 
-def test_webhook_enqueues_without_a_local_channel() -> None:
-    """Ingress resolves shared storage and never needs a dispatcher."""
+def test_webhook_persists_without_a_local_channel() -> None:
+    """Ingress persists work before returning and never needs a dispatcher."""
     app = FastAPI()
     record = _record()
     storage = AsyncMock()
@@ -110,11 +119,11 @@ def test_webhook_enqueues_without_a_local_channel() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "accepted": 1}
-    app.state.message_bus.queue_push.assert_awaited_once()
-    queued = app.state.message_bus.queue_push.await_args.args
-    assert queued[0] == MessageBusKeys.channel_webhook_queue(record.id)
-    assert queued[1]["channel_id"] == record.id
-    assert queued[1]["message_id"] == "wamid-1"
+    app.state.message_bus.log_append.assert_awaited_once()
+    persisted = app.state.message_bus.log_append.await_args.args
+    assert persisted[0] == MessageBusKeys.channel_webhook_queue(record.id)
+    assert persisted[1]["channel_id"] == record.id
+    assert persisted[1]["message_id"] == "wamid-1"
     app.state.message_bus.publish.assert_awaited_once_with(
         MessageBusKeys.channel_webhook_signal(),
         {"accepted": 1, "channel_ids": [record.id]},
@@ -124,7 +133,6 @@ def test_webhook_enqueues_without_a_local_channel() -> None:
 def test_create_app_registers_webhook_only_for_whatsapp() -> None:
     """The built-in route follows the configured channel registry."""
     from agentscope.app import create_app
-    from agentscope.app.message_bus import InMemoryMessageBus
     from agentscope.app.workspace_manager import WorkspaceManagerBase
 
     storage = AsyncMock()
@@ -135,8 +143,7 @@ def test_create_app_registers_webhook_only_for_whatsapp() -> None:
         channels=[WhatsAppChannel],
         enable_index_worker=False,
     )
-    paths = set(app.openapi()["paths"])
-    assert "/webhooks/whatsapp" in paths
+    assert "/webhooks/whatsapp" in set(app.openapi()["paths"])
 
     app_without_whatsapp = create_app(
         storage=storage,
@@ -149,20 +156,19 @@ def test_create_app_registers_webhook_only_for_whatsapp() -> None:
     ]
 
 
-def test_inbound_consumer_uses_shared_record_without_local_instance() -> None:
-    """A worker can normalize a queued message without hosting the channel."""
+def test_inbound_consumer_uses_independently_expiring_dedupe_key() -> None:
+    """A processed wamid gets its own TTL namespace."""
     record = _record()
     storage = AsyncMock()
     storage.get_channel.return_value = record
     bus = AsyncMock()
-    bus.try_lock.return_value = True
     bus.registry_exists.return_value = False
     gateway = AsyncMock()
     gateway.process_with_result.return_value = True
     event = ChannelEvent(
         channel_id=record.id,
         channel_user_id="8613800138000",
-        chat_id="8613800138000",
+        chat_id="",
         content=[],
     )
     dispatcher = ChannelLifecycleDispatcher(
@@ -177,7 +183,7 @@ def test_inbound_consumer_uses_shared_record_without_local_instance() -> None:
         "normalize_webhook",
         new=AsyncMock(return_value=[event]),
     ):
-        asyncio.run(
+        handled = asyncio.run(
             dispatcher._process_webhook_job(
                 {
                     "channel_id": record.id,
@@ -187,23 +193,22 @@ def test_inbound_consumer_uses_shared_record_without_local_instance() -> None:
             ),
         )
 
+    assert handled
     gateway.process_with_result.assert_awaited_once_with(event)
     bus.registry_set.assert_awaited_once_with(
-        MessageBusKeys.channel_webhook_dedupe(record.id),
-        "wamid-1",
+        f"{MessageBusKeys.channel_webhook_dedupe(record.id)}:wamid-1",
+        "processed",
         "1",
         ttl_secs=7 * 24 * 60 * 60,
     )
-    bus.unlock.assert_awaited_once()
 
 
-def test_failed_gateway_processing_is_not_marked_as_deduplicated() -> None:
-    """A failed gateway delivery remains eligible for a later retry."""
+def test_failed_gateway_processing_is_not_acknowledged() -> None:
+    """A failed Gateway delivery leaves the durable job retryable."""
     record = _record()
     storage = AsyncMock()
     storage.get_channel.return_value = record
     bus = AsyncMock()
-    bus.try_lock.return_value = True
     bus.registry_exists.return_value = False
     gateway = AsyncMock()
     gateway.process_with_result.return_value = False
@@ -213,19 +218,19 @@ def test_failed_gateway_processing_is_not_marked_as_deduplicated() -> None:
         type_registry=ChannelTypeRegistry([WhatsAppChannel]),
         gateway=gateway,
     )
-
     event = ChannelEvent(
         channel_id=record.id,
         channel_user_id="8613800138000",
-        chat_id="8613800138000",
+        chat_id="",
         content=[],
     )
+
     with patch.object(
         WhatsAppChannel,
         "normalize_webhook",
         new=AsyncMock(return_value=[event]),
     ):
-        asyncio.run(
+        handled = asyncio.run(
             dispatcher._process_webhook_job(
                 {
                     "channel_id": record.id,
@@ -235,17 +240,16 @@ def test_failed_gateway_processing_is_not_marked_as_deduplicated() -> None:
             ),
         )
 
+    assert not handled
     bus.registry_set.assert_not_awaited()
-    bus.unlock.assert_awaited_once()
 
 
-def test_failed_webhook_normalization_is_not_marked_as_deduplicated() -> None:
+def test_failed_webhook_normalization_is_not_acknowledged() -> None:
     """A media normalization failure remains eligible for retry."""
     record = _record()
     storage = AsyncMock()
     storage.get_channel.return_value = record
     bus = AsyncMock()
-    bus.try_lock.return_value = True
     bus.registry_exists.return_value = False
     dispatcher = ChannelLifecycleDispatcher(
         storage=storage,
@@ -259,7 +263,7 @@ def test_failed_webhook_normalization_is_not_marked_as_deduplicated() -> None:
         "normalize_webhook",
         new=AsyncMock(side_effect=RuntimeError("media download failed")),
     ):
-        asyncio.run(
+        handled = asyncio.run(
             dispatcher._process_webhook_job(
                 {
                     "channel_id": record.id,
@@ -269,57 +273,196 @@ def test_failed_webhook_normalization_is_not_marked_as_deduplicated() -> None:
             ),
         )
 
+    assert not handled
     bus.registry_set.assert_not_awaited()
-    bus.unlock.assert_awaited_once()
 
 
-def test_inbound_drain_processes_jobs_in_queue_order() -> None:
-    """Only one worker advances the shared inbound queue at a time."""
+def test_failed_durable_job_is_consumed_again() -> None:
+    """A failed job stays behind the shared cursor for the next drain."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        dispatcher = _dispatcher(bus)
+        key = MessageBusKeys.channel_webhook_queue("whatsapp-1")
+        entry_id = await bus.log_append(key, {"message_id": "retry-me"})
+        process = AsyncMock(side_effect=[False, True])
+
+        with patch.object(dispatcher, "_process_webhook_job", new=process):
+            await dispatcher._drain_webhook_queue("whatsapp-1")
+            assert process.await_count == 1
+            assert await bus.log_read(key) == [
+                (entry_id, {"message_id": "retry-me"}),
+            ]
+            await dispatcher._drain_webhook_queue("whatsapp-1")
+
+        assert process.await_count == 2
+        cursor = await bus.registry_get(
+            dispatcher._webhook_cursor_namespace("whatsapp-1"),
+            "entry_id",
+        )
+        assert cursor == entry_id
+        assert await bus.log_read(key, since=entry_id) == []
+
+    asyncio.run(run())
+
+
+def test_inbound_drain_preserves_log_order() -> None:
+    """One channel advances its shared log cursor in arrival order."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        dispatcher = _dispatcher(bus)
+        key = MessageBusKeys.channel_webhook_queue("whatsapp-1")
+        await bus.log_append(key, {"message_id": "first"})
+        second_id = await bus.log_append(key, {"message_id": "second"})
+
+        with patch.object(
+            dispatcher,
+            "_process_webhook_job",
+            new=AsyncMock(return_value=True),
+        ) as process:
+            await dispatcher._drain_webhook_queue("whatsapp-1")
+
+        assert [
+            item.args[0]["message_id"] for item in process.await_args_list
+        ] == ["first", "second"]
+        assert await bus.registry_get(
+            dispatcher._webhook_cursor_namespace("whatsapp-1"),
+            "entry_id",
+        ) == second_id
+
+    asyncio.run(run())
+
+
+def test_webhook_drain_tasks_are_coalesced_per_channel() -> None:
+    """Repeated local wakeups reuse one active task instead of piling waiters."""
+
+    async def run() -> None:
+        dispatcher = _dispatcher(AsyncMock())
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def drain(_channel_id: str) -> None:
+            started.set()
+            await release.wait()
+
+        with patch.object(
+            dispatcher,
+            "_drain_webhook_queue",
+            new=AsyncMock(side_effect=drain),
+        ) as mocked:
+            dispatcher._spawn_webhook_drain("whatsapp-1")
+            await started.wait()
+            first = dispatcher._webhook_drains["whatsapp-1"]
+            dispatcher._spawn_webhook_drain("whatsapp-1")
+            assert dispatcher._webhook_drains["whatsapp-1"] is first
+            release.set()
+            await first
+
+        assert mocked.await_count == 2
+
+    asyncio.run(run())
+
+
+def test_shared_consumer_persists_chat_metadata() -> None:
+    """Observed chats are stored outside the short-lived normalizer."""
+    record = _record()
+    storage = AsyncMock()
+    storage.get_channel.return_value = record
     bus = AsyncMock()
-    bus.try_lock.return_value = True
-    bus.queue_drain.side_effect = [
-        [("1-0", {"message_id": "first"})],
-        [("2-0", {"message_id": "second"})],
-        [],
-    ]
+    bus.registry_exists.return_value = False
+    gateway = AsyncMock()
+    gateway.process_with_result.return_value = True
     dispatcher = ChannelLifecycleDispatcher(
-        storage=AsyncMock(),
+        storage=storage,
         message_bus=bus,
         type_registry=ChannelTypeRegistry([WhatsAppChannel]),
-        gateway=AsyncMock(),
+        gateway=gateway,
     )
-
-    @asynccontextmanager
-    async def acquire_lock(
-        *_args: object,
-        **_kwargs: object,
-    ) -> AsyncIterator[None]:
-        yield
-
-    bus.acquire_lock = acquire_lock
+    event = ChannelEvent(
+        channel_id=record.id,
+        channel_user_id="8613800138000",
+        chat_id="group-1",
+        chat_name="Project",
+        content=[],
+        metadata={"chat_type": "group"},
+    )
 
     with patch.object(
-        dispatcher,
-        "_process_webhook_job",
-        new=AsyncMock(),
-    ) as process:
-        asyncio.run(dispatcher._drain_webhook_queue("whatsapp-1"))
+        WhatsAppChannel,
+        "normalize_webhook",
+        new=AsyncMock(return_value=[event]),
+    ):
+        assert asyncio.run(
+            dispatcher._process_webhook_job(
+                {
+                    "channel_id": record.id,
+                    "message_id": "wamid-group",
+                    "payload": {},
+                },
+            ),
+        )
 
-    processed_ids = [
-        call.args[0]["message_id"] for call in process.await_args_list
-    ]
-    assert processed_ids == [
-        "first",
-        "second",
-    ]
-    assert bus.queue_drain.await_count == 3
-    bus.queue_drain.assert_awaited_with(
-        MessageBusKeys.channel_webhook_queue("whatsapp-1"),
+    expected_chat = json.dumps(
+        {"chat_type": "group", "chat_name": "Project"},
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
+    assert call(
+        MessageBusKeys.channel_seen_chats(record.id),
+        "group-1",
+        expected_chat,
+    ) in bus.registry_set.await_args_list
+
+
+def test_inmemory_registry_ttl_expires_namespace() -> None:
+    """In-memory registry TTL follows the Redis namespace-TTL contract."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        with patch(
+            "agentscope.app.message_bus._in_memory_message_bus.time.monotonic",
+            side_effect=[100.0, 102.0],
+        ):
+            await bus.registry_set("dedupe:1", "processed", "1", ttl_secs=1)
+            assert not await bus.registry_exists("dedupe:1", "processed")
+
+    asyncio.run(run())
+
+
+def test_whatsapp_group_name_populates_channel_event() -> None:
+    """The resolved group name reaches the first-class event field."""
+
+    async def run() -> None:
+        channel = WhatsAppChannel(
+            "whatsapp-1",
+            WhatsAppChannel.Credentials(
+                phone_number_id="phone-id",
+                access_token="access-token",
+                verify_token="verify-token",
+                meta_app_secret="app-secret",
+            ),
+            WhatsAppChannel.Config(),
+        )
+        event = await channel._normalize_message(
+            {
+                "id": "wamid-group",
+                "from": "8613800138000",
+                "group_id": "group-1",
+                "group_name": "Project",
+                "type": "text",
+                "text": {"body": "hello"},
+            },
+            {},
+        )
+        assert isinstance(event, ChannelEvent)
+        assert event.chat_name == "Project"
+
+    asyncio.run(run())
 
 
 def test_inbound_subscribes_before_startup_drain() -> None:
-    """Persisted queue draining starts only after the signal is subscribed."""
+    """Persisted draining starts only after the signal subscription exists."""
     record = _record()
     storage = AsyncMock()
     storage.list_all_channels.return_value = [record]

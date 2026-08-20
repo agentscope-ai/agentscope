@@ -130,9 +130,8 @@ class WhatsAppChannel(ChannelBase):
         ] = asyncio.Queue()
         self._message_ids: OrderedDict[str, None] = OrderedDict()
         self._processing_message_ids: set[str] = set()
-        # chat_id -> lightweight metadata observed from inbound webhooks.
-        # WhatsApp Cloud API does not provide a general chat directory, so
-        # this is the source used by ``list_bot_chats`` and ``chat_kind``.
+        # Process-local cache. Shared webhook consumers hydrate it from the
+        # message-bus seen-chat registry before management/send operations.
         self._seen: dict[str, dict[str, str]] = {}
 
     @property
@@ -216,7 +215,7 @@ class WhatsAppChannel(ChannelBase):
     ) -> list[ChannelEvent | ChannelConfirmationResultEvent]:
         """Normalize webhook messages without requiring a local listener.
 
-        The normal channel listener owns its HTTP client.  A shared webhook
+        The normal channel listener owns its HTTP client. A shared webhook
         consumer may instead create a short-lived channel on a different
         worker, so this method owns a temporary client when necessary.
         """
@@ -243,7 +242,7 @@ class WhatsAppChannel(ChannelBase):
         """Parse a Meta webhook payload and enqueue supported messages.
 
         The embedding HTTP handler should validate Meta's ``X-Hub-Signature``
-        before calling this method.  Duplicate message ids are ignored.
+        before calling this method. Duplicate message ids are ignored.
         """
         count = 0
         for message, value in self._webhook_messages(payload):
@@ -253,6 +252,12 @@ class WhatsAppChannel(ChannelBase):
             try:
                 event = await self._normalize_message(message, value)
                 if event:
+                    if isinstance(event, ChannelEvent):
+                        self.observe_chat(
+                            event.chat_id,
+                            str(event.metadata.get("chat_type", "")),
+                            event.chat_name,
+                        )
                     await self._queue.put(event)
                     if message_id:
                         self._remember_message(message_id)
@@ -327,11 +332,12 @@ class WhatsAppChannel(ChannelBase):
         if not content:
             return None
         profile = (value.get("contacts") or [{}])[0]
-        event = ChannelEvent(
+        return ChannelEvent(
             channel_id=self._channel_id,
             channel_user_id=sender,
             channel_user_name=profile.get("profile", {}).get("name", ""),
             chat_id=chat_id,
+            chat_name=chat_name,
             channel_message_id=message.get("id"),
             content=content,
             metadata={
@@ -343,8 +349,6 @@ class WhatsAppChannel(ChannelBase):
                 ),
             },
         )
-        self._record_chat(event.chat_id, chat_type, chat_name)
-        return event
 
     @staticmethod
     def _conversation_context(
@@ -377,10 +381,8 @@ class WhatsAppChannel(ChannelBase):
         )
         return group_id, "group", group_name
 
-    def _record_chat(self, chat_id: str, chat_type: str, name: str) -> None:
-        """Remember a chat observed through a webhook without overwriting
-        useful group metadata with a later sparse event.
-        """
+    def observe_chat(self, chat_id: str, chat_type: str, name: str) -> None:
+        """Cache chat metadata supplied by a retained/shared state source."""
         if not chat_id:
             return
         current = self._seen.get(chat_id, {})
@@ -594,7 +596,7 @@ class WhatsAppChannel(ChannelBase):
                 if not group_id:
                     continue
                 name = str(group.get("subject", "")) or group_id
-                self._record_chat(group_id, "group", name)
+                self.observe_chat(group_id, "group", name)
                 chats[group_id] = {
                     "chat_id": group_id,
                     "name": name,
@@ -641,6 +643,10 @@ class WhatsAppChannel(ChannelBase):
             if info.get("chat_type") == "group"
             else ChatKind.PRIVATE
         )
+
+    async def chat_name(self, chat_id: str) -> str:
+        """Return the best known display name for an observed chat."""
+        return self._seen.get(chat_id, {}).get("name", "")
 
     def _recipient_type(self, chat_id: str, metadata: dict) -> str:
         """Resolve the Graph API recipient type for a send target."""

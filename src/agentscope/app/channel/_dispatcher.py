@@ -15,6 +15,7 @@ rendering (streaming, confirmation cards); the dispatcher only feeds it
 the events.
 """
 import asyncio
+import json
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncGenerator, AsyncIterator
@@ -37,12 +38,12 @@ from ._registry import ChannelTypeRegistry
 RESPONSE_TIMEOUT_SECS = 60.0
 # TTL (seconds) of a node's per-channel status heartbeat.
 LIVENESS_TTL_SECS = 30
-# Shared lease held while one worker normalizes a webhook message.
-WEBHOOK_DEDUPE_LOCK_TTL_SECS = 300
-# One worker drains one webhook job at a time to preserve queue order.
+# One worker drains one webhook channel at a time to preserve ordering.
 WEBHOOK_DRAIN_LOCK_TTL_SECS = 300
-# Keep processed WhatsApp message ids bounded in the shared registry.
+# Processed WhatsApp message ids remain deduplicated for one week.
 WEBHOOK_DEDUPE_TTL_SECS = 7 * 24 * 60 * 60
+_WEBHOOK_CURSOR_FIELD = "entry_id"
+_WEBHOOK_DEDUPE_FIELD = "processed"
 
 # Events that end a reply's event stream.
 _TERMINAL_EVENTS = frozenset(
@@ -88,6 +89,8 @@ class ChannelLifecycleDispatcher:
         self._tasks: list[asyncio.Task] = []
         self._forward_tasks: set[asyncio.Task] = set()
         self._webhook_tasks: set[asyncio.Task] = set()
+        self._webhook_drains: dict[str, asyncio.Task] = {}
+        self._webhook_pending: set[str] = set()
 
     def get_local_channel(self, channel_id: str) -> ChannelBase | None:
         """Return this node's live channel for ``channel_id``, if running —
@@ -299,66 +302,103 @@ class ChannelLifecycleDispatcher:
                 self._spawn_webhook_drain(record.id)
 
     def _spawn_webhook_drain(self, channel_id: str) -> None:
-        """Start an ordered drain for one channel without blocking others."""
+        """Coalesce wakeups into one active drain per local channel."""
         if not channel_id:
             return
+        current = self._webhook_drains.get(channel_id)
+        if current is not None and not current.done():
+            self._webhook_pending.add(channel_id)
+            return
         task = asyncio.create_task(
-            self._drain_webhook_queue(channel_id),
+            self._run_webhook_drain(channel_id),
             name=f"channel-webhook-drain:{channel_id}",
         )
+        self._webhook_drains[channel_id] = task
         self._track_webhook_task(task)
 
-    async def _drain_webhook_queue(self, channel_id: str) -> None:
-        """Drain one channel's webhook messages in queue order.
+    async def _run_webhook_drain(self, channel_id: str) -> None:
+        """Run one local single-flight drain until wakeups are consumed."""
+        try:
+            while True:
+                self._webhook_pending.discard(channel_id)
+                await self._drain_webhook_queue(channel_id)
+                if channel_id not in self._webhook_pending:
+                    return
+        finally:
+            task = asyncio.current_task()
+            if self._webhook_drains.get(channel_id) is task:
+                self._webhook_drains.pop(channel_id, None)
+            if channel_id in self._webhook_pending:
+                self._webhook_pending.discard(channel_id)
+                self._spawn_webhook_drain(channel_id)
 
-        A per-channel distributed lock preserves ordering across workers while
-        allowing unrelated channels to download media concurrently.
-        """
+    @staticmethod
+    def _webhook_cursor_namespace(channel_id: str) -> str:
+        """Shared checkpoint namespace for one channel's webhook log."""
+        return f"{MessageBusKeys.channel_webhook_queue(channel_id)}:cursor"
+
+    @staticmethod
+    def _webhook_dedupe_namespace(channel_id: str, message_id: str) -> str:
+        """Independently expiring namespace for one logical message."""
+        return (
+            f"{MessageBusKeys.channel_webhook_dedupe(channel_id)}:{message_id}"
+        )
+
+    async def _drain_webhook_queue(self, channel_id: str) -> None:
+        """Process one channel's durable webhook log in arrival order."""
         drain_lock = MessageBusKeys.channel_webhook_drain_lock(channel_id)
+        cursor_namespace = self._webhook_cursor_namespace(channel_id)
+        log_key = MessageBusKeys.channel_webhook_queue(channel_id)
         async with self._bus.acquire_lock(
             drain_lock,
             ttl_secs=WEBHOOK_DRAIN_LOCK_TTL_SECS,
         ):
+            await self._hydrate_seen_chats(channel_id)
             while True:
                 try:
-                    jobs = await self._bus.queue_drain(
-                        MessageBusKeys.channel_webhook_queue(channel_id),
+                    cursor = await self._bus.registry_get(
+                        cursor_namespace,
+                        _WEBHOOK_CURSOR_FIELD,
+                    )
+                    jobs = await self._bus.log_read(
+                        log_key,
+                        since=cursor,
+                        max_count=1,
                     )
                 except Exception:  # pylint: disable=broad-except
                     logger.exception("channel webhook drain failed")
                     return
                 if not jobs:
                     return
-                for _entry_id, job in jobs:
-                    await self._process_webhook_job(job)
+                entry_id, job = jobs[0]
+                if not await self._process_webhook_job(job):
+                    return
+                await self._bus.registry_set(
+                    cursor_namespace,
+                    _WEBHOOK_CURSOR_FIELD,
+                    entry_id,
+                )
+                await self._bus.log_trim(log_key, before_id=entry_id)
 
-    async def _process_webhook_job(self, job: dict) -> None:
-        """Normalize one shared webhook payload and route its events."""
+    async def _process_webhook_job(self, job: dict) -> bool:
+        """Process one webhook job and report whether it can be ACKed."""
         channel_id = str(job.get("channel_id", ""))
         message_id = str(job.get("message_id", ""))
         if not channel_id or not message_id:
-            return
-        record = await self._storage.get_channel(channel_id)
-        if record is None or not record.enabled:
-            return
-        lock_key = MessageBusKeys.channel_webhook_dedupe_lock(
-            channel_id,
-            message_id,
-        )
-        if not await self._bus.try_lock(
-            lock_key,
-            ttl_secs=WEBHOOK_DEDUPE_LOCK_TTL_SECS,
-        ):
-            return
+            return True
         try:
-            dedupe_namespace = MessageBusKeys.channel_webhook_dedupe(
+            record = await self._storage.get_channel(channel_id)
+            if record is None or not record.enabled:
+                return True
+            dedupe_namespace = self._webhook_dedupe_namespace(
                 channel_id,
+                message_id,
             )
             if await self._bus.registry_exists(
                 dedupe_namespace,
-                message_id,
+                _WEBHOOK_DEDUPE_FIELD,
             ):
-                return
+                return True
             channel = self._types.create_channel_from_record(record)
             normalize = getattr(channel, "normalize_webhook", None)
             if normalize is None:
@@ -366,25 +406,80 @@ class ChannelLifecycleDispatcher:
                     "Channel %s does not support webhook normalization",
                     record.channel_type,
                 )
-                return
+                return True
             events = await normalize(job.get("payload", {}))
             for event in events:
+                if isinstance(event, ChannelEvent):
+                    self._observe_local_webhook_chat(event)
                 if not await self._gateway.process_with_result(event):
-                    return
+                    return False
+                if isinstance(event, ChannelEvent) and event.chat_id:
+                    await self._persist_seen_chat(event)
             await self._bus.registry_set(
                 dedupe_namespace,
-                message_id,
+                _WEBHOOK_DEDUPE_FIELD,
                 "1",
                 ttl_secs=WEBHOOK_DEDUPE_TTL_SECS,
             )
+            return True
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "channel webhook processing failed for %s/%s",
                 channel_id,
                 message_id,
             )
-        finally:
-            await self._bus.unlock(lock_key)
+            return False
+
+    def _observe_local_webhook_chat(self, event: ChannelEvent) -> None:
+        """Update the retained adapter, never the temporary normalizer."""
+        inst = self._instances.get(event.channel_id)
+        if inst is None:
+            return
+        observe = getattr(inst.channel, "observe_chat", None)
+        if observe is not None:
+            observe(
+                event.chat_id,
+                str(event.metadata.get("chat_type", "")),
+                event.chat_name,
+            )
+
+    async def _persist_seen_chat(self, event: ChannelEvent) -> None:
+        """Persist observed chat metadata for cross-process discovery."""
+        await self._bus.registry_set(
+            MessageBusKeys.channel_seen_chats(event.channel_id),
+            event.chat_id,
+            json.dumps(
+                {
+                    "chat_type": str(event.metadata.get("chat_type", "")),
+                    "chat_name": event.chat_name,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+
+    async def _hydrate_seen_chats(self, channel_id: str) -> None:
+        """Refresh a retained adapter from shared observed-chat metadata."""
+        inst = self._instances.get(channel_id)
+        if inst is None:
+            return
+        observe = getattr(inst.channel, "observe_chat", None)
+        if observe is None:
+            return
+        seen = await self._bus.registry_getall(
+            MessageBusKeys.channel_seen_chats(channel_id),
+        )
+        for chat_id, raw in seen.items():
+            chat_type = ""
+            chat_name = ""
+            try:
+                metadata = json.loads(raw)
+                if isinstance(metadata, dict):
+                    chat_type = str(metadata.get("chat_type", ""))
+                    chat_name = str(metadata.get("chat_name", ""))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            observe(chat_id, chat_type, chat_name)
 
     async def _drain_outbound(self) -> None:
         """Forward every queued output signal this node can serve."""
@@ -425,6 +520,7 @@ class ChannelLifecycleDispatcher:
         record = await self._storage.get_channel(job["channel_id"])
         if record is None:
             return
+        await self._hydrate_seen_chats(job["channel_id"])
         # Dedup across nodes: the drain is at-least-once, so claim a
         # per-run lease first — only the winner forwards, the rest skip.
         lock_key = MessageBusKeys.channel_forward_lease(job["session_id"])
@@ -549,6 +645,7 @@ class ChannelLifecycleDispatcher:
         Args:
             channel_id (`str`): The channel to query.
         """
+        await self._hydrate_seen_chats(channel_id)
         inst = self._instances.get(channel_id)
         return await inst.channel.list_bot_chats() if inst else []
 
