@@ -7,20 +7,26 @@ The HTTP layer is intentionally thin — every endpoint translates the
 request into a single :class:`~agentscope.app._service.
 KnowledgeBaseService` call and returns the result.
 """
+from urllib.parse import quote
+
 from fastapi import (
     APIRouter,
     Depends,
     File,
     Form,
+    Header,
+    HTTPException,
     Path,
     Query,
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 
 from ..access import ResourceKind
 from ..deps import (
     get_current_user_id,
+    get_download_secret,
     get_knowledge_base_manager,
     get_knowledge_base_service,
     get_knowledge_chunkers,
@@ -29,6 +35,8 @@ from ..deps import (
 )
 from ._schema import (
     ChunkerInfo,
+    DocumentDownloadTokenResponse,
+    ListDocumentChunksResponse,
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
@@ -49,6 +57,8 @@ from ...credential import CredentialFactory
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .._service import (
     KnowledgeBaseService,
+    sign_download_token,
+    verify_download_token,
     KnowledgeBaseView,
     ResourceAccessService,
 )
@@ -617,3 +627,231 @@ async def search_knowledge_base(
         top_k=body.top_k,
     )
     return SearchKnowledgeBaseResponse(results=results, total=len(results))
+
+
+# The media types a browser may render inline. Anything else (notably
+# text/html and image/svg+xml, which can run script) is forced to an
+# attachment so a crafted upload cannot XSS the app origin.
+_INLINE_MEDIA_TYPES = frozenset(
+    {
+        "text/plain",
+        "text/markdown",
+        "application/pdf",
+    },
+)
+
+
+def _document_token_path(knowledge_base_id: str, document_id: str) -> str:
+    """The resource string a document download token is bound to."""
+    return f"kb/{knowledge_base_id}/{document_id}"
+
+
+@knowledge_base_router.get(
+    "/{knowledge_base_id}/documents/{document_id}/chunks",
+    response_model=ListDocumentChunksResponse,
+    summary="Browse one document's chunks in order",
+)
+async def list_document_chunks(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The document id."),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=30, ge=1, le=128),
+    user_id: str = Depends(get_current_user_id),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+) -> ListDocumentChunksResponse:
+    """Return one page of a document's chunks, ``chunk_index`` ascending.
+
+    Pagination is stable: ``chunk_index`` is a dense, immutable
+    ``0..N-1`` sequence within a document, so page ``N`` always maps to
+    the same chunk range.  A document that is still indexing serves
+    the chunks persisted so far.
+
+    Args:
+        knowledge_base_id (`str`):
+            The parent knowledge base.
+        document_id (`str`):
+            The document whose chunks should be listed.
+        page (`int`, defaults to ``1``):
+            1-based page number.
+        page_size (`int`, defaults to ``30``):
+            Chunks per page (max 128).
+        user_id (`str`):
+            Injected authenticated user ID.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service.
+
+    Returns:
+        `ListDocumentChunksResponse`:
+            The page of chunks plus the document's total chunk count.
+    """
+    chunks, total = await service.list_document_chunks(
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+        page=page,
+        page_size=page_size,
+    )
+    return ListDocumentChunksResponse(
+        chunks=chunks,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@knowledge_base_router.post(
+    "/{knowledge_base_id}/documents/{document_id}/download_token",
+    response_model=DocumentDownloadTokenResponse,
+    summary="Mint a short-lived token for a browser-native fetch",
+)
+async def create_document_download_token(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The document id."),
+    user_id: str = Depends(get_current_user_id),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+    download_secret: str = Depends(get_download_secret),
+) -> DocumentDownloadTokenResponse:
+    """Mint a token so a browser can fetch the raw file directly.
+
+    ``<iframe>`` PDF previews, ``<img>`` tags and click-to-download
+    navigations carry no custom headers, so they cannot present
+    ``X-User-ID``; the token rides in the URL instead and is bound to
+    exactly this document.
+
+    Args:
+        knowledge_base_id (`str`):
+            The parent knowledge base.
+        document_id (`str`):
+            The document the token authorizes.
+        user_id (`str`):
+            Injected authenticated user ID.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service — resolved here only to
+            fail early with a proper 404 instead of a raw error page
+            on the browser navigation.
+        download_secret (`str`):
+            Injected app-wide signing secret.
+
+    Returns:
+        `DocumentDownloadTokenResponse`:
+            The token, its expiry, and a ready-to-use relative URL.
+    """
+    await service.get_document(user_id, knowledge_base_id, document_id)
+    token, expires_at = sign_download_token(
+        download_secret,
+        user_id,
+        _document_token_path(knowledge_base_id, document_id),
+    )
+    return DocumentDownloadTokenResponse(
+        token=token,
+        expires_at=expires_at,
+        url=(
+            f"/knowledge_bases/{knowledge_base_id}"
+            f"/documents/{document_id}?token={quote(token)}"
+        ),
+    )
+
+
+@knowledge_base_router.get(
+    "/{knowledge_base_id}/documents/{document_id}",
+    summary="Fetch the original uploaded file of a document",
+)
+async def read_knowledge_document(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The document id."),
+    download: bool = Query(
+        default=False,
+        description="Force a Content-Disposition attachment.",
+    ),
+    token: str
+    | None = Query(
+        default=None,
+        description=(
+            "A token from ``POST .../documents/{document_id}"
+            "/download_token``, accepted in place of the "
+            "``X-User-ID`` header so a browser navigation can fetch "
+            "the file directly."
+        ),
+    ),
+    x_user_id: str | None = Header(default=None),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+    download_secret: str = Depends(get_download_secret),
+) -> StreamingResponse:
+    """Stream the raw uploaded file back for preview or download.
+
+    Mirrors ``GET /workspace/files``: the body is piped chunk by chunk
+    from the blob store rather than read whole, so one large file
+    cannot exhaust the shared API process.  Only media types that
+    cannot carry script are served inline; everything else is forced
+    to an attachment.
+
+    Args:
+        knowledge_base_id (`str`):
+            The parent knowledge base.
+        document_id (`str`):
+            The document whose original file should be fetched.
+        download (`bool`, defaults to ``False``):
+            Force an attachment disposition.
+        token (`str | None`, optional):
+            Signed download token, accepted instead of ``X-User-ID``.
+        x_user_id (`str | None`, optional):
+            The normal identity header.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service.
+        download_secret (`str`):
+            Injected app-wide signing secret.
+
+    Returns:
+        `StreamingResponse`:
+            The file bytes with content-type / length / disposition
+            headers derived from the upload-time record.
+    """
+    if token is not None:
+        try:
+            user_id = verify_download_token(
+                download_secret,
+                token,
+                _document_token_path(knowledge_base_id, document_id),
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(e),
+            ) from e
+    elif x_user_id:
+        user_id = x_user_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-ID header or download token is required.",
+        )
+
+    record, content = await service.stream_document_content(
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+    )
+    data = record.data
+    media_type = (
+        (data.content_type or "").split(";")[0].strip().lower()
+        or "application/octet-stream"
+    )
+    inline = not download and (
+        media_type in _INLINE_MEDIA_TYPES
+        or media_type.startswith("image/")
+    )
+    disposition = "inline" if inline else "attachment"
+    filename = quote(data.filename or "download")
+    headers = {
+        "Content-Length": str(data.size),
+        "Content-Disposition": (
+            f"{disposition}; filename*=UTF-8''{filename}"
+        ),
+        "Cache-Control": "private, max-age=60",
+    }
+    return StreamingResponse(
+        content,
+        media_type=media_type,
+        headers=headers,
+    )
+

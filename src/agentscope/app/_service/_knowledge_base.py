@@ -18,7 +18,7 @@ project's stance is that a knowledge base is managed end-to-end in one
 mode.
 """
 import uuid
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, AsyncIterator
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -34,7 +34,7 @@ from ..storage import (
     KnowledgeDocumentRecord,
 )
 from ..._logging import logger
-from ...rag import ApproxTokenChunker
+from ...rag import ApproxTokenChunker, Chunk
 from .._bus_ops import enqueue_index_task
 from ._access import ResourceAccessService
 
@@ -427,6 +427,171 @@ class KnowledgeBaseService:
             if record_doc is not None:
                 records.append(record_doc)
         return records
+
+    async def get_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> KnowledgeDocumentRecord:
+        """Fetch one document record, or 404.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — owner or shared reader.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document to fetch.
+
+        Returns:
+            `KnowledgeDocumentRecord`:
+                The matching record.
+
+        Raises:
+            `HTTPException`:
+                ``404`` if the knowledge base is not visible to the
+                caller or the document does not exist in it.
+        """
+        record = await self._access.resolve_knowledge_base(
+            user_id,
+            knowledge_base_id,
+        )
+        document = await self._storage.get_knowledge_document(
+            record.user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        if document is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document {document_id} not found.",
+            )
+        return document
+
+    async def list_document_chunks(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 30,
+    ) -> tuple[list[Chunk], int]:
+        """List one page of a document's chunks in ``chunk_index`` order.
+
+        ``page`` / ``page_size`` translate to the dense-``chunk_index``
+        slice ``[(page - 1) * page_size, page * page_size)`` — stable
+        under concurrent writes because chunk indices never move.  The
+        total comes from the document record's ``chunk_count`` rather
+        than a vector-store count, so a document that is still
+        indexing reports the chunks persisted so far with a total
+        of ``0`` until it turns ``ready``.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — owner or shared reader.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document whose chunks should be listed.
+            page (`int`, defaults to ``1``):
+                1-based page number.
+            page_size (`int`, defaults to ``30``):
+                Chunks per page.
+
+        Returns:
+            `tuple[list[Chunk], int]`:
+                The page of chunks (``chunk_index`` ascending) and the
+                document's total chunk count.
+
+        Raises:
+            `HTTPException`:
+                ``404`` if the knowledge base or document is not
+                visible to the caller; ``501`` if the configured
+                vector store does not implement chunk listing.
+        """
+        document = await self.get_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
+        try:
+            chunks = await knowledge.list_chunks(
+                document_id,
+                offset=(page - 1) * page_size,
+                limit=page_size,
+            )
+        except NotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=(
+                    "The configured vector store does not support "
+                    "chunk listing."
+                ),
+            ) from exc
+        return chunks, document.data.chunk_count
+
+    async def stream_document_content(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> tuple[KnowledgeDocumentRecord, AsyncIterator[bytes]]:
+        """Open the original uploaded file of a document for streaming.
+
+        The bytes come straight from the blob store — the same blob
+        the index worker parsed — in bounded 1 MiB chunks so a large
+        download never holds the whole file in the API process.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — owner or shared reader.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document whose original file should be streamed.
+
+        Returns:
+            `tuple[KnowledgeDocumentRecord, AsyncIterator[bytes]]`:
+                The document record (for filename / size /
+                content-type headers) and a lazy byte iterator that
+                opens the blob on first pull.
+
+        Raises:
+            `HTTPException`:
+                ``404`` if the knowledge base or document is not
+                visible to the caller, or the underlying blob is gone
+                (legacy data, switched blob backend).
+        """
+        document = await self.get_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        blob_uri = document.data.blob_uri
+        try:
+            available = await self._blob_store.exists(blob_uri)
+        except ValueError:
+            # URI scheme unknown to this backend (e.g. records written
+            # by a local:// deployment now running on s3://).
+            available = False
+        if not available:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The original file is no longer available.",
+            )
+
+        async def _iter_content() -> AsyncIterator[bytes]:
+            async with self._blob_store.open(blob_uri) as fp:
+                while True:
+                    data = await fp.read(1 << 20)
+                    if not data:
+                        break
+                    yield data
+
+        return document, _iter_content()
 
     async def delete_document(
         self,

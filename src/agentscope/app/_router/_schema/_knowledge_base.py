@@ -12,7 +12,7 @@ from ...storage import (
 )
 from ..._service import CredentialView, KnowledgeBaseView
 from ....embedding import EmbeddingModelCard
-from ....rag import VectorSearchResult
+from ....rag import Chunk, VectorSearchResult
 from ...rag.knowledge_base_manager._dimension_policy import DimensionPolicy
 
 
@@ -302,3 +302,47 @@ class ListChunkersResponse(BaseModel):
     chunkers: list[ChunkerInfo] = Field(
         description="The available chunker types, in configured order.",
     )
+
+
+class ListDocumentChunksResponse(BaseModel):
+    """Response body for browsing one document's chunks page by page."""
+
+    chunks: list[Chunk] = Field(
+        description=(
+            "The requested page of chunks, ordered by ``chunk_index`` "
+            "ascending."
+        ),
+    )
+    total: int = Field(
+        description=(
+            "Total number of chunks indexed for this document, taken "
+            "from the document record. ``0`` while the document is "
+            "still being indexed."
+        ),
+    )
+    page: int = Field(description="The 1-based page number served.")
+    page_size: int = Field(description="The page size used.")
+
+
+class DocumentDownloadTokenResponse(BaseModel):
+    """A capability authorizing one fetch of one document's raw file."""
+
+    token: str = Field(
+        description=(
+            "Pass as the ``token`` query parameter of "
+            "``GET /knowledge_bases/{kb_id}/documents/{document_id}``, "
+            "in place of the ``X-User-ID`` header. Valid for this "
+            "document only."
+        ),
+    )
+    expires_at: float = Field(
+        description="Unix timestamp after which the token is refused.",
+    )
+    url: str = Field(
+        description=(
+            "Relative URL with the token already applied — ready to "
+            "drop into an ``<iframe src>`` / ``<img src>`` or a "
+            "download link."
+        ),
+    )
+
