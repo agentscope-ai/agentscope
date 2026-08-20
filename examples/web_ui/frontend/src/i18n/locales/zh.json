@@ -140,6 +140,11 @@
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
+		"maxItersExceeded": {
+			"title": "已达到最大迭代次数",
+			"description": "输入新消息可继续对话，或点击继续以完成当前任务。",
+			"continue": "继续"
+		},
 		"agent": {
 			"selectPlaceholder": "选择智能体",
 			"emptyTitle": "暂无智能体",
