@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Protocol middleware base class for converting AgentEvent stream to
 various protocols."""
+
 import json
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Callable
@@ -16,9 +17,9 @@ from agentscope.event import AgentEvent
 class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
     """Base middleware for converting AgentEvent stream to protocol format.
 
-    This middleware intercepts streaming responses that yield AgentEvent
-    objects, deserializes them, and converts them to a specific protocol
-    format.
+    This middleware intercepts ``text/event-stream`` responses, deserializes
+    AgentEvent objects from SSE ``data:`` frames, and converts them to a
+    specific protocol format.
 
     Subclasses should implement the `_convert_to_protocol` method to define
     the conversion logic for their specific protocol (e.g., AGUI, A2A).
@@ -61,11 +62,15 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
         # Call the next middleware or endpoint
         response = await call_next(request)
 
-        # Check if the response is a streaming response
-        if isinstance(response, StreamingResponse):
+        content_type = response.headers.get("content-type", "")
+        body_iterator = getattr(response, "body_iterator", None)
+
+        if (
+            content_type.startswith("text/event-stream")
+            and body_iterator is not None
+        ):
             # Wrap the original stream with our conversion logic
-            original_stream = response.body_iterator
-            converted_stream = self._convert_stream(original_stream)
+            converted_stream = self._convert_stream(body_iterator)
 
             # Create a new StreamingResponse with the converted stream
             return StreamingResponse(
@@ -91,36 +96,106 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
             Bytes in protocol format.
         """
         async for chunk in original_stream:
-            # Decode the chunk if it's bytes
             if isinstance(chunk, bytes):
                 chunk_str = chunk.decode("utf-8")
             else:
                 chunk_str = chunk
 
-            # Try to deserialize the chunk as AgentEvent
-            try:
-                # Parse the JSON string to dict
-                event_dict = json.loads(chunk_str)
+            converted = self._convert_sse_frame(chunk_str)
+            if converted is not None:
+                yield converted
+                continue
 
-                # Deserialize to AgentEvent based on the 'type' field
-                agent_event = self._deserialize_event(event_dict)
+            # Fallback for subclasses that may override dispatch() to handle
+            # non-SSE streams while still reusing this converter.
+            converted = self._convert_event_json(chunk_str)
+            if converted is not None:
+                yield converted
+                continue
 
-                # Convert AgentEvent to protocol format
-                protocol_data = self._convert_to_protocol(agent_event)
+            if isinstance(chunk, bytes):
+                yield chunk
+            else:
+                yield chunk.encode("utf-8")
 
-                # Serialize and yield the protocol data
-                yield json.dumps(protocol_data, ensure_ascii=False).encode(
+    def _convert_sse_frame(self, frame: str) -> bytes | None:
+        """Convert AgentEvent payloads inside an SSE frame.
+
+        Note:
+            This method targets the AgentScope service's SSE stream shape:
+            each ``data:`` line contains a complete JSON payload, and each
+            input ``frame`` contains one or more complete SSE frames. SSE
+            multi-line ``data:`` concatenation and cross-chunk frame
+            reassembly are intentionally out of scope here.
+
+        Args:
+            frame: A server-sent event frame.
+
+        Returns:
+            Converted frame bytes if at least one ``data:`` payload was
+            converted, otherwise ``None``.
+        """
+        lines = frame.splitlines(keepends=True)
+        converted_lines: list[str] = []
+        converted_any = False
+
+        for line in lines:
+            if not line.startswith("data:"):
+                converted_lines.append(line)
+                continue
+
+            line_content, line_ending = self._split_line_ending(line)
+            payload = line_content.removeprefix("data:")
+            if payload.startswith(" "):
+                payload = payload[1:]
+
+            converted = self._convert_event_json(payload)
+            if converted is None:
+                converted_lines.append(line)
+                continue
+
+            converted_json = converted.decode("utf-8").rstrip("\n")
+            converted_lines.append(f"data: {converted_json}{line_ending}")
+            converted_any = True
+
+        if not converted_any:
+            return None
+
+        return "".join(converted_lines).encode("utf-8")
+
+    @staticmethod
+    def _split_line_ending(line: str) -> tuple[str, str]:
+        """Split a line into content and its original line ending."""
+        if line.endswith("\r\n"):
+            return line[:-2], "\r\n"
+        if line.endswith("\n"):
+            return line[:-1], "\n"
+        if line.endswith("\r"):
+            return line[:-1], "\r"
+        return line, ""
+
+    def _convert_event_json(self, chunk_str: str) -> bytes | None:
+        """Convert a serialized AgentEvent JSON string.
+
+        Args:
+            chunk_str: Serialized AgentEvent JSON.
+
+        Returns:
+            Converted protocol JSON bytes with trailing newline, or ``None``
+            when ``chunk_str`` is not a valid AgentEvent payload.
+        """
+        try:
+            event_dict = json.loads(chunk_str)
+            agent_event = self._deserialize_event(event_dict)
+            protocol_data = self._convert_to_protocol(agent_event)
+            return (
+                json.dumps(protocol_data, ensure_ascii=False).encode(
                     "utf-8",
-                ) + b"\n"
-
-            except (json.JSONDecodeError, KeyError, ValueError):
-                # If deserialization fails, pass through the original chunk
-                # or log the error
-                # For now, we'll pass through the original chunk
-                if isinstance(chunk, bytes):
-                    yield chunk
-                else:
-                    yield chunk.encode("utf-8")
+                )
+                + b"\n"
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return None
 
     def _deserialize_event(self, event_dict: dict) -> AgentEvent:
         """Deserialize event dictionary to AgentEvent object.

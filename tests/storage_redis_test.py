@@ -18,10 +18,13 @@ from agentscope.app.storage import (
     TeamData,
     TeamRecord,
 )
+from agentscope.app.storage import MCPRecord, SkillRecord
 from agentscope.credential import OllamaCredential
+from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.app.storage import AgentData
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
+from agentscope.state import AgentState
 
 
 def make_storage() -> RedisStorage:
@@ -226,6 +229,35 @@ class TestSession(IsolatedAsyncioTestCase):
         self.assertEqual(len(records_after), 1)
         self.assertEqual(records_after[0].id, first_id)
 
+    async def test_create_with_explicit_session_id_uses_that_key(self) -> None:
+        """A caller-provided session_id should be the stored record id."""
+        session_id = "session-from-router"
+
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(self.workspace_id),
+            session_id=session_id,
+        )
+
+        self.assertEqual(session.id, session_id)
+        fetched = await self.storage.get_session(
+            self.user_id,
+            self.agent_id,
+            session_id,
+        )
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.id, session_id)
+
+        await self.storage.update_session_state(
+            self.user_id,
+            self.agent_id,
+            session_id,
+            AgentState(),
+        )
+        records = await self.storage.list_sessions(self.user_id, self.agent_id)
+        self.assertEqual([record.id for record in records], [session_id])
+
     async def test_delete(self) -> None:
         """Delete a session and verify it is gone from Redis."""
         await self.storage.upsert_session(
@@ -306,10 +338,11 @@ class TestMessage(IsolatedAsyncioTestCase):
         """Upserting a new message appends it to the session list."""
         msg = UserMsg(name="alice", content="hello")
         await self.storage.upsert_message(self.user_id, self.session_id, msg)
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
+        self.assertFalse(has_more)
         self.assertListEqual(
             [m.model_dump() for m in messages],
             [msg.model_dump()],
@@ -343,10 +376,11 @@ class TestMessage(IsolatedAsyncioTestCase):
             updated,
         )
 
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
+        self.assertFalse(has_more)
         self.assertListEqual(
             [m.model_dump() for m in messages],
             [updated.model_dump()],
@@ -383,10 +417,11 @@ class TestMessage(IsolatedAsyncioTestCase):
         msg2 = UserMsg(name="alice", content="second")
         await self.storage.upsert_message(self.user_id, self.session_id, msg1)
         await self.storage.upsert_message(self.user_id, self.session_id, msg2)
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
+        self.assertFalse(has_more)
         self.assertListEqual(
             [m.model_dump() for m in messages],
             [msg1.model_dump(), msg2.model_dump()],
@@ -419,14 +454,15 @@ class TestMessage(IsolatedAsyncioTestCase):
     async def test_list_messages_empty_session(self) -> None:
         """list_messages returns an empty list for a session with no
         messages."""
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
+        self.assertFalse(has_more)
         self.assertListEqual(messages, [])
 
-    async def test_list_messages_pagination(self) -> None:
-        """list_messages respects offset and limit parameters."""
+    async def test_list_messages_latest_page(self) -> None:
+        """list_messages without cursor returns the most recent messages."""
         msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(5)]
         for m in msgs:
             await self.storage.upsert_message(
@@ -435,17 +471,99 @@ class TestMessage(IsolatedAsyncioTestCase):
                 m,
             )
 
-        # Fetch the middle slice: offset=1, limit=3 → msgs[1], msgs[2], msgs[3]
-        page = await self.storage.list_messages(
+        # Default: latest page with limit=3 → last 3 messages
+        page, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
-            offset=1,
             limit=3,
         )
+        self.assertTrue(has_more)
         self.assertListEqual(
             [m.model_dump() for m in page],
-            [m.model_dump() for m in msgs[1:4]],
+            [m.model_dump() for m in msgs[2:5]],
         )
+
+    async def test_list_messages_cursor_pagination(self) -> None:
+        """list_messages with before cursor returns older messages."""
+        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(5)]
+        for m in msgs:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                m,
+            )
+
+        # Use msgs[3].id as cursor → should get msgs[0], msgs[1], msgs[2]
+        page, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=3,
+            before=msgs[3].id,
+        )
+        self.assertFalse(has_more)
+        self.assertListEqual(
+            [m.model_dump() for m in page],
+            [m.model_dump() for m in msgs[0:3]],
+        )
+
+    async def test_list_messages_has_more_flag(self) -> None:
+        """has_more is True when older messages exist beyond the page."""
+        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(10)]
+        for m in msgs:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                m,
+            )
+
+        # Latest 5 of 10 → has_more should be True
+        _, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=5,
+        )
+        self.assertTrue(has_more)
+
+        # Cursor at msgs[5], limit=5 → msgs[0..4], has_more should be False
+        _, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=5,
+            before=msgs[5].id,
+        )
+        self.assertFalse(has_more)
+
+    async def test_list_messages_invalid_cursor(self) -> None:
+        """list_messages with nonexistent cursor returns empty result."""
+        msg = UserMsg(name="alice", content="hello")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+
+        page, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            before="nonexistent-id",
+        )
+        self.assertFalse(has_more)
+        self.assertListEqual(page, [])
+
+    async def test_find_message_index_across_chunks(self) -> None:
+        """_find_message_index locates messages beyond the first chunk."""
+        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(7)]
+        for m in msgs:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                m,
+            )
+        key = self.storage._message_key(self.user_id, self.session_id)
+
+        # chunk_size=2 forces the scan to walk several chunks.
+        for i, m in enumerate(msgs):
+            idx = await self.storage._find_message_index(key, m.id, 2)
+            self.assertEqual(idx, i)
+
+        idx = await self.storage._find_message_index(key, "nonexistent", 2)
+        self.assertIsNone(idx)
 
     async def test_list_messages_order_preserved(self) -> None:
         """Messages are returned in the insertion order (chronological)."""
@@ -459,10 +577,11 @@ class TestMessage(IsolatedAsyncioTestCase):
                 self.session_id,
                 m,
             )
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
+        self.assertFalse(has_more)
         self.assertListEqual(
             [m.model_dump() for m in messages],
             [m.model_dump() for m in msgs],
@@ -475,11 +594,27 @@ class TestMessage(IsolatedAsyncioTestCase):
             "session-A",
             UserMsg(name="alice", content="in A"),
         )
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             "session-B",
         )
+        self.assertFalse(has_more)
         self.assertListEqual(messages, [])
+
+    async def test_list_messages_offset_kwarg_warns(self) -> None:
+        """Passing deprecated offset via kwargs emits DeprecationWarning."""
+        msg = UserMsg(name="alice", content="hello")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+
+        with self.assertWarns(DeprecationWarning):
+            messages, has_more = await self.storage.list_messages(
+                self.user_id,
+                self.session_id,
+                offset=0,
+            )
+        # Should still return results (offset is ignored, latest page).
+        self.assertFalse(has_more)
+        self.assertEqual(len(messages), 1)
 
 
 def make_schedule_record(user_id: str, agent_id: str) -> ScheduleRecord:
@@ -1078,3 +1213,308 @@ class TestTeamCascade(IsolatedAsyncioTestCase):
         """delete_team on a missing team returns False without crashing."""
         result = await self.storage.delete_team(self.user_id, "no-such-id")
         self.assertFalse(result)
+
+
+def make_mcp_record(
+    user_id: str,
+    name: str = "deepwiki",
+    **kwargs: object,
+) -> MCPRecord:
+    """Create a test MCPRecord wrapping a stateless HTTP MCP."""
+    return MCPRecord(
+        user_id=user_id,
+        client=MCPClient(
+            name=name,
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(url="https://mcp.deepwiki.com/mcp"),
+        ),
+        **kwargs,
+    )
+
+
+class TestMCP(IsolatedAsyncioTestCase):
+    """Tests for installed-MCP CRUD and the per-user name uniqueness."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-mcp"
+
+    async def test_upsert_and_get_roundtrip(self) -> None:
+        """A written record comes back with its provenance intact."""
+        record = make_mcp_record(
+            self.user_id,
+            hub_id="static",
+            card_id="deepwiki",
+            version="1.0.0",
+        )
+        mcp_id = await self.storage.upsert_mcp(self.user_id, record)
+
+        fetched = await self.storage.get_mcp(self.user_id, mcp_id)
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.client.name, "deepwiki")
+        self.assertEqual(fetched.client.mcp_config.type, "http_mcp")
+        self.assertEqual(fetched.hub_id, "static")
+        self.assertEqual(fetched.card_id, "deepwiki")
+        self.assertEqual(fetched.version, "1.0.0")
+        self.assertTrue(fetched.enabled)
+
+    async def test_manually_added_mcp_has_no_provenance(self) -> None:
+        """An MCP added by hand still gets a record, just without a hub."""
+        record = make_mcp_record(self.user_id, name="hand-rolled")
+        await self.storage.upsert_mcp(self.user_id, record)
+
+        fetched = await self.storage.get_mcp_by_name(
+            self.user_id,
+            "hand-rolled",
+        )
+        self.assertIsNotNone(fetched)
+        self.assertIsNone(fetched.hub_id)
+        self.assertIsNone(fetched.card_id)
+
+    async def test_duplicate_name_rejected(self) -> None:
+        """Two records may not share a name — the workspace joins on it."""
+        await self.storage.upsert_mcp(
+            self.user_id,
+            make_mcp_record(self.user_id),
+        )
+        with self.assertRaises(ValueError):
+            await self.storage.upsert_mcp(
+                self.user_id,
+                make_mcp_record(self.user_id),
+            )
+
+    async def test_same_name_across_users_allowed(self) -> None:
+        """Uniqueness is per user, not global."""
+        await self.storage.upsert_mcp(
+            self.user_id,
+            make_mcp_record(self.user_id),
+        )
+        other = await self.storage.upsert_mcp(
+            "other-user",
+            make_mcp_record("other-user"),
+        )
+        self.assertIsNotNone(await self.storage.get_mcp("other-user", other))
+
+    async def test_update_in_place_keeps_name_claim(self) -> None:
+        """Re-upserting the same record is an update, not a name clash."""
+        record = make_mcp_record(self.user_id)
+        mcp_id = await self.storage.upsert_mcp(self.user_id, record)
+
+        record.enabled = False
+        await self.storage.upsert_mcp(self.user_id, record)
+
+        fetched = await self.storage.get_mcp(self.user_id, mcp_id)
+        self.assertFalse(fetched.enabled)
+        self.assertEqual(len(await self.storage.list_mcps(self.user_id)), 1)
+
+    async def test_rename_releases_the_old_name(self) -> None:
+        """After a rename the old name is free and no longer resolves."""
+        record = make_mcp_record(self.user_id)
+        await self.storage.upsert_mcp(self.user_id, record)
+
+        record.client.name = "deepwiki-2"
+        await self.storage.upsert_mcp(self.user_id, record)
+
+        self.assertIsNone(
+            await self.storage.get_mcp_by_name(self.user_id, "deepwiki"),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_mcp_by_name(self.user_id, "deepwiki-2"),
+        )
+        # The freed name can now be claimed by a different record
+        await self.storage.upsert_mcp(
+            self.user_id,
+            make_mcp_record(self.user_id),
+        )
+        self.assertEqual(len(await self.storage.list_mcps(self.user_id)), 2)
+
+    async def test_delete_frees_the_name(self) -> None:
+        """Deleting a record releases its name for reuse."""
+        record = make_mcp_record(self.user_id)
+        mcp_id = await self.storage.upsert_mcp(self.user_id, record)
+
+        self.assertTrue(await self.storage.delete_mcp(self.user_id, mcp_id))
+        self.assertIsNone(
+            await self.storage.get_mcp_by_name(self.user_id, "deepwiki"),
+        )
+        self.assertEqual(await self.storage.list_mcps(self.user_id), [])
+
+        await self.storage.upsert_mcp(
+            self.user_id,
+            make_mcp_record(self.user_id),
+        )
+
+    async def test_delete_missing_returns_false(self) -> None:
+        """delete_mcp on a missing record returns False without crashing."""
+        self.assertFalse(
+            await self.storage.delete_mcp(self.user_id, "no-such-id"),
+        )
+
+    async def test_get_by_unknown_name_returns_none(self) -> None:
+        """An unclaimed name resolves to nothing."""
+        self.assertIsNone(
+            await self.storage.get_mcp_by_name(self.user_id, "nope"),
+        )
+
+
+def make_skill_record(
+    user_id: str,
+    name: str = "gifgrep",
+    **kwargs: object,
+) -> SkillRecord:
+    """Create a test SkillRecord."""
+    return SkillRecord(user_id=user_id, name=name, **kwargs)
+
+
+class TestSkill(IsolatedAsyncioTestCase):
+    """Tests for installed-skill CRUD and per-user name uniqueness."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-skill"
+
+    async def test_upsert_and_get_roundtrip(self) -> None:
+        """A written record comes back with its provenance intact."""
+        record = make_skill_record(
+            self.user_id,
+            hub_id="clawhub",
+            card_id="gifgrep",
+            version="1.0.1",
+            markdown="# gifgrep",
+        )
+        skill_id = await self.storage.upsert_skill(self.user_id, record)
+
+        fetched = await self.storage.get_skill(
+            self.user_id,
+            skill_id,
+        )
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.name, "gifgrep")
+        self.assertEqual(fetched.hub_id, "clawhub")
+        self.assertEqual(fetched.markdown, "# gifgrep")
+        self.assertTrue(fetched.enabled)
+
+    async def test_duplicate_name_rejected(self) -> None:
+        """Two records may not share a name."""
+        await self.storage.upsert_skill(
+            self.user_id,
+            make_skill_record(self.user_id),
+        )
+        with self.assertRaises(ValueError):
+            await self.storage.upsert_skill(
+                self.user_id,
+                make_skill_record(self.user_id),
+            )
+
+    async def test_same_name_across_users_allowed(self) -> None:
+        """Uniqueness is per user, not global."""
+        await self.storage.upsert_skill(
+            self.user_id,
+            make_skill_record(self.user_id),
+        )
+        other = await self.storage.upsert_skill(
+            "other-user",
+            make_skill_record("other-user"),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_skill("other-user", other),
+        )
+
+    async def test_update_in_place_keeps_name_claim(self) -> None:
+        """Re-upserting the same record is an update, not a name clash."""
+        record = make_skill_record(self.user_id)
+        skill_id = await self.storage.upsert_skill(self.user_id, record)
+
+        record.enabled = False
+        await self.storage.upsert_skill(self.user_id, record)
+
+        fetched = await self.storage.get_skill(
+            self.user_id,
+            skill_id,
+        )
+        self.assertFalse(fetched.enabled)
+        self.assertEqual(
+            len(await self.storage.list_skills(self.user_id)),
+            1,
+        )
+
+    async def test_rename_releases_the_old_name(self) -> None:
+        """After a rename the old name is free and no longer resolves."""
+        record = make_skill_record(self.user_id)
+        await self.storage.upsert_skill(self.user_id, record)
+
+        record.name = "gifgrep-2"
+        await self.storage.upsert_skill(self.user_id, record)
+
+        self.assertIsNone(
+            await self.storage.get_skill_by_name(
+                self.user_id,
+                "gifgrep",
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_skill_by_name(
+                self.user_id,
+                "gifgrep-2",
+            ),
+        )
+        await self.storage.upsert_skill(
+            self.user_id,
+            make_skill_record(self.user_id),
+        )
+        self.assertEqual(
+            len(await self.storage.list_skills(self.user_id)),
+            2,
+        )
+
+    async def test_delete_frees_the_name(self) -> None:
+        """Deleting a record releases its name for reuse."""
+        record = make_skill_record(self.user_id)
+        skill_id = await self.storage.upsert_skill(self.user_id, record)
+
+        self.assertTrue(
+            await self.storage.delete_skill(self.user_id, skill_id),
+        )
+        self.assertIsNone(
+            await self.storage.get_skill_by_name(
+                self.user_id,
+                "gifgrep",
+            ),
+        )
+        self.assertEqual(
+            await self.storage.list_skills(self.user_id),
+            [],
+        )
+
+        await self.storage.upsert_skill(
+            self.user_id,
+            make_skill_record(self.user_id),
+        )
+
+    async def test_delete_missing_returns_false(self) -> None:
+        """Deleting a missing record returns False without crashing."""
+        self.assertFalse(
+            await self.storage.delete_skill(
+                self.user_id,
+                "no-such-id",
+            ),
+        )
+
+    async def test_mcp_and_skill_libraries_are_independent(self) -> None:
+        """The two name indexes do not collide."""
+        await self.storage.upsert_mcp(
+            self.user_id,
+            make_mcp_record(self.user_id, name="shared"),
+        )
+        await self.storage.upsert_skill(
+            self.user_id,
+            make_skill_record(self.user_id, name="shared"),
+        )
+
+        self.assertEqual(len(await self.storage.list_mcps(self.user_id)), 1)
+        self.assertEqual(
+            len(await self.storage.list_skills(self.user_id)),
+            1,
+        )

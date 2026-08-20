@@ -7,7 +7,9 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
+    from ..tts import TTSModelBase
 
 
 class GeminiCredential(CredentialBase):
@@ -31,3 +33,17 @@ class GeminiCredential(CredentialBase):
         from ..model import GeminiChatModel
 
         return GeminiChatModel
+
+    @classmethod
+    def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:
+        """Return the GeminiEmbeddingModel class."""
+        from ..embedding import GeminiEmbeddingModel
+
+        return GeminiEmbeddingModel
+
+    @classmethod
+    def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:
+        """Return the Gemini TTS model classes."""
+        from ..tts import GeminiTTSModel
+
+        return [GeminiTTSModel]

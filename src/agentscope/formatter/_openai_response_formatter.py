@@ -27,10 +27,10 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``. '
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``. '
             "Audio is not supported by the Responses API."
         ),
     )
@@ -38,7 +38,6 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     def _format_response_data_block(
         self,
         block: DataBlock,
-        role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the Response API format.
 
@@ -46,6 +45,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         Completions API:
 
         * ``image_url`` → ``input_image``
+        * ``file`` → ``input_file``
         * ``input_audio`` → skipped (the Responses API does not support
           audio input yet; use Chat Completions API instead). See
           https://developers.openai.com/api/docs/guides/audio
@@ -53,8 +53,6 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
-            role (`str`, defaults to ``"user"``):
-                The role of the message that contains this block.
 
         Returns:
             `dict[str, Any] | None`:
@@ -75,7 +73,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             )
             return None
 
-        base_result = self._format_openai_data_block(block, role)
+        base_result = self._format_openai_data_block(block)
         if base_result is None:
             return None
 
@@ -84,6 +82,9 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 "type": "input_image",
                 "image_url": base_result["image_url"]["url"],
             }
+
+        if base_result.get("type") == "file":
+            return {"type": "input_file", **base_result["file"]}
 
         return base_result
 
@@ -129,15 +130,17 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
+                    text_type = (
+                        "output_text"
+                        if msg.role == "assistant"
+                        else "input_text"
+                    )
                     content_parts.append(
-                        {"type": "input_text", "text": block.text},
+                        {"type": text_type, "text": block.text},
                     )
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(
-                        block,
-                        role=msg.role,
-                    )
+                    formatted = self._format_response_data_block(block)
                     if formatted is not None:
                         content_parts.append(formatted)
 
@@ -188,7 +191,6 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                 formatted_sub = (
                                     self._format_response_data_block(
                                         sub,
-                                        role="user",
                                     )
                                 )
                                 if formatted_sub is not None:
@@ -210,7 +212,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         None,
                     )
                     if reasoning_item_id:
-                        if content_parts:
+                        if content_parts and block.thinking:
                             items.append(
                                 {
                                     "role": msg.role,
@@ -218,8 +220,11 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                 },
                             )
                             content_parts = []
-                        # summary may be empty when the model did not produce
-                        # reasoning summary text (e.g. o4-mini with streaming)
+                        # Empty reasoning blocks can arrive after text deltas
+                        # only to carry reasoning_item_id; emit them before
+                        # pending assistant text for replay. Non-empty
+                        # reasoning starts a new output segment, so flush text
+                        # first.
                         summary = (
                             [{"type": "summary_text", "text": block.thinking}]
                             if block.thinking
@@ -235,21 +240,10 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         )
 
                 elif isinstance(block, ToolCallBlock):
-                    # The Responses API distinguishes two identifiers on a
-                    # function_call item:
-                    #   id       → fc_xxx: the item identifier used when
-                    #              echoing the item in multi-turn history
-                    #   call_id  → call_xxx: the identifier that must be
-                    #              echoed in the matching function_call_output
-                    # For other APIs (Chat Completions, DashScope …) only one
-                    # ID exists; call_id extra field is None and we fall back
-                    # to id for both fields.
                     function_calls.append(
                         {
                             "type": "function_call",
-                            "id": block.id,
-                            "call_id": getattr(block, "call_id", None)
-                            or block.id,
+                            "call_id": block.id,
                             "name": block.name,
                             "arguments": block.input,
                         },
@@ -302,7 +296,6 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_response_data_block(
                                     item,
-                                    role="user",
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -452,10 +445,7 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(
-                        block,
-                        role=msg.role,
-                    )
+                    formatted = self._format_response_data_block(block)
                     if formatted is not None:
                         media_blocks.append(formatted)
 

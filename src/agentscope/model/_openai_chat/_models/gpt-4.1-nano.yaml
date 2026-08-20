@@ -1,6 +1,7 @@
 name: gpt-4.1-nano
 label: GPT-4.1 Nano
-status: active
+status: deprecated
+deprecated_at: "2026-10-23T00:00:00"
 
 input_types:
   - text/plain
@@ -8,6 +9,7 @@ input_types:
   - image/png
   - image/gif
   - image/webp
+  - application/pdf
 
 output_types:
   - text/plain
@@ -21,4 +23,8 @@ parameter_overrides:
   thinking_enable:
     hidden: true
   reasoning_effort:
+    hidden: true
+  # Voice only applies to omni-style models; hide the field for this
+  # non-omni model so the frontend popover doesn't render it.
+  voice:
     hidden: true

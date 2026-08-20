@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
 
 
@@ -35,3 +36,10 @@ class OllamaCredential(CredentialBase):
         from ..model import OllamaChatModel
 
         return OllamaChatModel
+
+    @classmethod
+    def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:
+        """Return the OllamaEmbeddingModel class."""
+        from ..embedding import OllamaEmbeddingModel
+
+        return OllamaEmbeddingModel

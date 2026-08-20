@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The DashScope chat model class (OpenAI-compatible implementation)."""
+import base64
 import warnings
 from collections import OrderedDict
 from datetime import datetime
@@ -7,8 +8,10 @@ from typing import Any, AsyncGenerator, List, Literal, Type, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
@@ -17,8 +20,6 @@ from ...message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
-    DataBlock,
-    Base64Source,
 )
 from ...tool import ToolChoice
 
@@ -57,7 +58,7 @@ class DashScopeChatModel(ChatModelBase):
 
         thinking_budget: int | None = Field(
             default=None,
-            title="Thinking budget",
+            title="Thinking Budget",
             description="The thinking budget for the LLM output.",
             gt=0,
         )
@@ -90,6 +91,21 @@ class DashScopeChatModel(ChatModelBase):
             default=True,
             title="Parallel Tool Calls",
             description="If enable parallel tool calls for the LLM output.",
+        )
+
+        voice: str | None = Field(
+            default=None,
+            title="Voice",
+            description=(
+                "Voice for audio output on omni-style models (e.g. "
+                "``qwen3.5-omni-plus``). Setting this implicitly asks the "
+                "model to speak its response — ``modalities`` is filled in "
+                "automatically. Supported voices vary by model — see the "
+                "model card's ``voice.suggestions``. Any value the API "
+                "accepts works — the suggestions are convenience-only. "
+                "Leave unset for text-only "
+                "responses."
+            ),
         )
 
     type: Literal["dashscope_chat"] = "dashscope_chat"
@@ -146,6 +162,14 @@ class DashScopeChatModel(ChatModelBase):
         self.formatter = formatter or DashScopeChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import openai
+
+        self.client: openai.AsyncClient = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import openai
@@ -156,6 +180,14 @@ class DashScopeChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
 
     async def _call_api(
         self,
@@ -181,16 +213,6 @@ class DashScopeChatModel(ChatModelBase):
                 The keyword arguments for DashScope chat completions API,
                 e.g. ``temperature``, ``max_tokens``, ``top_p``, etc.
         """
-        import openai
-
-        client = openai.AsyncClient(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         request_kwargs: dict[str, Any] = {
@@ -208,6 +230,18 @@ class DashScopeChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             request_kwargs["top_p"] = self.parameters.top_p
 
+        if self.parameters.voice is not None:
+            # Requesting audio output implies ``modalities`` must include
+            # ``"audio"``; set it automatically so callers don't have to.
+            # ``format`` is forced to ``pcm16``: omni streaming delivers raw
+            # PCM upstream regardless of the requested format, and we wrap
+            # it as WAV in ``_parse_stream_response`` before yielding.
+            request_kwargs["audio"] = {
+                "voice": self.parameters.voice,
+                "format": "pcm16",
+            }
+            request_kwargs["modalities"] = ["text", "audio"]
+
         request_kwargs.update(kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
@@ -218,36 +252,30 @@ class DashScopeChatModel(ChatModelBase):
         if fmt_tool_choice is not None:
             request_kwargs["tool_choice"] = fmt_tool_choice
 
-        extra_body: dict[str, Any] = {}
-        if self.parameters.thinking_enable is not None:
-            extra_body["enable_thinking"] = self.parameters.thinking_enable
-        if self.parameters.thinking_budget is not None:
-            extra_body["thinking_budget"] = self.parameters.thinking_budget
-        if self.parameters.top_k is not None:
-            extra_body["top_k"] = self.parameters.top_k
+        eb = dict(request_kwargs.get("extra_body") or {})
+        request_kwargs["extra_body"] = eb
 
-        if extra_body:
-            request_kwargs.setdefault("extra_body", {})
-            request_kwargs["extra_body"].update(extra_body)
+        if self.parameters.thinking_enable is not None:
+            eb.setdefault(
+                "enable_thinking",
+                self.parameters.thinking_enable,
+            )
+        if self.parameters.thinking_budget is not None:
+            eb.setdefault(
+                "thinking_budget",
+                self.parameters.thinking_budget,
+            )
+        if self.parameters.top_k is not None:
+            eb.setdefault("top_k", self.parameters.top_k)
 
         if self.stream:
             request_kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**request_kwargs)
+        response = await self.client.chat.completions.create(**request_kwargs)
 
         if self.stream:
-            audio_cfg = request_kwargs.get("audio")
-            audio_fmt = (
-                audio_cfg.get("format", "wav")
-                if isinstance(audio_cfg, dict)
-                else "wav"
-            )
-            return self._parse_stream_response(
-                start_datetime,
-                response,
-                audio_fmt,
-            )
+            return self._parse_stream_response(start_datetime, response)
 
         return self._parse_completion_response(start_datetime, response)
 
@@ -255,7 +283,6 @@ class DashScopeChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncStream,
-        audio_format: str = "wav",
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the DashScope streaming response (OpenAI-compatible format).
 
@@ -264,24 +291,36 @@ class DashScopeChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncStream`):
                 The OpenAI-compatible async stream object.
-            audio_format (`str`, defaults to ``"wav"``):
-                The audio format requested (used to set the media type on
-                the output ``DataBlock``).
 
         Yields:
             `ChatResponse`:
                 Incremental ``ChatResponse`` objects with ``is_last=False``
                 followed by a final one with ``is_last=True``.
         """
+        # ``True`` once the first audio chunk has been prefixed with a
+        # streaming WAV header and yielded.
+        audio_header_sent: bool = False
+
         usage = None
-        response_id: str | None = None
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: OrderedDict = OrderedDict()
-        acc_audio_data: str = ""
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
+        audio_id = _generate_id()
+        # The mapping from index to tool call id
+        tool_call_mapping: dict = OrderedDict()
 
         async with response as stream:
             async for chunk in stream:
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
+
+                # Update the response ID if exists
+                response_id = getattr(chunk, "id", None) or response_id
+                delta_res.id = response_id
+
                 if chunk.usage:
                     u = chunk.usage
                     ptd = getattr(u, "prompt_tokens_details", None)
@@ -296,120 +335,81 @@ class DashScopeChatModel(ChatModelBase):
                         cache_input_tokens=cache_read,
                     )
 
-                response_id = response_id or getattr(chunk, "id", None)
-
                 if not chunk.choices:
+                    if usage is not None:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
                 delta = choice.delta
 
-                delta_thinking = (
-                    getattr(delta, "reasoning_content", None) or ""
-                )
-                delta_text = getattr(delta, "content", None) or ""
+                # Thinking
+                if getattr(delta, "reasoning_content", None):
+                    delta_res.append_thinking(
+                        block_id=thinking_id,
+                        thinking=delta.reasoning_content,
+                    )
 
-                # Collect audio output from Omni models (delta.audio.data)
-                delta_audio = getattr(delta, "audio", None)
-                if delta_audio is not None:
+                # Text
+                if getattr(delta, "content", None):
+                    delta_res.append_text(
+                        block_id=text_id,
+                        text=delta.content,
+                    )
+
+                # Tool call
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    index = tool_call.index
+                    fn = getattr(tool_call, "function", None)
+                    delta_name = getattr(fn, "name", None) if fn else None
+                    delta_args = getattr(fn, "arguments", None) if fn else None
+
+                    # Record the id and name in case following deltas
+                    # don't provide them
+                    if index not in tool_call_mapping:
+                        tool_call_mapping[index] = (
+                            tool_call.id,
+                            delta_name or "unknown",
+                        )
+
+                    stored_id, stored_name = tool_call_mapping[index]
+
+                    delta_res.append_tool_call(
+                        block_id=tool_call.id or stored_id,
+                        name=delta_name or stored_name,
+                        input=delta_args or "",
+                    )
+
+                # Data block
+                if getattr(delta, "audio", None):
+                    delta_audio = getattr(delta, "audio", None)
                     if isinstance(delta_audio, dict):
                         audio_chunk = delta_audio.get("data", "")
                     else:
-                        audio_chunk = getattr(delta_audio, "data", "") or ""
+                        audio_chunk = getattr(delta_audio, "data", "")
+
                     if audio_chunk:
-                        acc_audio_data += audio_chunk
+                        pcm_bytes = base64.b64decode(audio_chunk)
+                        if not audio_header_sent:
+                            payload = _build_streaming_wav_header() + pcm_bytes
+                            audio_header_sent = True
+                        else:
+                            payload = pcm_bytes
+                        # ``append_data_block`` expects the raw incremental
+                        # media bytes and handles base64 encoding internally
+                        # (see ``ChatResponse.append_data_block``); passing an
+                        # already base64-encoded string here would result in
+                        # double-encoding.
+                        delta_res.append_data_block(
+                            block_id=audio_id,
+                            data=payload,
+                            media_type="audio/wav",
+                        )
 
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
-
-                delta_tool_call_blocks: List[ToolCallBlock] = []
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = (
-                        tool_call.function.arguments
-                        if tool_call.function
-                        else ""
-                    ) or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id or "",
-                            "name": (
-                                tool_call.function.name
-                                if tool_call.function
-                                else ""
-                            ),
-                            "input": args,
-                        }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
-                    )
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
-                if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
-                    )
-                delta_contents.extend(delta_tool_call_blocks)
-
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
-
-        final_contents: List[
-            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-        ] = []
-        if acc_thinking.thinking:
-            final_contents.append(acc_thinking)
-        if acc_text.text:
-            final_contents.append(acc_text)
-        for tc in acc_tool_calls.values():
-            final_contents.append(
-                ToolCallBlock(
-                    id=tc["id"],
-                    name=tc["name"],
-                    input=tc["input"],
-                ),
-            )
-        if acc_audio_data:
-            final_contents.append(
-                DataBlock(
-                    source=Base64Source(
-                        data=acc_audio_data,
-                        media_type=f"audio/{audio_format}",
-                    ),
-                ),
-            )
-
-        _final_kwargs: dict[str, Any] = {
-            "content": final_contents,
-            "usage": usage,
-            "is_last": True,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+                if delta_res.content or usage:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _parse_completion_response(
         self,
@@ -541,51 +541,6 @@ class DashScopeChatModel(ChatModelBase):
 
         return fmt_tools, mode
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """DashScope-specific override for structured output.
-
-        DashScope rejects ``tool_choice="required"`` or an object-form
-        ``tool_choice`` when thinking mode is enabled. In that case we
-        default ``tool_choice`` to ``"auto"`` and rely on the base class's
-        injected system-reminder prompt to guide the model. When thinking
-        is disabled, this falls through to the base implementation.
-
-        See: https://help.aliyun.com/en/model-studio/qwen-function-calling
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self.parameters.thinking_enable:
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """DashScope uses ``enable_thinking=False`` in extra_body."""
+        return {"extra_body": {"enable_thinking": False}}

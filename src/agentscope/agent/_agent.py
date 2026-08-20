@@ -1,27 +1,37 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import asyncio
+import collections
 import inspect
-import uuid
+import re
+import warnings
 
 from asyncio import Queue
 from copy import deepcopy
+from fnmatch import fnmatch
+from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
     Sequence,
-    Literal,
     List,
     TYPE_CHECKING,
+    Type,
 )
 
 import jsonschema
+from pydantic import BaseModel
 
-from ._config import ContextConfig, ReActConfig, ModelConfig
+from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
 from ..state import AgentState
-from ._utils import _ToolCallBatch
+from ..state._state import ReplyContext
+from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
-from .._utils._common import _json_loads_with_repair
+from .._utils._common import (
+    _generate_id,
+    _json_loads_with_repair,
+    _execute_async_or_sync_func,
+)
 from ..event import (
     AgentEvent,
     ModelCallEndEvent,
@@ -49,12 +59,16 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     ExceedMaxItersEvent,
+    ReplyFinishedReason,
+    UserInterruptEvent,
+    HintBlockEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (
     ChatResponse,
     ChatUsage,
     ChatModelBase,
+    FinishedReason,
 )
 from ..message import (
     Msg,
@@ -71,9 +85,11 @@ from ..message import (
     ToolCallState,
     ToolResultState,
     Usage,
+    HintBlock,
 )
 from ..tool import (
     Toolkit,
+    ToolBase,
     ToolChunk,
     ToolChoice,
     ToolResponse,
@@ -82,7 +98,9 @@ from ..permission import (
     PermissionBehavior,
     PermissionEngine,
     PermissionDecision,
+    PermissionRule,
 )
+from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
 
 if TYPE_CHECKING:
@@ -104,9 +122,10 @@ class Agent:
         state: AgentState | None = None,
         offloader: Offloader | None = None,
         # The agent configurations
-        model_config: ModelConfig = ModelConfig(),
-        context_config: ContextConfig = ContextConfig(),
-        react_config: ReActConfig = ReActConfig(),
+        model_config: ModelConfig | None = None,
+        context_config: ContextConfig | None = None,
+        react_config: ReActConfig | None = None,
+        injection_config: InjectionConfig | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -121,33 +140,39 @@ class Agent:
             toolkit (`Toolkit | None`, optional):
                 The toolkit used for registering tools, MCPs and skills as the
                 sole source.
-            middlewares (`list[MiddlewareBase] | None`):
+            middlewares (`list[MiddlewareBase] | None`, optional):
                 Middlewares applied to the agent to modify its behavior
                 without altering its source code. Supported hook points
-                include: reply, reasoning, acting, model call, and system
-                prompt retrieval.
-            state (`AgentState`):
+                include: reply, reasoning, permission checking, acting, model
+                call, context compression, and system prompt retrieval.
+            state (`AgentState | None`, optional):
                 The agent state. A new state will be created if not provided.
             offloader (`Offloader | None`, optional):
                 The context offloader. If provided, the compressed context and
                 tool result will be offloaded.
-            model_config (`ModelConfig`):
+            model_config (`ModelConfig | None`, optional):
                 The additional chat model configuration including fallback
                 model and retries.
-            context_config (`CompressionConfig`):
+            context_config (`ContextConfig | None`, optional):
                 The context config for context compression and tool result
                 compression.
-            react_config (`ReActConfig`):
+            react_config (`ReActConfig | None`, optional):
                 The config for the reasoning-acting loop.
+            injection_config (`InjectionConfig | None`, optional):
+                The runtime state injection config, which controls how the
+                time, (plan) tasks and context usage are injected into the
+                context to help the agent better reason and act.
         """
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
         self.state = state or AgentState()
 
-        self.model_config = model_config
-        self.context_config = context_config
-        self.react_config = react_config
+        self.model_config = model_config or ModelConfig()
+        self.context_config = context_config or ContextConfig()
+        self.react_config = react_config or ReActConfig()
+        self.injection_config = injection_config or InjectionConfig()
+        self._validate_configs()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -171,6 +196,9 @@ class Agent:
         self._reasoning_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_reasoning")
         ]
+        self._check_permission_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_check_permission")
+        ]
         self._acting_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_acting")
         ]
@@ -184,6 +212,43 @@ class Agent:
             _ for _ in middlewares if _.is_implemented("on_compress_context")
         ]
 
+        # Set when a `ReplyEndEvent` escapes the reply middleware chain; the
+        # reply loop only exits after the event is delivered (not swallowed)
+        self._receive_reply_end: bool = False
+
+    def _validate_configs(self) -> None:
+        """Validate the config combinations that a single config class cannot
+        check by itself.
+
+        Raises:
+            `ValueError`:
+                If the reserved/buffer ratios don't leave room ahead of the
+                context compression threshold.
+        """
+        if (
+            self.context_config.reserve_ratio
+            >= self.context_config.trigger_ratio
+        ):
+            raise ValueError(
+                "The 'reserve_ratio' of the context config must be smaller "
+                "than its 'trigger_ratio', got "
+                f"{self.context_config.reserve_ratio} and "
+                f"{self.context_config.trigger_ratio}.",
+            )
+
+        if (
+            self.injection_config.inject_runtime_state
+            and self.injection_config.context_buffer_ratio
+            >= self.context_config.trigger_ratio
+        ):
+            raise ValueError(
+                "The 'context_buffer_ratio' of the injection config must be "
+                "smaller than the 'trigger_ratio' of the context config, so "
+                "that the context length is injected before the compression, "
+                f"got {self.injection_config.context_buffer_ratio} and "
+                f"{self.context_config.trigger_ratio}.",
+            )
+
     # =======================================================================
     # Agent public methods
     # =======================================================================
@@ -193,39 +258,61 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-    ) -> AsyncGenerator[AgentEvent, None]:
+        structured_schema: Type[BaseModel] | None = None,
+        yield_final_msg: bool = False,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply to the given inputs and stream agent events.
 
+        Args:
+            inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
+            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
+            optional):
+                The inputs that trigger this reply. See :meth:`reply` for
+                the full list of accepted variants.
+            structured_schema (`Type[BaseModel] | None`, optional):
+                The Pydantic model class that the reply's structured output
+                must conform to. See :meth:`reply` for details.
+            yield_final_msg (`bool`, defaults to `False`):
+                If yield the final reply message. When requiring structured
+                output, use this option to get the final message, and access
+                it via the `structured_output` attribute.
 
-        **NOTE**:
+        Yields:
+            `AgentEvent | Msg`:
+                Streamed events produced during the reply.
 
-        - If requiring outside interaction for multiple tool calls and only
-         receive partial confirmation or execution results, the agent won't
-         re-send the requiring events for the unconfirmed or unexecuted tool
-         calls.
+        .. note:: If requiring outside interaction for multiple tool calls
+            and only receive partial confirmation or execution results, the
+            agent won't re-send the requiring events for the unconfirmed
+            or unexecuted tool calls.
         """
-        try:
-            async for chunk in self._reply(inputs=inputs):
-                if not isinstance(chunk, Msg):
-                    yield chunk
-        finally:
-            pass
+        async for chunk in self._reply(
+            inputs=inputs,
+            structured_schema=structured_schema,
+        ):
+            if isinstance(chunk, Msg) and not yield_final_msg:
+                continue
+            yield chunk
 
     async def reply(
         self,
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent | None`, optional):
+            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
+            optional):
                 The inputs that trigger this reply. It can be:
 
                 - a single `Msg` or a list of `Msg` objects to start a new
@@ -233,23 +320,31 @@ class Agent:
                 - a `UserConfirmResultEvent` or
                   `ExternalExecutionResultEvent` to continue from the
                   outside interaction required by the previous reply,
+                - a `UserInterruptEvent` to abort a parked reply — the
+                  agent closes all pending tool calls with an interrupted
+                  tool result and ends the reply without entering the
+                  reasoning-acting loop,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
+            structured_schema (`Type[BaseModel] | None`, optional):
+                The Pydantic model class that the reply's structured output
+                must conform to, with the validated result carried on the
+                final message's ``structured_output`` attribute as a dict.
 
         Returns:
             `Msg`:
                 A final reply message.
         """
-        try:
-            final_msg: Msg | None = None
-            async for evt_or_msg in self._reply(inputs=inputs):
-                if isinstance(evt_or_msg, Msg):
-                    final_msg = evt_or_msg
-            if final_msg is None:
-                raise RuntimeError("Agent did not produce a final message.")
-            return final_msg
-        finally:
-            pass
+        final_msg: Msg | None = None
+        async for evt_or_msg in self._reply(
+            inputs=inputs,
+            structured_schema=structured_schema,
+        ):
+            if isinstance(evt_or_msg, Msg):
+                final_msg = evt_or_msg
+        if final_msg is None:
+            raise RuntimeError("Agent did not produce a final message.")
+        return final_msg
 
     async def observe(self, msgs: Msg | list[Msg] | None = None) -> None:
         """Receive external observation message(s) and save them into
@@ -259,6 +354,7 @@ class Agent:
     async def compress_context(
         self,
         context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -268,26 +364,40 @@ class Agent:
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
         """
         if not self._compress_context_middlewares:
-            await self._compress_context_impl(context_config=context_config)
+            await self._compress_context_impl(
+                context_config=context_config,
+                instructions=instructions,
+            )
         else:
 
             async def execute_chain(
                 index: int = 0,
                 context_config: ContextConfig | None = context_config,
+                instructions: HintBlock | None = instructions,
             ) -> None:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
                     await self._compress_context_impl(
                         context_config=context_config,
+                        instructions=instructions,
                     )
                 else:
                     mw = self._compress_context_middlewares[index]
-                    input_kwargs = {"context_config": context_config}
+                    input_kwargs = {
+                        "context_config": context_config,
+                        "instructions": instructions,
+                    }
 
                     async def next_handler(**kwargs: Any) -> None:
-                        await execute_chain(index + 1, **kwargs)
+                        await execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        )
 
                     await mw.on_compress_context(
                         agent=self,
@@ -300,6 +410,7 @@ class Agent:
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -309,8 +420,15 @@ class Agent:
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
         """
         cfg: ContextConfig = context_config or self.context_config
+
+        # Limit the number of images in the context first, so that the token
+        # counting below reflects the images that actually remain
+        await self._limit_context_images(cfg)
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
@@ -383,9 +501,19 @@ class Agent:
         if self.state.summary:
             msgs_system.append(UserMsg("user", self.state.summary))
 
+        instruction_msgs: list[Msg] = []
+        if instructions is not None:
+            instruction_msgs.append(
+                AssistantMsg(
+                    name=self.name,
+                    content=[instructions],
+                ),
+            )
+
         messages = (
             msgs_system
             + msgs_to_compress
+            + instruction_msgs
             + [
                 UserMsg(name="user", content=cfg.compression_prompt),
             ]
@@ -420,13 +548,14 @@ class Agent:
             context_overflow = True
 
         # Compress the messages
+        res = None
         try:
             res = await self.model.generate_structured_output(
                 messages=messages,
                 structured_model=cfg.summary_schema,
             )
 
-        except Exception as e:
+        except Exception as error:
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -437,6 +566,7 @@ class Agent:
                     messages = (
                         msgs_system
                         + msgs_to_compress[i:]
+                        + instruction_msgs
                         + [
                             UserMsg(
                                 name="user",
@@ -458,37 +588,190 @@ class Agent:
                     ):
                         break
 
-                res = await self.model.generate_structured_output(
-                    messages=messages,
-                    structured_model=cfg.summary_schema,
+                try:
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+                except Exception as retry_error:
+                    error = retry_error
+
+            if res is None:
+                logger.warning(
+                    "[AGENT %s]: Summary generation failed: %s. "
+                    "Falling back to context truncation.",
+                    self.name,
+                    error,
                 )
 
-            else:
-                raise e from None
+        if res is not None and (
+            res.finished_reason == FinishedReason.INTERRUPTED
+        ):
+            logger.warning(
+                "The context compression was interrupted and skipped. ",
+            )
+            raise asyncio.CancelledError()
 
         # Update the summary
-        self.state.summary = cfg.summary_template.format(**res.content)
+        async def _apply_change() -> None:
+            """Apply the context change with interruption protection."""
+            if res is not None:
+                new_summary = cfg.summary_template.format(**res.content)
+            else:
+                # Keep the previous summary if the compression failed
+                new_summary = self.state.summary or (
+                    "<system-info>Some earlier messages were truncated for "
+                    "limited context.</system-info>"
+                )
 
-        if self.offloader:
-            path = await self.offloader.offload_context(
-                self.state.session_id,
-                msgs=msgs_to_compress,
+            # Offload the compressed context if offloader is provided
+            if self.offloader:
+                path = await self.offloader.offload_context(
+                    self.state.session_id,
+                    msgs=msgs_to_compress,
+                )
+                offload_reminder = (
+                    f"<system-reminder>The compressed context"
+                    f" is offloaded to '{path}', you can refer"
+                    f" to it when needed.</system-reminder>"
+                )
+                # Avoid duplicating the reminder when the previous summary
+                # is reused after a failed compression
+                if isinstance(new_summary, list):
+                    if not any(
+                        isinstance(block, TextBlock)
+                        and block.text == offload_reminder
+                        for block in new_summary
+                    ):
+                        new_summary = [
+                            *new_summary,
+                            TextBlock(text=offload_reminder),
+                        ]
+                elif offload_reminder not in new_summary:
+                    new_summary += f"\n{offload_reminder}"
+
+            # Clear the read tool cache
+            await self._clear_unreserved_read_cache(msgs_to_reserve)
+
+            # Update the context and summary
+            self.state.summary = new_summary
+            self.state.context = msgs_to_reserve
+
+            logger.info(
+                "[AGENT %s]: The context compression finished.",
+                self.name,
             )
 
-            self.state.summary += (
-                f"\n<system-reminder>The compressed context is offloaded to "
-                f"'{path}', you can refer to it when needed.</system-reminder>"
-            )
+        apply_task = asyncio.create_task(_apply_change())
+        try:
+            await asyncio.shield(apply_task)
+        except asyncio.CancelledError:
+            await apply_task
+            raise
 
-        await self._clear_unreserved_read_cache(msgs_to_reserve)
+    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+        """Limit the number of images in the context according to
+        ``cfg.max_image_num``. The oldest images exceeding the limit are
+        offloaded to the workspace (if an offloader is provided) and replaced
+        by a hint recording the offloaded path; otherwise they are dropped and
+        replaced by a hint without path information.
 
-        # Update the context
-        self.state.context = msgs_to_reserve
+        Image data blocks at the top level of a non-user message are
+        replaced by :class:`HintBlock`, while those in user messages or
+        nested inside a :class:`ToolResultBlock` / :class:`HintBlock` are
+        replaced by :class:`TextBlock` (as required by their type
+        constraints).
+
+        Args:
+            cfg (`ContextConfig`):
+                The context config that provides ``max_image_num``.
+        """
+        max_image_num = cfg.max_image_num
+
+        def _is_image(block: Any) -> bool:
+            """Check whether the given block is an image data block."""
+            return isinstance(
+                block,
+                DataBlock,
+            ) and block.source.media_type.startswith("image/")
+
+        # Collect all the image data blocks in chronological order, recorded
+        # as (container list, index, block, is_top_level, role)
+        images: list[tuple[list, int, DataBlock, bool, str]] = []
+        for msg in self.state.context:
+            for i, block in enumerate(msg.content):
+                if _is_image(block):
+                    images.append((msg.content, i, block, True, msg.role))
+                elif isinstance(block, ToolResultBlock) and isinstance(
+                    block.output,
+                    list,
+                ):
+                    for j, sub in enumerate(block.output):
+                        if _is_image(sub):
+                            images.append(
+                                (block.output, j, sub, False, msg.role),
+                            )
+                elif isinstance(block, HintBlock) and isinstance(
+                    block.hint,
+                    list,
+                ):
+                    for j, sub in enumerate(block.hint):
+                        if _is_image(sub):
+                            images.append(
+                                (block.hint, j, sub, False, msg.role),
+                            )
+
+        n_exceed = len(images) - max_image_num
+        if n_exceed <= 0:
+            return
 
         logger.info(
-            "[AGENT %s]: The context compression finished.",
+            "[AGENT %s]: The number of images in context (%d) exceeds the "
+            "limit (%d), removing the oldest %d image(s).",
             self.name,
+            len(images),
+            max_image_num,
+            n_exceed,
         )
+
+        # Offload the images first (which may involve I/O), and then apply
+        # the replacements together to avoid partial modification on
+        # interruption
+        replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
+        for container, idx, block, is_top_level, role in images[:n_exceed]:
+            url = ""
+            if isinstance(block.source, URLSource):
+                url = str(block.source.url)
+            elif self.offloader is not None:
+                saved = await self.offloader.offload_data_block(block)
+                if isinstance(saved.source, URLSource):
+                    url = str(saved.source.url)
+
+            name = f"named '{block.name}' " if block.name else ""
+            if url:
+                text = (
+                    f"<system-reminder>The image {name}is offloaded into "
+                    f"{url}, you can refer to it when needed."
+                    f"</system-reminder>"
+                )
+            else:
+                text = (
+                    f"<system-reminder>The image {name}is removed to free "
+                    f"up context space.</system-reminder>"
+                )
+
+            new_block: HintBlock | TextBlock
+            if is_top_level and role != "user":
+                new_block = HintBlock(hint=text)
+            else:
+                # User messages only accept text/data blocks (see the
+                # validator in Msg), and a hint block is equivalent to a user
+                # text block for the model anyway.
+                new_block = TextBlock(type="text", text=text)
+            replacements.append((container, idx, new_block))
+
+        for container, idx, new_block in replacements:
+            container[idx] = new_block
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
@@ -499,13 +782,20 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply entry point (maybe wrapped by middleware)."""
+        """Reply entry point (maybe wrapped by middleware). The reply loop
+        exits only after its ``ReplyEndEvent`` escapes the middleware chain,
+        so an ``on_reply`` middleware can swallow the event (receive it
+        without yielding) to force another reasoning-acting round."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(inputs=inputs):
-                yield item
+            agen = self._reply_impl(
+                inputs=inputs,
+                structured_schema=structured_schema,
+            )
         else:
 
             async def execute_chain(
@@ -513,20 +803,31 @@ class Agent:
                 inputs: Msg
                 | list[Msg]
                 | UserConfirmResultEvent
+                | UserInterruptEvent
                 | ExternalExecutionResultEvent
                 | None = inputs,
+                structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(inputs=inputs):
+                    async for item in self._reply_impl(
+                        inputs=inputs,
+                        structured_schema=structured_schema,
+                    ):
                         yield item
                 else:
                     mw = self._reply_middlewares[index]
-                    input_kwargs = {"inputs": inputs}
+                    input_kwargs = {
+                        "inputs": inputs,
+                        "structured_schema": structured_schema,
+                    }
 
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_reply(
@@ -536,167 +837,605 @@ class Agent:
                     ):
                         yield item
 
-            async for item in execute_chain():
-                yield item
+            agen = execute_chain()
 
-    async def _reply_impl(
+        self._receive_reply_end = False
+        async for item in agen:
+            # Set before the yield: the suspended `_reply_impl` checks the
+            # flag once resumed by the next pull
+            if isinstance(item, ReplyEndEvent):
+                self._receive_reply_end = True
+            yield item
+
+    async def _close_unfinished_tool_calls(
+        self,
+    ) -> AsyncGenerator[
+        ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
+        None,
+    ]:
+        """Close the unfinished tool calls on interruption, so the next
+        input will be handled normally."""
+        if not self.state.context:
+            return
+
+        last_msg = self.state.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != self.name:
+            return
+
+        # Searching for tool calls that requires user confirmation or external
+        # execution without tool results
+        awaiting_tool_calls: dict = {}
+        for index, block in enumerate(last_msg.content):
+            if isinstance(block, ToolCallBlock):
+                awaiting_tool_calls[block.id] = index
+            elif isinstance(block, ToolResultBlock):
+                awaiting_tool_calls.pop(block.id, None)
+
+        interruption_message = (
+            "<system-reminder>The tool call has been interrupted by "
+            "the user.</system-reminder>"
+        )
+
+        for index in awaiting_tool_calls.values():
+            call_block = last_msg.content[index]
+            assert isinstance(call_block, ToolCallBlock)
+
+            # ALLOWED calls are running and SUBMITTED external calls are
+            # awaiting their result; both already emitted START.
+            if call_block.state not in (
+                ToolCallState.ALLOWED,
+                ToolCallState.SUBMITTED,
+            ):
+                yield ToolResultStartEvent(
+                    reply_id=self.state.reply_id,
+                    tool_call_id=last_msg.content[index].id,
+                    tool_call_name=last_msg.content[index].name,
+                )
+
+            call_block.state = ToolCallState.FINISHED
+            yield ToolResultTextDeltaEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=last_msg.content[index].id,
+                delta=interruption_message,
+            )
+            yield ToolResultEndEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=last_msg.content[index].id,
+                state=ToolResultState.INTERRUPTED,
+            )
+            last_msg.content.append(
+                ToolResultBlock(
+                    id=last_msg.content[index].id,
+                    name=last_msg.content[index].name,
+                    output=interruption_message,
+                    state=ToolResultState.INTERRUPTED,
+                ),
+            )
+
+    async def _reply_impl(  # pylint: disable=too-many-branches
         self,
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
-        # Dispatch the unified inputs by type into the legacy local variables
-        event: (UserConfirmResultEvent | ExternalExecutionResultEvent | None)
-        msgs: Msg | list[Msg] | None
-        if isinstance(
-            inputs,
-            (UserConfirmResultEvent, ExternalExecutionResultEvent),
-        ):
-            event = inputs
-            msgs = None
-        else:
-            event = None
-            msgs = inputs
 
-        # ===================================================================
-        # Step 1: Checking agent input:
-        #  - if incoming event and agent is waiting for an event
-        #  - if event is None and agent is not waiting for an event
-        # ===================================================================
-        is_awaiting = await self._check_incoming_event(event)
-
-        # ===================================================================
-        # Step 2: Handling agent event if applicable
-        #  - yield tool result events for the denied tool calls, or
-        #  - update the reply state as a new reply process
-        # ===================================================================
-        if is_awaiting:
-            async for evt in self._handle_incoming_event(event):
-                yield evt
-        else:
-            await self._handle_incoming_messages(msgs)
-            # Update the context with the incoming message and state
-            self.state.reply_id = uuid.uuid4().hex
-            self.state.cur_iter = 0
-
-            yield ReplyStartEvent(
-                session_id=self.state.session_id,
-                reply_id=self.state.reply_id,
-                name=self.name,
+        end_event: ReplyEndEvent | None = None
+        try:
+            # Dispatch the unified inputs by type into the legacy local
+            # variables
+            event: (
+                UserConfirmResultEvent
+                | UserInterruptEvent
+                | ExternalExecutionResultEvent
+                | None
             )
+            msgs: Msg | list[Msg] | None
+            if isinstance(
+                inputs,
+                (
+                    UserConfirmResultEvent,
+                    UserInterruptEvent,
+                    ExternalExecutionResultEvent,
+                ),
+            ):
+                event = inputs
+                msgs = None
+            else:
+                event = None
+                msgs = inputs
 
-        # ===================================================================
-        # Step 3: Enter the reasoning-acting loop until reaching max_iters or
-        #  no more tool calls to execute
-        # ===================================================================
-        while self.state.cur_iter < self.react_config.max_iters:
-            # ===============================================================
-            # Step 3.1:
-            # ===============================================================
-            action, data = self._check_next_action()
-            if action == "exit" and isinstance(data, Msg):
-                yield data
+            if event and structured_schema:
+                logger.warning(
+                    "The given structured_schema is ignored when "
+                    "resuming with a HITL event; the parked reply's "
+                    "schema is used instead.",
+                )
+
+            # Parked-interrupt short-circuit: only signal an INTERRUPTED
+            # end when there is actual HITL work to close; otherwise the
+            # session is effectively idle and the call is a silent no-op.
+            # ``finally`` reuses the CancelledError cleanup path when
+            # ``end_event`` is set — no reasoning-acting loop either way.
+            if isinstance(inputs, UserInterruptEvent):
+                if self.state.has_awaiting_tool_calls(self.name):
+                    end_event = ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.INTERRUPTED,
+                    )
                 return
 
-            # ===============================================================
-            # Step 3.2: Execute reasoning if no more tools to be executed
-            # ===============================================================
-            if action == "reasoning":
-                # Compressed the memory if needed before reasoning
-                await self.compress_context()
-                # Perform reasoning
-                async for evt in self._reasoning():
-                    # Exit the loop when no tool calls generated and the reply
-                    # message is generated
-                    if isinstance(evt, Msg):
-                        yield ReplyEndEvent(
-                            session_id=self.state.session_id,
-                            reply_id=self.state.reply_id,
-                        )
-                        yield evt
-                        return
+            # ===================================================================
+            # Step 1: Checking agent input:
+            #  - if incoming event and agent is waiting for an event
+            #  - if event is None and agent is not waiting for an event
+            # ===================================================================
+            is_awaiting = await self._check_incoming_event(event)
+
+            # ===================================================================
+            # Step 2: Handling agent event if applicable
+            #  - yield tool result events for the denied tool calls, or
+            #  - update the reply state as a new reply process
+            # ===================================================================
+            if is_awaiting:
+                async for evt in self._handle_incoming_event(event):
                     yield evt
+            else:
+                await self._handle_incoming_messages(msgs)
+                # Update the context with the incoming message and state
+                self.state.reply_context = ReplyContext(
+                    reply_id=_generate_id(),
+                    cur_iter=0,
+                    structured_schema=structured_schema,
+                    structured_output=None,
+                )
 
-            # ===============================================================
-            # Step 3.3: Getting batches of tool calls to be executed
-            #  - If not, finish the loop by yielding RunFinishedEvent and exit
-            #  - Otherwise, execute by batch and continue the loop
-            # ===============================================================
-            for batch in await self._batch_tool_calls():
-                if batch.type == "sequential":
-                    evt_generator = self._execute_sequential_tool_calls(
-                        batch.tool_calls,
-                    )
+                yield ReplyStartEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
 
-                elif batch.type == "concurrent":
-                    evt_generator = self._execute_concurrent_tool_calls(
-                        batch.tool_calls,
-                    )
+            # Update the structured output tool for new requirements or
+            #  from the previous reply
+            await self.toolkit.remove_tool(_GenerateStructuredOutput.name)
+            if self.state.reply_context.structured_schema:
+                await self.toolkit.add_tool(
+                    _GenerateStructuredOutput(
+                        schema=self.state.reply_context.structured_schema,
+                    ),
+                )
 
-                else:
-                    raise ValueError(
-                        f"Invalid batch type: {batch.type}",
-                    )
+            # =================================================================
+            # Step 3: Enter the reasoning-acting loop until reaching max_iters
+            #  or no more tool calls to execute
+            # =================================================================
+            final_msg: Msg | None = None
+            # Detects middlewares swallowing the ReplyEndEvent repeatedly
+            # without any reasoning/acting in between (a busy loop)
+            made_progress = True
+            while True:
+                # =============================================================
+                # Step 3.1: Decide the next action based on the current state
+                # =============================================================
+                next_action = self._next_action(final_msg)
 
-                break_execution = False
-                async for evt in evt_generator:
-                    yield evt
-                    if isinstance(
-                        evt,
-                        (
-                            RequireUserConfirmEvent,
-                            RequireExternalExecutionEvent,
-                        ),
-                    ):
-                        break_execution = True
+                match next_action:
+                    case Exit(exit_msg=exit_msg, exit_events=exit_events):
+                        if not exit_events:
+                            # Parked on HITL: the reply is not finished, so
+                            # the continuation protocol doesn't apply
+                            yield exit_msg
+                            return
 
-                # If it requires outside interaction stop executing the next
-                # batch and wait for outside trigger events
-                if break_execution:
-                    # Yield a Msg object for outside handling
+                        for exit_event in exit_events:
+                            yield exit_event
+
+                        # Exit unless a middleware swallowed the ReplyEndEvent
+                        # to force another reasoning-acting round
+                        if self._receive_reply_end:
+                            yield exit_msg
+                            return
+
+                        if not made_progress:
+                            raise RuntimeError(
+                                "A middleware swallowed the ReplyEndEvent "
+                                "twice without any reasoning/acting in "
+                                "between. Unblock the next round (e.g. "
+                                "adjust 'cur_iter', 'max_iters' or the "
+                                "structured output state) before swallowing "
+                                "the event again.",
+                            )
+                        made_progress = False
+                        final_msg = None
+                        continue
+
+                    case Reasoning(hint=hint, tool_choice=tool_choice):
+                        made_progress = True
+                        final_msg = None
+                        if hint:
+                            self.state.append_context(self.name, [hint])
+
+                        # Compressed the memory if needed before reasoning
+                        await self.compress_context()
+
+                        # Inject runtime state if needed before reasoning
+                        async for evt in self._inject_runtime_state():
+                            yield evt
+
+                        # Perform reasoning
+                        interrupted = False
+                        async for evt in self._reasoning(
+                            tool_choice=tool_choice,
+                        ):
+                            if isinstance(evt, Msg):
+                                # Candidate final message; ``_next_action``
+                                # decides whether it ends the reply
+                                final_msg = evt
+                                continue
+
+                            if isinstance(evt, ModelCallEndEvent):
+                                interrupted = (
+                                    evt.finished_reason
+                                    == FinishedReason.INTERRUPTED
+                                )
+
+                            yield evt
+
+                        if interrupted:
+                            end_event = ReplyEndEvent(
+                                session_id=self.state.session_id,
+                                reply_id=self.state.reply_id,
+                                finished_reason=(
+                                    ReplyFinishedReason.INTERRUPTED
+                                ),
+                            )
+                            return
+
+                    case Acting(tool_calls=tool_calls):
+                        made_progress = True
+                        for batch in await self._batch_tool_calls(tool_calls):
+                            if batch.type == "sequential":
+                                evt_generator = (
+                                    self._execute_sequential_tool_calls(
+                                        batch.tool_calls,
+                                    )
+                                )
+
+                            elif batch.type == "concurrent":
+                                evt_generator = (
+                                    self._execute_concurrent_tool_calls(
+                                        batch.tool_calls,
+                                    )
+                                )
+
+                            else:
+                                raise ValueError(
+                                    f"Invalid batch type: {batch.type}",
+                                )
+
+                            break_execution_for_hitl = False
+                            break_execution_for_interruption = False
+                            async for evt in evt_generator:
+                                yield evt
+                                if isinstance(
+                                    evt,
+                                    (
+                                        RequireUserConfirmEvent,
+                                        RequireExternalExecutionEvent,
+                                    ),
+                                ):
+                                    break_execution_for_hitl = True
+
+                                elif (
+                                    isinstance(evt, ToolResultEndEvent)
+                                    and evt.state
+                                    == ToolResultState.INTERRUPTED
+                                ):
+                                    # Handle the interruption event
+                                    break_execution_for_interruption = True
+
+                            if break_execution_for_interruption:
+                                end_event = ReplyEndEvent(
+                                    session_id=self.state.session_id,
+                                    reply_id=self.state.reply_id,
+                                    finished_reason=(
+                                        ReplyFinishedReason.INTERRUPTED
+                                    ),
+                                )
+                                return
+
+                            if break_execution_for_hitl:
+                                break
+
+                # One reasoning-acting round is over once every tool call it
+                # produced has a result. Reasoning that generated tool calls,
+                # or Acting that parked some of them on a user confirmation
+                # or an external execution, leaves the round unfinished
+                if not self.state.get_unfinished_tool_calls(self.name):
+                    self.state.cur_iter += 1
+
+        except asyncio.CancelledError:
+            # Handle the CancelledError within the _reply_impl for the
+            # agent middlewares
+            end_event = ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id=self.state.reply_id,
+                finished_reason=ReplyFinishedReason.INTERRUPTED,
+            )
+
+            if self.react_config.interruption_raise_cancelled_error:
+                raise
+
+        finally:
+            if end_event is not None:
+                interrupted_end = (
+                    end_event.finished_reason
+                    == ReplyFinishedReason.INTERRUPTED
+                )
+                if interrupted_end:
+                    # Handle the context when interruption
+                    async for _ in self._close_unfinished_tool_calls():
+                        yield _
+
+                yield end_event
+
+                if interrupted_end:
+                    # The fallback msg goes last: Msg terminates the stream
                     yield AssistantMsg(
                         id=self.state.reply_id,
                         name=self.name,
-                        content="Waiting for tool calls to be confirmed or "
-                        "executed from outside ...",
+                        content=self.react_config.interruption_message,
+                        finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
-                    return
+    async def _inject_runtime_state(
+        self,
+    ) -> AsyncGenerator[HintBlockEvent, None]:
+        """Inject the current runtime state (time, plan tasks and context
+        usage) into the conversation context as a ``HintBlock``, so the agent
+        stays aware of the information that changes across turns/replies.
 
-            # Update the iteration count after each round of reasoning-acting
-            self.state.cur_iter += 1
+        .. note:: The injection is **not** ephemeral. It is appended to the
+            persistent context on purpose, so the agent can perceive how time
+            elapses and what it did at each step, building a sense of time.
 
-        # ===================================================================
-        # Step 4: Handling the max iteration executed
-        # ===================================================================
-        yield ExceedMaxItersEvent(
-            reply_id=self.state.reply_id,
-            name=self.name,
-        )
-        logger.warning(
-            "Agent %s exceeds the max iteration numbers %d. "
-            "Stop the react loop.",
-            self.name,
-            self.react_config.max_iters,
+        .. note:: We attach a ``HintBlock`` instead of mutating the system
+            prompt, so that prompt caching still works while the agent remains
+            aware of the changing time / tasks / context.
+
+        .. note:: Only information that *changes* within a conversation is
+            injected here. Fixed information should live in the system prompt.
+
+        The injection timing is decided per dimension:
+
+        - **Time**: injected when (1) no time is recorded in the context (i.e.
+          the first reply or right after a context compression), or (2) the
+          elapsed time since the recorded one exceeds
+          ``injection_config.time_interval`` hours. The injected time is the
+          wall-clock time of ``injection_config.timezone``, and the timezone
+          is injected next to it so that the elapsed time is still correct
+          when the configured timezone changes within a conversation.
+        - **Plan tasks**: injected when there are pending or in-progress tasks
+          while the context contains neither task-related tool calls (e.g.
+          they have been compressed away) nor a previous tasks injection.
+        - **Context**: injected at the first iteration of a reply when the
+          current input tokens are within
+          ``injection_config.context_buffer_ratio`` of the compression
+          threshold, letting the agent perceive that a compression is near.
+          This dimension is evaluated independently of the two above.
+
+        The user defined ``injection_config.extra_fields`` are attached to
+        every injection, but never trigger one by themselves.
+
+        Yields:
+            `HintBlockEvent`:
+                Emitted when a runtime-state hint is injected and
+                ``injection_config.emit_hint_event`` is enabled.
+        """
+        if not self.injection_config.inject_runtime_state:
+            return
+
+        injections: dict = {}
+
+        # The wall-clock time in the configured timezone. It's kept timezone
+        # aware for the elapsed time calculation, while ``time_format`` decides
+        # whether the timezone is carried in the injected text.
+        now = datetime.now(_resolve_timezone(self.injection_config.timezone))
+
+        # A fixed source used to detect existing injection
+        injection_source = self.injection_config.injection_source
+
+        # =====================================================================
+        # Step 1: Analyze the current context
+        #  - The latest injection that records a time (if any)
+        #  - If the agent is already aware of the uncompleted tasks
+        # =====================================================================
+        task_status: dict = collections.defaultdict(int)
+        for task in self.state.tasks_context.tasks:
+            task_status[task.state] += 1
+
+        has_uncompleted_tasks = (
+            task_status["pending"] > 0 or task_status["in_progress"] > 0
         )
 
-        # Mirror the normal-exit path so subscribers (e.g. SSE clients
-        # waiting on a terminal event) don't hang when the loop bails
-        # out on max_iters.
-        yield ReplyEndEvent(
-            session_id=self.state.session_id,
-            reply_id=self.state.reply_id,
-        )
+        # The text of the newest injection that records a time. An injection
+        # only carries the fields triggered at that moment, so the newest one
+        # doesn't necessarily record a time.
+        last_time_text: str | None = None
 
-        yield AssistantMsg(
-            id=self.state.reply_id,
-            name=self.name,
-            content="Executed maximum iterations of reasoning-acting loop"
-            "without finishing the task.",
-        )
+        # The agent is aware of the tasks when the context contains the task
+        # related tool calls or a previous tasks injection. Without uncompleted
+        # tasks the flag is never used, so skip the detection entirely.
+        aware_of_tasks = not has_uncompleted_tasks
+
+        for msg in reversed(self.state.context):
+            if last_time_text is not None and aware_of_tasks:
+                # Both dimensions are settled, no need to scan the older
+                # context
+                break
+
+            if msg.role != "assistant":
+                continue
+
+            for block in reversed(msg.content):
+                if (
+                    isinstance(block, HintBlock)
+                    and block.source == injection_source
+                ):
+                    if isinstance(block.hint, str):
+                        text = block.hint
+                    else:
+                        text = "".join(
+                            _.text
+                            for _ in block.hint
+                            if isinstance(_, TextBlock)
+                        )
+
+                    if last_time_text is None and "<current-time>" in text:
+                        last_time_text = text
+                    if not aware_of_tasks and "<tasks>" in text:
+                        aware_of_tasks = True
+
+                elif (
+                    isinstance(block, ToolCallBlock)
+                    and block.name in self.injection_config.task_tool_names
+                ):
+                    aware_of_tasks = True
+
+        # =====================================================================
+        # Step 2: Check Time Injection
+        # =====================================================================
+        # No time recorded in the context, e.g. the first reply or right after
+        # a context compression, so inject to be safe
+        inject_time = True
+        if last_time_text is not None:
+            # Extract the recorded time from the injection, e.g.
+            # <current-time>2026-07-01T12:00:00</current-time>
+            match = re.search(
+                r"<current-time>(.*?)</current-time>",
+                last_time_text,
+            )
+            last_time = None
+            if match is not None:
+                try:
+                    last_time = datetime.strptime(
+                        match.group(1).strip(),
+                        self.injection_config.time_format,
+                    )
+                except ValueError:
+                    # Fail to parse the recorded time, e.g. the time format has
+                    # changed, so inject again to be safe
+                    last_time = None
+
+            if last_time is not None:
+                if last_time.tzinfo is None:
+                    # The recorded time is the wall-clock time of the timezone
+                    # recorded next to it, e.g.
+                    # <timezone>Asia/Shanghai</timezone>. Restore it so that
+                    # the comparison holds even if the configured timezone has
+                    # changed since then.
+                    match_tz = re.search(
+                        r"<timezone>(.*?)</timezone>",
+                        last_time_text,
+                    )
+                    last_time = last_time.replace(
+                        tzinfo=_resolve_timezone(
+                            match_tz.group(1).strip()
+                            if match_tz
+                            else self.injection_config.timezone,
+                        ),
+                    )
+
+                elapsed_hours = (now - last_time).total_seconds() / 3600
+                # A negative elapsed time means the recorded time is in the
+                # future, e.g. the machine clock went backwards, so inject
+                # again to be safe
+                inject_time = not (
+                    0 <= elapsed_hours <= self.injection_config.time_interval
+                )
+
+        if inject_time:
+            injections["current-time"] = now.strftime(
+                self.injection_config.time_format,
+            )
+            injections["timezone"] = self.injection_config.timezone
+
+        # =====================================================================
+        # Step 3: Check Plan Tasks
+        # =====================================================================
+        # If exists uncompleted tasks and the agent isn't aware of them, e.g.
+        # the task related tool calls have been compressed away, so that the
+        # same reminder isn't repeated on every iteration
+        if has_uncompleted_tasks and not aware_of_tasks:
+            injections["tasks"] = (
+                f"You have {task_status['in_progress']} in-progress tasks "
+                f"and {task_status['pending']} pending tasks. "
+                f"Use `TaskList` to view them if you don't know."
+            )
+
+        # =====================================================================
+        # Step 4: Context Length
+        # =====================================================================
+        # The context length is checked independently of the dimensions above,
+        # and only at the beginning of a reply, where the context has just
+        # grown by the new input
+        if self.state.cur_iter == 0:
+            # Count the current tokens
+            kwargs = await self._prepare_model_input()
+            input_tokens = await self.model.count_tokens(**kwargs)
+
+            trigger_tokens = int(
+                self.context_config.trigger_ratio * self.model.context_size,
+            )
+
+            if input_tokens > (
+                max(
+                    0.0,
+                    self.context_config.trigger_ratio
+                    - self.injection_config.context_buffer_ratio,
+                )
+                * self.model.context_size
+            ):
+                # To trigger memory compress
+                injections["context-length"] = (
+                    f"Your current context contains {input_tokens} "
+                    f"tokens. When reaching {trigger_tokens} tokens, "
+                    f"your context will be compressed."
+                )
+
+        if injections:
+            # The user defined fields, which don't trigger an injection by
+            # themselves
+            injections.update(self.injection_config.extra_fields)
+
+            hint_block = HintBlock(
+                source=injection_source,
+                # Use replace instead of format, so that the other curly
+                # braces in the template are kept as-is
+                hint=self.injection_config.template.replace(
+                    "{runtime_state}",
+                    "\n".join(
+                        f"<{k}>{v}</{k}>" for k, v in injections.items()
+                    ),
+                ),
+            )
+            self.state.append_context(
+                self.name,
+                [hint_block],
+            )
+            if self.injection_config.emit_hint_event:
+                yield HintBlockEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=hint_block.id,
+                    source=hint_block.source,
+                    hint=hint_block.hint,
+                )
 
     async def _reasoning(
         self,
@@ -739,7 +1478,10 @@ class Agent:
                     input_kwargs = {"tool_choice": tool_choice}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_reasoning(
@@ -790,7 +1532,12 @@ class Agent:
             **kwargs,
         )
 
-        block_ids: dict = {"text": None, "thinking": None, "tools": []}
+        block_ids: dict = {
+            "text": None,
+            "thinking": None,
+            "tools": [],
+            "data": [],
+        }
         completed_response: ChatResponse | None = None
 
         # Check if res is an async generator (streaming response)
@@ -832,6 +1579,20 @@ class Agent:
                 reply_id=self.state.reply_id,
                 tool_call_id=tool_call_id,
             )
+        for data_block_id in block_ids["data"]:
+            yield DataBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=data_block_id,
+            )
+
+        # Guard against empty or interrupted streaming responses.
+        if completed_response is None:
+            raise RuntimeError(
+                "Model returned an empty streaming response: no is_last=True"
+                " chunk was received.  The model call may have been "
+                "interrupted mid-stream (network dropout, timeout, or model "
+                "bug).",
+            )
 
         # Send the model call ended event with usage if available
         yield ModelCallEndEvent(
@@ -842,6 +1603,7 @@ class Agent:
             output_tokens=completed_response.usage.output_tokens
             if completed_response.usage
             else 0,
+            finished_reason=completed_response.finished_reason,
         )
 
         self._save_to_context(
@@ -849,9 +1611,22 @@ class Agent:
             completed_response.usage,
         )
 
+        # A thinking-only response is an intermediate reasoning step rather
+        # than a user-visible final answer. Keep the ReAct loop running so the
+        # model can produce text, data, or a tool call on the next iteration.
+        has_only_thinking_blocks = bool(completed_response.content) and all(
+            isinstance(block, ThinkingBlock)
+            for block in completed_response.content
+        )
+
         # If no tool call is generated, return the final message directly
-        if not any(
-            isinstance(_, ToolCallBlock) for _ in completed_response.content
+        if (
+            completed_response.finished_reason != FinishedReason.INTERRUPTED
+            and not any(
+                isinstance(_, ToolCallBlock)
+                for _ in completed_response.content
+            )
+            and not has_only_thinking_blocks
         ):
             last_ctx = self._get_last_msg()
             final_usage = (
@@ -865,8 +1640,11 @@ class Agent:
             yield AssistantMsg(
                 id=self.state.reply_id,
                 name=self.name,
+                # Text only response message
                 content=list(completed_response.content),
                 usage=final_usage,
+                # The INTERRUPTED case is excluded by the branch condition
+                finished_reason=ReplyFinishedReason.COMPLETED,
             )
 
     async def _check_incoming_event(
@@ -893,25 +1671,17 @@ class Agent:
                 the reply id and iteration count should be updated for the new
                 reply.
         """
-        awaiting_confirmations = []
-        awaiting_external_executions = []
-
-        last_msg = self._get_last_msg()
-        if last_msg:
-            # The completed tool call ids
-            tool_result_ids = [
-                _.id for _ in last_msg.get_content_blocks("tool_result")
-            ]
-
-            for tool_call in last_msg.get_content_blocks("tool_call"):
-                if tool_call.state == ToolCallState.ASKING:
-                    awaiting_confirmations.append(tool_call.id)
-                elif (
-                    tool_call.state == ToolCallState.SUBMITTED
-                    and tool_call.id not in tool_result_ids
-                ):
-                    # submitted but no result yet, i.e. external execution
-                    awaiting_external_executions.append(tool_call.id)
+        awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
+        awaiting_confirmations = [
+            _.id
+            for _ in awaiting_tool_calls
+            if _.state == ToolCallState.ASKING
+        ]
+        awaiting_external_executions = [
+            _.id
+            for _ in awaiting_tool_calls
+            if _.state == ToolCallState.SUBMITTED
+        ]
 
         # No incoming event but needed
         if event is None and (
@@ -1048,6 +1818,7 @@ class Agent:
                     reply_id=self.state.reply_id,
                     tool_call_id=tool_result.id,
                     state=tool_result.state,
+                    metadata=tool_result.metadata,
                 )
 
                 self._save_to_context([tool_result])
@@ -1087,15 +1858,49 @@ class Agent:
                         f"tool results or thinking blocks.",
                     )
 
+                # Handle the unsupported input data
+                supported = self.model.formatter.supported_input_media_types
+                for i, block in enumerate(msg.content):
+                    if not isinstance(block, DataBlock) or any(
+                        fnmatch(block.source.media_type, pattern)
+                        for pattern in supported
+                    ):
+                        continue
+
+                    # Convert unsupported input data block into a text block,
+                    # and offload it into the workspace
+                    url = ""
+                    if isinstance(block.source, URLSource):
+                        url = str(block.source.url)
+                    elif self.offloader is not None:
+                        saved = await self.offloader.offload_data_block(block)
+                        if isinstance(saved.source, URLSource):
+                            url = str(saved.source.url)
+
+                    name = f"named '{block.name}' " if block.name else ""
+                    if url:
+                        text = (
+                            f"<system-reminder>An attached file {name}is "
+                            f"saved into {url}.</system-reminder>"
+                        )
+                    else:
+                        text = (
+                            f"<system-reminder>An unsupported input file "
+                            f"{name}is attached with media type "
+                            f"'{block.source.media_type}'.</system-reminder>"
+                        )
+                    msg.content[i] = TextBlock(type="text", text=text)
+
                 self.state.context.append(msg)
 
-    async def _batch_tool_calls(self) -> list[_ToolCallBatch]:
+    async def _batch_tool_calls(
+        self,
+        tool_calls: list[ToolCallBlock],
+    ) -> list[_ToolCallBatch]:
         """Batch the tool calls into a sequence of batches that should be
         executed **sequentially** or **concurrently** according to the tool
         properties `is_concurrency_safe` and `is_read_only`.
         """
-        # All tool calls that haven't the corresponding results in the context
-        tool_calls = self._get_executable_tool_calls()
 
         # Batch the tool calls according to whether they can be executed
         # concurrently or not
@@ -1169,6 +1974,9 @@ class Agent:
                         RequireUserConfirmEvent,
                         RequireExternalExecutionEvent,
                     ),
+                ) or (
+                    isinstance(evt, ToolResultEndEvent)
+                    and evt.state == ToolResultState.INTERRUPTED
                 ):
                     break_execution = True
                     break
@@ -1200,6 +2008,16 @@ class Agent:
         means every ``queue.put`` from every worker has already finished
         before the generator returns.
 
+        If the caller task is cancelled from outside, the concurrent worker
+        tasks are cancelled explicitly (to avoid orphan tasks), any events
+        already queued by the workers (including interruption chunks emitted
+        by ``toolkit.call_tool`` when it catches ``CancelledError``) are
+        flushed to the caller, and the generator returns normally. The
+        caller is expected to detect the interruption via the flushed
+        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
+        event-based propagation used by
+        :meth:`_execute_sequential_tool_calls`.
+
         Args:
             tool_calls (`list[ToolCallBlock]`):
                 The tool calls to be executed concurrently.
@@ -1226,6 +2044,14 @@ class Agent:
         # Create a queue to collect events from all concurrent workers.
         queue: Queue = Queue()
 
+        # Batch-shared accumulator for confirmation de-duplication: the
+        # suggested rules of every confirmation surfaced by this batch are
+        # collected here so a later call already covered by an earlier
+        # call's rule is not prompted a second time. Mutated only from
+        # synchronous sections of the workers, so no lock is needed on the
+        # single-threaded event loop.
+        kept_rules: list[PermissionRule] = []
+
         async def _run_all() -> list[BaseException | None]:
             """Run all tool calls concurrently and push the sentinel when done.
 
@@ -1237,7 +2063,10 @@ class Agent:
             # return_exceptions=True keeps all tasks running even when some
             # fail, and returns exceptions as values instead of re-raising.
             results = await asyncio.gather(
-                *[self._into_queue(tc, queue) for tc in tool_calls],
+                *[
+                    self._into_queue(tc, queue, kept_rules)
+                    for tc in tool_calls
+                ],
                 return_exceptions=True,
             )
             # The sentinel is placed AFTER gather returns, which guarantees
@@ -1247,12 +2076,35 @@ class Agent:
 
         gather_task = asyncio.create_task(_run_all())
 
-        # Drain the queue until the sentinel is encountered.
-        while True:
-            event = await queue.get()
-            if event is sentinel:
-                break
-            yield event
+        try:
+            # Drain the queue until the sentinel is encountered.
+            while True:
+                event = await queue.get()
+                if event is sentinel:
+                    break
+                yield event
+        except asyncio.CancelledError:
+            # Cancel the gather tasks, which will be handled within the toolkit
+            gather_task.cancel()
+            try:
+                await gather_task
+            except asyncio.CancelledError:
+                pass
+            while True:
+                try:
+                    event = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if event is sentinel:
+                    continue
+                yield event
+            # Consume the cancel so this generator returns normally. The
+            # caller relies on the flushed ``ToolResultEndEvent(state=
+            # INTERRUPTED)`` events, not on the exception, to detect the
+            # interruption — mirroring the event-based propagation used by
+            # :meth:`_execute_sequential_tool_calls`.
+            asyncio.current_task().uncancel()
+            return
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
@@ -1267,22 +2119,119 @@ class Agent:
         self,
         tool_call: ToolCallBlock,
         queue: Queue,
+        kept_rules: list[PermissionRule] | None = None,
     ) -> None:
         """Execute a single tool call and forward every event into *queue*.
 
         Args:
-            tool_call (`ToolBlockCall`):
+            tool_call (`ToolCallBlock`):
                 The tool call to execute.
             queue (`Queue`):
                 The shared async queue that collects events from all
                 concurrent workers.
+            kept_rules (`list[PermissionRule] | None`, defaults to `None`):
+                The batch-shared accumulator of already-surfaced suggested
+                rules, forwarded to :meth:`_execute_tool_call` for
+                confirmation de-duplication within the concurrent batch.
         """
-        async for evt in self._execute_tool_call(tool_call):
+        async for evt in self._execute_tool_call(tool_call, kept_rules):
             await queue.put(evt)
+
+    async def _check_permission(
+        self,
+        tool_call: ToolCallBlock,
+        tool: ToolBase,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision:
+        """Run permission checking through the middleware onion.
+
+        The middleware chain receives copies of the tool call and tool input;
+        changes to these copies do not alter the eventual tool invocation. A
+        call already allowed by user confirmation still traverses the
+        middleware chain, but skips re-evaluation by the built-in engine.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The validated tool call metadata.
+            tool (`ToolBase`):
+                The resolved tool instance.
+            tool_input (`dict[str, Any]`):
+                The parsed and schema-validated tool input.
+
+        Returns:
+            `PermissionDecision`:
+                The decision that the agent should consume.
+        """
+
+        if not self._check_permission_middlewares:
+            return await self._check_permission_impl(
+                tool_call,
+                tool,
+                tool_input,
+            )
+
+        # Copy so middleware cannot mutate what the agent consumes later.
+        tool_call = deepcopy(tool_call)
+        tool_input = deepcopy(tool_input)
+
+        async def execute_chain(
+            index: int = 0,
+            tool_call: ToolCallBlock = tool_call,
+            tool: ToolBase = tool,
+            tool_input: dict[str, Any] = tool_input,
+        ) -> PermissionDecision:
+            """Execute the check_permission middleware chain."""
+            if index >= len(self._check_permission_middlewares):
+                return await self._check_permission_impl(
+                    tool_call,
+                    tool,
+                    tool_input,
+                )
+
+            mw = self._check_permission_middlewares[index]
+            input_kwargs = {
+                "tool_call": tool_call,
+                "tool": tool,
+                "tool_input": tool_input,
+            }
+
+            async def next_handler(**kwargs: Any) -> PermissionDecision:
+                return await execute_chain(
+                    index + 1,
+                    **{**input_kwargs, **kwargs},
+                )
+
+            return await mw.on_check_permission(
+                agent=self,
+                input_kwargs=input_kwargs,
+                next_handler=next_handler,
+            )
+
+        return await execute_chain()
+
+    async def _check_permission_impl(
+        self,
+        tool_call: ToolCallBlock,
+        tool: ToolBase,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision:
+        """Core permission resolution, wrapped by ``on_check_permission``.
+
+        A call already allowed by user confirmation short-circuits to ALLOW;
+        otherwise the built-in engine evaluates the tool and its input. See
+        :meth:`_check_permission` for the argument and return semantics.
+        """
+        if tool_call.state == ToolCallState.ALLOWED:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Already allowed by user confirmation.",
+            )
+        return await self._engine.check_permission(tool, tool_input)
 
     async def _execute_tool_call(
         self,
         tool_call: ToolCallBlock,
+        kept_rules: list[PermissionRule] | None = None,
     ) -> AsyncGenerator[
         RequireUserConfirmEvent
         | RequireExternalExecutionEvent
@@ -1304,6 +2253,16 @@ class Agent:
         Args:
             tool_call (`ToolCallBlock`):
                 The tool call block to be executed.
+            kept_rules (`list[PermissionRule] | None`, defaults to `None`):
+                A batch-scoped, shared accumulator of the suggested rules
+                already surfaced by earlier confirmations in the same
+                concurrent batch. Passed only by
+                :meth:`_execute_concurrent_tool_calls`; when provided, a
+                non-safety ASK whose invocation is already covered by an
+                accumulated rule is de-duplicated (left ``PENDING`` and
+                not surfaced again). ``None`` disables de-duplication
+                (e.g. sequential execution, which already parks at the
+                first ASK).
 
         Yields:
             `RequireUserConfirmEvent \
@@ -1359,17 +2318,11 @@ class Agent:
         # ===================================================================
         # Step 2: Check permission by toolkit and permission engine
         # ===================================================================
-        if tool_call.state == ToolCallState.ALLOWED:
-            # Already allowed by user confirmation, skip permission checking
-            decision = PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Already allowed by user confirmation.",
-            )
-        else:
-            decision = await self._engine.check_permission(
-                tool,
-                parsed_input,
-            )
+        decision = await self._check_permission(
+            tool_call,
+            tool,
+            parsed_input,
+        )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed
@@ -1380,6 +2333,36 @@ class Agent:
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
         ]:
+            # Batch de-duplication (concurrent batches only): if an earlier
+            # confirmation in this same batch already suggested an allow rule
+            # that matches this invocation, do not surface a second prompt.
+            # Leave the call PENDING so the next reply run re-evaluates it
+            # against the engine once the user answers the first prompt (and
+            # its rule has been added). Safety ASKs (bypass-immune) are never
+            # de-duplicated — an allow rule cannot clear them, so each must
+            # surface its own prompt.
+            is_safety_ask = (
+                decision.behavior == PermissionBehavior.ASK
+                and decision.bypass_immune
+            )
+            if kept_rules is not None and not is_safety_ask:
+                for rule in kept_rules:
+                    if rule.tool_name != tool.name:
+                        continue
+                    if await _execute_async_or_sync_func(
+                        tool.match_rule,
+                        rule.rule_content,
+                        parsed_input,
+                    ):
+                        # Covered by an earlier call's rule; stay PENDING and
+                        # do not yield — re-evaluated on the next reply run.
+                        return
+
+            if kept_rules is not None:
+                # Register this prompt's suggested rules so later calls in the
+                # batch can be de-duplicated against them.
+                kept_rules.extend(decision.suggested_rules or [])
+
             # Set the state of the tool call to "ask"
             # **Note** the update must be done before yielding the event
             self._update_tool_call_state(
@@ -1447,6 +2430,7 @@ class Agent:
                         if isinstance(chunk.content, str)
                         else chunk.content,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                     # ========================================================
@@ -1515,6 +2499,7 @@ class Agent:
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                 else:
@@ -1569,7 +2554,10 @@ class Agent:
                     input_kwargs = {"tool_call": tool_call}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_acting(
@@ -1633,7 +2621,7 @@ class Agent:
             message (`str`):
                 The error message to be returned for the tool call.
             state (`ToolResultState`):
-                The state of the tool result, which can be "error", "denied",
+                The state of the tool result, such as "error" or "denied".
 
         Yields:
             `ToolResultStartEvent \
@@ -1757,21 +2745,30 @@ class Agent:
                 break
             block_index -= 1
 
-        # Adjust the block_index to avoid splitting tool call and result pairs
+        # Adjust the block_index to avoid splitting tool call and result pairs.
+        # Moving the boundary can bring another tool call into the compressed
+        # part while leaving its result reserved, so repeat until it is stable.
+        while True:
+            # Check if the reserved part has tool results that don't have the
+            # corresponding tool calls
+            remain_result_ids = {}
+            for i in range(
+                len(boundary_msg_content) - 1,
+                block_index,
+                -1,
+            ):
+                block = boundary_msg_content[i]
+                if isinstance(block, ToolResultBlock):
+                    remain_result_ids[block.id] = i
+                elif isinstance(block, ToolCallBlock):
+                    remain_result_ids.pop(block.id, None)
 
-        # Check if the reserved part has tool results that don't have the
-        # corresponding tool calls
-        remain_result_ids = {}
-        for i in range(len(boundary_msg_content) - 1, block_index, -1):
-            block = boundary_msg_content[i]
-            if isinstance(block, ToolResultBlock):
-                remain_result_ids[block.id] = i
-            elif isinstance(block, ToolCallBlock):
-                remain_result_ids.pop(block.id, None)
+            # All tool result blocks in the reserved part are paired.
+            if not remain_result_ids:
+                break
 
-        # Find the largest index of the remaining tool results, which doesn't
-        # have the corresponding tool calls in the reserved parts
-        if remain_result_ids:
+            # Move unmatched results into the compressed part and recheck,
+            # because this move can split another tool call/result pair.
             block_index = max(remain_result_ids.values())
 
         # Split the boundary msg content
@@ -2105,7 +3102,7 @@ class Agent:
                                     # pylint: disable=cell-var-from-loop
                                     return await execute_chain(
                                         index + 1,
-                                        **kwargs,
+                                        **{**input_kwargs, **kwargs},
                                     )
 
                                 return await mw.on_model_call(
@@ -2197,36 +3194,32 @@ class Agent:
             else None
         )
 
-        if len(self.state.context) == 0:
-            self.state.context.append(
-                AssistantMsg(
-                    id=self.state.reply_id,
-                    name=self.name,
-                    content=list(blocks),
-                    usage=msg_usage,
-                ),
+        # Assistant-produced audio (e.g. qwen-omni speaking aloud) is delivered
+        # to the user via streaming events; the raw bytes don't belong in
+        # conversation memory. Filtering here keeps every downstream walker
+        # (formatter, count_tokens, persistence) honest without each having
+        # to remember.
+        persisted_blocks = [
+            b
+            for b in blocks
+            if not (
+                isinstance(b, DataBlock)
+                and isinstance(b.source, (Base64Source, URLSource))
+                and b.source.media_type.startswith("audio/")
             )
-        else:
-            last_msg = self.state.context[-1]
-            if last_msg.role == "assistant" and last_msg.name == self.name:
-                if isinstance(last_msg.content, str):
-                    last_msg.content = [TextBlock(text=last_msg.content)]
-                last_msg.content.extend(blocks)
-                if msg_usage is not None:
-                    if last_msg.usage is None:
-                        last_msg.usage = msg_usage
-                    else:
-                        last_msg.usage.input_tokens += msg_usage.input_tokens
-                        last_msg.usage.output_tokens += msg_usage.output_tokens
+        ]
+        if not persisted_blocks and msg_usage is None:
+            return
+
+        self.state.append_context(self.name, persisted_blocks)
+
+        tail = self.state.context[-1]
+        if msg_usage is not None:
+            if tail.usage is None:
+                tail.usage = msg_usage
             else:
-                self.state.context.append(
-                    AssistantMsg(
-                        id=self.state.reply_id,
-                        name=self.name,
-                        content=list(blocks),
-                        usage=msg_usage,
-                    ),
-                )
+                tail.usage.input_tokens += msg_usage.input_tokens
+                tail.usage.output_tokens += msg_usage.output_tokens
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
@@ -2237,134 +3230,212 @@ class Agent:
             return last_msg
         return None
 
-    def _check_next_action(
+    def _next_action(
         self,
-    ) -> (
-        tuple[Literal["exit"], Msg]
-        | tuple[Literal["reasoning"], None]
-        | tuple[Literal["acting"], None]
-    ):
-        """Check the next action for the agent
+        final_msg: Msg | None = None,
+    ) -> Reasoning | Acting | Exit:
+        """Decide the next action from the current state. Read-only: all
+        side effects are performed by the caller ``_reply_impl``."""
 
-        Awaiting tool calls:
-            The tool calls waiting for the outside events (confirmation or
-            external execution results, state = "asking" or "submitted")
-        Executable tool calls:
-            The tool calls allowed by the incoming confirmation events and
-            haven't been executed yet (state = "allowed")
+        # ===========================================================
+        # Step 1: Check executable and awaiting tool calls
+        # ===========================================================
+        awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
 
-        The next action:
-
-        |                          | Awaiting tool calls          | No awaiting tool call        |
-        | ------------------------ | ---------------------------- | ---------------------------- |
-        | Executable tool calls    | Acting executable tool calls | Acting executable tool calls |
-        | No executable tool calls | Exit the _reply              | Reasoning                    |
-
-        Returns:
-            `tuple[Literal["exit"], Msg]`:
-                If there is no executable tool call and there are awaiting tool
-                calls, which means the agent is waiting for the outside events
-                and should not do anything before that, the next action is to
-                exit the _reply and wait for the outside events.
-            `tuple[Literal["reasoning"], None]`:
-                If there is no executable tool call and no awaiting tool call,
-                which means the agent has nothing to do in this iteration and
-                can continue reasoning for the next step.
-            `tuple[Literal["acting"], None]`:
-                If there are executable tool calls, which means the agent can
-                act by executing the tool calls.
-        """  # noqa: E501
         last_msg = self._get_last_msg()
-        if last_msg is None:
-            return "reasoning", None
-
-        # In case wrong tool call state, first filter with the results
-        finished_ids = {
-            _.id for _ in last_msg.get_content_blocks("tool_result")
-        }
-        unfinished_tool_calls = [
-            _
-            for _ in last_msg.get_content_blocks("tool_call")
-            if _.id not in finished_ids
-        ]
-
-        # Find if there are executable or awaiting tool calls
-        awaiting_tool_calls: list[ToolCallBlock] = []
-        executable_tool_calls: list[ToolCallBlock] = []
-
-        confirming_names, asking_names = [], []
-        for _ in unfinished_tool_calls:
-            if _.state in [ToolCallState.PENDING, ToolCallState.ALLOWED]:
-                executable_tool_calls.append(_)
-
-            elif _.state == ToolCallState.ASKING:
-                asking_names.append(_.name)
-                awaiting_tool_calls.append(_)
-
-            elif _.state == ToolCallState.SUBMITTED:
-                confirming_names.append(_.name)
-                awaiting_tool_calls.append(_)
-
-        if executable_tool_calls:
-            return "acting", None
+        if last_msg is not None:
+            # In case wrong tool call state, first filter with the results
+            finished_ids = {
+                _.id for _ in last_msg.get_content_blocks("tool_result")
+            }
+            # With awaiting tool calls, PENDING ones are blocked (e.g.
+            # deduplicated in a batch) and wait; only ALLOWED ones execute
+            executable_tool_calls = [
+                _
+                for _ in last_msg.get_content_blocks("tool_call")
+                if _.id not in finished_ids
+                and (
+                    _.state == ToolCallState.ALLOWED
+                    or (
+                        _.state == ToolCallState.PENDING
+                        and not awaiting_tool_calls
+                    )
+                )
+            ]
+            if executable_tool_calls:
+                # Next execute the tool calls
+                return Acting(tool_calls=executable_tool_calls)
 
         if awaiting_tool_calls:
-            # Prepare the message
-            evt = ["I'm waiting for "]
-            if asking_names:
-                evt += [
-                    f"user confirmation for {len(asking_names)} tool calls",
-                ]
-
-            if confirming_names:
-                if evt:
-                    evt += [", and "]
-                evt += [
-                    f"external execution results for {len(confirming_names)} "
-                    f"tool calls",
-                ]
-
-            text = "".join(evt) + "."
-
-            return "exit", AssistantMsg(
-                name=self.name,
-                content=[TextBlock(text=text)],
+            # Next wait for the permission or external execution to finish
+            return Exit(
+                # The reply doesn't finish yet
+                exit_events=None,
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    # both confirmation or external execution
+                    content="I'm waiting for your permission or the "
+                    "external execution to finish.",
+                ),
             )
 
-        return "reasoning", None
+        # ===========================================================
+        # Step 2: Check structured output if no blocked tool calls
+        # ===========================================================
 
-    def _get_executable_tool_calls(self) -> list[ToolCallBlock]:
-        """Get tool calls from the last message that to be executed, which
-        means we should reserve the tool calls that:
+        # Structured output requirement and satisfaction
+        required = self.state.reply_context.structured_schema is not None
+        satisfied = self.state.reply_context.structured_output is not None
 
-        1. doesn't have results yet, **and**
-        2. haven't been submitted for external execution (state != "submitted")
-        """
-        last_msg = self._get_last_msg()
-        if last_msg is None:
-            return []
+        if required and satisfied:
+            # Next return the structured output and finish the reply
+            return Exit(
+                exit_events=[
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.COMPLETED,
+                    ),
+                ],
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content="The required structured output is generated.",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                    structured_output=deepcopy(
+                        self.state.reply_context.structured_output,
+                    ),
+                ),
+            )
 
-        # The tool results
-        result_ids = {_.id for _ in last_msg.get_content_blocks("tool_result")}
-        # The tool calls that doesn't have results yet
-        tool_calls_wo_results = [
-            _
-            for _ in last_msg.get_content_blocks("tool_call")
-            if _.id not in result_ids
-        ]
+        elif required and not satisfied:
+            # Maybe the model needs futher reasoning-acting to
+            # generate the structured output
+            tool_choice = None
+            suffix = (
+                "Call it when you are ready to generate the final "
+                "structured output."
+            )
 
-        # Filter the ones that are "submitted", which already report the
-        # external execution requirement
-        pending_tool_calls = [
-            _
-            for _ in tool_calls_wo_results
-            if _.state
-            in [
-                ToolCallState.PENDING,
-                ToolCallState.ALLOWED,
-            ]
-        ]
-        return pending_tool_calls
+            # Allow extra grace iterations for structured generation
+            if (
+                self.state.cur_iter
+                >= self.react_config.max_iters
+                + self.react_config.structured_output_grace_iters
+            ):
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exceed_event = ExceedMaxItersEvent(
+                        reply_id=self.state.reply_id,
+                        name=self.name,
+                    )
+                return Exit(
+                    exit_events=[
+                        exceed_event,
+                        ReplyEndEvent(
+                            session_id=self.state.session_id,
+                            reply_id=self.state.reply_id,
+                            finished_reason=(
+                                ReplyFinishedReason.EXCEED_MAX_ITERS
+                            ),
+                        ),
+                    ],
+                    exit_msg=AssistantMsg(
+                        id=self.state.reply_id,
+                        name=self.name,
+                        content="The maximum reasoning-acting iterations "
+                        "are exceeded.",
+                        finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                    ),
+                )
+
+            if self.state.cur_iter >= self.react_config.max_iters:
+                # Must call the structured output tool and return the
+                # structured output
+                tool_choice = ToolChoice(
+                    mode=_GenerateStructuredOutput.name,
+                )
+                suffix = (
+                    "You have reached the maximum reasoning-acting "
+                    "iterations, so call this tool at once to generate "
+                    "the final structured output."
+                )
+
+            # Next continue reasoning with injected hint
+            return Reasoning(
+                hint=HintBlock(
+                    hint=[
+                        TextBlock(
+                            text=(
+                                "<system-reminder>You're required to "
+                                "generate structured output by calling the "
+                                f"'{_GenerateStructuredOutput.name}' tool. "
+                                f"{suffix}</system-reminder>"
+                            ),
+                        ),
+                    ],
+                    source='{"label": "System", "sublabel": '
+                    '"Structured Output Requirement"}',
+                ),
+                tool_choice=tool_choice,
+            )
+
+        # ===========================================================
+        # Step 3: Exit with the final message, or continue reasoning
+        # ===========================================================
+
+        # The last reasoning produced a text-only final message
+        if final_msg is not None:
+            return Exit(
+                exit_events=[
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.COMPLETED,
+                    ),
+                ],
+                exit_msg=final_msg,
+            )
+
+        if self.state.cur_iter >= self.react_config.max_iters:
+            logger.warning(
+                "Agent %s exceeds the max iteration numbers %d. "
+                "Stop the react loop.",
+                self.name,
+                self.react_config.max_iters,
+            )
+
+            # Deprecated but still emitted for backward compatibility;
+            # suppressed since the warning targets consumers
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                exceed_event = ExceedMaxItersEvent(
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
+            return Exit(
+                exit_events=[
+                    exceed_event,
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                    ),
+                ],
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content="The maximum reasoning-acting iterations are "
+                    "exceeded.",
+                    finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                ),
+            )
+
+        # By default, continue reasoning
+        return Reasoning()
 
     async def _convert_chat_response_to_event(
         self,
@@ -2384,6 +3455,7 @@ class Agent:
 
         # Classify the content blocks into different types
         text_blocks, thinking_blocks, tool_call_blocks = [], [], []
+        data_blocks: list = []
         for block in chunk.content:
             if isinstance(block, TextBlock):
                 text_blocks.append(block)
@@ -2391,36 +3463,18 @@ class Agent:
                 thinking_blocks.append(block)
             elif isinstance(block, ToolCallBlock):
                 tool_call_blocks.append(block)
+            elif isinstance(block, DataBlock):
+                data_blocks.append(block)
 
-        # Handle the text blocks
-        if text_blocks:
-            # If the current chunk has text blocks but no text block id,
-            # start with a start event
-            if not block_ids.get("text"):
-                block_ids["text"] = uuid.uuid4().hex
-                yield TextBlockStartEvent(
-                    reply_id=self.state.reply_id,
-                    block_id=block_ids["text"],
-                )
-            # Go on using the existing text block id to generate delta events
-            yield TextBlockDeltaEvent(
-                reply_id=self.state.reply_id,
-                block_id=block_ids["text"],
-                delta="".join([_.text for _ in text_blocks]),
-            )
-
-        elif block_ids.get("text"):
-            yield TextBlockEndEvent(
-                reply_id=self.state.reply_id,
-                block_id=block_ids["text"],
-            )
-            block_ids["text"] = None
-
-        # Handle the thinking blocks
+        # Handle the thinking stream: continue/open or close.
+        # We only auto-close when the chunk also carries no data blocks;
+        # a data-only chunk (e.g. an omni-style audio PCM delta) must keep
+        # both text and thinking streams alive so the frontend doesn't
+        # fragment one logical stream into many separate bubbles.
         if thinking_blocks:
             # Generate a new thinking block id and start event
             if not block_ids.get("thinking"):
-                block_ids["thinking"] = uuid.uuid4().hex
+                block_ids["thinking"] = _generate_id()
                 yield ThinkingBlockStartEvent(
                     reply_id=self.state.reply_id,
                     block_id=block_ids["thinking"],
@@ -2432,12 +3486,34 @@ class Agent:
                 delta="".join([_.thinking for _ in thinking_blocks]),
             )
 
-        elif block_ids.get("thinking"):
+        elif block_ids.get("thinking") and not data_blocks:
             yield ThinkingBlockEndEvent(
                 reply_id=self.state.reply_id,
                 block_id=block_ids["thinking"],
             )
             block_ids["thinking"] = None
+
+        # Handle the text stream: continue/open or close.  Placed after
+        # thinking so that a chunk carrying both ThinkingBlock and TextBlock
+        # emits thinking events first.
+        if text_blocks:
+            if not block_ids.get("text"):
+                block_ids["text"] = _generate_id()
+                yield TextBlockStartEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=block_ids["text"],
+                )
+            yield TextBlockDeltaEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["text"],
+                delta="".join([_.text for _ in text_blocks]),
+            )
+        elif block_ids.get("text") and not data_blocks:
+            yield TextBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["text"],
+            )
+            block_ids["text"] = None
 
         # Handle the tool calls that exist in the current chunk
         for tool_call in tool_call_blocks:
@@ -2466,6 +3542,29 @@ class Agent:
                 tool_call_id=finished_id,
             )
             block_ids["tools"].remove(finished_id)
+
+        # Handle the data blocks (streaming binary content, e.g. omni audio).
+        # Each DataBlock chunk from the model carries a delta payload with a
+        # stable block id; we open a stream the first time we see an id and
+        # emit delta events for subsequent chunks with the same id.
+        for data_block in data_blocks:
+            if not isinstance(data_block.source, Base64Source):
+                # Only Base64Source carries inline delta bytes; URLSource is
+                # one-shot and not part of the streaming protocol.
+                continue
+            if data_block.id not in block_ids["data"]:
+                block_ids["data"].append(data_block.id)
+                yield DataBlockStartEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=data_block.id,
+                    media_type=data_block.source.media_type,
+                )
+            yield DataBlockDeltaEvent(
+                reply_id=self.state.reply_id,
+                block_id=data_block.id,
+                data=data_block.source.data,
+                media_type=data_block.source.media_type,
+            )
 
     async def _convert_tool_chunk_to_event(
         self,

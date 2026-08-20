@@ -20,18 +20,30 @@ export function useSessions(agentId: string | null) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
-	const refetch = useCallback(async () => {
+	/**
+	 * Reload the session list.
+	 *
+	 * Also returns the fresh list, so a caller reacting to an event can
+	 * act on it immediately — reading the `sessions` state right after
+	 * awaiting would still see the pre-update value from its closure.
+	 *
+	 * @returns The reloaded views, or an empty array when there is no
+	 *   agent or the request failed.
+	 */
+	const refetch = useCallback(async (): Promise<SessionView[]> => {
 		if (!agentId) {
 			setSessions([]);
-			return;
+			return [];
 		}
 		setLoading(true);
 		setError(null);
 		try {
 			const res = await sessionApi.list(agentId);
 			setSessions(res.sessions);
+			return res.sessions;
 		} catch (e) {
 			setError(e as Error);
+			return [];
 		} finally {
 			setLoading(false);
 		}

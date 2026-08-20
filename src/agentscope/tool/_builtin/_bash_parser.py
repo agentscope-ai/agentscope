@@ -132,6 +132,18 @@ READ_ONLY_COMMANDS = {
     "pip show",
 }
 
+FIND_MUTATING_PREDICATES = {
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-fls",
+    "-fprint",
+    "-fprint0",
+    "-fprintf",
+    "-ok",
+    "-okdir",
+}
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -199,6 +211,9 @@ class BashCommandParser:
         if cmd in READ_ONLY_COMMANDS:
             return True
 
+        if self._is_mutating_find_command(cmd):
+            return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
@@ -218,6 +233,30 @@ class BashCommandParser:
             # Check if base command is in safe commands
             if base_cmd in SAFE_COMMANDS:
                 return True
+
+        return False
+
+    def _is_mutating_find_command(self, cmd: str) -> bool:
+        """Check if a find command contains mutating predicates via AST."""
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+        except Exception:
+            return False
+
+        root = tree.root_node
+        cmd_node = self._find_first_simple_command(root)
+        if cmd_node is None:
+            return False
+
+        name_node = cmd_node.child_by_field_name("name")
+        if name_node is None or name_node.text.decode("utf8") != "find":
+            return False
+
+        for child in cmd_node.children:
+            if child.type == "word":
+                text = child.text.decode("utf8")
+                if text in FIND_MUTATING_PREDICATES:
+                    return True
 
         return False
 
