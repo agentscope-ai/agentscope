@@ -225,9 +225,7 @@ class WhatsAppChannel(ChannelBase):
         if owns_http:
             self._http = httpx.AsyncClient(timeout=30.0)
         try:
-            events: list[
-                ChannelEvent | ChannelConfirmationResultEvent
-            ] = []
+            events: list[ChannelEvent | ChannelConfirmationResultEvent] = []
             for message, value in self._webhook_messages(payload):
                 event = await self._normalize_message(message, value)
                 if event is not None:

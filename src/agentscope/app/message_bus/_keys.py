@@ -300,9 +300,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_OUTBOUND_SIGNAL = "agentscope:channel:outbound:wake"
     _CHANNEL_WEBHOOK_QUEUE = "agentscope:channel:webhook:inbound:{cid}"
     _CHANNEL_WEBHOOK_SIGNAL = "agentscope:channel:webhook:wake"
-    _CHANNEL_WEBHOOK_DRAIN_LOCK = (
-        "agentscope:channel:webhook:drain:lock:{cid}"
-    )
+    _CHANNEL_WEBHOOK_DRAIN_LOCK = "agentscope:channel:webhook:drain:lock:{cid}"
     _CHANNEL_WEBHOOK_DEDUPE = "agentscope:channel:webhook:dedupe:{cid}"
     _CHANNEL_WEBHOOK_DEDUPE_LOCK = (
         "agentscope:channel:webhook:dedupe:lock:{cid}:{mid}"

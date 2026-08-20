@@ -256,6 +256,7 @@ class ChannelLifecycleDispatcher:
         """Subscribe before draining so startup cannot miss a wake signal."""
         backoff = 1.0
         while True:
+
             def on_ready() -> None:
                 """Expose subscription readiness and drain persisted work."""
                 ready.set()
@@ -269,7 +270,7 @@ class ChannelLifecycleDispatcher:
                     backoff = 1.0
                     for channel_id in signal.get("channel_ids", []):
                         self._spawn_webhook_drain(str(channel_id))
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception:  # pylint: disable=broad-except
                 ready.set()

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Unit tests for the WhatsApp channel's transport-independent behavior."""
 import asyncio
 import base64

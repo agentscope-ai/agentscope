@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Tests for the shared WhatsApp webhook ingress path."""
 import asyncio
 import hashlib
@@ -13,17 +14,21 @@ fastapi = pytest.importorskip("fastapi")
 FastAPI = fastapi.FastAPI
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
 
-from agentscope.app._router._whatsapp_webhook import (
+# pylint: disable=wrong-import-position
+from agentscope.app._router._whatsapp_webhook import (  # noqa: E402
     create_whatsapp_webhook_router,
 )
-from agentscope.app.channel import (
+from agentscope.app.channel import (  # noqa: E402
     ChannelEvent,
     ChannelLifecycleDispatcher,
     ChannelTypeRegistry,
     WhatsAppChannel,
 )
-from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
-from agentscope.app.storage import (
+from agentscope.app.message_bus import (  # noqa: E402
+    InMemoryMessageBus,
+    MessageBusKeys,
+)
+from agentscope.app.storage import (  # noqa: E402
     ChannelBinding,
     ChannelRecord,
     RoutingConfig,
@@ -52,7 +57,10 @@ def _record() -> ChannelRecord:
     )
 
 
-def _dispatcher(bus: object, gateway: object | None = None) -> ChannelLifecycleDispatcher:
+def _dispatcher(
+    bus: object,
+    gateway: object | None = None,
+) -> ChannelLifecycleDispatcher:
     """Build a dispatcher around a test bus."""
     return ChannelLifecycleDispatcher(
         storage=AsyncMock(),
@@ -151,9 +159,7 @@ def test_create_app_registers_webhook_only_for_whatsapp() -> None:
         workspace_manager=MagicMock(spec=WorkspaceManagerBase),
         enable_index_worker=False,
     )
-    assert "/webhooks/whatsapp" not in app_without_whatsapp.openapi()[
-        "paths"
-    ]
+    assert "/webhooks/whatsapp" not in app_without_whatsapp.openapi()["paths"]
 
 
 def test_inbound_consumer_uses_independently_expiring_dedupe_key() -> None:
@@ -326,16 +332,19 @@ def test_inbound_drain_preserves_log_order() -> None:
         assert [
             item.args[0]["message_id"] for item in process.await_args_list
         ] == ["first", "second"]
-        assert await bus.registry_get(
-            dispatcher._webhook_cursor_namespace("whatsapp-1"),
-            "entry_id",
-        ) == second_id
+        assert (
+            await bus.registry_get(
+                dispatcher._webhook_cursor_namespace("whatsapp-1"),
+                "entry_id",
+            )
+            == second_id
+        )
 
     asyncio.run(run())
 
 
 def test_webhook_drain_tasks_are_coalesced_per_channel() -> None:
-    """Repeated local wakeups reuse one active task instead of piling waiters."""
+    """Repeated wakeups reuse one active task instead of piling waiters."""
 
     async def run() -> None:
         dispatcher = _dispatcher(AsyncMock())
@@ -408,11 +417,14 @@ def test_shared_consumer_persists_chat_metadata() -> None:
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    assert call(
-        MessageBusKeys.channel_seen_chats(record.id),
-        "group-1",
-        expected_chat,
-    ) in bus.registry_set.await_args_list
+    assert (
+        call(
+            MessageBusKeys.channel_seen_chats(record.id),
+            "group-1",
+            expected_chat,
+        )
+        in bus.registry_set.await_args_list
+    )
 
 
 def test_inmemory_registry_ttl_expires_namespace() -> None:
