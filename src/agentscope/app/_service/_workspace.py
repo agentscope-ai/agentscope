@@ -19,9 +19,6 @@ from ..._logging import logger
 from ...tool import BackendBase
 from ...workspace import WorkspaceBase
 
-# Long enough to survive a slow round trip and the user's click, short
-# enough that a token leaked through a log or history is already dead.
-
 #: Ceilings on one upload. Peak memory is a chunk per concurrent
 #: install; these bound the sandbox's disk and how long a slot is held.
 MAX_FILE_BYTES = 50 * 1024 * 1024

@@ -414,6 +414,14 @@ class IndexWorker:
         # (document_id, chunk_index), so re-inserting overwrites in
         # place — but a re-parse that yields fewer chunks would leave
         # the old tail behind, so drop the previous vectors first.
+        #
+        # The trade-off: between this delete and the insert below the
+        # document is unsearchable, where before it kept a complete but
+        # stale set; and a first-time index pays a no-op delete. The
+        # narrow alternative — insert, then drop only
+        # ``chunk_index >= len(chunks)`` — needs a vector-store API that
+        # deletes by more than ``document_id``, which is not worth a new
+        # abstract method for a retry-only window.
         await knowledge.delete_document(document_id)
         await knowledge.insert_document(
             chunks=chunks,

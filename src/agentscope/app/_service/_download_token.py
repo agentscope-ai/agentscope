@@ -19,7 +19,8 @@ import hashlib
 import hmac
 import time
 
-# Seconds a download token stays valid unless the caller overrides.
+# Long enough to survive a slow round trip and the user's click, short
+# enough that a token leaked through a log or history is already dead.
 DEFAULT_DOWNLOAD_TOKEN_TTL = 60
 
 

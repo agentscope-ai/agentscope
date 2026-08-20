@@ -89,8 +89,10 @@ class KnowledgeBaseView(BaseModel):
     nesting of those fields under :attr:`KnowledgeBaseRecord.data`
     (introduced so the SQL backend can serialise a single JSON column)
     must not leak into the HTTP response, so :meth:`_lift_data_payload`
-    lifts them back up. ``user_id`` and the opaque ``collection_name``
-    are dropped (pydantic ignores the surplus keys).
+    lifts them back up. The record's ``user_id`` is kept as
+    :attr:`owner_id` for server-side reads but excluded from the wire
+    shape; the opaque ``collection_name`` is dropped outright (pydantic
+    ignores the surplus key).
     """
 
     id: str = Field(description="The knowledge base id.")
@@ -117,7 +119,6 @@ class KnowledgeBaseView(BaseModel):
         ),
     )
     owner_id: str = Field(
-        default="",
         validation_alias=AliasChoices("owner_id", "user_id"),
         exclude=True,
         description=(
