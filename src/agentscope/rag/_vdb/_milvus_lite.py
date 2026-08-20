@@ -403,6 +403,66 @@ class MilvusLiteStore(VectorStoreBase):
             offset += self._batch_size
         return rows
 
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Selects the page with a JSON-path range expression
+        ``offset <= chunk["chunk_index"] < offset + limit`` instead of
+        sort-and-skip — Milvus ``query`` has no ORDER BY, but because
+        ``chunk_index`` is dense the range filter yields exactly the
+        requested page, which is then sorted in Python (at most
+        ``limit`` items).
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        if limit <= 0:
+            return []
+        clauses = [
+            self._build_document_filter(document_id),
+            f'chunk["chunk_index"] >= {offset}',
+            f'chunk["chunk_index"] < {offset + limit}',
+        ]
+        meta_expr = self._build_metadata_filter(metadata_filter)
+        if meta_expr:
+            clauses.append(meta_expr)
+
+        rows = await asyncio.to_thread(
+            self.get_client().query,
+            collection_name=collection,
+            filter=" and ".join(clauses),
+            output_fields=["chunk"],
+            limit=limit,
+        )
+        chunks = [Chunk.model_validate(row["chunk"]) for row in rows]
+        chunks.sort(key=lambda chunk: chunk.chunk_index)
+        return chunks[:limit]
+
     @staticmethod
     def _build_document_filter(document_id: str) -> str:
         """Build a Milvus scalar filter for a document id."""

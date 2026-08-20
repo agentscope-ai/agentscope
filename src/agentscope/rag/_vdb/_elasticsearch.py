@@ -269,6 +269,77 @@ class ElasticsearchStore(VectorStoreBase):
 
         return summaries
 
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        The index mapping stores ``chunk`` with ``enabled: false`` (it
+        is a verbatim payload, neither indexed nor sortable), so unlike
+        the other backends this implementation cannot push the
+        ``chunk_index`` range down to the server.  Instead it retrieves
+        **all** chunks of the one document (a ``term`` query on the
+        indexed ``document_id`` field), sorts them in Python, and
+        slices the requested page — O(chunks of one document) per
+        page, which is bounded and acceptable for an interactive
+        detail view.  Mirroring :meth:`search`, retrieval is capped at
+        Elasticsearch's 10000-hit window; a single document with more
+        chunks than that raises :class:`RuntimeError`.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        if limit <= 0:
+            return []
+        filters: list[dict[str, Any]] = [
+            {"term": {"document_id": document_id}},
+        ]
+        filters.extend(self._metadata_filters(metadata_filter))
+
+        response = await self.get_client().search(
+            index=collection,
+            query={"bool": {"filter": filters}},
+            size=10_000,
+            track_total_hits=True,
+            source_includes=["chunk"],
+        )
+        total = response["hits"]["total"]["value"]
+        if total > 10_000:
+            raise RuntimeError(
+                f"Document {document_id!r} has {total} chunks, which "
+                "exceeds Elasticsearch's 10000-hit retrieval window "
+                "for chunk listing.",
+            )
+        chunks = [
+            Chunk.model_validate(hit["_source"]["chunk"])
+            for hit in response["hits"]["hits"]
+        ]
+        chunks.sort(key=lambda chunk: chunk.chunk_index)
+        return chunks[offset : offset + limit]
+
     @staticmethod
     def _record_id(record: VectorRecord) -> str:
         """Build a stable ID so re-indexing replaces the same chunk."""

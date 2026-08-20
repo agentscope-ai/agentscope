@@ -247,3 +247,54 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             second_query["aggs"]["documents"]["composite"]["after"],
             {"document_id": "doc-1"},
         )
+
+    async def test_list_chunks_sorts_and_slices(self) -> None:
+        chunks = [_record("doc-1", i).chunk for i in (2, 0, 3, 1)]
+        self.client.search.return_value = {
+            "hits": {
+                "total": {"value": 4},
+                "hits": [
+                    {"_source": {"chunk": chunk.model_dump(mode="json")}}
+                    for chunk in chunks
+                ],
+            },
+        }
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=1,
+            limit=2,
+            metadata_filter={"tenant": "bank-a"},
+        )
+
+        self.client.search.assert_awaited_once_with(
+            index="kb-1",
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"document_id": "doc-1"}},
+                        {"term": {"metadata.tenant": "bank-a"}},
+                    ],
+                },
+            },
+            size=10_000,
+            track_total_hits=True,
+            source_includes=["chunk"],
+        )
+        self.assertEqual([c.chunk_index for c in page], [1, 2])
+
+    async def test_list_chunks_rejects_oversized_documents(self) -> None:
+        self.client.search.return_value = {
+            "hits": {"total": {"value": 10_001}, "hits": []},
+        }
+        with self.assertRaisesRegex(RuntimeError, "10000"):
+            await self.store.list_chunks("kb-1", "doc-1")
+
+    async def test_list_chunks_zero_limit_short_circuits(self) -> None:
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", limit=0),
+            [],
+        )
+        self.client.search.assert_not_awaited()
+

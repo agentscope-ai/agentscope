@@ -357,6 +357,85 @@ class QdrantStore(VectorStoreBase):
 
         return list(summaries.values())
 
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Selects the page with a payload range condition
+        ``offset <= chunk.chunk_index < offset + limit`` instead of
+        sort-and-skip — Qdrant's ``scroll`` has no payload ordering,
+        but because ``chunk_index`` is dense the range filter yields
+        exactly the requested page, which is then sorted in Python
+        (at most ``limit`` items).
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        from qdrant_client import models
+
+        if limit <= 0:
+            return []
+        conditions = [
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            ),
+            models.FieldCondition(
+                key="chunk.chunk_index",
+                range=models.Range(gte=offset, lt=offset + limit),
+            ),
+        ]
+        base_filter = self._build_metadata_filter(metadata_filter)
+        if base_filter is not None:
+            conditions.extend(base_filter.must)
+
+        client = self.get_client()
+        chunks: list[Chunk] = []
+        scroll_offset: Any = None
+        while True:
+            points, next_offset = await client.scroll(
+                collection_name=collection,
+                scroll_filter=models.Filter(must=conditions),
+                limit=min(limit, 256),
+                offset=scroll_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            chunks.extend(
+                Chunk.model_validate(point.payload["chunk"])
+                for point in points
+            )
+            if next_offset is None or len(chunks) >= limit:
+                break
+            scroll_offset = next_offset
+
+        chunks.sort(key=lambda chunk: chunk.chunk_index)
+        return chunks[:limit]
+
     @staticmethod
     def _build_metadata_filter(
         metadata_filter: dict[str, Any] | None,
