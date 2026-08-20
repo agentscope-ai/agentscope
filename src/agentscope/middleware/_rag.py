@@ -31,6 +31,7 @@ service, to the knowledge-base manager) that constructs the
 """
 import asyncio
 import json
+from contextvars import ContextVar
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
@@ -588,8 +589,11 @@ class RAGMiddleware(MiddlewareBase):
         # consumed by ``on_reasoning`` so the auto-search can use the
         # original reply inputs (which are no longer in
         # ``agent.state.context`` by the time ``on_reasoning`` runs in
-        # a tool-call loop).  Cleared in ``on_reply``'s finally.
-        self._cached_inputs: list[TextBlock | DataBlock] | None = None
+        # a tool-call loop).  It must be task-local because middleware
+        # instances may be shared by concurrent agents.
+        self._cached_inputs: ContextVar[
+            list[TextBlock | DataBlock] | None
+        ] = ContextVar("rag_middleware_cached_inputs", default=None)
 
     # ------------------------------------------------------------------
     # Agentic mode — expose the search tool
@@ -655,12 +659,13 @@ class RAGMiddleware(MiddlewareBase):
         ):
             msgs = inputs
 
+        blocks: list[TextBlock | DataBlock] | None = None
         if msgs:
             # Deepcopy because we are about to mutate the first text block of
             # each message to prepend the speaker name — never touch the
             # caller's message objects.
             msgs = deepcopy(msgs)
-            blocks: list[TextBlock | DataBlock] = []
+            blocks = []
             for msg in msgs:
                 if not msg.content:
                     continue
@@ -671,13 +676,13 @@ class RAGMiddleware(MiddlewareBase):
                     blocks.append(TextBlock(text=speaker))
                 blocks.extend(msg.content)
 
-            self._cached_inputs = blocks
+        token = self._cached_inputs.set(blocks)
 
         try:
             async for evt in next_handler(**input_kwargs):
                 yield evt
         finally:
-            self._cached_inputs = None
+            self._cached_inputs.reset(token)
 
     async def on_reasoning(
         self,
@@ -715,15 +720,17 @@ class RAGMiddleware(MiddlewareBase):
         """
         hint: HintBlock | None = None
 
+        cached_inputs = self._cached_inputs.get()
+
         if (
             self._parameters.mode == "static"
             and agent.state.cur_iter == 0
-            and self._cached_inputs
+            and cached_inputs
         ):
             try:
                 results = await _search_across(
                     self._knowledge_bases,
-                    self._cached_inputs,
+                    cached_inputs,
                     top_k=self._parameters.top_k,
                     score_threshold=self._parameters.score_threshold,
                 )
