@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
 import json
+from typing import Any
 
 from pydantic import Field
 
 from ._constants import HANDLE_LEN
-from ._team_tool_base import TeamToolDeps, _TeamToolBase
+from ._team_tool_base import _TeamToolBase
 from .._bus_ops import deliver_to_inbox
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
@@ -97,19 +98,22 @@ class TeamSay(_TeamToolBase):
 
     def __init__(
         self,
-        deps: TeamToolDeps,
+        *args: Any,
         role: str = "leader",
+        **kwargs: Any,
     ) -> None:
         """Initialise with role-specific description.
 
         Args:
-            deps (`TeamToolDeps`):
-                The shared team-tool dependencies.
             role (`str`, defaults to ``"leader"``):
                 Either ``"leader"`` or ``"worker"``. Determines which
                 description the agent sees for this tool.
+            *args:
+                Forwarded to :class:`_TeamToolBase.__init__`.
+            **kwargs:
+                Forwarded to :class:`_TeamToolBase.__init__`.
         """
-        super().__init__(deps)
+        super().__init__(*args, **kwargs)
         self.description = (
             _LEADER_DESCRIPTION if role == "leader" else _WORKER_DESCRIPTION
         )

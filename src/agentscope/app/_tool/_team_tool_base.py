@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Base class shared by the team tools."""
-from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from ...permission import (
@@ -16,29 +15,6 @@ if TYPE_CHECKING:
     from ..workspace_manager import WorkspaceManagerBase
 
 
-@dataclass(frozen=True)
-class TeamToolDeps:
-    """The request-scoped dependencies every team tool is built with."""
-
-    storage: "StorageBase"
-    """Application storage."""
-
-    message_bus: "MessageBus"
-    """Application message bus for inter-session delivery."""
-
-    workspace_manager: "WorkspaceManagerBase"
-    """Workspace manager, used by tools that provision new sessions."""
-
-    user_id: str
-    """The owner user id of the calling agent."""
-
-    session_id: str
-    """The current session id of the calling agent."""
-
-    agent_id: str
-    """The id of the agent invoking the tool."""
-
-
 class _TeamToolError(Exception):
     """A failed precondition, rendered by each tool's error wrapper."""
 
@@ -47,9 +23,11 @@ class _TeamToolBase(ToolBase):
     """Shared base for the team tools.
 
     All team tools are constructed at agent assembly time (in
-    :func:`get_toolkit`) from one :class:`TeamToolDeps` bundle. Each
-    tool's ``__call__`` does its work directly via those dependencies —
-    there is no intermediate service layer.
+    :func:`get_toolkit`) with the request-scoped ``user_id``,
+    ``session_id``, and ``agent_id`` plus ``storage`` + ``message_bus``
+    + ``workspace_manager`` references. Each tool's ``__call__`` does
+    its work directly via those dependencies — there is no intermediate
+    service layer.
 
     Permissions: all team tools allow themselves unconditionally —
     which tools get attached is already role-gated in
@@ -67,20 +45,39 @@ class _TeamToolBase(ToolBase):
     is_mcp: bool = False
     mcp_name: str | None = None
 
-    def __init__(self, deps: TeamToolDeps) -> None:
-        """Unpack the shared dependency bundle onto the instance.
+    def __init__(
+        self,
+        storage: "StorageBase",
+        message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Bind request-scoped identifiers and shared dependencies.
 
         Args:
-            deps (`TeamToolDeps`):
-                The request-scoped dependencies, built once per chat
-                turn by :func:`get_toolkit`.
+            storage (`StorageBase`):
+                Application storage.
+            message_bus (`MessageBus`):
+                Application message bus for inter-session delivery.
+            workspace_manager (`WorkspaceManagerBase`):
+                Workspace manager, used by ``AgentInvite`` to assign a
+                borrowed session's workspace and by ``TeamDelete`` to
+                drop each deleted session's workspace state.
+            user_id (`str`):
+                The owner user id of the calling agent.
+            session_id (`str`):
+                The current session id of the calling agent.
+            agent_id (`str`):
+                The id of the agent invoking the tool.
         """
-        self._storage = deps.storage
-        self._message_bus = deps.message_bus
-        self._workspace_manager = deps.workspace_manager
-        self._user_id = deps.user_id
-        self._session_id = deps.session_id
-        self._agent_id = deps.agent_id
+        self._storage = storage
+        self._message_bus = message_bus
+        self._workspace_manager = workspace_manager
+        self._user_id = user_id
+        self._session_id = session_id
+        self._agent_id = agent_id
 
     async def _require_team(self) -> "TeamRecord":
         """Return this session's team, read fresh at call time.

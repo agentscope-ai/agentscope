@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from pydantic import Field
 
 from ._constants import HANDLE_LEN
-from ._team_tool_base import TeamToolDeps, _TeamToolBase
+from ._team_tool_base import _TeamToolBase
 from .._bus_ops import deliver_to_inbox
 from ..storage import SessionConfig, TeamMember
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
@@ -33,7 +33,9 @@ from ...tool import ToolChunk, ParamsBase
 from ..._utils._common import _generate_id
 
 if TYPE_CHECKING:
-    from ..storage import AgentRecord
+    from ..message_bus import MessageBus
+    from ..storage import AgentRecord, StorageBase
+    from ..workspace_manager import WorkspaceManagerBase
 
 
 def _display_handle(agent_id: str) -> str:
@@ -159,19 +161,42 @@ class AgentInvite(_TeamToolBase):
 
     def __init__(
         self,
-        deps: TeamToolDeps,
+        storage: "StorageBase",
+        message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
+        user_id: str,
+        session_id: str,
+        agent_id: str,
         invitable_pool: list["AgentRecord"],
     ) -> None:
-        """Bind the shared dependencies plus the invitable pool snapshot.
+        """Bind the base dependencies plus the invitable pool snapshot.
 
         Args:
-            deps (`TeamToolDeps`):
-                The shared team-tool dependencies.
+            storage (`StorageBase`):
+                Application storage backend.
+            message_bus (`MessageBus`):
+                Application message bus.
+            workspace_manager (`WorkspaceManagerBase`):
+                Assigns the borrowed session's workspace id when the
+                invited agent has no session of its own yet.
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The calling session id.
+            agent_id (`str`):
+                The calling agent id.
             invitable_pool (`list[AgentRecord]`):
                 Snapshot of currently-invitable agents. Must be
                 non-empty — the caller skips construction otherwise.
         """
-        super().__init__(deps)
+        super().__init__(
+            storage,
+            message_bus,
+            workspace_manager,
+            user_id,
+            session_id,
+            agent_id,
+        )
 
         self._pool_by_id: dict[str, "AgentRecord"] = {
             a.id: a for a in invitable_pool

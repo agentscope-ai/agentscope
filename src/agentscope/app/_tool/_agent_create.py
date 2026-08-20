@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
+from typing import TYPE_CHECKING
+
 from pydantic import Field
 
-from ._team_tool_base import TeamToolDeps, _TeamToolBase
+from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
 from .._bus_ops import deliver_to_inbox
 from ..storage import AgentData, AgentRecord, SessionConfig, TeamMember
@@ -15,6 +17,12 @@ from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
+
+if TYPE_CHECKING:
+    from ..message_bus import MessageBus
+    from ..storage import StorageBase
+    from ..workspace_manager import WorkspaceManagerBase
+
 
 _DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "You are {member_name}, a member of team '{team_name}' led by "
@@ -168,22 +176,45 @@ overall communication topology unnecessarily complex.
 
     def __init__(
         self,
-        deps: TeamToolDeps,
+        storage: "StorageBase",
+        message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
+        user_id: str,
+        session_id: str,
+        agent_id: str,
         sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     ) -> None:
-        """Bind the shared dependencies plus the sub-agent templates.
+        """Bind the base dependencies plus the sub-agent templates.
 
         The built-in ``"default"`` template is always injected; extra
         templates unlock a ``subagent_type`` enum in the input schema.
 
         Args:
-            deps (`TeamToolDeps`):
-                The shared team-tool dependencies.
+            storage (`StorageBase`):
+                Application storage backend.
+            message_bus (`MessageBus`):
+                Application message bus.
+            workspace_manager (`WorkspaceManagerBase`):
+                Forwarded to the base for uniform team-tool wiring;
+                unused here — a worker inherits the leader's workspace.
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The calling session id.
+            agent_id (`str`):
+                The calling agent id.
             sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
 optional):
                 Template registry keyed by type.
         """
-        super().__init__(deps)
+        super().__init__(
+            storage,
+            message_bus,
+            workspace_manager,
+            user_id,
+            session_id,
+            agent_id,
+        )
 
         self._sub_agent_templates: dict[str, SubAgentTemplate] = dict(
             sub_agent_templates or {},

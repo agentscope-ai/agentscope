@@ -6,7 +6,7 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
-from typing import Literal
+from typing import Any, Literal
 
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
@@ -16,7 +16,6 @@ from .._tool import (
     TeamCreate,
     TeamDelete,
     TeamSay,
-    TeamToolDeps,
 )
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
@@ -171,25 +170,25 @@ time or interval"
 
     # Team tools by caller-resolved role; non-team sessions get the
     # leader set (each leader tool rechecks its precondition at call time).
-    team_deps = TeamToolDeps(
-        storage=storage,
-        message_bus=message_bus,
-        workspace_manager=workspace_manager,
-        user_id=user_id,
-        session_id=session_record.id,
-        agent_id=agent_record.id,
-    )
+    team_tool_kwargs: dict[str, Any] = {
+        "storage": storage,
+        "message_bus": message_bus,
+        "workspace_manager": workspace_manager,
+        "user_id": user_id,
+        "session_id": session_record.id,
+        "agent_id": agent_record.id,
+    }
     if team_role == "worker":
-        tools.append(TeamSay(team_deps, role="worker"))
+        tools.append(TeamSay(**team_tool_kwargs, role="worker"))
     else:
         tools += [
-            TeamCreate(team_deps),
+            TeamCreate(**team_tool_kwargs),
             AgentCreate(
-                team_deps,
+                **team_tool_kwargs,
                 sub_agent_templates=sub_agent_templates or {},
             ),
-            TeamSay(team_deps, role="leader"),
-            TeamDelete(team_deps),
+            TeamSay(**team_tool_kwargs, role="leader"),
+            TeamDelete(**team_tool_kwargs),
         ]
         # Conditionally attach AgentInvite. Skipping construction when
         # the user has no invitable agents keeps the input_schema enum
@@ -214,7 +213,10 @@ time or interval"
         ]
         if invitable_pool:
             tools.append(
-                AgentInvite(team_deps, invitable_pool=invitable_pool),
+                AgentInvite(
+                    **team_tool_kwargs,
+                    invitable_pool=invitable_pool,
+                ),
             )
 
     # Caller-supplied extras.
