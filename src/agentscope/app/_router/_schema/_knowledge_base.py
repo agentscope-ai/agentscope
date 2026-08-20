@@ -72,9 +72,16 @@ class ListKnowledgeBasesResponse(BaseModel):
     """Response body for listing the caller's knowledge bases."""
 
     knowledge_bases: list[KnowledgeBaseView] = Field(
-        description="All knowledge bases owned by the caller.",
+        description="The requested page of visible knowledge bases.",
     )
-    total: int = Field(description="Total number of returned items.")
+    total: int = Field(
+        description=(
+            "Total number of knowledge bases matching the filters — "
+            "across all pages, for computing page counts."
+        ),
+    )
+    page: int = Field(default=1, description="The 1-based page served.")
+    page_size: int = Field(default=30, description="The page size used.")
 
 
 class KnowledgeDocumentView(BaseModel):
@@ -140,9 +147,16 @@ class ListKnowledgeDocumentsResponse(BaseModel):
     """Response body for listing documents inside a knowledge base."""
 
     documents: list[KnowledgeDocumentView] = Field(
-        description="One view per registered document.",
+        description="The requested page of document views.",
     )
-    total: int = Field(description="Total number of returned items.")
+    total: int = Field(
+        description=(
+            "Total number of documents matching the filters — across "
+            "all pages, for computing page counts."
+        ),
+    )
+    page: int = Field(default=1, description="The 1-based page served.")
+    page_size: int = Field(default=30, description="The page size used.")
 
 
 class ListKnowledgeDocumentStatusResponse(BaseModel):

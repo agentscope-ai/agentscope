@@ -61,6 +61,23 @@ class CredentialView(CredentialRecord):
     )
 
 
+class KnowledgeBaseStatusCounts(BaseModel):
+    """Documents of one knowledge base, counted by indexing status.
+
+    Served only when the list endpoint is asked for it
+    (``include_status_counts=true``) — the per-status breakdown costs a
+    full document scan per knowledge base, so it is opt-in the same way
+    RAGFlow gates ``include_parsing_status``.
+    """
+
+    pending: int = 0
+    parsing: int = 0
+    chunking: int = 0
+    indexing: int = 0
+    ready: int = 0
+    error: int = 0
+
+
 class KnowledgeBaseView(BaseModel):
     """Flat, viewer-facing projection of a knowledge base.
 
@@ -97,6 +114,33 @@ class KnowledgeBaseView(BaseModel):
     editable: bool = Field(
         description=(
             "Whether the current viewer may modify this knowledge base."
+        ),
+    )
+    document_count: int = Field(
+        default=0,
+        description="Number of documents registered in the knowledge base.",
+    )
+    chunk_count: int = Field(
+        default=0,
+        description=(
+            "Total indexed chunks across all documents, summed from the "
+            "per-document records."
+        ),
+    )
+    credential_name: str | None = Field(
+        default=None,
+        description=(
+            "Display name of the credential behind "
+            "``embedding_model_config.credential_id``, resolved against "
+            "the owner so shared viewers see it too. ``None`` when the "
+            "credential has been deleted."
+        ),
+    )
+    status_counts: KnowledgeBaseStatusCounts | None = Field(
+        default=None,
+        description=(
+            "Per-indexing-status document counts. ``None`` unless the "
+            "request set ``include_status_counts=true``."
         ),
     )
 

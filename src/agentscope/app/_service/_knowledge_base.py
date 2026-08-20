@@ -36,7 +36,11 @@ from ..storage import (
 from ..._logging import logger
 from ...rag import ApproxTokenChunker, Chunk
 from .._bus_ops import enqueue_index_task
-from ._access import ResourceAccessService
+from ._access import (
+    KnowledgeBaseStatusCounts,
+    KnowledgeBaseView,
+    ResourceAccessService,
+)
 
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
@@ -198,6 +202,116 @@ class KnowledgeBaseService:
         """
         return await self._manager.list_knowledge_bases(user_id)
 
+    async def list_knowledge_base_views(
+        self,
+        user_id: str,
+        *,
+        knowledge_base_id: str | None = None,
+        name: str | None = None,
+        include_status_counts: bool = False,
+        page: int = 1,
+        page_size: int = 30,
+        orderby: str = "create_time",
+        desc: bool = True,
+    ) -> tuple[list[KnowledgeBaseView], int]:
+        """List visible knowledge bases as enriched, paginated views.
+
+        Serves the single list endpoint that doubles as "get one"
+        (filter by ``knowledge_base_id``), mirroring RAGFlow's dataset
+        API. Filtering and ordering happen before the page is cut;
+        the returned total counts the filtered set so clients can
+        compute page numbers.
+
+        Only the served page is enriched: per view, the documents are
+        read once from storage to derive ``document_count`` /
+        ``chunk_count`` (and ``status_counts`` when opted in), and the
+        embedding credential is resolved against the owner to expose
+        its display name to shared viewers too.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — own + shared knowledge bases.
+            knowledge_base_id (`str | None`, optional):
+                Filter down to one knowledge base by id.
+            name (`str | None`, optional):
+                Case-insensitive substring filter on the display name.
+            include_status_counts (`bool`, defaults to ``False``):
+                Also aggregate per-status document counts (costs a
+                document scan per listed knowledge base).
+            page (`int`, defaults to ``1``):
+                1-based page number.
+            page_size (`int`, defaults to ``30``):
+                Knowledge bases per page.
+            orderby (`str`, defaults to ``"create_time"``):
+                Sort key — ``"create_time"`` or ``"update_time"``.
+            desc (`bool`, defaults to ``True``):
+                Sort newest first.
+
+        Returns:
+            `tuple[list[KnowledgeBaseView], int]`:
+                The requested page of views and the filtered total.
+        """
+        views = await self._access.list_resource(
+            user_id,
+            ResourceKind.KNOWLEDGE_BASE,
+        )
+        if knowledge_base_id is not None:
+            views = [view for view in views if view.id == knowledge_base_id]
+        if name is not None:
+            needle = name.lower()
+            views = [view for view in views if needle in view.name.lower()]
+        total = len(views)
+
+        views.sort(
+            key=lambda view: (
+                view.updated_at
+                if orderby == "update_time"
+                else view.created_at
+            ),
+            reverse=desc,
+        )
+        page_views = views[(page - 1) * page_size : page * page_size]
+
+        credential_names: dict[tuple[str, str], str | None] = {}
+        for view in page_views:
+            record = await self._access.resolve_knowledge_base(
+                user_id,
+                view.id,
+            )
+            documents = await self._storage.list_knowledge_documents(
+                record.user_id,
+                view.id,
+            )
+            view.document_count = len(documents)
+            view.chunk_count = sum(
+                document.data.chunk_count for document in documents
+            )
+            if include_status_counts:
+                counts = KnowledgeBaseStatusCounts()
+                for document in documents:
+                    setattr(
+                        counts,
+                        document.status,
+                        getattr(counts, document.status) + 1,
+                    )
+                view.status_counts = counts
+
+            credential_id = view.embedding_model_config.credential_id
+            cache_key = (record.user_id, credential_id)
+            if cache_key not in credential_names:
+                credential = await self._storage.get_credential(
+                    record.user_id,
+                    credential_id,
+                )
+                credential_names[cache_key] = (
+                    credential.data.get("name")
+                    if credential is not None
+                    else None
+                )
+            view.credential_name = credential_names[cache_key]
+
+        return page_views, total
+
     async def update_knowledge_base(
         self,
         user_id: str,
@@ -347,8 +461,16 @@ class KnowledgeBaseService:
         self,
         user_id: str,
         knowledge_base_id: str,
-    ) -> list[KnowledgeDocumentRecord]:
-        """List every document registered against a knowledge base.
+        *,
+        document_id: str | None = None,
+        keywords: str | None = None,
+        doc_status: str | None = None,
+        page: int = 1,
+        page_size: int = 30,
+        orderby: str = "create_time",
+        desc: bool = True,
+    ) -> tuple[list[KnowledgeDocumentRecord], int]:
+        """List documents of a knowledge base, filtered and paginated.
 
         Service-mode source of truth: reads from storage, NOT the
         vector store.  Documents in ``pending`` / ``parsing`` /
@@ -361,11 +483,25 @@ class KnowledgeBaseService:
                 granted access through the resource access policy.
             knowledge_base_id (`str`):
                 The target knowledge base id.
+            document_id (`str | None`, optional):
+                Filter down to one document by id.
+            keywords (`str | None`, optional):
+                Case-insensitive substring filter on the filename.
+            doc_status (`str | None`, optional):
+                Filter by indexing status (``pending`` / ``parsing`` /
+                ``chunking`` / ``indexing`` / ``ready`` / ``error``).
+            page (`int`, defaults to ``1``):
+                1-based page number.
+            page_size (`int`, defaults to ``30``):
+                Documents per page.
+            orderby (`str`, defaults to ``"create_time"``):
+                Sort key — ``"create_time"`` or ``"update_time"``.
+            desc (`bool`, defaults to ``True``):
+                Sort newest first.
 
         Returns:
-            `list[KnowledgeDocumentRecord]`:
-                Every document registered against the knowledge base,
-                in unspecified order.
+            `tuple[list[KnowledgeDocumentRecord], int]`:
+                The requested page of records and the filtered total.
 
         Raises:
             `HTTPException`:
@@ -376,10 +512,28 @@ class KnowledgeBaseService:
             user_id,
             knowledge_base_id,
         )
-        return await self._storage.list_knowledge_documents(
+        records = await self._storage.list_knowledge_documents(
             record.user_id,
             knowledge_base_id,
         )
+        if document_id is not None:
+            records = [r for r in records if r.id == document_id]
+        if keywords is not None:
+            needle = keywords.lower()
+            records = [
+                r for r in records if needle in r.data.filename.lower()
+            ]
+        if doc_status is not None:
+            records = [r for r in records if r.status == doc_status]
+        total = len(records)
+
+        records.sort(
+            key=lambda r: (
+                r.updated_at if orderby == "update_time" else r.created_at
+            ),
+            reverse=desc,
+        )
+        return records[(page - 1) * page_size : page * page_size], total
 
     async def get_document_status(
         self,

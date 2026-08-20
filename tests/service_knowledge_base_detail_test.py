@@ -33,6 +33,7 @@ from agentscope.app.storage import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
 )
+from agentscope.credential import OpenAICredential
 from agentscope.message import TextBlock
 from agentscope.rag import Chunk
 from agentscope.rag._vdb._vector_store import VectorRecord
@@ -146,6 +147,14 @@ class _KnowledgeBaseDetailTestBase(IsolatedAsyncioTestCase):
         storage._client = self._fr
         await storage.upsert_knowledge_base("user-1", kb_record)
         await storage.upsert_knowledge_document("user-1", document)
+        await storage.upsert_credential(
+            "user-1",
+            OpenAICredential(
+                id="cred-1",
+                name="My OpenAI Key",
+                api_key="sk-secret",
+            ),
+        )
         storage._client = None
 
     async def asyncTearDown(self) -> None:
@@ -394,3 +403,133 @@ class DocumentDownloadTokenTest(_KnowledgeBaseDetailTestBase):
                 headers={"X-User-ID": "user-2"},
             )
             self.assertEqual(foreign.status_code, 404)
+
+
+class KnowledgeBaseListEnrichmentTest(_KnowledgeBaseDetailTestBase):
+    """``GET /knowledge_bases/`` filters, pagination and enrichment."""
+
+    def test_list_serves_counts_and_credential_name(self) -> None:
+        with TestClient(self._app) as client:
+            response = client.get(
+                "/knowledge_bases/",
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["total"], 1)
+            self.assertEqual(body["page"], 1)
+            self.assertEqual(body["page_size"], 30)
+            view = body["knowledge_bases"][0]
+            self.assertEqual(view["document_count"], 1)
+            self.assertEqual(view["chunk_count"], 5)
+            self.assertEqual(view["credential_name"], "My OpenAI Key")
+            self.assertIsNone(view["status_counts"])
+            # The masked credential secret must never ride along.
+            self.assertNotIn("api_key", str(body))
+
+    def test_status_counts_are_opt_in(self) -> None:
+        with TestClient(self._app) as client:
+            response = client.get(
+                "/knowledge_bases/",
+                params={"include_status_counts": "true"},
+                headers={"X-User-ID": "user-1"},
+            )
+            counts = response.json()["knowledge_bases"][0]["status_counts"]
+            self.assertEqual(counts["ready"], 1)
+            self.assertEqual(counts["error"], 0)
+
+    def test_id_filter_doubles_as_get_single(self) -> None:
+        with TestClient(self._app) as client:
+            hit = client.get(
+                "/knowledge_bases/",
+                params={"id": self._kb_id},
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(hit.json()["total"], 1)
+
+            miss = client.get(
+                "/knowledge_bases/",
+                params={"id": "kb-nope"},
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(miss.json()["total"], 0)
+            self.assertEqual(miss.json()["knowledge_bases"], [])
+
+    def test_name_filter_and_pagination_window(self) -> None:
+        with TestClient(self._app) as client:
+            named = client.get(
+                "/knowledge_bases/",
+                params={"name": "KB"},  # case-insensitive substring
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(named.json()["total"], 1)
+
+            beyond = client.get(
+                "/knowledge_bases/",
+                params={"page": 2, "page_size": 30},
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(beyond.json()["knowledge_bases"], [])
+            self.assertEqual(beyond.json()["total"], 1)
+
+
+class KnowledgeDocumentListFilterTest(_KnowledgeBaseDetailTestBase):
+    """``GET .../documents`` filters and pagination."""
+
+    def test_filters_and_pagination(self) -> None:
+        headers = {"X-User-ID": "user-1"}
+        base = f"/knowledge_bases/{self._kb_id}/documents"
+        with TestClient(self._app) as client:
+            plain = client.get(base, headers=headers)
+            body = plain.json()
+            self.assertEqual(body["total"], 1)
+            self.assertEqual(body["page"], 1)
+            self.assertEqual(body["page_size"], 30)
+            self.assertEqual(body["documents"][0]["id"], "doc-1")
+
+            by_id = client.get(base, params={"id": "doc-1"}, headers=headers)
+            self.assertEqual(by_id.json()["total"], 1)
+
+            by_kw = client.get(
+                base,
+                params={"keywords": "HELLO"},
+                headers=headers,
+            )
+            self.assertEqual(by_kw.json()["total"], 1)
+
+            kw_miss = client.get(
+                base,
+                params={"keywords": "nothing"},
+                headers=headers,
+            )
+            self.assertEqual(kw_miss.json()["total"], 0)
+
+            by_status = client.get(
+                base,
+                params={"status": "ready"},
+                headers=headers,
+            )
+            self.assertEqual(by_status.json()["total"], 1)
+
+            status_miss = client.get(
+                base,
+                params={"status": "error"},
+                headers=headers,
+            )
+            self.assertEqual(status_miss.json()["total"], 0)
+
+            bad_status = client.get(
+                base,
+                params={"status": "bogus"},
+                headers=headers,
+            )
+            self.assertEqual(bad_status.status_code, 422)
+
+            beyond = client.get(
+                base,
+                params={"page": 2},
+                headers=headers,
+            )
+            self.assertEqual(beyond.json()["documents"], [])
+            self.assertEqual(beyond.json()["total"], 1)
+

@@ -422,6 +422,10 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
                 "created_at": AnyValue(),
                 "updated_at": AnyValue(),
                 "editable": True,
+                "document_count": 0,
+                "chunk_count": 0,
+                "credential_name": None,
+                "status_counts": None,
             },
         )
 
@@ -450,6 +454,10 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
                     "created_at": AnyValue(),
                     "updated_at": AnyValue(),
                     "editable": True,
+                    "document_count": 0,
+                    "chunk_count": 0,
+                    "credential_name": None,
+                    "status_counts": None,
                 },
             ],
         )

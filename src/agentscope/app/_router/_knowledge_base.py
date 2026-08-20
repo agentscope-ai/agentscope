@@ -310,31 +310,84 @@ async def create_knowledge_base(
     summary="List the caller's knowledge bases",
 )
 async def list_knowledge_bases(
+    id: str  # pylint: disable=redefined-builtin  # noqa: A002
+    | None = Query(
+        default=None,
+        description=(
+            "Filter down to one knowledge base — the list endpoint "
+            "doubles as get-single, RAGFlow style."
+        ),
+    ),
+    name: str | None = Query(
+        default=None,
+        description="Case-insensitive substring filter on the name.",
+    ),
+    include_status_counts: bool = Query(
+        default=False,
+        description=(
+            "Also return per-indexing-status document counts (costs a "
+            "document scan per listed knowledge base)."
+        ),
+    ),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=30, ge=1, le=128),
+    orderby: str = Query(
+        default="create_time",
+        pattern="^(create_time|update_time)$",
+    ),
+    desc: bool = Query(default=True, description="Sort newest first."),
     user_id: str = Depends(get_current_user_id),
-    access: "ResourceAccessService" = Depends(get_resource_access_service),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
 ) -> ListKnowledgeBasesResponse:
-    """Return all knowledge bases visible to the authenticated user.
+    """Return the caller's knowledge bases, filtered and paginated.
 
     Includes the caller's own knowledge bases plus any shared to them
     through :class:`ResourceAccessPolicyBase`. Each entry carries an
-    ``editable`` flag: ``read`` grants search + attach; ``edit`` also
-    grants document add/delete and metadata update.
+    ``editable`` flag (``read`` grants search + attach; ``edit`` also
+    grants document add/delete and metadata update) plus the
+    aggregated ``document_count`` / ``chunk_count`` and the resolved
+    ``credential_name`` a detail page needs — the list is the single
+    source of truth; there is no separate get-single endpoint.
 
     Args:
+        id (`str | None`, optional):
+            Filter down to one knowledge base by id.
+        name (`str | None`, optional):
+            Case-insensitive substring filter on the display name.
+        include_status_counts (`bool`, defaults to ``False``):
+            Opt into per-status document counts.
+        page (`int`, defaults to ``1``):
+            1-based page number.
+        page_size (`int`, defaults to ``30``):
+            Knowledge bases per page (max 128).
+        orderby (`str`, defaults to ``"create_time"``):
+            Sort key — ``"create_time"`` or ``"update_time"``.
+        desc (`bool`, defaults to ``True``):
+            Sort newest first.
         user_id (`str`):
             Injected authenticated user ID.
-        access (`ResourceAccessService`):
-            Injected resource access service.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service.
 
     Returns:
         `ListKnowledgeBasesResponse`:
-            All visible knowledge bases paired with per-viewer
-            editability.
+            The requested page of views plus the filtered total.
     """
-    entries = await access.list_resource(user_id, ResourceKind.KNOWLEDGE_BASE)
+    views, total = await service.list_knowledge_base_views(
+        user_id,
+        knowledge_base_id=id,
+        name=name,
+        include_status_counts=include_status_counts,
+        page=page,
+        page_size=page_size,
+        orderby=orderby,
+        desc=desc,
+    )
     return ListKnowledgeBasesResponse(
-        knowledge_bases=entries,
-        total=len(entries),
+        knowledge_bases=views,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -420,10 +473,33 @@ async def delete_knowledge_base(
 )
 async def list_knowledge_documents(
     knowledge_base_id: str = Path(description="The knowledge base id."),
+    id: str  # pylint: disable=redefined-builtin  # noqa: A002
+    | None = Query(
+        default=None,
+        description="Filter down to one document by id.",
+    ),
+    keywords: str | None = Query(
+        default=None,
+        description="Case-insensitive substring filter on the filename.",
+    ),
+    status_filter: str
+    | None = Query(
+        default=None,
+        alias="status",
+        pattern="^(pending|parsing|chunking|indexing|ready|error)$",
+        description="Filter by indexing status.",
+    ),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=30, ge=1, le=128),
+    orderby: str = Query(
+        default="create_time",
+        pattern="^(create_time|update_time)$",
+    ),
+    desc: bool = Query(default=True, description="Sort newest first."),
     user_id: str = Depends(get_current_user_id),
     service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
 ) -> ListKnowledgeDocumentsResponse:
-    """List every document registered against a knowledge base.
+    """List a knowledge base's documents, filtered and paginated.
 
     Reads from the storage backend (service-mode source of truth), so
     documents in any lifecycle state — including ``pending`` /
@@ -432,6 +508,20 @@ async def list_knowledge_documents(
     Args:
         knowledge_base_id (`str`):
             The target knowledge base id.
+        id (`str | None`, optional):
+            Filter down to one document by id.
+        keywords (`str | None`, optional):
+            Case-insensitive substring filter on the filename.
+        status_filter (`str | None`, optional):
+            Filter by indexing status.
+        page (`int`, defaults to ``1``):
+            1-based page number.
+        page_size (`int`, defaults to ``30``):
+            Documents per page (max 128).
+        orderby (`str`, defaults to ``"create_time"``):
+            Sort key — ``"create_time"`` or ``"update_time"``.
+        desc (`bool`, defaults to ``True``):
+            Sort newest first.
         user_id (`str`):
             Injected authenticated user ID.
         service (`KnowledgeBaseService`):
@@ -439,13 +529,25 @@ async def list_knowledge_documents(
 
     Returns:
         `ListKnowledgeDocumentsResponse`:
-            One view per registered document.
+            The requested page of views plus the filtered total.
     """
-    records = await service.list_documents(user_id, knowledge_base_id)
+    records, total = await service.list_documents(
+        user_id,
+        knowledge_base_id,
+        document_id=id,
+        keywords=keywords,
+        doc_status=status_filter,
+        page=page,
+        page_size=page_size,
+        orderby=orderby,
+        desc=desc,
+    )
     views = [KnowledgeDocumentView.from_record(r) for r in records]
     return ListKnowledgeDocumentsResponse(
         documents=views,
-        total=len(views),
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 

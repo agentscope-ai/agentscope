@@ -3,6 +3,7 @@
 from ._access import (
     AgentView,
     CredentialView,
+    KnowledgeBaseStatusCounts,
     KnowledgeBaseView,
     ResourceAccessService,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "IndexTaskConsumer",
     "IndexWorker",
     "KnowledgeBaseService",
+    "KnowledgeBaseStatusCounts",
     "KnowledgeBaseView",
     "MCPRenderError",
     "ResourceAccessService",
