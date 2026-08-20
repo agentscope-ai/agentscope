@@ -36,6 +36,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.39.0",
     "opentelemetry-semantic-conventions>=0.60b0",
     "python-socketio",
+    "rich",
     "shortuuid",
     "python-frontmatter",
     "jinja2",
@@ -43,6 +44,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
 ]

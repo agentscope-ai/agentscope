@@ -150,11 +150,47 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------------------
 
     _INBOX = "agentscope:inbox:{sid}"
+    _INBOX_LOCK = "agentscope:inbox:lock:{sid}"
+    _INBOX_CONSUMER = "agentscope:inbox:consumer:{sid}"
+
+    INBOX_LOCK_TTL_SECS = 30
+    """Lease for the inbox hand-off lock. The critical sections it
+    guards are a single queue op plus a single registry op, so a lease
+    this short only ever matters when a process dies inside one."""
+
+    INBOX_CONSUMER_FIELD = "running"
+    """Field name inside the per-session inbox-consumer registry."""
 
     @classmethod
     def inbox(cls, session_id: str) -> str:
         """Per-session inbox drain-queue key."""
         return cls._INBOX.format(sid=session_id)
+
+    @classmethod
+    def inbox_lock(cls, session_id: str) -> str:
+        """Per-session lock serialising inbox hand-off.
+
+        Held only around two tiny critical sections — the producer's
+        "push then read consumer flag" and the consumer's "drain then
+        clear consumer flag". Making those two mutually exclusive is
+        what stops an entry pushed just as a run finishes from being
+        both missed by that run and skipped by the producer's wake-up
+        decision.
+        """
+        return cls._INBOX_LOCK.format(sid=session_id)
+
+    @classmethod
+    def inbox_consumer(cls, session_id: str) -> str:
+        """Per-session registry recording whether a run is currently
+        consuming this inbox.
+
+        Deliberately **not** derived from
+        :meth:`session_lock` — the lock is still held while a finished
+        run persists its state, and during that window no further drain
+        will happen, so producers must already treat the session as
+        having no consumer.
+        """
+        return cls._INBOX_CONSUMER.format(sid=session_id)
 
     # ------------------------------------------------------------------
     # Run trigger queue (wakeup / resume)

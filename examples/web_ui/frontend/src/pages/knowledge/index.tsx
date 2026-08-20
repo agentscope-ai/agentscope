@@ -1,5 +1,5 @@
 import { Ellipsis, Files, FlaskConical, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -116,6 +116,16 @@ export const KnowledgePage = () => {
 	const [testOpen, setTestOpen] = useState(false);
 
 	const selectedKb = knowledgeBases.find((kb) => kb.id === selectedKbId);
+
+	// Default to the first knowledge base when none is selected (or the
+	// selected one no longer exists), mirroring the URL so refresh keeps it.
+	useEffect(() => {
+		if (knowledgeBases.length === 0) return;
+		if (knowledgeBases.some((kb) => kb.id === selectedKbId)) return;
+		const first = knowledgeBases[0].id;
+		setSelectedKbId(first);
+		navigate(`/knowledge/${first}`, { replace: true });
+	}, [knowledgeBases, selectedKbId, navigate]);
 
 	const handleCreated = async (knowledgeBaseId: string) => {
 		await refetch();

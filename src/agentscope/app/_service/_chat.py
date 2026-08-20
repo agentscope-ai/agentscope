@@ -18,9 +18,12 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException
 
 from .._bus_ops import (
+    abandon_inbox_consumer,
     enqueue_channel_output,
     enqueue_run_trigger,
+    has_pending_inbox_or_release,
     publish_session_event,
+    register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
@@ -515,290 +518,294 @@ optional):
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
-        per-step logic at one extra indentation level."""
+        per-step logic at one extra indentation level.
 
-        # Steps 1-6 assemble the run; step 7 performs it. A failure
-        # here has no reply to attach to, so one is synthesized —
-        # otherwise the client sees a stream that simply stops and is
-        # left saying "unknown error".
-        try:
-            # -----------------------------------------------------------------
-            # 1. Load records + resolve workspace ONCE here, reused below.
-            # Reject missing records up front with a clear error so the
-            # downstream assembly code can rely on non-None values.
-            #
-            # ``resolve_agent`` covers own agents (including team workers,
-            # which the owner runs directly) and cross-owner shared agents
-            # (viewer runs a shared user-source agent). It raises 404 when
-            # the agent is not visible to the caller.
-            # -----------------------------------------------------------------
+        The whole body runs under the distributed session lock: the mutable
+        session record must be loaded only after this run owns the lock,
+        otherwise a waiter can assemble an agent from a snapshot that the
+        preceding holder replaces before releasing the lock."""
+
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            # Steps 1-6 assemble the run; step 7 performs it. A failure
+            # here has no reply to attach to, so one is synthesized —
+            # otherwise the client sees a stream that simply stops and is
+            # left saying "unknown error".
             try:
-                agent_record = await self._access.resolve_agent(
+                # -------------------------------------------------------------
+                # 1. Load records + resolve workspace ONCE here, reused below.
+                # Reject missing records up front with a clear error so the
+                # downstream assembly code can rely on non-None values.
+                #
+                # ``resolve_agent`` covers own agents (including team workers,
+                # which the owner runs directly) and cross-owner shared agents
+                # (viewer runs a shared user-source agent). It raises 404 when
+                # the agent is not visible to the caller.
+                # -------------------------------------------------------------
+                try:
+                    agent_record = await self._access.resolve_agent(
+                        user_id,
+                        agent_id,
+                    )
+                except HTTPException as exc:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent {agent_id!r} not found.",
+                    ) from exc
+                session_record = await self._storage.get_session(
                     user_id,
                     agent_id,
+                    session_id,
                 )
-            except HTTPException as exc:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Agent {agent_id!r} not found.",
-                ) from exc
-            session_record = await self._storage.get_session(
-                user_id,
-                agent_id,
-                session_id,
-            )
-            if session_record is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"Session {session_id!r} not found for "
-                        f"agent {agent_id!r}."
-                    ),
-                )
-            workspace = await self._workspace_manager.get_workspace(
-                user_id,
-                agent_id,
-                session_id,
-                session_record.config.workspace_id,
-            )
-
-            # Add workspace working directory to the permission context
-            working_dirs = (
-                session_record.state.permission_context.working_directories
-            )
-            if workspace.workdir not in working_dirs:
-                working_dirs[workspace.workdir] = AdditionalWorkingDirectory(
-                    path=workspace.workdir,
-                    source="session",
-                )
-
-            # ----------------------------------------------------------------
-            # 2. Middlewares — framework-supplied first, then caller extras.
-            # Background-tool completions deliver their results via
-            # ``message_bus.inbox_push + enqueue_wakeup``, so the dispatcher
-            # (any process) wakes an idle session — no in-process retrigger
-            # plumbing is needed here.
-            # -----------------------------------------------------------------
-            middlewares: list = [
-                InboxMiddleware(self._message_bus),
-                StateChangeMiddleware(
-                    message_bus=self._message_bus,
-                    session_id=session_id,
-                ),
-                ToolOffloadMiddleware(
-                    bg_manager=self._background_task_manager,
-                    message_bus=self._message_bus,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                ),
-            ]
-            if self._extra_agent_middlewares is not None:
-                factory_args: tuple = (user_id, agent_id, session_id)
-                if self._middlewares_take_workspace:
-                    factory_args += (workspace,)
-                middlewares.extend(
-                    await self._extra_agent_middlewares(*factory_args),
-                )
-
-            # ----------------------------------------------------------------
-            # 2b. TTS middleware — inject when the session has a TTS config.
-            # -----------------------------------------------------------------
-            tts_cfg = session_record.config.tts_model_config
-            if tts_cfg is not None:
-                tts_model = await get_tts_model(
+                if session_record is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"Session {session_id!r} not found for "
+                            f"agent {agent_id!r}."
+                        ),
+                    )
+                workspace = await self._workspace_manager.get_workspace(
                     user_id,
-                    tts_cfg,
-                    self._access,
+                    agent_id,
+                    session_id,
+                    session_record.config.workspace_id,
                 )
-                middlewares.append(TTSMiddleware(tts_model))
 
-            # ----------------------------------------------------------------
-            # 2c. Knowledge-base middleware — inject when the session has KBs
-            # attached.  Each KB resolves to its own
-            # :class:`KnowledgeBase` handle
-            # (own embedding model + vector store), so the middleware can
-            # retrieve across heterogeneous KBs in one fan-out.
-            #
-            # Each KB may be either owned by the caller or shared to them
-            # via the resource access policy. We resolve the owner through
-            # ``resolve_knowledge_base`` first and hand the KB manager the
-            # true owner id — its own storage lookups stay owner-scoped
-            # and unaware of sharing.
-            # -----------------------------------------------------------------
-            kb_cfg = session_record.config.knowledge_config
-            if (
-                kb_cfg is not None
-                and kb_cfg.knowledge_base_ids
-                and self._knowledge_base_manager is not None
-            ):
-                knowledges: list[KnowledgeBase] = []
-                for kb_id in kb_cfg.knowledge_base_ids:
-                    try:
-                        kb_record = await self._access.resolve_knowledge_base(
-                            user_id,
-                            kb_id,
-                        )
-                        knowledge = (
-                            await self._knowledge_base_manager.get_knowledge(
+                # Add workspace working directory to the permission context
+                working_dirs = (
+                    session_record.state.permission_context.working_directories
+                )
+                if workspace.workdir not in working_dirs:
+                    working_dirs[
+                        workspace.workdir
+                    ] = AdditionalWorkingDirectory(
+                        path=workspace.workdir,
+                        source="session",
+                    )
+
+                # -------------------------------------------------------------
+                # 2. Middlewares — framework-supplied first, then caller
+                # extras. Background-tool completions deliver their results
+                # via ``message_bus.inbox_push + enqueue_wakeup``, so the
+                # dispatcher (any process) wakes an idle session — no
+                # in-process retrigger plumbing is needed here.
+                # -------------------------------------------------------------
+                middlewares: list = [
+                    InboxMiddleware(self._message_bus),
+                    StateChangeMiddleware(
+                        message_bus=self._message_bus,
+                        session_id=session_id,
+                    ),
+                    ToolOffloadMiddleware(
+                        bg_manager=self._background_task_manager,
+                        message_bus=self._message_bus,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                    ),
+                ]
+                if self._extra_agent_middlewares is not None:
+                    factory_args: tuple = (user_id, agent_id, session_id)
+                    if self._middlewares_take_workspace:
+                        factory_args += (workspace,)
+                    middlewares.extend(
+                        await self._extra_agent_middlewares(*factory_args),
+                    )
+
+                # -------------------------------------------------------------
+                # 2b. TTS middleware — inject when the session has a TTS
+                # config.
+                # -------------------------------------------------------------
+                tts_cfg = session_record.config.tts_model_config
+                if tts_cfg is not None:
+                    tts_model = await get_tts_model(
+                        user_id,
+                        tts_cfg,
+                        self._access,
+                    )
+                    middlewares.append(TTSMiddleware(tts_model))
+
+                # -------------------------------------------------------------
+                # 2c. Knowledge-base middleware — inject when the session has
+                # KBs attached.  Each KB resolves to its own
+                # :class:`KnowledgeBase` handle
+                # (own embedding model + vector store), so the middleware can
+                # retrieve across heterogeneous KBs in one fan-out.
+                #
+                # Each KB may be either owned by the caller or shared to them
+                # via the resource access policy. We resolve the owner through
+                # ``resolve_knowledge_base`` first and hand the KB manager the
+                # true owner id — its own storage lookups stay owner-scoped
+                # and unaware of sharing.
+                # -------------------------------------------------------------
+                kb_cfg = session_record.config.knowledge_config
+                if (
+                    kb_cfg is not None
+                    and kb_cfg.knowledge_base_ids
+                    and self._knowledge_base_manager is not None
+                ):
+                    knowledges: list[KnowledgeBase] = []
+                    for kb_id in kb_cfg.knowledge_base_ids:
+                        try:
+                            kb_record = (
+                                await self._access.resolve_knowledge_base(
+                                    user_id,
+                                    kb_id,
+                                )
+                            )
+                            kb_manager = self._knowledge_base_manager
+                            knowledge = await kb_manager.get_knowledge(
                                 kb_record.user_id,
                                 kb_id,
                             )
-                        )
-                    except Exception:  # pylint: disable=broad-except
-                        # A KB the session referenced was deleted, its
-                        # sharing revoked, or its credential is gone —
-                        # log and skip so the chat turn can still run
-                        # with the remaining KBs.
-                        logger.exception(
-                            "Skipping knowledge base %r for session %r: "
-                            "failed to resolve runtime handle.",
-                            kb_id,
-                            session_id,
-                        )
-                        continue
-                    knowledges.append(knowledge)
-                if knowledges:
-                    middlewares.append(
-                        RAGMiddleware(
-                            knowledge_bases=knowledges,
-                            parameters=RAGMiddleware.Parameters(
-                                **(kb_cfg.parameters or {}),
+                        except Exception:  # pylint: disable=broad-except
+                            # A KB the session referenced was deleted, its
+                            # sharing revoked, or its credential is gone —
+                            # log and skip so the chat turn can still run
+                            # with the remaining KBs.
+                            logger.exception(
+                                "Skipping knowledge base %r for session %r: "
+                                "failed to resolve runtime handle.",
+                                kb_id,
+                                session_id,
+                            )
+                            continue
+                        knowledges.append(knowledge)
+                    if knowledges:
+                        middlewares.append(
+                            RAGMiddleware(
+                                knowledge_bases=knowledges,
+                                parameters=RAGMiddleware.Parameters(
+                                    **(kb_cfg.parameters or {}),
+                                ),
                             ),
+                        )
+
+                # -------------------------------------------------------------
+                # 3. Toolkit (workspace tools + planning + ToolStop +
+                # schedule + team + extras + skills + mcps).
+                # -------------------------------------------------------------
+                toolkit = await get_toolkit(
+                    storage=self._storage,
+                    workspace=workspace,
+                    workspace_manager=self._workspace_manager,
+                    scheduler_manager=self._scheduler_manager,
+                    background_task_manager=self._background_task_manager,
+                    message_bus=self._message_bus,
+                    middlewares=middlewares,
+                    user_id=user_id,
+                    agent_record=agent_record,
+                    session_record=session_record,
+                    resource_access_service=self._access,
+                    extra_factory=self._extra_agent_tools,
+                    sub_agent_templates=self._sub_agent_templates,
+                    channel_dispatcher=self._channel_dispatcher,
+                )
+
+                # -------------------------------------------------------------
+                # 4. Model + fallback (resolved from session's config).
+                # -------------------------------------------------------------
+                model_cfg = session_record.config.chat_model_config
+                if not model_cfg:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"No model configuration found for agent "
+                            f"{agent_id}"
                         ),
                     )
+                model = await get_model(user_id, model_cfg, self._access)
 
-            # ----------------------------------------------------------------
-            # 3. Toolkit (workspace tools + planning + ToolStop + schedule +
-            # team + extras + skills + mcps).
-            # -----------------------------------------------------------------
-            toolkit = await get_toolkit(
-                storage=self._storage,
-                workspace=workspace,
-                workspace_manager=self._workspace_manager,
-                scheduler_manager=self._scheduler_manager,
-                background_task_manager=self._background_task_manager,
-                message_bus=self._message_bus,
-                middlewares=middlewares,
-                user_id=user_id,
-                agent_record=agent_record,
-                session_record=session_record,
-                resource_access_service=self._access,
-                extra_factory=self._extra_agent_tools,
-                sub_agent_templates=self._sub_agent_templates,
-                channel_dispatcher=self._channel_dispatcher,
-            )
-
-            # ----------------------------------------------------------------
-            # 4. Model + fallback (resolved from session's config).
-            # -----------------------------------------------------------------
-            model_cfg = session_record.config.chat_model_config
-            if not model_cfg:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"No model configuration found for agent "
-                        f"{agent_id}"
-                    ),
+                fallback_cfg = session_record.config.fallback_chat_model_config
+                fallback_model = (
+                    await get_model(user_id, fallback_cfg, self._access)
+                    if fallback_cfg is not None
+                    else None
                 )
-            model = await get_model(user_id, model_cfg, self._access)
 
-            fallback_cfg = session_record.config.fallback_chat_model_config
-            fallback_model = (
-                await get_model(user_id, fallback_cfg, self._access)
-                if fallback_cfg is not None
-                else None
-            )
+                # -------------------------------------------------------------
+                # 5. Assemble the Agent.
+                # -------------------------------------------------------------
+                attachment = f"You're within a session (id={session_id})."
 
-            # ----------------------------------------------------------------
-            # 5. Assemble the Agent.
-            # -----------------------------------------------------------------
-            attachment = f"You're within a session (id={session_id})."
+                # Channel-bound sessions: tell the agent which chat it serves.
+                if (
+                    session_record.source_channel_id
+                    and self._channel_dispatcher is not None
+                ):
+                    channel = self._channel_dispatcher.get_local_channel(
+                        session_record.source_channel_id,
+                    )
+                    if channel is not None:
+                        tools = ", ".join(
+                            t.name for t in await channel.list_tools(workspace)
+                        )
+                        chat_id = session_record.source_chat_id or ""
+                        kind = await channel.chat_kind(chat_id)
+                        name = await channel.chat_name(chat_id)
+                        where = f' named "{name}"' if name else ""
+                        attachment += (
+                            f" This session is bound to a chat{where} on the "
+                            f"{channel.display_name} platform: the messages, "
+                            f"images and files people send there are relayed "
+                            f"to you here, and your replies are delivered "
+                            f"back to that same chat."
+                        )
+                        if kind is ChatKind.GROUP:
+                            attachment += (
+                                " It is a group chat, so messages may come "
+                                "from several different people; each incoming "
+                                "user turn is labelled with its sender."
+                            )
+                        elif kind is ChatKind.PRIVATE:
+                            attachment += (
+                                " It is a one-to-one private chat with a "
+                                "single user."
+                            )
+                        if tools:
+                            attachment += (
+                                f" You also have these {channel.display_name} "
+                                f"tools available: {tools}."
+                            )
 
-            # Channel-bound sessions: tell the agent which chat it serves.
-            if (
-                session_record.source_channel_id
-                and self._channel_dispatcher is not None
-            ):
-                channel = self._channel_dispatcher.get_local_channel(
-                    session_record.source_channel_id,
+                attachment = (
+                    f"<system-notification>{attachment}</system-notification>"
                 )
-                if channel is not None:
-                    tools = ", ".join(
-                        t.name for t in await channel.list_tools(workspace)
-                    )
-                    chat_id = session_record.source_chat_id or ""
-                    kind = await channel.chat_kind(chat_id)
-                    name = await channel.chat_name(chat_id)
-                    where = f' named "{name}"' if name else ""
-                    attachment += (
-                        f" This session is bound to a chat{where} on the "
-                        f"{channel.display_name} platform: the messages, "
-                        f"images and files people send there are relayed to "
-                        f"you here, and your replies are delivered back to "
-                        f"that same chat."
-                    )
-                    if kind is ChatKind.GROUP:
-                        attachment += (
-                            " It is a group chat, so messages may come from "
-                            "several different people; each incoming user "
-                            "turn is labelled with its sender."
-                        )
-                    elif kind is ChatKind.PRIVATE:
-                        attachment += (
-                            " It is a one-to-one private chat with a single "
-                            "user."
-                        )
-                    if tools:
-                        attachment += (
-                            f" You also have these {channel.display_name} "
-                            f"tools available: {tools}."
-                        )
+                system_prompt = (
+                    agent_record.data.system_prompt + "\n\n" + attachment
+                )
 
-            attachment = (
-                f"<system-notification>{attachment}</system-notification>"
-            )
-            system_prompt = (
-                agent_record.data.system_prompt + "\n\n" + attachment
-            )
+                agent_state = session_record.state
+                agent_state.session_id = session_id
+                agent = self._agent_cls(
+                    name=agent_record.data.name,
+                    system_prompt=system_prompt,
+                    model=model,
+                    toolkit=toolkit,
+                    model_config=ModelConfig(fallback_model=fallback_model),
+                    context_config=agent_record.data.context_config,
+                    react_config=agent_record.data.react_config,
+                    state=agent_state,
+                    middlewares=middlewares,
+                    offloader=workspace,
+                )
 
-            agent_state = session_record.state
-            agent_state.session_id = session_id
-            agent = self._agent_cls(
-                name=agent_record.data.name,
-                system_prompt=system_prompt,
-                model=model,
-                toolkit=toolkit,
-                model_config=ModelConfig(fallback_model=fallback_model),
-                context_config=agent_record.data.context_config,
-                react_config=agent_record.data.react_config,
-                state=agent_state,
-                middlewares=middlewares,
-                offloader=workspace,
-            )
-
-            if self._skip_parked_wakeup(session_id, agent, input_msg):
-                return
-        except Exception as e:  # pylint: disable=broad-except
-            # Under the session lock, like the reply this run never got
-            # to make: these events share a channel with a live reply's,
-            # so publishing them unserialised would drop a "reply failed"
-            # into the middle of an answer another run is streaming.
-            async with self._message_bus.acquire_lock(
-                MessageBusKeys.session_lock(session_id),
-                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-            ):
+                if self._skip_parked_wakeup(session_id, agent, input_msg):
+                    return
+            except Exception as e:  # pylint: disable=broad-except
+                # Under the session lock, like the reply this run never got
+                # to make: these events share a channel with a live reply's,
+                # so publishing them unserialised would drop a "reply failed"
+                # into the middle of an answer another run is streaming.
                 await self._report_failure(user_id, session_id, agent_id, e)
-            return
+                return
 
-        # --------------------------------------------------------------------
-        # 7. Run the agent inside the distributed session lock
-        # ---------------------------------------------------------------------
-        lock_key = MessageBusKeys.session_lock(session_id)
-        events_key = MessageBusKeys.session_events(session_id)
-        async with self._message_bus.acquire_lock(
-            lock_key,
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-        ):
+            # ----------------------------------------------------------------
+            # 7. Run the agent (still under the session lock)
+            # -----------------------------------------------------------------
+            events_key = MessageBusKeys.session_events(session_id)
             # Channel-bound run: signal the output forwarder so the reply
             # is streamed back to the platform chat. Covers scheduled /
             # background wakes, not just inbound channel messages.
@@ -816,161 +823,232 @@ optional):
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None
+            reply_msgs: list[Msg] = []
+            released = False
+            await register_inbox_consumer(self._message_bus, session_id)
             try:
-                if input_msg is None or isinstance(input_msg, (Msg, list)):
-                    # Case A: new reply (user message(s), or retrigger with
-                    # empty input)
-                    if isinstance(input_msg, (Msg, list)):
-                        input_msgs = (
-                            [input_msg]
-                            if isinstance(input_msg, Msg)
-                            else input_msg
-                        )
-                        for msg in input_msgs:
-                            await self._storage.upsert_message(
+                while True:
+                    reply_msg = None
+                    try:
+                        if input_msg is None or isinstance(
+                            input_msg,
+                            (Msg, list),
+                        ):
+                            # Case A: new reply (user message(s), or
+                            # retrigger with empty input)
+                            if isinstance(input_msg, (Msg, list)):
+                                input_msgs = (
+                                    [input_msg]
+                                    if isinstance(input_msg, Msg)
+                                    else input_msg
+                                )
+                                for msg in input_msgs:
+                                    await self._storage.upsert_message(
+                                        user_id,
+                                        session_id,
+                                        msg,
+                                    )
+
+                            async for event in agent.reply_stream(
+                                inputs=input_msg,
+                            ):
+                                # Apply to reply_msg FIRST (sync — never
+                                # interrupted), so an interrupt in the
+                                # awaits below can't lose this event.
+                                if isinstance(event, ReplyStartEvent):
+                                    reply_msg = AssistantMsg(
+                                        id=event.reply_id,
+                                        name=event.name,
+                                        content=[],
+                                    )
+                                elif reply_msg is not None:
+                                    reply_msg.append_event(event)
+                                try:
+                                    await publish_session_event(
+                                        self._message_bus,
+                                        session_id,
+                                        event.model_dump(mode="json"),
+                                    )
+                                    await self._project_event(
+                                        user_id,
+                                        session_record,
+                                        agent_record,
+                                        event,
+                                    )
+                                except asyncio.CancelledError:
+                                    # Interrupt landed here, not at
+                                    # ``__anext__``. Re-arm it so it is
+                                    # redelivered into the agent at the
+                                    # next ``__anext__`` (which runs its
+                                    # interruption cleanup) instead of
+                                    # abandoning the generator and
+                                    # dropping that cleanup.
+                                    current = asyncio.current_task()
+                                    if current is not None:
+                                        current.cancel()
+
+                        else:
+                            # Case B: continuation (UserConfirmResult
+                            #  / ExternalExecResult)
+                            reply_msg = await self._storage.get_message(
                                 user_id,
                                 session_id,
-                                msg,
+                                agent.state.reply_id,
                             )
 
-                    async for event in agent.reply_stream(inputs=input_msg):
-                        # Apply to reply_msg FIRST (sync — never
-                        # interrupted), so an interrupt in the awaits below
-                        # can't lose this event.
-                        if isinstance(event, ReplyStartEvent):
-                            reply_msg = AssistantMsg(
-                                id=event.reply_id,
-                                name=event.name,
-                                content=[],
+                            if reply_msg is None:
+                                logger.warning(
+                                    "Reply message %r not found in "
+                                    "storage for session %r; tool-call "
+                                    "state changes from the incoming "
+                                    "event will not be persisted.",
+                                    agent.state.reply_id,
+                                    session_id,
+                                )
+                            elif input_msg:
+                                reply_msg.append_event(input_msg)
+
+                            # Broadcast the applied decision so
+                            # observers that didn't make it (other tabs,
+                            # the channel card) close it.
+                            if isinstance(
+                                input_msg,
+                                (
+                                    UserConfirmResultEvent,
+                                    ExternalExecutionResultEvent,
+                                ),
+                            ):
+                                await publish_session_event(
+                                    self._message_bus,
+                                    session_id,
+                                    input_msg.model_dump(mode="json"),
+                                )
+
+                            # Emit a synthetic REPLY_START so SSE subscribers
+                            # (frontend, channel gateway) can detect the
+                            # continuation without requiring special handling.
+                            #
+                            # IMPORTANT: The frontend SSE handler must
+                            # NOT clear its accumulated message buffer
+                            # upon receiving a
+                            # REPLY_START with the same reply_id as the current
+                            # message. This event signals a continuation (e.g.
+                            # after an approval flow), not a fresh reply.
+                            continuation_start = ReplyStartEvent(
+                                session_id=session_id,
+                                reply_id=agent.state.reply_id,
+                                name=agent_record.data.name,
                             )
-                        elif reply_msg is not None:
-                            reply_msg.append_event(event)
-                        try:
                             await publish_session_event(
                                 self._message_bus,
                                 session_id,
-                                event.model_dump(mode="json"),
+                                continuation_start.model_dump(mode="json"),
                             )
-                            await self._project_event(
+
+                            async for event in agent.reply_stream(
+                                inputs=input_msg,
+                            ):
+                                # Apply to the persisted reply FIRST
+                                # (synchronous), then publish/project —
+                                # see Case A above.
+                                if reply_msg is not None:
+                                    reply_msg.append_event(event)
+                                try:
+                                    await publish_session_event(
+                                        self._message_bus,
+                                        session_id,
+                                        event.model_dump(mode="json"),
+                                    )
+                                    await self._project_event(
+                                        user_id,
+                                        session_record,
+                                        agent_record,
+                                        event,
+                                    )
+                                except asyncio.CancelledError:
+                                    # See Case A: redirect an interrupt
+                                    # landing here back into the agent
+                                    # via the next ``__anext__``.
+                                    current = asyncio.current_task()
+                                    if current is not None:
+                                        current.cancel()
+
+                    except Exception as e:  # pylint: disable=broad-except
+                        # CancelledError is a BaseException, so interrupts are
+                        # unaffected. The lock is already held here, so the
+                        # reporter is called directly.
+                        if reply_msg is None:
+                            # Failed before REPLY_START: nothing to close, so a
+                            # fresh reply carries the failure instead.
+                            await self._report_failure(
                                 user_id,
-                                session_record,
-                                agent_record,
-                                event,
+                                session_id,
+                                agent_id,
+                                e,
                             )
-                        except asyncio.CancelledError:
-                            # Interrupt landed here, not at ``__anext__``.
-                            # Re-arm it so it's redelivered into the agent at
-                            # the next ``__anext__`` (which runs its
-                            # interruption cleanup) instead of abandoning the
-                            # generator and dropping that cleanup.
-                            current = asyncio.current_task()
-                            if current is not None:
-                                current.cancel()
+                        else:
+                            await self._close_failed_reply(
+                                session_id,
+                                reply_msg,
+                                e,
+                            )
 
-                else:
-                    # Case B: continuation (UserConfirmResult
-                    #  / ExternalExecResult)
-                    reply_msg = await self._storage.get_message(
-                        user_id,
-                        session_id,
-                        agent.state.reply_id,
-                    )
+                        # A failed turn stops the run; whatever is still
+                        # queued is handed to a fresh one by the
+                        # ``released`` cleanup below.
+                        if reply_msg is not None:
+                            reply_msgs.append(reply_msg)
+                        break
 
-                    if reply_msg is None:
-                        logger.warning(
-                            "Reply message %r not found in storage for "
-                            "session %r; tool-call state changes from the "
-                            "incoming event will not be persisted.",
-                            agent.state.reply_id,
-                            session_id,
-                        )
-                    elif input_msg:
-                        reply_msg.append_event(input_msg)
+                    if reply_msg is not None:
+                        reply_msgs.append(reply_msg)
 
-                    # Broadcast the applied decision so observers that
-                    # didn't make it (other tabs, the channel card) close it.
-                    if isinstance(
-                        input_msg,
-                        (UserConfirmResultEvent, ExternalExecutionResultEvent),
-                    ):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            input_msg.model_dump(mode="json"),
-                        )
-
-                    # Emit a synthetic REPLY_START so SSE subscribers
-                    # (frontend, channel gateway) can detect the
-                    # continuation without requiring special handling.
-                    #
-                    # IMPORTANT: The frontend SSE handler must NOT clear
-                    # its accumulated message buffer upon receiving a
-                    # REPLY_START with the same reply_id as the current
-                    # message. This event signals a continuation (e.g.
-                    # after an approval flow), not a fresh reply.
-                    continuation_start = ReplyStartEvent(
-                        session_id=session_id,
-                        reply_id=agent.state.reply_id,
-                        name=agent_record.data.name,
-                    )
-                    await publish_session_event(
+                    # Still holding the session lock: anything that
+                    # landed in the inbox after this turn's last drain
+                    # is this run's to handle — no producer will have
+                    # woken the session while it was registered as the
+                    # consumer.
+                    if not await has_pending_inbox_or_release(
                         self._message_bus,
                         session_id,
-                        continuation_start.model_dump(mode="json"),
-                    )
-
-                    async for event in agent.reply_stream(inputs=input_msg):
-                        # Apply to the persisted reply FIRST (synchronous),
-                        # then publish/project — see Case A above.
-                        if reply_msg is not None:
-                            reply_msg.append_event(event)
-                        try:
-                            await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                event.model_dump(mode="json"),
-                            )
-                            await self._project_event(
-                                user_id,
-                                session_record,
-                                agent_record,
-                                event,
-                            )
-                        except asyncio.CancelledError:
-                            # See Case A: redirect an interrupt landing here
-                            # back into the agent via the next ``__anext__``.
-                            current = asyncio.current_task()
-                            if current is not None:
-                                current.cancel()
-
-            except Exception as e:  # pylint: disable=broad-except
-                # CancelledError is a BaseException, so interrupts are
-                # unaffected. The lock is already held here, so the
-                # reporter is called directly.
-                if reply_msg is None:
-                    # Failed before REPLY_START: nothing to close, so a
-                    # fresh reply carries the failure instead.
-                    await self._report_failure(
-                        user_id,
-                        session_id,
-                        agent_id,
-                        e,
-                    )
-                else:
-                    await self._close_failed_reply(session_id, reply_msg, e)
+                    ):
+                        released = True
+                        break
+                    input_msg = None
 
             finally:
+                # An interrupt unwinds past the loop's own exit check, so
+                # the run may still be registered as the inbox consumer.
+                # Hand the registration back and wake the session when
+                # payloads are still queued, otherwise they would wait
+                # for an unrelated trigger.
+                if not released:
+                    await abandon_inbox_consumer(
+                        self._message_bus,
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                    )
+
+                # The last turn's reply is only in ``reply_msgs`` when the
+                # loop reached its own bookkeeping — an interrupt lands
+                # here instead, so add it now.
+                if reply_msg is not None and (
+                    not reply_msgs or reply_msgs[-1] is not reply_msg
+                ):
+                    reply_msgs.append(reply_msg)
+
                 # All persistence in a single coroutine, shielded from
                 # outer cancellation.  Must complete BEFORE the session
                 # lock is released — otherwise another worker could
                 # acquire the lock and load a stale state from storage
                 # before this write lands.
                 async def _persist() -> None:
-                    if reply_msg is not None:
+                    for msg in reply_msgs:
                         await self._storage.upsert_message(
                             user_id,
                             session_id,
-                            reply_msg,
+                            msg,
                         )
                     await self._storage.update_session_state(
                         user_id=user_id,
