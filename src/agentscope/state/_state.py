@@ -20,6 +20,13 @@ from ..message import (
 from ..permission import PermissionContext
 
 
+class _UseHostMtime:
+    """Sentinel indicating that the host filesystem should be inspected."""
+
+
+_USE_HOST_MTIME = _UseHostMtime()
+
+
 class ReadCacheEntry(BaseModel):
     """The read file cache."""
 
@@ -43,45 +50,74 @@ class ToolContext(BaseModel):
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
-    async def get_cache(self, file_path: str) -> ReadCacheEntry | None:
+    async def get_cache(
+        self,
+        file_path: str,
+        mtime: float | None | _UseHostMtime = _USE_HOST_MTIME,
+    ) -> ReadCacheEntry | None:
         """Get cached file content if still valid.
 
         Args:
-            file_path: The absolute path of the file.
+            file_path (`str`):
+                The absolute path of the file.
+            mtime (`float | None`, optional):
+                Modification time obtained from the filesystem that owns the
+                file. When omitted, the host filesystem is inspected for
+                backward compatibility. An explicit ``None`` means the
+                modification time could not be determined, so the cache is
+                treated as invalid.
 
         Returns:
-            The cached entry if valid, otherwise None.
+            `ReadCacheEntry | None`:
+                The cached entry if valid, otherwise None.
         """
 
         # Find the cache entry
         for entry in self.read_file_cache:
             if entry.file_path == file_path:
                 # Check if cache is still valid
-                try:
-                    updated_at = await aiofiles.os.path.getmtime(file_path)
-                    if updated_at == entry.updated_at:
-                        return entry
-                    else:
-                        # Cache is outdated, remove it
-                        self.read_file_cache.remove(entry)
-                        return None
-                except Exception:
-                    # File might not exist anymore
+                if isinstance(mtime, _UseHostMtime):
+                    try:
+                        mtime = await aiofiles.os.path.getmtime(file_path)
+                    except Exception:
+                        mtime = None
+
+                if mtime is None or mtime != entry.updated_at:
+                    # File might no longer exist, be unverifiable, or have
+                    # changed since it was read.
                     self.read_file_cache.remove(entry)
                     return None
+                return entry
         return None
 
-    async def cache_file(self, file_path: str, lines: list[str]) -> None:
+    async def cache_file(
+        self,
+        file_path: str,
+        lines: list[str],
+        mtime: float | None | _UseHostMtime = _USE_HOST_MTIME,
+    ) -> None:
         """Cache file content with LRU eviction.
 
         Args:
-            file_path: The absolute path of the file.
-            lines: The lines of the file content.
+            file_path (`str`):
+                The absolute path of the file.
+            lines (`list[str]`):
+                The lines of the file content.
+            mtime (`float | None`, optional):
+                Modification time obtained from the filesystem that owns the
+                file. When omitted, the host filesystem is inspected for
+                backward compatibility. An explicit ``None`` means the
+                modification time could not be determined and caching is
+                skipped.
         """
-        try:
-            updated_at = await aiofiles.os.path.getmtime(file_path)
-        except Exception:
-            # Cannot get mtime, skip caching
+        if isinstance(mtime, _UseHostMtime):
+            try:
+                mtime = await aiofiles.os.path.getmtime(file_path)
+            except Exception:
+                mtime = None
+
+        if mtime is None:
+            # Cannot validate the entry later, so do not cache it.
             return
 
         # Calculate size in KB
@@ -113,7 +149,7 @@ class ToolContext(BaseModel):
         self.read_file_cache.append(
             ReadCacheEntry(
                 lines=lines,
-                updated_at=updated_at,
+                updated_at=mtime,
                 bytes=new_entry_bytes,
                 file_path=file_path,
             ),
