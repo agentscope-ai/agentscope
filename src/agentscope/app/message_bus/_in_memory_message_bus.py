@@ -120,13 +120,17 @@ class InMemoryMessageBus(MessageBus):
         self._seq += 1
         return f"{self._seq}-0"
 
-    def _purge_expired_registry(self, namespace: str) -> None:
-        """Drop ``namespace`` after its registry TTL has elapsed."""
-        expires_at = self._registry_expiries.get(namespace)
-        if expires_at is None or expires_at > time.monotonic():
-            return
-        self._registries.pop(namespace, None)
-        self._registry_expiries.pop(namespace, None)
+    def _purge_expired_registries(self) -> None:
+        """Drop all registry namespaces whose TTL has elapsed."""
+        now = time.monotonic()
+        expired = [
+            namespace
+            for namespace, expires_at in self._registry_expiries.items()
+            if expires_at <= now
+        ]
+        for namespace in expired:
+            self._registries.pop(namespace, None)
+            self._registry_expiries.pop(namespace, None)
 
     # ------------------------------------------------------------------
     # Mode A — drain queue
@@ -442,7 +446,7 @@ class InMemoryMessageBus(MessageBus):
             ttl_secs (`int | None`, optional):
                 Namespace lifetime in seconds; ``None`` keeps its current TTL.
         """
-        self._purge_expired_registry(namespace)
+        self._purge_expired_registries()
         self._registries[namespace][field] = value
         if ttl_secs is not None:
             self._registry_expiries[namespace] = time.monotonic() + ttl_secs
@@ -456,7 +460,7 @@ class InMemoryMessageBus(MessageBus):
             field (`str`):
                 Field to remove.
         """
-        self._purge_expired_registry(namespace)
+        self._purge_expired_registries()
         reg = self._registries.get(namespace)
         if reg is not None:
             reg.pop(field, None)
@@ -478,7 +482,7 @@ class InMemoryMessageBus(MessageBus):
             `bool`:
                 ``True`` if the field is present.
         """
-        self._purge_expired_registry(namespace)
+        self._purge_expired_registries()
         return field in self._registries.get(namespace, {})
 
     async def registry_getall(
@@ -496,7 +500,7 @@ class InMemoryMessageBus(MessageBus):
             `dict[str, str]`:
                 All entries (shallow copy). Empty dict when absent.
         """
-        self._purge_expired_registry(namespace)
+        self._purge_expired_registries()
         return dict(self._registries.get(namespace, {}))
 
     async def registry_get(
@@ -517,7 +521,7 @@ class InMemoryMessageBus(MessageBus):
             `str | None`:
                 The stored value, or ``None`` if missing.
         """
-        self._purge_expired_registry(namespace)
+        self._purge_expired_registries()
         return self._registries.get(namespace, {}).get(field)
 
     async def registry_drop(self, namespace: str) -> None:
@@ -527,5 +531,6 @@ class InMemoryMessageBus(MessageBus):
             namespace (`str`):
                 Registry key to delete.
         """
+        self._purge_expired_registries()
         self._registries.pop(namespace, None)
         self._registry_expiries.pop(namespace, None)

@@ -567,6 +567,13 @@ optional):
                             f"agent {agent_id!r}."
                         ),
                     )
+                if (
+                    session_record.source_channel_id
+                    and self._channel_dispatcher is not None
+                ):
+                    await self._channel_dispatcher.hydrate_channel(
+                        session_record.source_channel_id,
+                    )
                 workspace = await self._workspace_manager.get_workspace(
                     user_id,
                     agent_id,

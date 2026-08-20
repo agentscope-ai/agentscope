@@ -16,6 +16,7 @@ the events.
 """
 import asyncio
 import json
+import time
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncGenerator, AsyncIterator
@@ -42,6 +43,10 @@ LIVENESS_TTL_SECS = 30
 WEBHOOK_DRAIN_LOCK_TTL_SECS = 300
 # Processed WhatsApp message ids remain deduplicated for one week.
 WEBHOOK_DEDUPE_TTL_SECS = 7 * 24 * 60 * 60
+# Failed webhook entries retry autonomously with bounded exponential backoff.
+WEBHOOK_MAX_ATTEMPTS = 5
+WEBHOOK_RETRY_BASE_SECS = 1.0
+WEBHOOK_RETRY_MAX_SECS = 30.0
 _WEBHOOK_CURSOR_FIELD = "entry_id"
 _WEBHOOK_DEDUPE_FIELD = "processed"
 
@@ -101,6 +106,14 @@ class ChannelLifecycleDispatcher:
         """
         inst = self._instances.get(channel_id)
         return inst.channel if inst else None
+
+    async def hydrate_channel(self, channel_id: str) -> None:
+        """Refresh one retained channel from shared observed-chat metadata.
+
+        Args:
+            channel_id (`str`): The local channel to refresh, if present.
+        """
+        await self._hydrate_seen_chats(channel_id)
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
@@ -322,7 +335,10 @@ class ChannelLifecycleDispatcher:
         try:
             while True:
                 self._webhook_pending.discard(channel_id)
-                await self._drain_webhook_queue(channel_id)
+                retry_delay = await self._drain_webhook_queue(channel_id)
+                if retry_delay is not None:
+                    await asyncio.sleep(retry_delay)
+                    continue
                 if channel_id not in self._webhook_pending:
                     return
         finally:
@@ -345,10 +361,26 @@ class ChannelLifecycleDispatcher:
             f"{MessageBusKeys.channel_webhook_dedupe(channel_id)}:{message_id}"
         )
 
-    async def _drain_webhook_queue(self, channel_id: str) -> None:
-        """Process one channel's durable webhook log in arrival order."""
+    @staticmethod
+    def _webhook_retry_namespace(channel_id: str) -> str:
+        """Persist retry state for one channel's retained log entries."""
+        return f"{MessageBusKeys.channel_webhook_queue(channel_id)}:retry"
+
+    @staticmethod
+    def _webhook_dead_letter_log(channel_id: str) -> str:
+        """Return the replay log used for exhausted webhook deliveries."""
+        return f"{MessageBusKeys.channel_webhook_queue(channel_id)}:dead"
+
+    async def _drain_webhook_queue(self, channel_id: str) -> float | None:
+        """Process one channel's durable webhook log in arrival order.
+
+        Returns:
+            `float | None`: Retry delay for a retained failure, or ``None``
+            when the current drain has no delayed work left.
+        """
         drain_lock = MessageBusKeys.channel_webhook_drain_lock(channel_id)
         cursor_namespace = self._webhook_cursor_namespace(channel_id)
+        retry_namespace = self._webhook_retry_namespace(channel_id)
         log_key = MessageBusKeys.channel_webhook_queue(channel_id)
         async with self._bus.acquire_lock(
             drain_lock,
@@ -366,20 +398,97 @@ class ChannelLifecycleDispatcher:
                         since=cursor,
                         max_count=1,
                     )
+                    if not jobs:
+                        return None
+                    entry_id, job = jobs[0]
+
+                    raw_retry = await self._bus.registry_get(
+                        retry_namespace,
+                        entry_id,
+                    )
+                    retry_state: dict = {}
+                    if raw_retry:
+                        try:
+                            parsed = json.loads(raw_retry)
+                            if isinstance(parsed, dict):
+                                retry_state = parsed
+                        except (TypeError, ValueError):
+                            retry_state = {}
+                    retry_at = float(retry_state.get("retry_at", 0.0) or 0.0)
+                    remaining = retry_at - time.time()
+                    if remaining > 0:
+                        return min(remaining, WEBHOOK_RETRY_MAX_SECS)
+
+                    if await self._process_webhook_job(job):
+                        await self._bus.registry_del(
+                            retry_namespace,
+                            entry_id,
+                        )
+                        await self._bus.registry_set(
+                            cursor_namespace,
+                            _WEBHOOK_CURSOR_FIELD,
+                            entry_id,
+                        )
+                        await self._bus.log_trim(log_key, before_id=entry_id)
+                        continue
+
+                    try:
+                        attempts = int(retry_state.get("attempts", 0)) + 1
+                    except (TypeError, ValueError):
+                        attempts = 1
+                    if attempts < WEBHOOK_MAX_ATTEMPTS:
+                        delay = min(
+                            WEBHOOK_RETRY_BASE_SECS * (2 ** (attempts - 1)),
+                            WEBHOOK_RETRY_MAX_SECS,
+                        )
+                        await self._bus.registry_set(
+                            retry_namespace,
+                            entry_id,
+                            json.dumps(
+                                {
+                                    "attempts": attempts,
+                                    "retry_at": time.time() + delay,
+                                },
+                                separators=(",", ":"),
+                            ),
+                        )
+                        logger.warning(
+                            "channel webhook retry scheduled for %s/%s "
+                            "after attempt %d",
+                            channel_id,
+                            entry_id,
+                            attempts,
+                        )
+                        return delay
+
+                    await self._bus.log_append(
+                        self._webhook_dead_letter_log(channel_id),
+                        {
+                            "source_entry_id": entry_id,
+                            "attempts": attempts,
+                            "job": job,
+                        },
+                    )
+                    await self._bus.registry_del(
+                        retry_namespace,
+                        entry_id,
+                    )
+                    await self._bus.registry_set(
+                        cursor_namespace,
+                        _WEBHOOK_CURSOR_FIELD,
+                        entry_id,
+                    )
+                    await self._bus.log_trim(log_key, before_id=entry_id)
+                    logger.error(
+                        "channel webhook dead-lettered after %d attempts: "
+                        "%s/%s",
+                        attempts,
+                        channel_id,
+                        entry_id,
+                    )
                 except Exception:  # pylint: disable=broad-except
                     logger.exception("channel webhook drain failed")
-                    return
-                if not jobs:
-                    return
-                entry_id, job = jobs[0]
-                if not await self._process_webhook_job(job):
-                    return
-                await self._bus.registry_set(
-                    cursor_namespace,
-                    _WEBHOOK_CURSOR_FIELD,
-                    entry_id,
-                )
-                await self._bus.log_trim(log_key, before_id=entry_id)
+                    return WEBHOOK_RETRY_MAX_SECS
 
     async def _process_webhook_job(self, job: dict) -> bool:
         """Process one webhook job and report whether it can be ACKed."""
@@ -414,8 +523,6 @@ class ChannelLifecycleDispatcher:
                     self._observe_local_webhook_chat(event)
                 if not await self._gateway.process_with_result(event):
                     return False
-                if isinstance(event, ChannelEvent) and event.chat_id:
-                    await self._persist_seen_chat(event)
             await self._bus.registry_set(
                 dedupe_namespace,
                 _WEBHOOK_DEDUPE_FIELD,
@@ -444,21 +551,6 @@ class ChannelLifecycleDispatcher:
                 event.chat_name,
             )
 
-    async def _persist_seen_chat(self, event: ChannelEvent) -> None:
-        """Persist observed chat metadata for cross-process discovery."""
-        await self._bus.registry_set(
-            MessageBusKeys.channel_seen_chats(event.channel_id),
-            event.chat_id,
-            json.dumps(
-                {
-                    "chat_type": str(event.metadata.get("chat_type", "")),
-                    "chat_name": event.chat_name,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-        )
-
     async def _hydrate_seen_chats(self, channel_id: str) -> None:
         """Refresh a retained adapter from shared observed-chat metadata."""
         inst = self._instances.get(channel_id)
@@ -478,7 +570,7 @@ class ChannelLifecycleDispatcher:
                 if isinstance(metadata, dict):
                     chat_type = str(metadata.get("chat_type", ""))
                     chat_name = str(metadata.get("chat_name", ""))
-            except (TypeError, ValueError, json.JSONDecodeError):
+            except (TypeError, ValueError):
                 pass
             observe(chat_id, chat_type, chat_name)
 

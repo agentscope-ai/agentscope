@@ -328,14 +328,54 @@ class WakeupDispatcher:
             )
             return
 
+        async def run_trigger() -> None:
+            """Run one trigger, deduplicating stable message ids."""
+            if is_message and isinstance(input_msg, Msg):
+                # The ChannelGateway derives channel message ids from the
+                # platform delivery id. Holding this lease through the run
+                # closes the race where two workers receive the same replay
+                # before either has persisted the user message.
+                delivery_lock = (
+                    f"{MessageBusKeys.session_lock(session_id)}:input:"
+                    f"{input_msg.id}"
+                )
+                async with self._bus.acquire_lock(
+                    delivery_lock,
+                    ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+                ):
+                    if (
+                        await self._storage.get_message(
+                            user_id,
+                            session_id,
+                            input_msg.id,
+                        )
+                        is not None
+                    ):
+                        logger.info(
+                            "WakeupDispatcher: skipping duplicate message %s "
+                            "for session %s.",
+                            input_msg.id,
+                            session_id,
+                        )
+                        return
+                    await self._chat_service.run(
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        input_msg=input_msg,
+                    )
+                return
+
+            await self._chat_service.run(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                input_msg=input_msg,
+            )
+
         try:
             self._registry.spawn(
-                self._chat_service.run(
-                    user_id=user_id,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    input_msg=input_msg,
-                ),
+                run_trigger(),
                 session_id=session_id,
                 name=f"{kind}-run:{session_id}",
             )

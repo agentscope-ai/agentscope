@@ -170,7 +170,14 @@ class ChannelGateway:
             await self._bus.registry_set(
                 MessageBusKeys.channel_seen_chats(event.channel_id),
                 event.chat_id,
-                "1",
+                json.dumps(
+                    {
+                        "chat_type": str(event.metadata.get("chat_type", "")),
+                        "chat_name": event.chat_name,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
             )
 
         content = await self._aggregate_media(event)
@@ -199,13 +206,18 @@ class ChannelGateway:
         await self._ensure_session(record, agent_id, session_id, event, scope)
         # Deliver as a genuine user turn; the run's output is streamed
         # back by the dispatcher's forward loop, not collected here.
+        user_msg = UserMsg(name=event.channel_user_id, content=content)
+        if event.channel_message_id:
+            user_msg.id = (
+                f"channel:{event.channel_id}:{event.channel_message_id}"
+            )
         await enqueue_run_trigger(
             self._bus,
             user_id=record.user_id,
             session_id=session_id,
             agent_id=agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
-            inputs=UserMsg(name=event.channel_user_id, content=content),
+            inputs=user_msg,
         )
 
     async def _aggregate_media(

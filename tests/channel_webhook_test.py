@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import json
 from typing import AsyncIterator, Callable
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,10 @@ FastAPI = fastapi.FastAPI
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
 
 # pylint: disable=wrong-import-position
+from agentscope.app._manager import (  # noqa: E402
+    ChatRunRegistry,
+    WakeupDispatcher,
+)
 from agentscope.app._router._whatsapp_webhook import (  # noqa: E402
     create_whatsapp_webhook_router,
 )
@@ -24,6 +28,7 @@ from agentscope.app.channel import (  # noqa: E402
     ChannelTypeRegistry,
     WhatsAppChannel,
 )
+from agentscope.app.channel._gateway import ChannelGateway  # noqa: E402
 from agentscope.app.message_bus import (  # noqa: E402
     InMemoryMessageBus,
     MessageBusKeys,
@@ -34,6 +39,7 @@ from agentscope.app.storage import (  # noqa: E402
     RoutingConfig,
     SessionSettings,
 )
+from agentscope.message import Msg, TextBlock, UserMsg  # noqa: E402
 
 
 def _record() -> ChannelRecord:
@@ -283,8 +289,8 @@ def test_failed_webhook_normalization_is_not_acknowledged() -> None:
     bus.registry_set.assert_not_awaited()
 
 
-def test_failed_durable_job_is_consumed_again() -> None:
-    """A failed job stays behind the shared cursor for the next drain."""
+def test_failed_durable_job_retries_without_another_signal() -> None:
+    """A retained failure retries autonomously without later traffic."""
 
     async def run() -> None:
         bus = InMemoryMessageBus()
@@ -293,13 +299,14 @@ def test_failed_durable_job_is_consumed_again() -> None:
         entry_id = await bus.log_append(key, {"message_id": "retry-me"})
         process = AsyncMock(side_effect=[False, True])
 
-        with patch.object(dispatcher, "_process_webhook_job", new=process):
-            await dispatcher._drain_webhook_queue("whatsapp-1")
-            assert process.await_count == 1
-            assert await bus.log_read(key) == [
-                (entry_id, {"message_id": "retry-me"}),
-            ]
-            await dispatcher._drain_webhook_queue("whatsapp-1")
+        with (
+            patch.object(dispatcher, "_process_webhook_job", new=process),
+            patch(
+                "agentscope.app.channel._dispatcher.WEBHOOK_RETRY_BASE_SECS",
+                0.0,
+            ),
+        ):
+            await dispatcher._run_webhook_drain("whatsapp-1")
 
         assert process.await_count == 2
         cursor = await bus.registry_get(
@@ -308,6 +315,62 @@ def test_failed_durable_job_is_consumed_again() -> None:
         )
         assert cursor == entry_id
         assert await bus.log_read(key, since=entry_id) == []
+
+    asyncio.run(run())
+
+
+def test_poison_webhook_is_dead_lettered_and_does_not_block_later_work() -> (
+    None
+):
+    """A bounded poison retry eventually advances to the next log entry."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        dispatcher = _dispatcher(bus)
+        key = MessageBusKeys.channel_webhook_queue("whatsapp-1")
+        poison = {"message_id": "poison"}
+        good = {"message_id": "good"}
+        poison_id = await bus.log_append(key, poison)
+        good_id = await bus.log_append(key, good)
+
+        async def process(job: dict) -> bool:
+            return job["message_id"] == "good"
+
+        with (
+            patch.object(
+                dispatcher,
+                "_process_webhook_job",
+                new=AsyncMock(side_effect=process),
+            ) as mocked,
+            patch(
+                "agentscope.app.channel._dispatcher.WEBHOOK_MAX_ATTEMPTS",
+                2,
+            ),
+            patch(
+                "agentscope.app.channel._dispatcher.WEBHOOK_RETRY_BASE_SECS",
+                0.0,
+            ),
+        ):
+            await dispatcher._run_webhook_drain("whatsapp-1")
+
+        assert [
+            item.args[0]["message_id"] for item in mocked.await_args_list
+        ] == ["poison", "poison", "good"]
+        dead = await bus.log_read(
+            dispatcher._webhook_dead_letter_log("whatsapp-1"),
+        )
+        assert dead[0][1] == {
+            "source_entry_id": poison_id,
+            "attempts": 2,
+            "job": poison,
+        }
+        assert (
+            await bus.registry_get(
+                dispatcher._webhook_cursor_namespace("whatsapp-1"),
+                "entry_id",
+            )
+            == good_id
+        )
 
     asyncio.run(run())
 
@@ -373,58 +436,212 @@ def test_webhook_drain_tasks_are_coalesced_per_channel() -> None:
     asyncio.run(run())
 
 
-def test_shared_consumer_persists_chat_metadata() -> None:
-    """Observed chats are stored outside the short-lived normalizer."""
-    record = _record()
-    storage = AsyncMock()
-    storage.get_channel.return_value = record
-    bus = AsyncMock()
-    bus.registry_exists.return_value = False
-    gateway = AsyncMock()
-    gateway.process_with_result.return_value = True
-    dispatcher = ChannelLifecycleDispatcher(
-        storage=storage,
-        message_bus=bus,
-        type_registry=ChannelTypeRegistry([WhatsAppChannel]),
-        gateway=gateway,
-    )
-    event = ChannelEvent(
-        channel_id=record.id,
-        channel_user_id="8613800138000",
-        chat_id="group-1",
-        chat_name="Project",
-        content=[],
-        metadata={"chat_type": "group"},
-    )
+def test_gateway_persists_chat_metadata_before_stable_run_trigger() -> None:
+    """Shared chat metadata lands before a stable channel user turn."""
 
-    with patch.object(
-        WhatsAppChannel,
-        "normalize_webhook",
-        new=AsyncMock(return_value=[event]),
-    ):
-        assert asyncio.run(
-            dispatcher._process_webhook_job(
-                {
-                    "channel_id": record.id,
-                    "message_id": "wamid-group",
-                    "payload": {},
-                },
+    async def run() -> None:
+        record = _record()
+        storage = AsyncMock()
+        storage.get_channel.return_value = record
+        storage.get_session.return_value = object()
+        bus = AsyncMock()
+        bus.is_locked.return_value = False
+        bus.queue_drain.return_value = []
+        order: list[str] = []
+
+        async def registry_set(*_args: object, **_kwargs: object) -> None:
+            order.append("metadata")
+
+        async def queue_push(*_args: object, **_kwargs: object) -> str:
+            order.append("trigger")
+            return "1-0"
+
+        bus.registry_set.side_effect = registry_set
+        bus.queue_push.side_effect = queue_push
+        gateway = ChannelGateway(storage, bus, MagicMock())
+        event = ChannelEvent(
+            channel_id=record.id,
+            channel_user_id="8613800138000",
+            chat_id="group-1",
+            chat_name="Project",
+            channel_message_id="wamid-1",
+            content=[TextBlock(text="hello")],
+            metadata={"chat_type": "group"},
+        )
+
+        await gateway._handle_message(event)
+
+        assert order == ["metadata", "trigger"]
+        trigger = bus.queue_push.await_args.args[1]
+        assert trigger["input"]["id"] == "channel:whatsapp-1:wamid-1"
+        assert bus.registry_set.await_args.args == (
+            MessageBusKeys.channel_seen_chats(record.id),
+            "group-1",
+            json.dumps(
+                {"chat_type": "group", "chat_name": "Project"},
+                ensure_ascii=False,
+                separators=(",", ":"),
             ),
         )
 
-    expected_chat = json.dumps(
-        {"chat_type": "group", "chat_name": "Project"},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    assert (
-        call(
+    asyncio.run(run())
+
+
+def test_replayed_run_trigger_skips_an_already_persisted_user_message() -> (
+    None
+):
+    """A replayed channel trigger does not create a second Agent turn."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        storage = AsyncMock()
+        storage.get_session.return_value = object()
+        storage.get_message.return_value = object()
+        chat_service = AsyncMock()
+        registry = ChatRunRegistry()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=storage,
+            chat_service=chat_service,
+            chat_run_registry=registry,
+        )
+        msg = UserMsg(
+            id="channel:whatsapp-1:wamid-1",
+            name="8613800138000",
+            content=[TextBlock(text="hello")],
+        )
+
+        await dispatcher._dispatch_one(
+            user_id="alice",
+            session_id="session-1",
+            agent_id="agent-1",
+            kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
+            raw_input=msg.model_dump(mode="json"),
+        )
+        task = registry.get("session-1")
+        assert task is not None
+        await task
+
+        storage.get_message.assert_awaited_once_with(
+            "alice",
+            "session-1",
+            msg.id,
+        )
+        chat_service.run.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+def test_replayed_gateway_trigger_runs_one_user_turn_after_persistence() -> (
+    None
+):
+    """A replayed trigger is idempotent after the first run persists."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        record = _record()
+        storage = AsyncMock()
+        storage.get_channel.return_value = record
+        storage.get_session.return_value = object()
+        gateway = ChannelGateway(storage, bus, MagicMock())
+        event = ChannelEvent(
+            channel_id=record.id,
+            channel_user_id="8613800138000",
+            chat_id="direct-1",
+            channel_message_id="wamid-replayed",
+            content=[TextBlock(text="hello")],
+        )
+
+        # The outer webhook dedupe marker is written only after this path
+        # returns. Two deliveries can therefore enqueue the same trigger.
+        assert await gateway.process_with_result(event)
+        assert await gateway.process_with_result(event)
+        entries = await bus.queue_drain(
+            MessageBusKeys.wakeup_queue(),
+            max_count=10,
+        )
+        assert len(entries) == 2
+
+        persisted_ids: set[str] = set()
+        chat_service = AsyncMock()
+
+        async def run_chat(**kwargs: object) -> None:
+            input_msg = kwargs["input_msg"]
+            assert isinstance(input_msg, Msg)
+            assert input_msg.id not in persisted_ids
+            persisted_ids.add(input_msg.id)
+
+        chat_service.run.side_effect = run_chat
+
+        async def get_message(
+            _user_id: str,
+            _session_id: str,
+            message_id: str,
+        ) -> Msg | None:
+            if message_id in persisted_ids:
+                return UserMsg(
+                    id=message_id,
+                    name=event.channel_user_id,
+                    content=event.content,
+                )
+            return None
+
+        storage.get_message.side_effect = get_message
+        registry = ChatRunRegistry()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=storage,
+            chat_service=chat_service,
+            chat_run_registry=registry,
+        )
+
+        for _entry_id, payload in entries:
+            await dispatcher._dispatch_one(
+                user_id=payload["user_id"],
+                session_id=payload["session_id"],
+                agent_id=payload["agent_id"],
+                kind=payload["kind"],
+                raw_input=payload["input"],
+            )
+            task = registry.get(payload["session_id"])
+            if task is not None:
+                await task
+
+        assert chat_service.run.await_count == 1
+        assert persisted_ids == {"channel:whatsapp-1:wamid-replayed"}
+
+    asyncio.run(run())
+
+
+def test_shared_chat_metadata_hydrates_another_dispatcher_instance() -> None:
+    """A worker that missed the webhook can refresh its retained adapter."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        record = _record()
+        channel = WhatsAppChannel(
+            record.id,
+            WhatsAppChannel.Credentials(**record.credentials),
+            WhatsAppChannel.Config(),
+        )
+        dispatcher = _dispatcher(bus)
+        dispatcher._instances[record.id] = MagicMock(channel=channel)
+        await bus.registry_set(
             MessageBusKeys.channel_seen_chats(record.id),
             "group-1",
-            expected_chat,
+            json.dumps(
+                {"chat_type": "group", "chat_name": "Project"},
+                separators=(",", ":"),
+            ),
         )
-        in bus.registry_set.await_args_list
-    )
+
+        await dispatcher.hydrate_channel(record.id)
+
+        assert await channel.chat_name("group-1") == "Project"
+        chats = await channel.list_bot_chats()
+        assert any(chat["chat_id"] == "group-1" for chat in chats)
+
+    asyncio.run(run())
 
 
 def test_inmemory_registry_ttl_expires_namespace() -> None:
@@ -432,12 +649,40 @@ def test_inmemory_registry_ttl_expires_namespace() -> None:
 
     async def run() -> None:
         bus = InMemoryMessageBus()
+        clock = MagicMock(return_value=100.0)
         with patch(
             "agentscope.app.message_bus._in_memory_message_bus.time.monotonic",
-            side_effect=[100.0, 102.0],
+            new=clock,
         ):
             await bus.registry_set("dedupe:1", "processed", "1", ttl_secs=1)
+            clock.return_value = 102.0
             assert not await bus.registry_exists("dedupe:1", "processed")
+
+    asyncio.run(run())
+
+
+def test_inmemory_registry_reclaims_unvisited_expired_namespaces() -> None:
+    """Touching a new namespace sweeps old independently-expiring keys."""
+
+    async def run() -> None:
+        bus = InMemoryMessageBus()
+        clock = MagicMock(return_value=100.0)
+        with patch(
+            "agentscope.app.message_bus._in_memory_message_bus.time.monotonic",
+            new=clock,
+        ):
+            for index in range(5):
+                await bus.registry_set(
+                    f"dedupe:{index}",
+                    "processed",
+                    "1",
+                    ttl_secs=1,
+                )
+            clock.return_value = 102.0
+            await bus.registry_set("fresh", "value", "1")
+
+        assert set(bus._registries) == {"fresh"}
+        assert not bus._registry_expiries
 
     asyncio.run(run())
 
