@@ -35,6 +35,7 @@ from ..middleware import (
     InboxMiddleware,
     StateChangeMiddleware,
     ToolOffloadMiddleware,
+    TeamMemberLoopMiddleware,
 )
 from ...middleware import TTSMiddleware, RAGMiddleware
 from ...rag import KnowledgeBase
@@ -606,6 +607,33 @@ optional):
                         agent_id=agent_id,
                     ),
                 ]
+                # Equip the member middleware for loop control
+                if session_record.team_id is not None:
+                    team = await self._storage.get_team(
+                        user_id,
+                        session_record.team_id,
+                    )
+                    if (
+                        team is not None
+                        and team.session_id != session_record.id
+                    ):
+                        leader_session = await self._storage.get_session(
+                            user_id,
+                            "",
+                            team.session_id,
+                        )
+                        if leader_session:
+                            leader_agent = await self._storage.get_agent(
+                                user_id,
+                                leader_session.agent_id,
+                            )
+                            if leader_agent:
+                                middlewares.append(
+                                    TeamMemberLoopMiddleware(
+                                        leader_name=leader_agent.data.name,
+                                    ),
+                                )
+
                 if self._extra_agent_middlewares is not None:
                     factory_args: tuple = (user_id, agent_id, session_id)
                     if self._middlewares_take_workspace:
