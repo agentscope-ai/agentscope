@@ -27,8 +27,11 @@ from ..deps import (
     get_chat_service,
     get_current_user_id,
     get_message_bus,
+    get_storage,
 )
+from ..storage import StorageBase
 from ._schema import ChatRequest, ChatTriggerResponse
+from ._session import _worker_still_asking
 from .._manager import ChatRunRegistry
 from .._service import (
     ChatService,
@@ -57,6 +60,7 @@ async def chat(
     chat_service: ChatService = Depends(get_chat_service),
     chat_run_registry: ChatRunRegistry = Depends(get_chat_run_registry),
     message_bus: MessageBus = Depends(get_message_bus),
+    storage: StorageBase = Depends(get_storage),
 ) -> ChatTriggerResponse:
     """Trigger a chat run for the specified session.
 
@@ -116,14 +120,53 @@ async def chat(
     ):
         run_session_id = request.session_id
         run_agent_id = request.agent_id
+        projection = SessionProjection(message_bus)
         target = await SubagentHitlProjector.resolve(
-            SessionProjection(message_bus),
+            projection,
             request.session_id,
             request.input.reply_id,
         )
         if target is not None:
             run_session_id = target["worker_session_id"]
             run_agent_id = target["worker_agent_id"]
+
+            # SSOT check (#2324): the projected card is only a mirror of
+            # the worker's ASKING tool call. If the worker is no longer
+            # parked on it (resolved, cancelled, or desynced), delivering
+            # the confirm would raise "Agent is not waiting for user
+            # confirmation" inside the worker run — invisible to the
+            # front-end, which keeps re-posting the same event. Clear the
+            # stale card and fail loudly instead.
+            if not await _worker_still_asking(
+                storage,
+                user_id,
+                run_agent_id,
+                run_session_id,
+                request.input.reply_id,
+            ):
+                await projection.delete(
+                    request.session_id,
+                    SubagentHitlProjector.KIND,
+                    SubagentHitlProjector.entry_id(
+                        run_session_id,
+                        request.input.reply_id,
+                    ),
+                )
+                await projection.publish(
+                    request.session_id,
+                    SubagentHitlProjector.EVT_RESULT,
+                    {
+                        "worker_session_id": run_session_id,
+                        "reply_id": request.input.reply_id,
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Confirmation is no longer pending for this "
+                        "tool call; the request has been discarded."
+                    ),
+                )
 
         await enqueue_run_trigger(
             message_bus,

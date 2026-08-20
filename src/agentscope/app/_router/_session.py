@@ -52,7 +52,8 @@ from ..storage import (
 from ...message import ToolCallState
 from ...state import ToolContext
 from ..storage._utils import _ensure_team_members
-from ...event import CustomEvent
+from ...event import CustomEvent, UserInterruptEvent
+from .._bus_ops import enqueue_run_trigger
 from ..workspace_manager import WorkspaceManagerBase
 
 
@@ -417,6 +418,8 @@ async def interrupt_session(
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
     chat_service: ChatService = Depends(get_chat_service),
+    storage: StorageBase = Depends(get_storage),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> InterruptSessionResponse:
     """Request interruption of an in-progress reply for a session.
 
@@ -424,11 +427,17 @@ async def interrupt_session(
     method for the running vs not-running dispatch. Idempotent — an
     idle target session is a silent no-op at the agent layer.
 
+    When the session leads a team, this also interrupts team members'
+    HITL-parked runs and clears their projected confirm cards, so a
+    spinning subagent card cannot survive the interrupt (#2324).
+
     Args:
         session_id: The session whose reply should be interrupted.
         agent_id: The agent that owns the session.
         user_id: Injected authenticated user id.
         chat_service: Injected chat service.
+        storage: Injected storage backend.
+        message_bus: Injected message bus.
 
     Returns:
         202 with :class:`InterruptSessionResponse` echoing the
@@ -444,6 +453,39 @@ async def interrupt_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         ) from e
+
+    # Cascade (#2324): cards projected onto this leader session mirror
+    # worker runs parked on HITL. Interrupt those parked runs and clear
+    # the mirrors so no card survives the interrupt.
+    session = await storage.get_session(user_id, agent_id, session_id)
+    if session is not None and session.team_id:
+        team = await storage.get_team(user_id, session.team_id)
+        if team is not None and team.session_id == session_id:
+            projection = SessionProjection(message_bus)
+            entries = await projection.list(
+                session_id,
+                SubagentHitlProjector.KIND,
+            )
+            for entry in entries:
+                await enqueue_run_trigger(
+                    message_bus,
+                    user_id=user_id,
+                    session_id=entry["worker_session_id"],
+                    agent_id=entry["worker_agent_id"],
+                    kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+                    inputs=UserInterruptEvent(reply_id=entry["reply_id"]),
+                )
+            await SubagentHitlProjector.purge(projection, session_id)
+            for entry in entries:
+                await projection.publish(
+                    session_id,
+                    SubagentHitlProjector.EVT_RESULT,
+                    {
+                        "worker_session_id": entry["worker_session_id"],
+                        "reply_id": entry["reply_id"],
+                    },
+                )
+
     return InterruptSessionResponse(session_id=session_id)
 
 
