@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal, TypeVar, overload
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from ..access import (
     ResourceAccessPolicyBase,
@@ -64,10 +64,10 @@ class CredentialView(CredentialRecord):
 class KnowledgeBaseStatusCounts(BaseModel):
     """Documents of one knowledge base, counted by indexing status.
 
-    Served only when the list endpoint is asked for it
-    (``include_status_counts=true``) — the per-status breakdown costs a
-    full document scan per knowledge base, so it is opt-in the same way
-    RAGFlow gates ``include_parsing_status``.
+    Built from a :class:`collections.Counter` keyed by
+    ``KnowledgeDocumentStatus``; a status without a field here is
+    ignored rather than raising, so adding a lifecycle state cannot
+    break the list endpoint.
     """
 
     pending: int = 0
@@ -116,6 +116,16 @@ class KnowledgeBaseView(BaseModel):
             "Whether the current viewer may modify this knowledge base."
         ),
     )
+    owner_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("owner_id", "user_id"),
+        exclude=True,
+        description=(
+            "The owning user id, carried for server-side reads (shared "
+            "viewers must query the owner's storage) and excluded from "
+            "the wire shape."
+        ),
+    )
     document_count: int = Field(
         default=0,
         description="Number of documents registered in the knowledge base.",
@@ -136,12 +146,9 @@ class KnowledgeBaseView(BaseModel):
             "credential has been deleted."
         ),
     )
-    status_counts: KnowledgeBaseStatusCounts | None = Field(
-        default=None,
-        description=(
-            "Per-indexing-status document counts. ``None`` unless the "
-            "request set ``include_status_counts=true``."
-        ),
+    status_counts: KnowledgeBaseStatusCounts = Field(
+        default_factory=KnowledgeBaseStatusCounts,
+        description="Documents broken down by indexing status.",
     )
 
     @model_validator(mode="before")

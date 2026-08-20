@@ -299,10 +299,6 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
                     "text/markdown",
                 ),
             )
-            self.assertEqual(
-                response.headers["content-length"],
-                str(len(self._file_bytes)),
-            )
             self.assertTrue(
                 response.headers["content-disposition"].startswith(
                     "inline;",
@@ -508,12 +504,13 @@ class DocumentDownloadTokenTest(_KnowledgeBaseDetailTestBase):
                 headers={"X-User-ID": "user-1"},
             )
             self.assertEqual(minted.status_code, 200)
-            body = minted.json()
-            self.assertIn("token", body)
-            self.assertIn(body["token"], body["url"])
+            token = minted.json()["token"]
 
-            # The ready-made URL fetches without any header.
-            fetched = client.get(body["url"])
+            # The token alone fetches the file — no header needed.
+            fetched = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/doc-1",
+                params={"token": token},
+            )
             self.assertEqual(fetched.status_code, 200)
             self.assertEqual(fetched.content, self._file_bytes)
 
@@ -569,21 +566,9 @@ class KnowledgeBaseListEnrichmentTest(_KnowledgeBaseDetailTestBase):
             self.assertEqual(view["document_count"], 1)
             self.assertEqual(view["chunk_count"], 5)
             self.assertEqual(view["credential_name"], "My OpenAI Key")
-            self.assertIsNone(view["status_counts"])
+            self.assertEqual(view["status_counts"]["ready"], 1)
             # The masked credential secret must never ride along.
             self.assertNotIn("api_key", str(body))
-
-    def test_status_counts_are_opt_in(self) -> None:
-        """Per-status counts appear only when explicitly requested."""
-        with TestClient(self._app) as client:
-            response = client.get(
-                "/knowledge_bases/",
-                params={"include_status_counts": "true"},
-                headers={"X-User-ID": "user-1"},
-            )
-            counts = response.json()["knowledge_bases"][0]["status_counts"]
-            self.assertEqual(counts["ready"], 1)
-            self.assertEqual(counts["error"], 0)
 
     def test_id_filter_doubles_as_get_single(self) -> None:
         """``?id=`` narrows the list to one knowledge base."""
@@ -745,6 +730,9 @@ class SharedViewerAccessTest(_KnowledgeBaseDetailTestBase):
                 headers=headers,
             )
             self.assertEqual(minted.status_code, 200)
-            fetched = client.get(minted.json()["url"])
+            fetched = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/doc-1",
+                params={"token": minted.json()["token"]},
+            )
             self.assertEqual(fetched.status_code, 200)
             self.assertEqual(fetched.content, self._file_bytes)

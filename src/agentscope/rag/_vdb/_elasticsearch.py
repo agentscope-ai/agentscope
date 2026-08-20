@@ -290,9 +290,10 @@ class ElasticsearchStore(VectorStoreBase):
         ``chunk_index`` range down to the server.  Instead it retrieves
         **all** chunks of the one document (a ``term`` query on the
         indexed ``document_id`` field, paged through a point-in-time
-        with ``_shard_doc`` / ``search_after`` so documents beyond the
-        10000-hit window still work), sorts them in Python, and slices
-        the requested page — O(chunks of one document) per page, which
+        with ``_shard_doc`` / ``search_after`` — which needs
+        Elasticsearch >= 7.12 and is unsupported on OpenSearch — so
+        documents beyond the 10000-hit window still work), sorts them
+        in Python, and slices the requested page — O(chunks of one document) per page, which
         is bounded and acceptable for an interactive detail view.
 
         Args:

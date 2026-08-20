@@ -352,10 +352,3 @@ class DocumentDownloadTokenResponse(BaseModel):
     expires_at: float = Field(
         description="Unix timestamp after which the token is refused.",
     )
-    url: str = Field(
-        description=(
-            "Relative URL with the token already applied — ready to "
-            "drop into an ``<iframe src>`` / ``<img src>`` or a "
-            "download link."
-        ),
-    )

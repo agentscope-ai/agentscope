@@ -410,6 +410,11 @@ class IndexWorker:
             user_id,
             knowledge_base_id,
         )
+        # A retry re-runs the whole pipeline. Records are keyed by
+        # (document_id, chunk_index), so re-inserting overwrites in
+        # place — but a re-parse that yields fewer chunks would leave
+        # the old tail behind, so drop the previous vectors first.
+        await knowledge.delete_document(document_id)
         await knowledge.insert_document(
             chunks=chunks,
             document_id=document_id,

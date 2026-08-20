@@ -425,7 +425,14 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
                 "document_count": 0,
                 "chunk_count": 0,
                 "credential_name": None,
-                "status_counts": None,
+                "status_counts": {
+                    "pending": 0,
+                    "parsing": 0,
+                    "chunking": 0,
+                    "indexing": 0,
+                    "ready": 0,
+                    "error": 0,
+                },
             },
         )
 
@@ -457,7 +464,14 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
                     "document_count": 0,
                     "chunk_count": 0,
                     "credential_name": None,
-                    "status_counts": None,
+                    "status_counts": {
+                        "pending": 0,
+                        "parsing": 0,
+                        "chunking": 0,
+                        "indexing": 0,
+                        "ready": 0,
+                        "error": 0,
+                    },
                 },
             ],
         )

@@ -506,3 +506,37 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             limit=3,
         )
         self.assertEqual([c.chunk_index for c in window], [1, 2, 3])
+
+    async def test_list_chunks_after_reindexing_into_fewer_chunks(
+        self,
+    ) -> None:
+        """A shorter re-index leaves no tail from the previous run.
+
+        The worker deletes a document's vectors before re-inserting, so
+        even though upserts alone would keep the old high indices, the
+        listing reflects only the latest run.
+        """
+        await self.store.create_collection("kb-1", dimensions=3)
+
+        def _records(count: int) -> list:
+            return [
+                _make_record(
+                    f"v{count}-chunk{i}",
+                    [1.0, 0.0, 0.0],
+                    document_id="doc-1",
+                    chunk_index=i,
+                    total_chunks=count,
+                )
+                for i in range(count)
+            ]
+
+        await self.store.insert("kb-1", _records(5))
+        await self.store.delete("kb-1", "doc-1")
+        await self.store.insert("kb-1", _records(2))
+
+        chunks = await self.store.list_chunks("kb-1", "doc-1", limit=30)
+        self.assertEqual([c.chunk_index for c in chunks], [0, 1])
+        self.assertEqual(
+            [c.content.text for c in chunks],
+            ["v2-chunk0", "v2-chunk1"],
+        )

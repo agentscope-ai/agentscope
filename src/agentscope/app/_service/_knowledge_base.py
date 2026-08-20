@@ -18,6 +18,7 @@ project's stance is that a knowledge base is managed end-to-end in one
 mode.
 """
 import uuid
+from collections import Counter
 from typing import IO, TYPE_CHECKING, AsyncIterator
 
 from fastapi import HTTPException, status
@@ -208,7 +209,6 @@ class KnowledgeBaseService:
         *,
         knowledge_base_id: str | None = None,
         name: str | None = None,
-        include_status_counts: bool = False,
         page: int = 1,
         page_size: int = 30,
         orderby: str = "create_time",
@@ -223,10 +223,9 @@ class KnowledgeBaseService:
         compute page numbers.
 
         Only the served page is enriched: per view, the documents are
-        read once from storage to derive ``document_count`` /
-        ``chunk_count`` (and ``status_counts`` when opted in), and the
-        embedding credential is resolved against the owner to expose
-        its display name to shared viewers too.
+        read once from storage to derive the counts, and the embedding
+        credential is resolved against the owner so shared viewers see
+        its display name too.
 
         Args:
             user_id (`str`):
@@ -235,9 +234,6 @@ class KnowledgeBaseService:
                 Filter down to one knowledge base by id.
             name (`str | None`, optional):
                 Case-insensitive substring filter on the display name.
-            include_status_counts (`bool`, defaults to ``False``):
-                Also aggregate per-status document counts (costs a
-                document scan per listed knowledge base).
             page (`int`, defaults to ``1``):
                 1-based page number.
             page_size (`int`, defaults to ``30``):
@@ -262,47 +258,37 @@ class KnowledgeBaseService:
             views = [view for view in views if needle in view.name.lower()]
         total = len(views)
 
+        # The id breaks ties: storage returns rows in an undefined
+        # order and MySQL DATETIME has no sub-second precision, so
+        # records created together would otherwise shuffle between
+        # requests and make pages drop or repeat rows.
+        sort_key = "updated_at" if orderby == "update_time" else "created_at"
         views.sort(
-            key=lambda view: (
-                view.updated_at
-                if orderby == "update_time"
-                else view.created_at
-            ),
+            key=lambda view: (getattr(view, sort_key), view.id),
             reverse=desc,
         )
         page_views = views[(page - 1) * page_size : page * page_size]
 
         credential_names: dict[tuple[str, str], str | None] = {}
         for view in page_views:
-            record = await self._access.resolve_knowledge_base(
-                user_id,
-                view.id,
-            )
             documents = await self._storage.list_knowledge_documents(
-                record.user_id,
+                view.owner_id,
                 view.id,
             )
             view.document_count = len(documents)
             view.chunk_count = sum(
                 document.data.chunk_count for document in documents
             )
-            if include_status_counts:
-                counts = KnowledgeBaseStatusCounts()
-                for document in documents:
-                    setattr(
-                        counts,
-                        document.status,
-                        getattr(counts, document.status) + 1,
-                    )
-                view.status_counts = counts
+            view.status_counts = KnowledgeBaseStatusCounts(
+                **Counter(document.status for document in documents),
+            )
 
-            credential_id = view.embedding_model_config.credential_id
-            cache_key = (record.user_id, credential_id)
+            cache_key = (
+                view.owner_id,
+                view.embedding_model_config.credential_id,
+            )
             if cache_key not in credential_names:
-                credential = await self._storage.get_credential(
-                    record.user_id,
-                    credential_id,
-                )
+                credential = await self._storage.get_credential(*cache_key)
                 credential_names[cache_key] = (
                     credential.data.get("name")
                     if credential is not None
@@ -525,10 +511,12 @@ class KnowledgeBaseService:
             records = [r for r in records if r.status == doc_status]
         total = len(records)
 
+        # See ``list_knowledge_base_views`` — the id breaks timestamp
+        # ties so pages stay stable; a batch upload lands within one
+        # MySQL DATETIME tick.
+        sort_key = "updated_at" if orderby == "update_time" else "created_at"
         records.sort(
-            key=lambda r: (
-                r.updated_at if orderby == "update_time" else r.created_at
-            ),
+            key=lambda record: (getattr(record, sort_key), record.id),
             reverse=desc,
         )
         return records[(page - 1) * page_size : page * page_size], total

@@ -323,13 +323,6 @@ async def list_knowledge_bases(
         default=None,
         description="Case-insensitive substring filter on the name.",
     ),
-    include_status_counts: bool = Query(
-        default=False,
-        description=(
-            "Also return per-indexing-status document counts (costs a "
-            "document scan per listed knowledge base)."
-        ),
-    ),
     page: int = Query(default=1, ge=1, description="1-based page number."),
     page_size: int = Query(default=30, ge=1, le=128),
     orderby: str = Query(
@@ -346,7 +339,7 @@ async def list_knowledge_bases(
     through :class:`ResourceAccessPolicyBase`. Each entry carries an
     ``editable`` flag (``read`` grants search + attach; ``edit`` also
     grants document add/delete and metadata update) plus the
-    aggregated ``document_count`` / ``chunk_count`` and the resolved
+    aggregated document / chunk / per-status counts and the resolved
     ``credential_name`` a detail page needs — the list is the single
     source of truth; there is no separate get-single endpoint.
 
@@ -355,8 +348,6 @@ async def list_knowledge_bases(
             Filter down to one knowledge base by id.
         name (`str | None`, optional):
             Case-insensitive substring filter on the display name.
-        include_status_counts (`bool`, defaults to ``False``):
-            Opt into per-status document counts.
         page (`int`, defaults to ``1``):
             1-based page number.
         page_size (`int`, defaults to ``30``):
@@ -378,7 +369,6 @@ async def list_knowledge_bases(
         user_id,
         knowledge_base_id=id,
         name=name,
-        include_status_counts=include_status_counts,
         page=page,
         page_size=page_size,
         orderby=orderby,
@@ -752,6 +742,12 @@ _INLINE_MEDIA_TYPES = frozenset(
 )
 
 
+# Preview tokens outlive a download capability on purpose: a PDF
+# viewer embedded in an <iframe> re-requests the file as the reader
+# pages through it, and a 60-second window would 401 mid-read.
+_PREVIEW_TOKEN_TTL = 600
+
+
 def _document_token_path(knowledge_base_id: str, document_id: str) -> str:
     """The resource string a document download token is bound to."""
     return f"kb/{knowledge_base_id}/{document_id}"
@@ -845,22 +841,16 @@ async def create_document_download_token(
 
     Returns:
         `DocumentDownloadTokenResponse`:
-            The token, its expiry, and a ready-to-use relative URL.
+            The token and its expiry.
     """
     await service.get_document(user_id, knowledge_base_id, document_id)
     token, expires_at = sign_download_token(
         download_secret,
         user_id,
         _document_token_path(knowledge_base_id, document_id),
+        ttl=_PREVIEW_TOKEN_TTL,
     )
-    return DocumentDownloadTokenResponse(
-        token=token,
-        expires_at=expires_at,
-        url=(
-            f"/knowledge_bases/{knowledge_base_id}"
-            f"/documents/{document_id}?token={quote(token)}"
-        ),
-    )
+    return DocumentDownloadTokenResponse(token=token, expires_at=expires_at)
 
 
 @knowledge_base_router.get(
@@ -950,13 +940,16 @@ async def read_knowledge_document(
     disposition = "inline" if inline else "attachment"
     filename = quote(data.filename or "download")
     headers = {
-        "Content-Length": str(data.size),
         "Content-Disposition": (f"{disposition}; filename*=UTF-8''{filename}"),
         "Cache-Control": "private, max-age=60",
         # The declared type is authoritative — never let the browser
         # sniff a scriptable type out of the bytes.
         "X-Content-Type-Options": "nosniff",
     }
+    # No Content-Length: ``data.size`` is the uploader's declaration,
+    # not a measurement, and a wrong one truncates the body on the
+    # wire. The blob store cannot size a stream, so the response is
+    # chunked instead — same trade-off as ``GET /workspace/files``.
     return StreamingResponse(
         content,
         media_type=media_type,
