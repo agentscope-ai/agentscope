@@ -51,7 +51,7 @@ from ..storage import (
 )
 from ...message import ToolCallState
 from ...state import ToolContext
-from ..storage._utils import _ensure_team_members
+from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
 
@@ -79,19 +79,14 @@ async def _build_team_detail(
             member paired with its session id when available).
     """
     leader_agent: AgentView | None = None
-    leader_session = await storage.get_session(user_id, "", team.session_id)
-    if leader_session is not None:
-        leader_record = await storage.get_agent(
-            user_id,
-            leader_session.agent_id,
+    leader = await _resolve_team_leader(storage, user_id, team)
+    if leader is not None:
+        leader_agent = AgentView.model_validate(
+            {
+                **leader.agent.model_dump(),
+                "editable": leader.agent.user_id == user_id,
+            },
         )
-        if leader_record is not None:
-            leader_agent = AgentView.model_validate(
-                {
-                    **leader_record.model_dump(),
-                    "editable": leader_record.user_id == user_id,
-                },
-            )
 
     members: list[TeamMemberView] = []
     for member in await _ensure_team_members(storage, user_id, team):

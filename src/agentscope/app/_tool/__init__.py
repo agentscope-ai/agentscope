@@ -4,12 +4,11 @@
 These tools differ from the workspace-provided builtins (Bash, Read,
 Task series, …) in two ways:
 
-1. **Construction depends on app-level resources** — they bind a
-   :class:`StorageBase` + :class:`MessageBus` reference plus the
-   request-scoped ``user_id`` / ``session_id`` / ``agent_id`` at agent
-   assembly time, and call storage / bus directly in their
-   ``__call__`` — except ``TeamDelete``, which delegates to
-   :class:`SessionService` for cascade deletion.
+1. **Construction depends on app-level resources** — they take one
+   :class:`TeamToolDeps` bundle (storage + bus + workspace manager
+   plus the request-scoped ids) at agent assembly time and call
+   storage / bus directly in their ``__call__`` — except
+   ``TeamDelete``, which delegates to :class:`SessionService`.
 2. **Visibility depends on the session's team role, not the agent's
    source field** — a session that is not in any team OR that is its
    team's leader gets the full leader-side toolset (``TeamCreate /
@@ -35,6 +34,7 @@ from ._agent_invite import AgentInvite
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
 from ._team_say import TeamSay
+from ._team_tool_base import TeamToolDeps
 
 __all__ = [
     "AgentCreate",
@@ -43,4 +43,5 @@ __all__ = [
     "TeamCreate",
     "TeamDelete",
     "TeamSay",
+    "TeamToolDeps",
 ]

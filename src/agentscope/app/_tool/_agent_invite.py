@@ -23,19 +23,17 @@ from typing import TYPE_CHECKING
 from pydantic import Field
 
 from ._constants import HANDLE_LEN
-from ._team_tool_base import _TeamToolBase
+from ._team_tool_base import TeamToolDeps, _TeamToolBase
 from .._bus_ops import deliver_to_inbox
 from ..storage import SessionConfig, TeamMember
-from ..storage._utils import _ensure_team_members
+from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 from ..._utils._common import _generate_id
 
 if TYPE_CHECKING:
-    from ..message_bus import MessageBus
-    from ..storage import AgentRecord, StorageBase
-    from ..workspace_manager import WorkspaceManagerBase
+    from ..storage import AgentRecord
 
 
 def _display_handle(agent_id: str) -> str:
@@ -161,42 +159,19 @@ class AgentInvite(_TeamToolBase):
 
     def __init__(
         self,
-        storage: "StorageBase",
-        message_bus: "MessageBus",
-        workspace_manager: "WorkspaceManagerBase",
-        user_id: str,
-        session_id: str,
-        agent_id: str,
+        deps: TeamToolDeps,
         invitable_pool: list["AgentRecord"],
     ) -> None:
-        """Bind request-scoped identifiers plus the invitable pool snapshot.
+        """Bind the shared dependencies plus the invitable pool snapshot.
 
         Args:
-            storage (`StorageBase`):
-                Application storage backend.
-            message_bus (`MessageBus`):
-                Application message bus.
-            workspace_manager (`WorkspaceManagerBase`):
-                Used to mint the workspace id for freshly-invited
-                agents (see :meth:`__call__`).
-            user_id (`str`):
-                The owner user id.
-            session_id (`str`):
-                The calling session id.
-            agent_id (`str`):
-                The calling agent id.
+            deps (`TeamToolDeps`):
+                The shared team-tool dependencies.
             invitable_pool (`list[AgentRecord]`):
                 Snapshot of currently-invitable agents. Must be
                 non-empty — the caller skips construction otherwise.
         """
-        super().__init__(
-            storage,
-            message_bus,
-            workspace_manager,
-            user_id,
-            session_id,
-            agent_id,
-        )
+        super().__init__(deps)
 
         self._pool_by_id: dict[str, "AgentRecord"] = {
             a.id: a for a in invitable_pool
@@ -264,30 +239,7 @@ class AgentInvite(_TeamToolBase):
                 return _error(resolve_err)
             assert invited is not None  # narrows for mypy
 
-            session = await self._storage.get_session(
-                self._user_id,
-                self._agent_id,
-                self._session_id,
-            )
-            if session is None or session.team_id is None:
-                return _error(
-                    "AgentInvite: this session is not in any team — "
-                    "call TeamCreate first.",
-                )
-            team = await self._storage.get_team(
-                self._user_id,
-                session.team_id,
-            )
-            if team is None:
-                return _error(
-                    f"AgentInvite: team {session.team_id} no longer "
-                    f"exists.",
-                )
-            if team.session_id != self._session_id:
-                return _error(
-                    "AgentInvite: only the team leader can invite "
-                    "members; this session is a worker.",
-                )
+            team = await self._require_leader_team()
 
             # Re-fetch fresh — the snapshot could be stale if the user
             # just toggled the invite off.
@@ -335,15 +287,14 @@ class AgentInvite(_TeamToolBase):
                     f"for team {team.id} is missing — team is in an "
                     f"inconsistent state.",
                 )
-            leader_agent = await self._storage.get_agent(
+            leader = await _resolve_team_leader(
+                self._storage,
                 self._user_id,
-                leader_session.agent_id,
+                team,
             )
-            leader_name = (
-                leader_agent.data.name
-                if leader_agent is not None
-                else leader_session.agent_id
-            )
+            # Fall back to the id so a missing leader agent record does
+            # not block the invite.
+            leader_name = leader.name if leader else leader_session.agent_id
 
             # Prefer the invited agent's own primary session for
             # workspace + chat-model reuse: it already has any MCP /

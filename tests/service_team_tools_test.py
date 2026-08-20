@@ -29,6 +29,7 @@ from agentscope.app._tool import (
     TeamCreate,
     TeamDelete,
     TeamSay,
+    TeamToolDeps,
 )
 from agentscope.app._types import SubAgentTemplate
 from agentscope.app.message_bus import RedisMessageBus
@@ -131,6 +132,17 @@ class _TeamToolsTestBase(IsolatedAsyncioTestCase):
         await self._stack.aclose()
         await self.fr.aclose()
 
+    def _deps(self, *, session_id: str, agent_id: str) -> TeamToolDeps:
+        """Build the shared team-tool dependency bundle for a caller."""
+        return TeamToolDeps(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+
 
 class TestTeamCreate(_TeamToolsTestBase):
     """``TeamCreate`` creates a TeamRecord and stamps ``team_id`` on
@@ -140,12 +152,10 @@ class TestTeamCreate(_TeamToolsTestBase):
         """A successful ``TeamCreate`` writes a TeamRecord and stamps the
         leader's session with the new ``team_id``."""
         tool = TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool(name="alpha", description="t-desc")
 
@@ -192,12 +202,10 @@ class TestTeamCreate(_TeamToolsTestBase):
     async def test_rejects_when_session_already_in_team(self) -> None:
         """A session can lead at most one team."""
         tool = TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         await tool(name="first", description="d")
         chunk = await tool(name="second", description="d")
@@ -229,12 +237,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         await super().asyncSetUp()
         # Pre-create a team so the leader has one to add to.
         await TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )(name="team", description="team desc")
 
     async def test_spawns_worker_and_delivers_initial_prompt(
@@ -243,12 +249,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         """A successful ``AgentCreate`` adds the worker agent + session to
         the team and delivers the initial prompt via inbox + wakeup."""
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool(
             name="worker",
@@ -347,12 +351,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         """Run ``AgentCreate`` with the given template + leader state
         and return the worker session's :class:`PermissionContext`."""
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             sub_agent_templates={template.type: template},
         )
         chunk = await tool(
@@ -579,12 +581,10 @@ class TestAgentCreate(_TeamToolsTestBase):
             config=SessionConfig(workspace_id="ws2"),
         )
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=loner_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=loner_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool(
             name="worker",
@@ -613,12 +613,10 @@ class TestAgentCreate(_TeamToolsTestBase):
     async def test_rejects_unknown_subagent_type(self) -> None:
         """An unrecognised ``subagent_type`` returns an error chunk."""
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool(
             name="w",
@@ -649,12 +647,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         """Two ``AgentCreate`` calls with the same ``name`` is rejected:
         TeamSay routes by name, so duplicates would be ambiguous."""
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         first = await tool(
             name="worker",
@@ -684,12 +680,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         """A worker name that matches the leader's name is rejected —
         ``TeamSay(to=<leader name>)`` must remain unambiguous."""
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool(
             name=self.leader_agent.data.name,  # "leader"
@@ -726,12 +720,10 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )(name="team", description="team desc")
 
     async def test_schema_omits_subagent_type_when_no_custom_templates(
@@ -740,12 +732,10 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         """When only the built-in ``"default"`` template exists, the
         ``input_schema`` must NOT contain a ``subagent_type`` field."""
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         self.assertNotIn("subagent_type", tool.input_schema["properties"])
 
@@ -756,12 +746,10 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         in the schema with the correct enum values."""
         templates = {"explorer": self._explorer_template}
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             sub_agent_templates=templates,
         )
         self.assertIn("subagent_type", tool.input_schema["properties"])
@@ -774,12 +762,10 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         only custom templates are provided."""
         templates = {"explorer": self._explorer_template}
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             sub_agent_templates=templates,
         )
         self.assertIn("default", tool._sub_agent_templates)
@@ -793,12 +779,10 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         system prompt (not the default one)."""
         templates = {"explorer": self._explorer_template}
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             sub_agent_templates=templates,
         )
         chunk = await tool(
@@ -830,12 +814,10 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         config objects — mutations must not leak across agents."""
         templates = {"explorer": self._explorer_template}
         tool = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             sub_agent_templates=templates,
         )
         await tool(
@@ -882,21 +864,17 @@ class TestTeamSay(_TeamToolsTestBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )(name="team", description="team desc")
         # Add 2 workers.
         agent_create = AgentCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         await agent_create(
             name="w1",
@@ -930,12 +908,10 @@ class TestTeamSay(_TeamToolsTestBase):
         """``to=<member name>`` delivers a HintBlock + wakeup to that worker
         only; other team members see nothing."""
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             role="leader",
         )
         target_aid = self.worker_ids[0]
@@ -1003,12 +979,10 @@ class TestTeamSay(_TeamToolsTestBase):
         """``to=None`` broadcasts to everyone in the team except the
         sender."""
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             role="leader",
         )
         chunk = await tool(content="all hands", to=None)
@@ -1056,12 +1030,10 @@ class TestTeamSay(_TeamToolsTestBase):
             config=SessionConfig(workspace_id="ws-lone"),
         )
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=loner_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=loner_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             role="leader",
         )
         chunk = await tool(content="hi", to=None)
@@ -1088,12 +1060,10 @@ class TestTeamSay(_TeamToolsTestBase):
         """A ``to=`` that doesn't resolve to a team member name returns
         an error chunk."""
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             role="leader",
         )
         chunk = await tool(content="hi", to="ghost-name-not-in-team")
@@ -1120,12 +1090,10 @@ class TestTeamSay(_TeamToolsTestBase):
         """``to=<own name>`` is rejected — talk to yourself in
         reasoning, not via TeamSay."""
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             role="leader",
         )
         chunk = await tool(content="hi", to=self.leader_agent.data.name)
@@ -1157,12 +1125,7 @@ class TestTeamSay(_TeamToolsTestBase):
         worker_sid = self.worker_sessions[worker_aid]
 
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=worker_sid,
-            agent_id=worker_aid,
+            self._deps(session_id=worker_sid, agent_id=worker_aid),
             role="worker",
         )
         chunk = await tool(
@@ -1202,24 +1165,20 @@ class TestTeamDelete(_TeamToolsTestBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )(name="team", description="d")
 
     async def test_dissolves_team_from_leader(self) -> None:
         """``TeamDelete`` removes the team and clears the leader's
         ``team_id``."""
         tool = TeamDelete(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool()
         self.assertDictEqual(
@@ -1257,12 +1216,10 @@ class TestTeamDelete(_TeamToolsTestBase):
             config=SessionConfig(workspace_id="ws-lone"),
         )
         tool = TeamDelete(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=loner_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=loner_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )
         chunk = await tool()
         self.assertDictEqual(
@@ -1346,12 +1303,10 @@ class _AgentInviteTestBase(_TeamToolsTestBase):
         await super().asyncSetUp()
         # Leader creates a team.
         await TeamCreate(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )(name="team", description="d")
 
         # A pre-existing invitable user-owned agent.
@@ -1390,12 +1345,10 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         the initial prompt via inbox + wakeup."""
         pool = [self.monday_agent]
         tool = AgentInvite(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             invitable_pool=pool,
         )
         target = f"Monday@{self.monday_agent.id[:8]}"
@@ -1491,12 +1444,10 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
     def _tool(self, pool: list | None = None) -> AgentInvite:
         """Build an :class:`AgentInvite` bound to the leader session."""
         return AgentInvite(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             invitable_pool=pool or [self.monday_agent],
         )
 
@@ -1536,12 +1487,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
             config=SessionConfig(workspace_id="ws-lone"),
         )
         tool = AgentInvite(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=loner.id,
-            agent_id=self.leader_agent.id,
+            self._deps(session_id=loner.id, agent_id=self.leader_agent.id),
             invitable_pool=[self.monday_agent],
         )
         chunk = await tool(
@@ -1572,12 +1518,10 @@ class TestTeamSayInvitedRouting(_AgentInviteTestBase):
         await super().asyncSetUp()
         # Borrow Monday.
         await AgentInvite(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             invitable_pool=[self.monday_agent],
         )(target=f"Monday@{self.monday_agent.id[:8]}", prompt="join")
 
@@ -1600,12 +1544,10 @@ class TestTeamSayInvitedRouting(_AgentInviteTestBase):
         borrowed session — not Monday's primary session."""
         display = f"Monday@{self.monday_agent.id[:8]}"
         tool = TeamSay(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             role="leader",
         )
         chunk = await tool(content="hey", to=display)
@@ -1632,12 +1574,10 @@ class TestTeamDeletePreservesInvited(_AgentInviteTestBase):
         and primary session survive; only the team-scoped borrowed
         session is removed."""
         await AgentInvite(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             invitable_pool=[self.monday_agent],
         )(target=f"Monday@{self.monday_agent.id[:8]}", prompt="join")
 
@@ -1652,12 +1592,10 @@ class TestTeamDeletePreservesInvited(_AgentInviteTestBase):
         )
 
         await TeamDelete(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
         )()
 
         # Monday's AgentRecord survives.
@@ -1694,12 +1632,10 @@ class TestDeleteInvitedAgentReverseCascade(_AgentInviteTestBase):
         from agentscope.app._service import SessionService
 
         await AgentInvite(
-            storage=self.storage,
-            message_bus=self.bus,
-            workspace_manager=self.workspace_manager,
-            user_id=self.user_id,
-            session_id=self.leader_session.id,
-            agent_id=self.leader_agent.id,
+            self._deps(
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            ),
             invitable_pool=[self.monday_agent],
         )(target=f"Monday@{self.monday_agent.id[:8]}", prompt="join")
 
@@ -1783,3 +1719,53 @@ class TestEnsureTeamMembersMigration(_TeamToolsTestBase):
         # path.
         stored = await self.storage.get_team(self.user_id, team.id)
         self.assertEqual(len(stored.data.members), 1)
+
+
+class TestResolveTeamLeader(_TeamToolsTestBase):
+    """``_resolve_team_leader`` reads the leader and backfills its id."""
+
+    async def test_legacy_team_backfills_leader_agent_id(self) -> None:
+        """A record without ``leader_agent_id`` resolves via the leader
+        session, then persists the id so later reads skip that hop."""
+        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = TeamRecord(
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            data=TeamData(name="legacy", description="d"),
+        )
+        await self.storage.upsert_team(self.user_id, team)
+
+        leader = await _resolve_team_leader(self.storage, self.user_id, team)
+        persisted = await self.storage.get_team(self.user_id, team.id)
+        self.assertDictEqual(
+            {
+                "session_id": leader.session_id,
+                "agent_id": leader.agent.id,
+                "name": leader.name,
+                "persisted_leader_agent_id": persisted.leader_agent_id,
+            },
+            {
+                "session_id": self.leader_session.id,
+                "agent_id": self.leader_agent.id,
+                "name": self.leader_agent.data.name,
+                "persisted_leader_agent_id": self.leader_agent.id,
+            },
+        )
+
+    async def test_missing_leader_agent_resolves_to_none(self) -> None:
+        """A team pointing at a deleted leader agent yields ``None``."""
+        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = TeamRecord(
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            leader_agent_id="agent-gone",
+            data=TeamData(name="broken", description="d"),
+        )
+        await self.storage.upsert_team(self.user_id, team)
+        self.assertIsNone(
+            await _resolve_team_leader(self.storage, self.user_id, team),
+        )

@@ -30,6 +30,7 @@ from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..storage import StorageBase, AgentRecord, SessionRecord, SessionSource
+from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
@@ -73,15 +74,24 @@ if TYPE_CHECKING:
     from ..channel import ChannelLifecycleDispatcher
 
 
-@dataclass
-class _TeamContext:
-    """Team identity resolved once per chat run; ``leader_*`` fields are
-    set for workers only, and stay ``None`` when the leader is gone."""
+@dataclass(frozen=True)
+class _LeaderContext:
+    """This session leads its team."""
 
-    role: Literal["leader", "worker"]
-    leader_session_id: str | None = None
-    leader_agent_id: str | None = None
-    leader_name: str | None = None
+    role: Literal["leader"] = "leader"
+
+
+@dataclass(frozen=True)
+class _WorkerContext:
+    """This session is a worker; its leader is fully resolved."""
+
+    leader_session_id: str
+    leader_agent_id: str
+    leader_name: str
+    role: Literal["worker"] = "worker"
+
+
+_TeamContext = _LeaderContext | _WorkerContext
 
 
 class ChatService:
@@ -610,6 +620,8 @@ optional):
                         session_record.team_id,
                     )
                     if team is None:
+                        # Dissolved concurrently, or a stale team_id:
+                        # nothing to be a member of, so run teamless.
                         logger.warning(
                             "Session %r points at team %r which no longer "
                             "exists; running teamless.",
@@ -617,33 +629,29 @@ optional):
                             session_record.team_id,
                         )
                     elif team.session_id == session_record.id:
-                        team_ctx = _TeamContext(role="leader")
+                        team_ctx = _LeaderContext()
                     else:
-                        team_ctx = _TeamContext(role="worker")
-                        leader_session = await self._storage.get_session(
+                        leader = await _resolve_team_leader(
+                            self._storage,
                             user_id,
-                            "",
-                            team.session_id,
+                            team,
                         )
-                        leader_agent = (
-                            await self._storage.get_agent(
-                                user_id,
-                                leader_session.agent_id,
+                        if leader is None:
+                            # Unreachable while the data is consistent:
+                            # deleting a leader dissolves the team.
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    f"Team {team.id!r} has no resolvable "
+                                    f"leader; worker session "
+                                    f"{session_id!r} cannot run."
+                                ),
                             )
-                            if leader_session is not None
-                            else None
+                        team_ctx = _WorkerContext(
+                            leader_session_id=leader.session_id,
+                            leader_agent_id=leader.agent.id,
+                            leader_name=leader.name,
                         )
-                        if leader_agent is None:
-                            logger.warning(
-                                "Worker session %r cannot resolve its team "
-                                "leader; running without the team-loop "
-                                "middleware.",
-                                session_id,
-                            )
-                        else:
-                            team_ctx.leader_session_id = team.session_id
-                            team_ctx.leader_agent_id = leader_agent.id
-                            team_ctx.leader_name = leader_agent.data.name
 
                 channel = (
                     self._channel_dispatcher.get_local_channel(
@@ -680,11 +688,7 @@ optional):
                     ),
                 ]
                 # Equip the member middleware for loop control
-                if (
-                    team_ctx is not None
-                    and team_ctx.role == "worker"
-                    and team_ctx.leader_name is not None
-                ):
+                if isinstance(team_ctx, _WorkerContext):
                     middlewares.append(
                         TeamMemberLoopMiddleware(
                             leader_name=team_ctx.leader_name,
