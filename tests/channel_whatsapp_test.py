@@ -4,10 +4,11 @@
 import asyncio
 import base64
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from pydantic import ValidationError
+from utils import AnyString
 
 from agentscope.app.channel._base import ChannelConfirmationResultEvent
 from agentscope.app.channel import WhatsAppChannel
@@ -17,7 +18,7 @@ from agentscope.app.channel._whatsapp._tools import (
     ListChats,
     SendMessage,
 )
-from agentscope.message import Base64Source, DataBlock, TextBlock
+from agentscope.message import Base64Source, DataBlock
 
 
 def _channel() -> WhatsAppChannel:
@@ -31,6 +32,45 @@ def _channel() -> WhatsAppChannel:
         ),
         WhatsAppChannel.Config(),
     )
+
+
+def _text_block(text: str) -> dict:
+    """Expected serialized text block with nondeterministic fields."""
+    return {
+        "id": AnyString(),
+        "text": text,
+        "type": "text",
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+
+def _event(
+    *,
+    user_id: str,
+    chat_id: str,
+    message_id: str,
+    content: list[dict],
+    user_name: str = "",
+    chat_name: str = "",
+    chat_type: str = "private",
+) -> dict:
+    """Expected serialized WhatsApp channel event."""
+    return {
+        "channel_id": "whatsapp-1",
+        "channel_user_id": user_id,
+        "channel_user_name": user_name,
+        "chat_id": chat_id,
+        "chat_name": chat_name,
+        "channel_message_id": message_id,
+        "content": content,
+        "metadata": {
+            "chat_type": chat_type,
+            "chat_name": chat_name,
+            "display_phone_number": "",
+        },
+        "received_at": AnyString(),
+    }
 
 
 def test_webhook_verification() -> None:
@@ -80,9 +120,15 @@ def test_webhook_normalizes_text_and_deduplicates() -> None:
         assert await channel.handle_webhook(payload) == 1
         assert await channel.handle_webhook(payload) == 0
         await asyncio.sleep(0)
-        assert len(received) == 1
-        assert received[0].message == "hello"
-        assert received[0].channel_user_name == "Alice"
+        assert [event.model_dump() for event in received] == [
+            _event(
+                user_id="8613800138000",
+                user_name="Alice",
+                chat_id="8613800138000",
+                message_id="wamid-1",
+                content=[_text_block("hello")],
+            ),
+        ]
         listener.cancel()
         try:
             await listener
@@ -139,9 +185,13 @@ def test_cloud_api_lists_groups_and_members() -> None:
             assert await channel.list_chat_members("group-1") == [
                 {"id": "8613800138000", "name": "Alice"},
             ]
-        assert getter.await_args_list[1].kwargs == {
-            "params": {"fields": "participants"},
-        }
+        assert getter.await_args_list == [
+            call(channel._url("groups"), params={"limit": 100}),
+            call(
+                channel._media_url("group-1"),
+                params={"fields": "participants"},
+            ),
+        ]
         assert await channel.chat_kind("group-1") == "group"
         assert await channel.chat_kind("8613800138000") == "private"
 
@@ -183,8 +233,15 @@ def test_webhook_supports_group_chat_context() -> None:
         }
         assert await channel.handle_webhook(payload) == 1
         await asyncio.sleep(0)
-        assert received[0].chat_id == "group-1"
-        assert received[0].metadata["chat_type"] == "group"
+        assert [event.model_dump() for event in received] == [
+            _event(
+                user_id="8613800138000",
+                chat_id="group-1",
+                message_id="wamid-group-1",
+                content=[_text_block("hello group")],
+                chat_type="group",
+            ),
+        ]
         assert await channel.chat_kind("group-1") == "group"
         assert await channel.list_bot_chats() == [
             {"chat_id": "group-1", "name": "group-1", "chat_type": "group"},
@@ -203,7 +260,6 @@ def test_webhook_uses_business_scoped_user_id_fallback() -> None:
 
     async def run() -> None:
         channel = _channel()
-        # pylint: disable=protected-access
         event = await channel._normalize_message(
             {
                 "id": "wamid-bsuid-1",
@@ -214,8 +270,12 @@ def test_webhook_uses_business_scoped_user_id_fallback() -> None:
             {},
         )
         assert event is not None
-        assert event.channel_user_id == "bsuid-1"
-        assert event.chat_id == "bsuid-1"
+        assert event.model_dump() == _event(
+            user_id="bsuid-1",
+            chat_id="bsuid-1",
+            message_id="wamid-bsuid-1",
+            content=[_text_block("hello")],
+        )
 
     asyncio.run(run())
 
@@ -351,7 +411,7 @@ def test_duplicate_media_is_filtered_before_download() -> None:
         with patch.object(channel, "_download_media", new=download):
             assert await channel.handle_webhook(payload) == 1
             assert await channel.handle_webhook(payload) == 0
-        download.assert_awaited_once()
+        download.assert_awaited_once_with("media-1", "image/png", "image")
 
     asyncio.run(run())
 
@@ -396,7 +456,10 @@ def test_failed_media_download_can_be_retried() -> None:
             assert await channel.handle_webhook(payload) == 0
             assert await channel.handle_webhook(payload) == 1
             assert await channel.handle_webhook(payload) == 0
-        assert download.await_count == 2
+        assert download.await_args_list == [
+            call("media-retry", "image/png", "image"),
+            call("media-retry", "image/png", "image"),
+        ]
 
     asyncio.run(run())
 
@@ -460,7 +523,6 @@ def test_confirmation_reply_is_normalized() -> None:
             .decode()
             .rstrip("=")
         )
-        # pylint: disable=protected-access
         event = await channel._normalize_message(
             {
                 "id": "wamid-confirm-1",
@@ -475,10 +537,16 @@ def test_confirmation_reply_is_normalized() -> None:
             {},
         )
         assert isinstance(event, ChannelConfirmationResultEvent)
-        assert event.tool_call_id == "call-1"
-        assert event.agent_id == "agent-1"
-        assert event.session_id == "session-1"
-        assert event.approved
+        assert event.model_dump() == {
+            "channel_id": "whatsapp-1",
+            "chat_id": "8613800138000",
+            "channel_user_id": "8613800138000",
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "tool_call_id": "call-1",
+            "approved": True,
+            "actor": "8613800138000",
+        }
 
     asyncio.run(run())
 
@@ -488,9 +556,10 @@ def test_media_caption_is_preserved_with_downloaded_media() -> None:
 
     async def run() -> None:
         channel = _channel()
+        encoded = base64.b64encode(b"image").decode()
         media = DataBlock(
             source=Base64Source(
-                data=base64.b64encode(b"image").decode(),
+                data=encoded,
                 media_type="image/png",
             ),
             name="image.png",
@@ -512,9 +581,26 @@ def test_media_caption_is_preserved_with_downloaded_media() -> None:
         ):
             event = await channel._normalize_message(message, {})
         assert event is not None
-        assert isinstance(event.content[0], TextBlock)
-        assert event.content[0].text == "Please inspect this label"
-        assert event.content[1] == media
+        assert event.model_dump() == _event(
+            user_id="8613800138000",
+            chat_id="8613800138000",
+            message_id="wamid-caption-1",
+            content=[
+                _text_block("Please inspect this label"),
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": encoded,
+                        "media_type": "image/png",
+                    },
+                    "name": "image.png",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
 
     asyncio.run(run())
 

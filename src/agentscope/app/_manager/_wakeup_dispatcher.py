@@ -358,6 +358,7 @@ class WakeupDispatcher:
                             session_id,
                         )
                         return
+
                     await self._chat_service.run(
                         user_id=user_id,
                         session_id=session_id,

@@ -3,6 +3,7 @@
 """Unit tests for RedisStorage using fakeredis."""
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, call
 
 import fakeredis.aioredis
 
@@ -450,6 +451,46 @@ class TestMessage(IsolatedAsyncioTestCase):
             "no-such-id",
         )
         self.assertIsNone(result)
+
+    async def test_get_message_scans_history_in_batches(self) -> None:
+        """Missing message lookup uses one Redis request per batch."""
+        messages = [
+            UserMsg(name="alice", content=f"msg-{index}")
+            for index in range(250)
+        ]
+        for message in messages:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                message,
+            )
+        key = self.storage._message_key(self.user_id, self.session_id)
+        original_lrange = self.storage._client.lrange
+
+        async def tracked_lrange(
+            list_key: str,
+            start: int,
+            end: int,
+        ) -> list[str]:
+            return await original_lrange(list_key, start, end)
+
+        self.storage._client.lrange = AsyncMock(side_effect=tracked_lrange)
+
+        result = await self.storage.get_message(
+            self.user_id,
+            self.session_id,
+            "no-such-id",
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(
+            self.storage._client.lrange.await_args_list,
+            [
+                call(key, 150, 249),
+                call(key, 50, 149),
+                call(key, 0, 49),
+            ],
+        )
 
     async def test_list_messages_empty_session(self) -> None:
         """list_messages returns an empty list for a session with no

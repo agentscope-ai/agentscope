@@ -6,9 +6,10 @@ import hashlib
 import hmac
 import json
 from typing import AsyncIterator, Callable
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from utils import AnyString
 
 fastapi = pytest.importorskip("fastapi")
 FastAPI = fastapi.FastAPI
@@ -83,6 +84,60 @@ def _signed_body(payload: dict) -> tuple[bytes, str]:
     return raw, f"sha256={digest}"
 
 
+def _text_block(text: str) -> dict:
+    """Expected serialized TextBlock with nondeterministic fields."""
+    return {
+        "id": AnyString(),
+        "text": text,
+        "type": "text",
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+
+def _user_input(message_id: str, name: str, text: str) -> dict:
+    """Expected serialized channel UserMsg."""
+    return {
+        "id": message_id,
+        "name": name,
+        "content": [_text_block(text)],
+        "role": "user",
+        "metadata": {},
+        "created_at": AnyString(),
+        "finished_at": AnyString(),
+        "finished_reason": None,
+        "structured_output": None,
+        "error": None,
+        "usage": None,
+    }
+
+
+def _channel_event(
+    *,
+    message_id: str,
+    text: str,
+    chat_id: str,
+    chat_name: str = "",
+    chat_type: str = "private",
+) -> dict:
+    """Expected serialized WhatsApp ChannelEvent."""
+    return {
+        "channel_id": "whatsapp-1",
+        "channel_user_id": "8613800138000",
+        "channel_user_name": "",
+        "chat_id": chat_id,
+        "chat_name": chat_name,
+        "channel_message_id": message_id,
+        "content": [_text_block(text)],
+        "metadata": {
+            "chat_type": chat_type,
+            "chat_name": chat_name,
+            "display_phone_number": "",
+        },
+        "received_at": AnyString(),
+    }
+
+
 def test_webhook_persists_without_a_local_channel() -> None:
     """Ingress persists work before returning and never needs a dispatcher."""
     app = FastAPI()
@@ -95,29 +150,22 @@ def test_webhook_persists_without_a_local_channel() -> None:
     app.state.channel_type_registry = ChannelTypeRegistry([WhatsAppChannel])
     app.include_router(create_whatsapp_webhook_router())
 
+    message = {
+        "id": "wamid-1",
+        "from": "8613800138000",
+        "type": "text",
+        "text": {"body": "hello"},
+    }
+    change = {
+        "field": "messages",
+        "value": {
+            "metadata": {"phone_number_id": "phone-id"},
+            "messages": [message],
+        },
+    }
     payload = {
         "object": "whatsapp_business_account",
-        "entry": [
-            {
-                "id": "account-1",
-                "changes": [
-                    {
-                        "field": "messages",
-                        "value": {
-                            "metadata": {"phone_number_id": "phone-id"},
-                            "messages": [
-                                {
-                                    "id": "wamid-1",
-                                    "from": "8613800138000",
-                                    "type": "text",
-                                    "text": {"body": "hello"},
-                                },
-                            ],
-                        },
-                    },
-                ],
-            },
-        ],
+        "entry": [{"id": "account-1", "changes": [change]}],
     }
     raw, signature = _signed_body(payload)
 
@@ -133,11 +181,14 @@ def test_webhook_persists_without_a_local_channel() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "accepted": 1}
-    app.state.message_bus.log_append.assert_awaited_once()
-    persisted = app.state.message_bus.log_append.await_args.args
-    assert persisted[0] == MessageBusKeys.channel_webhook_queue(record.id)
-    assert persisted[1]["channel_id"] == record.id
-    assert persisted[1]["message_id"] == "wamid-1"
+    app.state.message_bus.log_append.assert_awaited_once_with(
+        MessageBusKeys.channel_webhook_queue(record.id),
+        {
+            "channel_id": record.id,
+            "message_id": "wamid-1",
+            "payload": payload,
+        },
+    )
     app.state.message_bus.publish.assert_awaited_once_with(
         MessageBusKeys.channel_webhook_signal(),
         {"accepted": 1, "channel_ids": [record.id]},
@@ -308,12 +359,17 @@ def test_failed_durable_job_retries_without_another_signal() -> None:
         ):
             await dispatcher._run_webhook_drain("whatsapp-1")
 
-        assert process.await_count == 2
-        cursor = await bus.registry_get(
-            dispatcher._webhook_cursor_namespace("whatsapp-1"),
-            "entry_id",
+        assert process.await_args_list == [
+            call({"message_id": "retry-me"}),
+            call({"message_id": "retry-me"}),
+        ]
+        assert (
+            await bus.registry_get(
+                dispatcher._webhook_cursor_namespace("whatsapp-1"),
+                "entry_id",
+            )
+            == entry_id
         )
-        assert cursor == entry_id
         assert await bus.log_read(key, since=entry_id) == []
 
     asyncio.run(run())
@@ -353,17 +409,23 @@ def test_poison_webhook_is_dead_lettered_and_does_not_block_later_work() -> (
         ):
             await dispatcher._run_webhook_drain("whatsapp-1")
 
-        assert [
-            item.args[0]["message_id"] for item in mocked.await_args_list
-        ] == ["poison", "poison", "good"]
-        dead = await bus.log_read(
+        assert mocked.await_args_list == [
+            call(poison),
+            call(poison),
+            call(good),
+        ]
+        assert await bus.log_read(
             dispatcher._webhook_dead_letter_log("whatsapp-1"),
-        )
-        assert dead[0][1] == {
-            "source_entry_id": poison_id,
-            "attempts": 2,
-            "job": poison,
-        }
+        ) == [
+            (
+                AnyString(),
+                {
+                    "source_entry_id": poison_id,
+                    "attempts": 2,
+                    "job": poison,
+                },
+            ),
+        ]
         assert (
             await bus.registry_get(
                 dispatcher._webhook_cursor_namespace("whatsapp-1"),
@@ -382,8 +444,10 @@ def test_inbound_drain_preserves_log_order() -> None:
         bus = InMemoryMessageBus()
         dispatcher = _dispatcher(bus)
         key = MessageBusKeys.channel_webhook_queue("whatsapp-1")
-        await bus.log_append(key, {"message_id": "first"})
-        second_id = await bus.log_append(key, {"message_id": "second"})
+        first = {"message_id": "first"}
+        second = {"message_id": "second"}
+        await bus.log_append(key, first)
+        second_id = await bus.log_append(key, second)
 
         with patch.object(
             dispatcher,
@@ -392,9 +456,7 @@ def test_inbound_drain_preserves_log_order() -> None:
         ) as process:
             await dispatcher._drain_webhook_queue("whatsapp-1")
 
-        assert [
-            item.args[0]["message_id"] for item in process.await_args_list
-        ] == ["first", "second"]
+        assert process.await_args_list == [call(first), call(second)]
         assert (
             await bus.registry_get(
                 dispatcher._webhook_cursor_namespace("whatsapp-1"),
@@ -431,7 +493,10 @@ def test_webhook_drain_tasks_are_coalesced_per_channel() -> None:
             release.set()
             await first
 
-        assert mocked.await_count == 2
+        assert mocked.await_args_list == [
+            call("whatsapp-1"),
+            call("whatsapp-1"),
+        ]
 
     asyncio.run(run())
 
@@ -472,8 +537,20 @@ def test_gateway_persists_chat_metadata_before_stable_run_trigger() -> None:
         await gateway._handle_message(event)
 
         assert order == ["metadata", "trigger"]
-        trigger = bus.queue_push.await_args.args[1]
-        assert trigger["input"]["id"] == "channel:whatsapp-1:wamid-1"
+        assert bus.queue_push.await_args.args == (
+            MessageBusKeys.wakeup_queue(),
+            {
+                "user_id": "alice",
+                "session_id": AnyString(),
+                "agent_id": "agent-1",
+                "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                "input": _user_input(
+                    "channel:whatsapp-1:wamid-1",
+                    "8613800138000",
+                    "hello",
+                ),
+            },
+        )
         assert bus.registry_set.await_args.args == (
             MessageBusKeys.channel_seen_chats(record.id),
             "group-1",
@@ -496,7 +573,6 @@ def test_replayed_run_trigger_skips_an_already_persisted_user_message() -> (
         bus = InMemoryMessageBus()
         storage = AsyncMock()
         storage.get_session.return_value = object()
-        storage.get_message.return_value = object()
         chat_service = AsyncMock()
         registry = ChatRunRegistry()
         dispatcher = WakeupDispatcher(
@@ -510,6 +586,7 @@ def test_replayed_run_trigger_skips_an_already_persisted_user_message() -> (
             name="8613800138000",
             content=[TextBlock(text="hello")],
         )
+        storage.get_message.return_value = msg
 
         await dispatcher._dispatch_one(
             user_id="alice",
@@ -522,11 +599,13 @@ def test_replayed_run_trigger_skips_an_already_persisted_user_message() -> (
         assert task is not None
         await task
 
-        storage.get_message.assert_awaited_once_with(
-            "alice",
-            "session-1",
-            msg.id,
-        )
+        assert storage.get_message.await_args_list == [
+            call(
+                "alice",
+                "session-1",
+                msg.id,
+            ),
+        ]
         chat_service.run.assert_not_awaited()
 
     asyncio.run(run())
@@ -552,15 +631,27 @@ def test_replayed_gateway_trigger_runs_one_user_turn_after_persistence() -> (
             content=[TextBlock(text="hello")],
         )
 
-        # The outer webhook dedupe marker is written only after this path
-        # returns. Two deliveries can therefore enqueue the same trigger.
         assert await gateway.process_with_result(event)
         assert await gateway.process_with_result(event)
         entries = await bus.queue_drain(
             MessageBusKeys.wakeup_queue(),
             max_count=10,
         )
-        assert len(entries) == 2
+        expected_payload = {
+            "user_id": "alice",
+            "session_id": AnyString(),
+            "agent_id": "agent-1",
+            "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+            "input": _user_input(
+                "channel:whatsapp-1:wamid-replayed",
+                "8613800138000",
+                "hello",
+            ),
+        }
+        assert entries == [
+            (AnyString(), expected_payload),
+            (AnyString(), expected_payload),
+        ]
 
         persisted_ids: set[str] = set()
         chat_service = AsyncMock()
@@ -607,8 +698,33 @@ def test_replayed_gateway_trigger_runs_one_user_turn_after_persistence() -> (
             if task is not None:
                 await task
 
-        assert chat_service.run.await_count == 1
         assert persisted_ids == {"channel:whatsapp-1:wamid-replayed"}
+        assert storage.get_message.await_args_list == [
+            call(
+                "alice",
+                entries[0][1]["session_id"],
+                "channel:whatsapp-1:wamid-replayed",
+            ),
+            call(
+                "alice",
+                entries[1][1]["session_id"],
+                "channel:whatsapp-1:wamid-replayed",
+            ),
+        ]
+        run_kwargs = chat_service.run.await_args.kwargs.copy()
+        run_kwargs["input_msg"] = run_kwargs["input_msg"].model_dump(
+            mode="json",
+        )
+        assert run_kwargs == {
+            "user_id": "alice",
+            "session_id": entries[0][1]["session_id"],
+            "agent_id": "agent-1",
+            "input_msg": _user_input(
+                "channel:whatsapp-1:wamid-replayed",
+                "8613800138000",
+                "hello",
+            ),
+        }
 
     asyncio.run(run())
 
@@ -638,8 +754,13 @@ def test_shared_chat_metadata_hydrates_another_dispatcher_instance() -> None:
         await dispatcher.hydrate_channel(record.id)
 
         assert await channel.chat_name("group-1") == "Project"
-        chats = await channel.list_bot_chats()
-        assert any(chat["chat_id"] == "group-1" for chat in chats)
+        assert await channel.list_bot_chats() == [
+            {
+                "chat_id": "group-1",
+                "name": "Project",
+                "chat_type": "group",
+            },
+        ]
 
     asyncio.run(run())
 
@@ -681,7 +802,7 @@ def test_inmemory_registry_reclaims_unvisited_expired_namespaces() -> None:
             clock.return_value = 102.0
             await bus.registry_set("fresh", "value", "1")
 
-        assert set(bus._registries) == {"fresh"}
+        assert bus._registries == {"fresh": {"value": "1"}}
         assert not bus._registry_expiries
 
     asyncio.run(run())
@@ -713,7 +834,13 @@ def test_whatsapp_group_name_populates_channel_event() -> None:
             {},
         )
         assert isinstance(event, ChannelEvent)
-        assert event.chat_name == "Project"
+        assert event.model_dump() == _channel_event(
+            message_id="wamid-group",
+            text="hello",
+            chat_id="group-1",
+            chat_name="Project",
+            chat_type="group",
+        )
 
     asyncio.run(run())
 

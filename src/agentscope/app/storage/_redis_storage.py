@@ -1448,14 +1448,11 @@ class RedisStorage(StorageBase):
     ) -> Msg | None:
         """Fetch a single message by id from the session's message list."""
         key = self._message_key(user_id, session_id)
-        length = await self._client.llen(key)
-        for i in range(length - 1, -1, -1):
-            raw = await self._client.lindex(key, i)
-            if raw:
-                msg = Msg.model_validate_json(raw)
-                if msg.id == message_id:
-                    return msg
-        return None
+        index = await self._find_message_index(key, message_id)
+        if index is None:
+            return None
+        raw = await self._client.lindex(key, index)
+        return Msg.model_validate_json(raw) if raw else None
 
     async def _find_message_index(
         self,
