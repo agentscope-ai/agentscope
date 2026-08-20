@@ -16,7 +16,7 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.middleware import AgenticMemoryMiddleware, MiddlewareBase
 from agentscope.permission import PermissionContext, PermissionMode
-from agentscope.rag import QdrantStore
+from agentscope.rag import ApproxTokenChunker, QdrantStore
 from agentscope.workspace import WorkspaceBase
 
 default_mcps = [
@@ -94,6 +94,9 @@ app = create_app(
         storage=storage,
         vector_store=vector_store,
     ),
+    # Chunker classes users can pick from when creating a knowledge base;
+    # the chosen type and parameters are pinned on the knowledge base.
+    knowledge_chunkers=[ApproxTokenChunker],
     # Resource hubs the UI browses under /hub. Neither needs credentials
     # of its own — an individual MCP card declares whatever key it wants
     # from the user in its ``inputs_schema``. Passing a ClawHub token

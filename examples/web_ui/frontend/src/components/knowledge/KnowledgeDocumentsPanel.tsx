@@ -75,7 +75,7 @@ function StatusBadge({ phase }: { phase: UploadPhase }) {
 	return (
 		<span
 			className={cn(
-				'inline-flex items-center gap-x-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium',
+				'inline-flex shrink-0 items-center gap-x-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap',
 				tone,
 			)}
 		>

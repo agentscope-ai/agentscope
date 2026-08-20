@@ -32,12 +32,9 @@ from .message_bus import MessageBus
 from .storage import StorageBase
 from ..agent import Agent
 from ..credential import CredentialFactory, CredentialBase
-from ..rag import (
-    ApproxTokenChunker,
-    ChunkerBase,
-    ParserBase,
-    TextParser,
-)
+from ..rag import ApproxTokenChunker, ChunkerBase, ParserBase, TextParser
+
+from .._logging import logger
 from .._version import __version__
 
 
@@ -84,7 +81,7 @@ def create_app(
     workspace_manager: WorkspaceManagerBase,
     knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
     knowledge_parsers: list[ParserBase] | dict[str, ParserBase] | None = None,
-    knowledge_chunker: ChunkerBase | None = None,
+    knowledge_chunkers: list[Type[ChunkerBase]] | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
     mcp_hubs: list[MCPHubBase] | None = None,
@@ -101,6 +98,7 @@ def create_app(
     download_secret: str | None = None,
     title: str = "AgentScope",
     version: str = __version__,
+    **kwargs: Any,
 ) -> FastAPI:
     """Create and configure a FastAPI application.
 
@@ -164,9 +162,11 @@ def create_app(
             (one parser bound to multiple types, type aliases, ...).
             Defaults to ``[TextParser()]`` when
             ``knowledge_base_manager`` is set.
-        knowledge_chunker (`ChunkerBase | None`, optional):
-            The chunker shared across every knowledge base.  Defaults
-            to :class:`~agentscope.rag.ApproxTokenChunker()` when
+        knowledge_chunkers (`list[Type[ChunkerBase]] | None`, optional):
+            The chunker classes users can choose from when creating a
+            knowledge base.  The chunker type and parameters are pinned
+            on the knowledge base record and reconstructed by the index
+            worker.  Defaults to ``[ApproxTokenChunker]`` when
             ``knowledge_base_manager`` is set.
         blob_store (`BlobStoreBase | None`, optional):
             Backend storing uploaded document bytes between the
@@ -297,13 +297,44 @@ def create_app(
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is
     # ``None`` every KB endpoint is disabled, so leaving these as ``None``
     # avoids unused imports being eagerly constructed at app startup.
+    unknown_kwargs = set(kwargs) - {"knowledge_chunker"}
+    if unknown_kwargs:
+        logger.warning(
+            "Ignoring unknown create_app() arguments: %s",
+            sorted(unknown_kwargs),
+        )
+
     if knowledge_base_manager is not None:
         app.state.knowledge_parsers = (
             knowledge_parsers
             if knowledge_parsers is not None
             else [TextParser()]
         )
-        app.state.knowledge_chunker = knowledge_chunker or ApproxTokenChunker()
+        chunker_classes = list(
+            knowledge_chunkers
+            if knowledge_chunkers is not None
+            else [ApproxTokenChunker],
+        )
+        # Backward compatibility: the deprecated ``knowledge_chunker``
+        # instance is only used for its class.
+        if "knowledge_chunker" in kwargs:
+            logger.warning(
+                "The `knowledge_chunker` argument of create_app() is "
+                "deprecated, use `knowledge_chunkers` instead.",
+            )
+            legacy_cls = type(kwargs["knowledge_chunker"])
+            if legacy_cls not in chunker_classes:
+                chunker_classes.append(legacy_cls)
+        seen_chunker_types: dict[str, Type[ChunkerBase]] = {}
+        for cls in chunker_classes:
+            if cls.chunker_type in seen_chunker_types:
+                raise ValueError(
+                    f"Duplicate chunker_type {cls.chunker_type!r}: "
+                    f"{seen_chunker_types[cls.chunker_type].__name__} and "
+                    f"{cls.__name__}.",
+                )
+            seen_chunker_types[cls.chunker_type] = cls
+        app.state.knowledge_chunkers = chunker_classes
         app.state.blob_store = (
             blob_store
             if blob_store is not None
@@ -311,7 +342,7 @@ def create_app(
         )
     else:
         app.state.knowledge_parsers = knowledge_parsers
-        app.state.knowledge_chunker = knowledge_chunker
+        app.state.knowledge_chunkers = knowledge_chunkers
         app.state.blob_store = blob_store
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None

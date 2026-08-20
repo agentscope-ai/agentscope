@@ -518,290 +518,294 @@ optional):
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
-        per-step logic at one extra indentation level."""
+        per-step logic at one extra indentation level.
 
-        # Steps 1-6 assemble the run; step 7 performs it. A failure
-        # here has no reply to attach to, so one is synthesized —
-        # otherwise the client sees a stream that simply stops and is
-        # left saying "unknown error".
-        try:
-            # -----------------------------------------------------------------
-            # 1. Load records + resolve workspace ONCE here, reused below.
-            # Reject missing records up front with a clear error so the
-            # downstream assembly code can rely on non-None values.
-            #
-            # ``resolve_agent`` covers own agents (including team workers,
-            # which the owner runs directly) and cross-owner shared agents
-            # (viewer runs a shared user-source agent). It raises 404 when
-            # the agent is not visible to the caller.
-            # -----------------------------------------------------------------
+        The whole body runs under the distributed session lock: the mutable
+        session record must be loaded only after this run owns the lock,
+        otherwise a waiter can assemble an agent from a snapshot that the
+        preceding holder replaces before releasing the lock."""
+
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            # Steps 1-6 assemble the run; step 7 performs it. A failure
+            # here has no reply to attach to, so one is synthesized —
+            # otherwise the client sees a stream that simply stops and is
+            # left saying "unknown error".
             try:
-                agent_record = await self._access.resolve_agent(
+                # -------------------------------------------------------------
+                # 1. Load records + resolve workspace ONCE here, reused below.
+                # Reject missing records up front with a clear error so the
+                # downstream assembly code can rely on non-None values.
+                #
+                # ``resolve_agent`` covers own agents (including team workers,
+                # which the owner runs directly) and cross-owner shared agents
+                # (viewer runs a shared user-source agent). It raises 404 when
+                # the agent is not visible to the caller.
+                # -------------------------------------------------------------
+                try:
+                    agent_record = await self._access.resolve_agent(
+                        user_id,
+                        agent_id,
+                    )
+                except HTTPException as exc:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent {agent_id!r} not found.",
+                    ) from exc
+                session_record = await self._storage.get_session(
                     user_id,
                     agent_id,
+                    session_id,
                 )
-            except HTTPException as exc:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Agent {agent_id!r} not found.",
-                ) from exc
-            session_record = await self._storage.get_session(
-                user_id,
-                agent_id,
-                session_id,
-            )
-            if session_record is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"Session {session_id!r} not found for "
-                        f"agent {agent_id!r}."
-                    ),
-                )
-            workspace = await self._workspace_manager.get_workspace(
-                user_id,
-                agent_id,
-                session_id,
-                session_record.config.workspace_id,
-            )
-
-            # Add workspace working directory to the permission context
-            working_dirs = (
-                session_record.state.permission_context.working_directories
-            )
-            if workspace.workdir not in working_dirs:
-                working_dirs[workspace.workdir] = AdditionalWorkingDirectory(
-                    path=workspace.workdir,
-                    source="session",
-                )
-
-            # ----------------------------------------------------------------
-            # 2. Middlewares — framework-supplied first, then caller extras.
-            # Background-tool completions deliver their results via
-            # ``message_bus.inbox_push + enqueue_wakeup``, so the dispatcher
-            # (any process) wakes an idle session — no in-process retrigger
-            # plumbing is needed here.
-            # -----------------------------------------------------------------
-            middlewares: list = [
-                InboxMiddleware(self._message_bus),
-                StateChangeMiddleware(
-                    message_bus=self._message_bus,
-                    session_id=session_id,
-                ),
-                ToolOffloadMiddleware(
-                    bg_manager=self._background_task_manager,
-                    message_bus=self._message_bus,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                ),
-            ]
-            if self._extra_agent_middlewares is not None:
-                factory_args: tuple = (user_id, agent_id, session_id)
-                if self._middlewares_take_workspace:
-                    factory_args += (workspace,)
-                middlewares.extend(
-                    await self._extra_agent_middlewares(*factory_args),
-                )
-
-            # ----------------------------------------------------------------
-            # 2b. TTS middleware — inject when the session has a TTS config.
-            # -----------------------------------------------------------------
-            tts_cfg = session_record.config.tts_model_config
-            if tts_cfg is not None:
-                tts_model = await get_tts_model(
+                if session_record is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"Session {session_id!r} not found for "
+                            f"agent {agent_id!r}."
+                        ),
+                    )
+                workspace = await self._workspace_manager.get_workspace(
                     user_id,
-                    tts_cfg,
-                    self._access,
+                    agent_id,
+                    session_id,
+                    session_record.config.workspace_id,
                 )
-                middlewares.append(TTSMiddleware(tts_model))
 
-            # ----------------------------------------------------------------
-            # 2c. Knowledge-base middleware — inject when the session has KBs
-            # attached.  Each KB resolves to its own
-            # :class:`KnowledgeBase` handle
-            # (own embedding model + vector store), so the middleware can
-            # retrieve across heterogeneous KBs in one fan-out.
-            #
-            # Each KB may be either owned by the caller or shared to them
-            # via the resource access policy. We resolve the owner through
-            # ``resolve_knowledge_base`` first and hand the KB manager the
-            # true owner id — its own storage lookups stay owner-scoped
-            # and unaware of sharing.
-            # -----------------------------------------------------------------
-            kb_cfg = session_record.config.knowledge_config
-            if (
-                kb_cfg is not None
-                and kb_cfg.knowledge_base_ids
-                and self._knowledge_base_manager is not None
-            ):
-                knowledges: list[KnowledgeBase] = []
-                for kb_id in kb_cfg.knowledge_base_ids:
-                    try:
-                        kb_record = await self._access.resolve_knowledge_base(
-                            user_id,
-                            kb_id,
-                        )
-                        knowledge = (
-                            await self._knowledge_base_manager.get_knowledge(
+                # Add workspace working directory to the permission context
+                working_dirs = (
+                    session_record.state.permission_context.working_directories
+                )
+                if workspace.workdir not in working_dirs:
+                    working_dirs[
+                        workspace.workdir
+                    ] = AdditionalWorkingDirectory(
+                        path=workspace.workdir,
+                        source="session",
+                    )
+
+                # -------------------------------------------------------------
+                # 2. Middlewares — framework-supplied first, then caller
+                # extras. Background-tool completions deliver their results
+                # via ``message_bus.inbox_push + enqueue_wakeup``, so the
+                # dispatcher (any process) wakes an idle session — no
+                # in-process retrigger plumbing is needed here.
+                # -------------------------------------------------------------
+                middlewares: list = [
+                    InboxMiddleware(self._message_bus),
+                    StateChangeMiddleware(
+                        message_bus=self._message_bus,
+                        session_id=session_id,
+                    ),
+                    ToolOffloadMiddleware(
+                        bg_manager=self._background_task_manager,
+                        message_bus=self._message_bus,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                    ),
+                ]
+                if self._extra_agent_middlewares is not None:
+                    factory_args: tuple = (user_id, agent_id, session_id)
+                    if self._middlewares_take_workspace:
+                        factory_args += (workspace,)
+                    middlewares.extend(
+                        await self._extra_agent_middlewares(*factory_args),
+                    )
+
+                # -------------------------------------------------------------
+                # 2b. TTS middleware — inject when the session has a TTS
+                # config.
+                # -------------------------------------------------------------
+                tts_cfg = session_record.config.tts_model_config
+                if tts_cfg is not None:
+                    tts_model = await get_tts_model(
+                        user_id,
+                        tts_cfg,
+                        self._access,
+                    )
+                    middlewares.append(TTSMiddleware(tts_model))
+
+                # -------------------------------------------------------------
+                # 2c. Knowledge-base middleware — inject when the session has
+                # KBs attached.  Each KB resolves to its own
+                # :class:`KnowledgeBase` handle
+                # (own embedding model + vector store), so the middleware can
+                # retrieve across heterogeneous KBs in one fan-out.
+                #
+                # Each KB may be either owned by the caller or shared to them
+                # via the resource access policy. We resolve the owner through
+                # ``resolve_knowledge_base`` first and hand the KB manager the
+                # true owner id — its own storage lookups stay owner-scoped
+                # and unaware of sharing.
+                # -------------------------------------------------------------
+                kb_cfg = session_record.config.knowledge_config
+                if (
+                    kb_cfg is not None
+                    and kb_cfg.knowledge_base_ids
+                    and self._knowledge_base_manager is not None
+                ):
+                    knowledges: list[KnowledgeBase] = []
+                    for kb_id in kb_cfg.knowledge_base_ids:
+                        try:
+                            kb_record = (
+                                await self._access.resolve_knowledge_base(
+                                    user_id,
+                                    kb_id,
+                                )
+                            )
+                            kb_manager = self._knowledge_base_manager
+                            knowledge = await kb_manager.get_knowledge(
                                 kb_record.user_id,
                                 kb_id,
                             )
-                        )
-                    except Exception:  # pylint: disable=broad-except
-                        # A KB the session referenced was deleted, its
-                        # sharing revoked, or its credential is gone —
-                        # log and skip so the chat turn can still run
-                        # with the remaining KBs.
-                        logger.exception(
-                            "Skipping knowledge base %r for session %r: "
-                            "failed to resolve runtime handle.",
-                            kb_id,
-                            session_id,
-                        )
-                        continue
-                    knowledges.append(knowledge)
-                if knowledges:
-                    middlewares.append(
-                        RAGMiddleware(
-                            knowledge_bases=knowledges,
-                            parameters=RAGMiddleware.Parameters(
-                                **(kb_cfg.parameters or {}),
+                        except Exception:  # pylint: disable=broad-except
+                            # A KB the session referenced was deleted, its
+                            # sharing revoked, or its credential is gone —
+                            # log and skip so the chat turn can still run
+                            # with the remaining KBs.
+                            logger.exception(
+                                "Skipping knowledge base %r for session %r: "
+                                "failed to resolve runtime handle.",
+                                kb_id,
+                                session_id,
+                            )
+                            continue
+                        knowledges.append(knowledge)
+                    if knowledges:
+                        middlewares.append(
+                            RAGMiddleware(
+                                knowledge_bases=knowledges,
+                                parameters=RAGMiddleware.Parameters(
+                                    **(kb_cfg.parameters or {}),
+                                ),
                             ),
+                        )
+
+                # -------------------------------------------------------------
+                # 3. Toolkit (workspace tools + planning + ToolStop +
+                # schedule + team + extras + skills + mcps).
+                # -------------------------------------------------------------
+                toolkit = await get_toolkit(
+                    storage=self._storage,
+                    workspace=workspace,
+                    workspace_manager=self._workspace_manager,
+                    scheduler_manager=self._scheduler_manager,
+                    background_task_manager=self._background_task_manager,
+                    message_bus=self._message_bus,
+                    middlewares=middlewares,
+                    user_id=user_id,
+                    agent_record=agent_record,
+                    session_record=session_record,
+                    resource_access_service=self._access,
+                    extra_factory=self._extra_agent_tools,
+                    sub_agent_templates=self._sub_agent_templates,
+                    channel_dispatcher=self._channel_dispatcher,
+                )
+
+                # -------------------------------------------------------------
+                # 4. Model + fallback (resolved from session's config).
+                # -------------------------------------------------------------
+                model_cfg = session_record.config.chat_model_config
+                if not model_cfg:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"No model configuration found for agent "
+                            f"{agent_id}"
                         ),
                     )
+                model = await get_model(user_id, model_cfg, self._access)
 
-            # ----------------------------------------------------------------
-            # 3. Toolkit (workspace tools + planning + ToolStop + schedule +
-            # team + extras + skills + mcps).
-            # -----------------------------------------------------------------
-            toolkit = await get_toolkit(
-                storage=self._storage,
-                workspace=workspace,
-                workspace_manager=self._workspace_manager,
-                scheduler_manager=self._scheduler_manager,
-                background_task_manager=self._background_task_manager,
-                message_bus=self._message_bus,
-                middlewares=middlewares,
-                user_id=user_id,
-                agent_record=agent_record,
-                session_record=session_record,
-                resource_access_service=self._access,
-                extra_factory=self._extra_agent_tools,
-                sub_agent_templates=self._sub_agent_templates,
-                channel_dispatcher=self._channel_dispatcher,
-            )
-
-            # ----------------------------------------------------------------
-            # 4. Model + fallback (resolved from session's config).
-            # -----------------------------------------------------------------
-            model_cfg = session_record.config.chat_model_config
-            if not model_cfg:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"No model configuration found for agent "
-                        f"{agent_id}"
-                    ),
+                fallback_cfg = session_record.config.fallback_chat_model_config
+                fallback_model = (
+                    await get_model(user_id, fallback_cfg, self._access)
+                    if fallback_cfg is not None
+                    else None
                 )
-            model = await get_model(user_id, model_cfg, self._access)
 
-            fallback_cfg = session_record.config.fallback_chat_model_config
-            fallback_model = (
-                await get_model(user_id, fallback_cfg, self._access)
-                if fallback_cfg is not None
-                else None
-            )
+                # -------------------------------------------------------------
+                # 5. Assemble the Agent.
+                # -------------------------------------------------------------
+                attachment = f"You're within a session (id={session_id})."
 
-            # ----------------------------------------------------------------
-            # 5. Assemble the Agent.
-            # -----------------------------------------------------------------
-            attachment = f"You're within a session (id={session_id})."
+                # Channel-bound sessions: tell the agent which chat it serves.
+                if (
+                    session_record.source_channel_id
+                    and self._channel_dispatcher is not None
+                ):
+                    channel = self._channel_dispatcher.get_local_channel(
+                        session_record.source_channel_id,
+                    )
+                    if channel is not None:
+                        tools = ", ".join(
+                            t.name for t in await channel.list_tools(workspace)
+                        )
+                        chat_id = session_record.source_chat_id or ""
+                        kind = await channel.chat_kind(chat_id)
+                        name = await channel.chat_name(chat_id)
+                        where = f' named "{name}"' if name else ""
+                        attachment += (
+                            f" This session is bound to a chat{where} on the "
+                            f"{channel.display_name} platform: the messages, "
+                            f"images and files people send there are relayed "
+                            f"to you here, and your replies are delivered "
+                            f"back to that same chat."
+                        )
+                        if kind is ChatKind.GROUP:
+                            attachment += (
+                                " It is a group chat, so messages may come "
+                                "from several different people; each incoming "
+                                "user turn is labelled with its sender."
+                            )
+                        elif kind is ChatKind.PRIVATE:
+                            attachment += (
+                                " It is a one-to-one private chat with a "
+                                "single user."
+                            )
+                        if tools:
+                            attachment += (
+                                f" You also have these {channel.display_name} "
+                                f"tools available: {tools}."
+                            )
 
-            # Channel-bound sessions: tell the agent which chat it serves.
-            if (
-                session_record.source_channel_id
-                and self._channel_dispatcher is not None
-            ):
-                channel = self._channel_dispatcher.get_local_channel(
-                    session_record.source_channel_id,
+                attachment = (
+                    f"<system-notification>{attachment}</system-notification>"
                 )
-                if channel is not None:
-                    tools = ", ".join(
-                        t.name for t in await channel.list_tools(workspace)
-                    )
-                    chat_id = session_record.source_chat_id or ""
-                    kind = await channel.chat_kind(chat_id)
-                    name = await channel.chat_name(chat_id)
-                    where = f' named "{name}"' if name else ""
-                    attachment += (
-                        f" This session is bound to a chat{where} on the "
-                        f"{channel.display_name} platform: the messages, "
-                        f"images and files people send there are relayed to "
-                        f"you here, and your replies are delivered back to "
-                        f"that same chat."
-                    )
-                    if kind is ChatKind.GROUP:
-                        attachment += (
-                            " It is a group chat, so messages may come from "
-                            "several different people; each incoming user "
-                            "turn is labelled with its sender."
-                        )
-                    elif kind is ChatKind.PRIVATE:
-                        attachment += (
-                            " It is a one-to-one private chat with a single "
-                            "user."
-                        )
-                    if tools:
-                        attachment += (
-                            f" You also have these {channel.display_name} "
-                            f"tools available: {tools}."
-                        )
+                system_prompt = (
+                    agent_record.data.system_prompt + "\n\n" + attachment
+                )
 
-            attachment = (
-                f"<system-notification>{attachment}</system-notification>"
-            )
-            system_prompt = (
-                agent_record.data.system_prompt + "\n\n" + attachment
-            )
+                agent_state = session_record.state
+                agent_state.session_id = session_id
+                agent = self._agent_cls(
+                    name=agent_record.data.name,
+                    system_prompt=system_prompt,
+                    model=model,
+                    toolkit=toolkit,
+                    model_config=ModelConfig(fallback_model=fallback_model),
+                    context_config=agent_record.data.context_config,
+                    react_config=agent_record.data.react_config,
+                    state=agent_state,
+                    middlewares=middlewares,
+                    offloader=workspace,
+                )
 
-            agent_state = session_record.state
-            agent_state.session_id = session_id
-            agent = self._agent_cls(
-                name=agent_record.data.name,
-                system_prompt=system_prompt,
-                model=model,
-                toolkit=toolkit,
-                model_config=ModelConfig(fallback_model=fallback_model),
-                context_config=agent_record.data.context_config,
-                react_config=agent_record.data.react_config,
-                state=agent_state,
-                middlewares=middlewares,
-                offloader=workspace,
-            )
-
-            if self._skip_parked_wakeup(session_id, agent, input_msg):
-                return
-        except Exception as e:  # pylint: disable=broad-except
-            # Under the session lock, like the reply this run never got
-            # to make: these events share a channel with a live reply's,
-            # so publishing them unserialised would drop a "reply failed"
-            # into the middle of an answer another run is streaming.
-            async with self._message_bus.acquire_lock(
-                MessageBusKeys.session_lock(session_id),
-                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-            ):
+                if self._skip_parked_wakeup(session_id, agent, input_msg):
+                    return
+            except Exception as e:  # pylint: disable=broad-except
+                # Under the session lock, like the reply this run never got
+                # to make: these events share a channel with a live reply's,
+                # so publishing them unserialised would drop a "reply failed"
+                # into the middle of an answer another run is streaming.
                 await self._report_failure(user_id, session_id, agent_id, e)
-            return
+                return
 
-        # --------------------------------------------------------------------
-        # 7. Run the agent inside the distributed session lock
-        # ---------------------------------------------------------------------
-        lock_key = MessageBusKeys.session_lock(session_id)
-        events_key = MessageBusKeys.session_events(session_id)
-        async with self._message_bus.acquire_lock(
-            lock_key,
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-        ):
+            # ----------------------------------------------------------------
+            # 7. Run the agent (still under the session lock)
+            # -----------------------------------------------------------------
+            events_key = MessageBusKeys.session_events(session_id)
             # Channel-bound run: signal the output forwarder so the reply
             # is streamed back to the platform chat. Covers scheduled /
             # background wakes, not just inbound channel messages.

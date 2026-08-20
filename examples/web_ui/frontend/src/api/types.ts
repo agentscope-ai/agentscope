@@ -838,6 +838,22 @@ export interface ListEmbeddingModelResponse {
 	total: number;
 }
 
+// ─── Chunker ──────────────────────────────────────────────────────────────────
+
+export interface ChunkerConfig {
+	type: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface ChunkerInfo {
+	type: string;
+	parameter_schema: JSONSchema;
+}
+
+export interface ListChunkersResponse {
+	chunkers: ChunkerInfo[];
+}
+
 // ─── Knowledge Base ───────────────────────────────────────────────────────────
 
 /**
@@ -849,6 +865,7 @@ export interface KnowledgeBaseView {
 	name: string;
 	description: string;
 	embedding_model_config: EmbeddingModelConfig;
+	chunker_config?: ChunkerConfig;
 	created_at: string;
 	updated_at: string;
 	/**
@@ -868,6 +885,7 @@ export interface CreateKnowledgeBaseRequest {
 	name: string;
 	description?: string;
 	embedding_model_config: EmbeddingModelConfig;
+	chunker_config: ChunkerConfig;
 }
 
 export interface CreateKnowledgeBaseResponse {

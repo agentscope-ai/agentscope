@@ -16,6 +16,7 @@ from ..access import (
 )
 from ..storage import (
     AgentRecord,
+    ChunkerConfig,
     CredentialRecord,
     EmbeddingModelConfig,
     KnowledgeBaseRecord,
@@ -83,6 +84,13 @@ class KnowledgeBaseView(BaseModel):
     )
     embedding_model_config: EmbeddingModelConfig = Field(
         description="Embedding model configuration pinned at creation.",
+    )
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "Chunker configuration pinned at creation. ``None`` for "
+            "legacy records created before per-KB chunker support."
+        ),
     )
     created_at: datetime = Field(description="Creation timestamp.")
     updated_at: datetime = Field(description="Last-update timestamp.")

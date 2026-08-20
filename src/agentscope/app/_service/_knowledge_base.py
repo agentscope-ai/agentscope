@@ -21,6 +21,7 @@ import uuid
 from typing import IO, TYPE_CHECKING
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 
 from ..access import ResourceKind
 from ..rag.knowledge_base_manager import (
@@ -28,10 +29,12 @@ from ..rag.knowledge_base_manager import (
     KnowledgeBaseNotFoundError,
 )
 from ..storage import (
+    ChunkerConfig,
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
 )
 from ..._logging import logger
+from ...rag import ApproxTokenChunker
 from .._bus_ops import enqueue_index_task
 from ._access import ResourceAccessService
 
@@ -44,7 +47,7 @@ if TYPE_CHECKING:
         KnowledgeBaseRecord,
         StorageBase,
     )
-    from ...rag import VectorSearchResult
+    from ...rag import ChunkerBase, VectorSearchResult
 
 
 class KnowledgeBaseService:
@@ -65,6 +68,7 @@ class KnowledgeBaseService:
         blob_store: "BlobStoreBase",
         message_bus: "MessageBus",
         resource_access_service: "ResourceAccessService",
+        chunkers: "list[type[ChunkerBase]] | None" = None,
     ) -> None:
         """Initialize the service.
 
@@ -90,12 +94,19 @@ class KnowledgeBaseService:
                 *and* mutation) goes through it so shared knowledge
                 bases work end-to-end: readers see documents +
                 search hits, editors can also upload / delete.
+            chunkers (`list[type[ChunkerBase]] | None`, optional):
+                The chunker classes users can choose from when creating
+                a knowledge base; used to validate ``chunker_config``.
+                Defaults to ``[ApproxTokenChunker]``.
         """
         self._storage = storage
         self._manager = knowledge_base_manager
         self._blob_store = blob_store
         self._bus = message_bus
         self._access = resource_access_service
+        self._chunkers_by_type = {
+            cls.chunker_type: cls for cls in (chunkers or [ApproxTokenChunker])
+        }
 
     # ------------------------------------------------------------------
     # Knowledge base CRUD
@@ -107,6 +118,7 @@ class KnowledgeBaseService:
         name: str,
         description: str,
         embedding_model_config: "EmbeddingModelConfig",
+        chunker_config: "ChunkerConfig | None" = None,
     ) -> "KnowledgeBaseRecord":
         """Delegate creation to the manager, mapping policy errors.
 
@@ -119,6 +131,9 @@ class KnowledgeBaseService:
                 Free-form description.
             embedding_model_config (`EmbeddingModelConfig`):
                 Embedding model configuration; pinned to the record.
+            chunker_config (`ChunkerConfig | None`, optional):
+                Chunker configuration; pinned to the record.  Defaults
+                to the first configured chunker with default parameters.
 
         Returns:
             `KnowledgeBaseRecord`:
@@ -128,13 +143,38 @@ class KnowledgeBaseService:
             `HTTPException`:
                 ``409`` when the requested embedding dimension
                 violates the manager's dimension policy.
+                ``422`` when the chunker type or parameters are
+                invalid.
         """
+        if chunker_config is None:
+            chunker_config = ChunkerConfig(
+                type=next(iter(self._chunkers_by_type)),
+                parameters={},
+            )
+        chunker_cls = self._chunkers_by_type.get(chunker_config.type)
+        if chunker_cls is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Unknown chunker type: {chunker_config.type!r}, "
+                    f"available: {sorted(self._chunkers_by_type)}"
+                ),
+            )
+        try:
+            chunker_cls.Parameters(**chunker_config.parameters)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid chunker parameters: {exc}",
+            ) from exc
+
         try:
             return await self._manager.create_knowledge_base(
                 user_id=user_id,
                 name=name,
                 description=description,
                 embedding_model_config=embedding_model_config,
+                chunker_config=chunker_config,
             )
         except DimensionPolicyError as exc:
             raise HTTPException(

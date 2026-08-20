@@ -231,27 +231,8 @@ async def list_skill_cards(
     return await hub.list_skills(user_id, q=q, cursor=cursor, limit=limit)
 
 
-@hub_router.get("/skill/{hub_id}/cards/{card_id}")
-async def get_skill_card(
-    hub_id: str,
-    card_id: str,
-    *,
-    user_id: str = Depends(get_current_user_id),
-    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
-) -> SkillCard:
-    """Return one skill card, including its ``SKILL.md`` body."""
-    hub = _pick_hub(hubs, hub_id)
-    try:
-        return await hub.get_skill(user_id, card_id)
-    except KeyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Hub {hub_id!r} has no skill {card_id!r}.",
-        ) from e
-
-
 @hub_router.post(
-    "/skill/{hub_id}/cards/{card_id}/install",
+    "/skill/{hub_id}/cards/{card_id:path}/install",
     status_code=status.HTTP_201_CREATED,
 )
 async def install_skill(
@@ -306,3 +287,25 @@ async def install_skill(
         ) from e
 
     return SkillView.from_record(record)
+
+
+# Keep this catch-all path route after the more specific ``/install`` route.
+# This keeps route precedence explicit and protects specific routes from
+# accidental shadowing as more card actions are added.
+@hub_router.get("/skill/{hub_id}/cards/{card_id:path}")
+async def get_skill_card(
+    hub_id: str,
+    card_id: str,
+    *,
+    user_id: str = Depends(get_current_user_id),
+    hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
+) -> SkillCard:
+    """Return one skill card, including its ``SKILL.md`` body."""
+    hub = _pick_hub(hubs, hub_id)
+    try:
+        return await hub.get_skill(user_id, card_id)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Hub {hub_id!r} has no skill {card_id!r}.",
+        ) from e
