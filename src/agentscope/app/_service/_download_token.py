@@ -19,8 +19,8 @@ import hashlib
 import hmac
 import time
 
+# Seconds a download token stays valid unless the caller overrides.
 DEFAULT_DOWNLOAD_TOKEN_TTL = 60
-"""Seconds a download token stays valid unless the caller overrides."""
 
 
 def sign_download_token(
