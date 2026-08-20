@@ -2,9 +2,9 @@
 """Event types for agent execution."""
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Dict, Literal, List, TypeAlias
+from typing import Any, Dict, Literal, List, Self, TypeAlias
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import deprecated
 
 from .._utils._common import _generate_id
@@ -375,6 +375,15 @@ class ToolResultDataDeltaEvent(EventBase):
     """Base64-encoded binary data, mutually exclusive with `url`."""
     url: str | None = None
     """URL pointing to the binary content, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
 
 
 class ToolResultEndEvent(EventBase):

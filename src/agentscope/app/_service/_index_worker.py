@@ -298,6 +298,15 @@ class IndexWorker:
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
             await pipeline_task
+        except asyncio.CancelledError:
+            pipeline_task.cancel()
+            heartbeat_task.cancel()
+            await asyncio.gather(
+                pipeline_task,
+                heartbeat_task,
+                return_exceptions=True,
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 — terminal error sink
             await self._mark_error(
                 user_id,

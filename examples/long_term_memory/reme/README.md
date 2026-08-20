@@ -16,12 +16,11 @@ is no add tool. The demo drives ReMe with AgentScope's own DashScope
 chat model (LLM-backed `auto_memory` write-back) and DashScope
 embedding model (vector search), both injected into the embedded app.
 
-ReMe's bundled `default` config searches with **BM25 (keyword) only** —
-its file store ships with the vector store disabled. A long-term
-*memory* demo wants **semantic** recall ("plot monthly sales" should
-find a "prefers matplotlib" card), so `reme_demo.py` injects an
-`embedding_model` — which turns ReMe's vector store on automatically;
-see below.
+AgentScope's minimal embedded ReMe config searches with **BM25 (keyword)
+only** by default. A long-term *memory* demo wants **semantic** recall
+("plot monthly sales" should find a "prefers matplotlib" card), so
+`reme_demo.py` injects an `embedding_model` — which turns the vector store
+on automatically; see below.
 
 ## Install
 
@@ -71,16 +70,13 @@ well-defined even when one middleware instance is shared across agents.
 
 | `chat_model` / `embedding_model` | Behavior |
 |:-:|---|
-| provided | Injected into ReMe's default LLM / embedding components at start; only a DashScope key is needed. An `embedding_model` also enables the vector store for semantic search. |
-| omitted | ReMe uses the LLM / embedding backend from its own config/credentials; search stays keyword-only. |
+| provided | Injected into the embedded app's default-named LLM / embedding components at start; only a DashScope key is needed. An `embedding_model` also enables the vector store for semantic search. |
+| omitted | AgentScope's minimal config supplies the LLM from ReMe's `LLM_*` environment variables and stays keyword-only without an `embedding_model`. |
 
-> **Why inject `embedding_model`?** ReMe starts its embedding
-> component eagerly at `start()` — even under the BM25-only default —
-> and builds it from credentials in its config. Injecting an
-> AgentScope `embedding_model` bypasses that credential path, so the
-> only key you need is a DashScope one. It is also what powers vector
-> search: providing it flips ReMe's file store from BM25-only to the
-> vector store automatically.
+> **Why inject `embedding_model`?** The minimal config omits embedding
+> components in BM25-only mode. Providing an AgentScope `embedding_model`
+> adds and wires those components before ReMe starts, and powers vector
+> search without requiring separate ReMe embedding credentials.
 
 ## How the middleware controls memory
 
@@ -174,11 +170,13 @@ down the embedded app (AgentScope doesn't manage middleware lifecycle).
 
 ## Configuration
 
-`config` selects a ReMe config (defaults to the bundled `"default"`,
-which is auto-memory + **BM25-only** search — its file store ships with
-`embedding_store: ""`). To enable **vector search**, provide an
-`embedding_model` (what the demo does) — the middleware then wires
-ReMe's file store to the default embedding store automatically:
+The middleware always builds an AgentScope-owned minimal ReMe config. It keeps
+the full memory lifecycle: conversation write-back, nightly/manual dream
+consolidation from daily cards into digest memory, and search across both daily
+and digest memory. Only the file/index jobs required by that lifecycle are
+registered; ReMe's resource ingestion, independent chat, daily-paper and
+operational jobs are not loaded. Search is **BM25-only** unless an
+`embedding_model` is provided:
 
 ```python
 ReMeMiddleware(
@@ -189,12 +187,8 @@ ReMeMiddleware(
 )
 ```
 
-ReMe's `as_llm` / `as_embedding` components are otherwise driven by
-environment variables (`LLM_API_KEY`, `EMBEDDING_API_KEY`, ...) from its
-own config; injecting AgentScope `chat_model` / `embedding_model`
-bypasses those. If you need a config the dedicated parameters don't
-expose, point `config` at your own ReMe config file. See ReMe's
-`default.yaml` for the full component set.
+The minimal config's `as_llm` component honors ReMe's `LLM_*` environment
+variables; injecting an AgentScope `chat_model` bypasses those.
 
 > **Note (indexing):** `auto_memory` write-back returns as soon as the
 > daily card is written to disk; the card only becomes searchable once
