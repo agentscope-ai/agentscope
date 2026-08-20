@@ -27,6 +27,14 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 
 const CHUNK_PAGE_SIZE = 20;
 
+/**
+ * Image types the backend serves with `Content-Disposition: inline`.
+ * Anything else — notably `image/svg+xml`, which can carry script —
+ * comes back as an attachment, so an `<img>` preview would break;
+ * those types fall through to the download-button branch instead.
+ */
+const INLINE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'];
+
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -235,7 +243,7 @@ function PreviewTab({ open, knowledgeBaseId, document }: TabProps) {
 	const media = mediaType(document);
 	const isText = media === 'text/markdown' || media === 'text/plain';
 	const isPdf = media === 'application/pdf';
-	const isImage = media.startsWith('image/');
+	const isImage = INLINE_IMAGE_TYPES.includes(media);
 
 	const [text, setText] = useState<string | null>(null);
 	const [tokenUrl, setTokenUrl] = useState<string | null>(null);

@@ -31,21 +31,22 @@ function toQuery(params: Record<string, unknown>): Record<string, string> {
 
 /** The backend caps `page_size` at 128. */
 const MAX_PAGE_SIZE = 128;
-/** Hard stop for {@link fetchAllPages} — guards a buggy `total`. */
-const MAX_PAGES = 100;
 
 /**
- * Drain a paginated endpoint into one flat array.
+ * Drain a paginated endpoint into one flat array — genuinely all of
+ * it, however many pages that takes.
  *
  * Keeps requesting pages while the accumulated count is below the
- * server-reported `total`. Stops early on an empty page (or after
- * {@link MAX_PAGES}) so a lying `total` can never loop forever.
+ * server-reported `total` and the last page still made progress. An
+ * empty page means the server has nothing more to give, so a lying
+ * `total` degrades into a clean stop instead of an infinite loop —
+ * no arbitrary page cap that would silently truncate large lists.
  */
 async function fetchAllPages<T>(
 	fetchPage: (page: number, pageSize: number) => Promise<{ items: T[]; total: number }>,
 ): Promise<T[]> {
 	const all: T[] = [];
-	for (let page = 1; page <= MAX_PAGES; page++) {
+	for (let page = 1; ; page++) {
 		const { items, total } = await fetchPage(page, MAX_PAGE_SIZE);
 		all.push(...items);
 		if (items.length === 0 || all.length >= total) break;
