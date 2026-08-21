@@ -4,10 +4,13 @@
 import hashlib
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from ..._utils._common import _generate_id
 from ...workspace import WorkspaceBase
+
+if TYPE_CHECKING:
+    from ..storage import StorageBase
 
 
 class IsolationPolicy(StrEnum):
@@ -50,22 +53,29 @@ class WorkspaceManagerBase(ABC):
         """
         self._isolation: IsolationPolicy = isolation
 
-    def assign_workspace_id(
+    async def assign_workspace_id(
         self,
         *,
         user_id: str,
         agent_id: str,
         session_id: str,
+        storage: "StorageBase | None" = None,
     ) -> str:
         """Mint a workspace id under :attr:`_isolation`.
 
-        Pure function — no I/O, no storage access. Called by the
-        session-creation flow when the caller did not supply an
-        explicit ``workspace_id``.
+        Called by the session-creation flow when the caller did not
+        supply an explicit ``workspace_id``.
 
         * ``PER_SESSION`` → fresh UUID.
-        * ``PER_AGENT`` → deterministic BLAKE2b of ``user::agent``.
+        * ``PER_AGENT`` → the id an earlier session of this
+          ``(user, agent)`` already bound, else a fresh one. With
+          ``storage`` absent the binding cannot be read, so a
+          deterministic BLAKE2b of ``user::agent`` stands in for it.
         * ``PER_USER`` → deterministic BLAKE2b of ``user::``.
+
+        Managers that pre-warm override this to draw the fresh ids from
+        their buffer, so the id of an already-running workspace becomes
+        the binding rather than naming one still to be built.
 
         Args:
             user_id (`str`):
@@ -75,22 +85,37 @@ class WorkspaceManagerBase(ABC):
             session_id (`str`):
                 The session id being provisioned (only used by the
                 per-session grain to underline its randomness).
+            storage (`StorageBase | None`, optional):
+                Backend to read the ``(user, agent)`` binding from.
+                ``None`` falls back to the deterministic hash.
 
         Returns:
             `str`:
                 A workspace id.
         """
         del session_id
-        if self._isolation is IsolationPolicy.PER_AGENT:
-            return hashlib.blake2b(
-                f"{user_id}::{agent_id}".encode("utf-8"),
-                digest_size=8,
-            ).hexdigest()
         if self._isolation is IsolationPolicy.PER_USER:
             return hashlib.blake2b(
                 f"user::{user_id}".encode("utf-8"),
                 digest_size=8,
             ).hexdigest()
+        if self._isolation is IsolationPolicy.PER_AGENT:
+            if storage is None:
+                return hashlib.blake2b(
+                    f"{user_id}::{agent_id}".encode("utf-8"),
+                    digest_size=8,
+                ).hexdigest()
+            for record in await storage.list_sessions(user_id, agent_id):
+                if record.config.workspace_id:
+                    return record.config.workspace_id
+        return await self._mint_workspace_id()
+
+    async def _mint_workspace_id(self) -> str:
+        """Produce an id for a workspace nobody holds yet.
+
+        The pre-warming managers override this to return the id of a
+        buffered, already-running workspace.
+        """
         return _generate_id()
 
     @abstractmethod

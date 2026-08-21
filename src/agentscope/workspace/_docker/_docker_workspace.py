@@ -190,50 +190,6 @@ class DockerWorkspace(SandboxedWorkspaceBase):
                 pass
             self._client = None
 
-    # ── pooling hooks ───────────────────────────────────────────
-
-    async def pause(self) -> None:
-        """Freeze the container with Docker's cgroup freezer.
-
-        Unlike :meth:`close` the container and backend are kept, so
-        :meth:`resume` can thaw them: the gateway process freezes with
-        everything else and comes back with its state intact.
-        """
-        if self._container is None:
-            return
-        await self._container.pause()
-        self.is_alive = False
-
-    async def resume(self) -> None:
-        """Thaw a container frozen by :meth:`pause`."""
-        if self._container is None:
-            raise RuntimeError(
-                f"Cannot resume workspace {self.workspace_id}: "
-                "the container is gone",
-            )
-        await self._container.unpause()
-        self.is_alive = True
-
-    async def upload_tar(self, tar_data: bytes) -> None:
-        """Extract a tar archive into ``/workspace``.
-
-        Args:
-            tar_data (`bytes`):
-                Raw tar bytes whose entries are paths relative to
-                :data:`CONTAINER_WORKDIR`.
-        """
-        await self._container.put_archive(CONTAINER_WORKDIR, tar_data)
-
-    async def download_tar(self) -> tarfile.TarFile:
-        """Download ``/workspace`` as a tar archive.
-
-        Returns:
-            `tarfile.TarFile`:
-                An open archive whose top-level entry is the
-                ``workspace/`` directory itself. The caller closes it.
-        """
-        return await self._container.get_archive(CONTAINER_WORKDIR)
-
     # ── instructions ────────────────────────────────────────────
 
     async def get_instructions(self) -> str:

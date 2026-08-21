@@ -180,43 +180,6 @@ class E2BWorkspace(SandboxedWorkspaceBase):
                 logger.warning("E2BWorkspace: pause failed: %s", e)
             self._sandbox = None
 
-    # ── pooling hooks ───────────────────────────────────────────
-
-    async def pause(self) -> None:
-        """Pause the sandbox so E2B stops billing.
-
-        Unlike :meth:`close` the handle is kept, so :meth:`resume` can
-        reconnect by ``sandbox_id`` without a metadata lookup.
-        """
-        if self._sandbox is None:
-            return
-        await self._sandbox.pause()
-        self.is_alive = False
-
-    async def resume(self) -> None:
-        """Reconnect to a paused sandbox — ``connect`` auto-resumes it.
-
-        The pause froze the gateway mid-request, so it is relaunched
-        against the reconnected backend.
-        """
-        from e2b import AsyncSandbox
-
-        if self._sandbox is None:
-            raise RuntimeError(
-                f"Cannot resume workspace {self.workspace_id}: "
-                "the sandbox is gone",
-            )
-
-        self._sandbox = await AsyncSandbox.connect(
-            sandbox_id=self._sandbox.sandbox_id,
-            timeout=self.timeout_seconds,
-            **self._api_opts(),
-        )
-        await self._wait_until_running()
-        self._backend = E2BBackend(self._sandbox, workdir=SANDBOX_WORKDIR)
-        await self._setup_mcp_gateway()
-        self.is_alive = True
-
     # ── instructions ────────────────────────────────────────────
 
     async def get_instructions(self) -> str:

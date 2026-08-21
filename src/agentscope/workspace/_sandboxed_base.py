@@ -259,19 +259,6 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             ):
                 await backend.delete_path(path)
 
-    async def gateway_health(self) -> bool:
-        """Whether the in-sandbox gateway answers ``/health``.
-
-        Never raises — any transport error reads as unhealthy, which
-        is what pool health checks want.
-        """
-        if self._gateway is None:
-            return False
-        try:
-            return await self._gateway.health()
-        except Exception:
-            return False
-
     # ── MCP management (gateway-routed) ───────────────────────────
 
     async def list_mcps(

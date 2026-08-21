@@ -120,7 +120,7 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         self.assertEqual(len(_FakeWorkspace.created), 1)
         self.assertEqual(
             first.kwargs["workspace_id"],
-            manager.assign_workspace_id(
+            await manager.assign_workspace_id(
                 user_id="u",
                 agent_id="a1",
                 session_id="",
