@@ -1337,7 +1337,37 @@ class AsyncSQLAlchemyStorage(StorageBase):
         record: ChannelRecord,
         platform_bot_id: str,
     ) -> str:
-        """Persist a channel record and its bot-uniqueness column."""
+        """Persist a channel record and its bot-uniqueness column.
+
+        Args:
+            record (`ChannelRecord`):
+                The channel record to store.
+            platform_bot_id (`str`):
+                The platform-side bot identifier, extracted from the
+                credentials by the caller. Globally unique: a bot drives
+                at most one channel.
+
+        Returns:
+            `str`:
+                The id of the stored record.
+
+        Raises:
+            `ValueError`:
+                If another channel already drives this bot. Checked here
+                rather than left to the UNIQUE constraint, because
+                MySQL's ``ON DUPLICATE KEY UPDATE`` fires on *any*
+                unique-key conflict — the write would silently overwrite
+                the holder instead of failing, and the same call would
+                behave differently per dialect.
+        """
+        holder = await self.get_channel_id_by_platform_bot_id(
+            platform_bot_id,
+        )
+        if holder is not None and holder != record.id:
+            raise ValueError(
+                f"Bot {platform_bot_id!r} already drives channel "
+                f"{holder!r}.",
+            )
         await self._write_row(
             ChannelRow,
             record,
@@ -1346,13 +1376,31 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return record.id
 
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
-        """Fetch a channel record by its global id."""
+        """Fetch a channel record by its global id.
+
+        Args:
+            channel_id (`str`):
+                The channel id.
+
+        Returns:
+            `ChannelRecord | None`:
+                The record, or ``None`` if not found.
+        """
         async with self._session() as sess:
             row = await sess.get(ChannelRow, channel_id)
         return None if row is None else _to_record(row, ChannelRecord)
 
     async def list_channels(self, user_id: str) -> list[ChannelRecord]:
-        """Return all channel records owned by *user_id*."""
+        """Return all channel records owned by *user_id*.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[ChannelRecord]`:
+                Every channel record for that user.
+        """
         from sqlalchemy import select
 
         async with self._session() as sess:
@@ -1370,7 +1418,13 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return [_to_record(r, ChannelRecord) for r in rows]
 
     async def list_all_channels(self) -> list[ChannelRecord]:
-        """Every channel across every user (used on reconcile)."""
+        """Every channel across every user.
+
+        Returns:
+            `list[ChannelRecord]`:
+                All channel records in the store, which reconcile reads
+                to decide what this node should be running.
+        """
         from sqlalchemy import select
 
         async with self._session() as sess:
@@ -1384,9 +1438,18 @@ class AsyncSQLAlchemyStorage(StorageBase):
     ) -> bool:
         """Delete a channel record.
 
-        ``platform_bot_id`` is accepted for interface parity with the
-        Redis backend, which keeps a separate index key; here the
-        UNIQUE column goes with the row.
+        Args:
+            channel_id (`str`):
+                The id of the channel to delete.
+            platform_bot_id (`str`):
+                Unused, and accepted only for parity with the Redis
+                backend, which keeps the bot index in a separate key.
+                Here the UNIQUE column goes with the row.
+
+        Returns:
+            `bool`:
+                ``True`` if a record was deleted, ``False`` if none
+                matched.
         """
         from sqlalchemy import delete
 
@@ -1402,7 +1465,16 @@ class AsyncSQLAlchemyStorage(StorageBase):
         self,
         platform_bot_id: str,
     ) -> str | None:
-        """Return the channel bound to a platform bot, if any."""
+        """Return the channel bound to a platform bot, if any.
+
+        Args:
+            platform_bot_id (`str`):
+                The platform-side bot identifier.
+
+        Returns:
+            `str | None`:
+                The bound channel id, or ``None``.
+        """
         from sqlalchemy import select
 
         async with self._session() as sess:

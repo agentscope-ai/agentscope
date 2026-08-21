@@ -1009,15 +1009,23 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
 
     async def test_platform_bot_id_is_globally_unique(self) -> None:
         """A second channel may not claim a bot already bound elsewhere,
-        even under a different owner."""
-        import sqlalchemy.exc
+        even under a different owner.
 
+        Rejected before the write rather than by the UNIQUE constraint:
+        MySQL's ``ON DUPLICATE KEY UPDATE`` fires on any unique-key
+        conflict, so leaving it to the constraint would overwrite the
+        holder there while raising on SQLite and Postgres.
+        """
         await self.storage.upsert_channel(_channel_record("chan-1"), "cli-1")
-        with self.assertRaises(sqlalchemy.exc.IntegrityError):
+        with self.assertRaises(ValueError):
             await self.storage.upsert_channel(
                 _channel_record("chan-2", user_id="user-2"),
                 "cli-1",
             )
+
+        held = await self.storage.get_channel("chan-1")
+        self.assertEqual(held.user_id, "user-1")
+        self.assertIsNone(await self.storage.get_channel("chan-2"))
 
     async def test_rebinding_a_channel_frees_the_old_bot_id(self) -> None:
         """Re-upserting the same channel under a new bot id moves the
