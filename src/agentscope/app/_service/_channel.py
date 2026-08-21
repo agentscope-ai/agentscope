@@ -15,6 +15,7 @@ from ..storage import (
     SessionSettings,
     StorageBase,
 )
+from ..channel._base import ChannelStatus
 from ..channel._errors import ChannelError
 from ..channel._registry import ChannelTypeRegistry
 
@@ -145,6 +146,46 @@ class ChannelService:
         )
         await self._storage.delete_channel(channel_id, bot_id)
         await self._notify(channel_id)
+
+    # -- Read-side (cluster-wide, no local instances needed) --
+
+    async def get_status(self, channel_id: str) -> ChannelStatus:
+        """The channel's connection status, from whichever node holds it.
+
+        Nodes that run a channel heartbeat their view into a registry
+        with a TTL, so this answers correctly from an API replica that
+        holds no connection, and a node that dies simply stops
+        appearing.
+
+        Args:
+            channel_id (`str`): The channel to report on.
+        """
+        try:
+            entries = await self._bus.registry_getall(
+                MessageBusKeys.channel_liveness(channel_id),
+            )
+        except Exception:  # pylint: disable=broad-except
+            return ChannelStatus(state="stopped")
+
+        best: ChannelStatus | None = None
+        for raw in entries.values():
+            status = ChannelStatus.model_validate_json(raw)
+            if status.state == "connected":
+                return status
+            if best is None or best.state == "stopped":
+                best = status
+        return best or ChannelStatus(state="stopped")
+
+    async def list_seen_chat_ids(self, channel_id: str) -> list[str]:
+        """Chat_ids passively recorded from inbound messages.
+
+        Args:
+            channel_id (`str`): The channel to list seen chats for.
+        """
+        fields = await self._bus.registry_getall(
+            MessageBusKeys.channel_seen_chats(channel_id),
+        )
+        return sorted(fields.keys())
 
     # -- internals --
 

@@ -84,6 +84,7 @@ def create_app(
     knowledge_chunkers: list[Type[ChunkerBase]] | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
+    enable_channel_worker: bool = True,
     mcp_hubs: list[MCPHubBase] | None = None,
     skill_hubs: list[SkillHubBase] | None = None,
     *,
@@ -185,6 +186,15 @@ def create_app(
             process is expected to consume tasks from the message
             bus.  No effect when ``knowledge_base_manager`` is
             ``None``.
+        enable_channel_worker (`bool`, defaults to ``True``):
+            Whether this process holds the channels' long connections.
+            ``True`` (embedded deployment) suits a desktop build or a
+            single API process. Set ``False`` when running dedicated
+            channel workers: a platform gives one bot's events to one
+            connection, so every replica connecting would either waste
+            connections or duplicate messages. The channel API, the
+            client factory and webhook delivery stay available either
+            way — only the connections move.
         mcp_hubs (`list[MCPHubBase] | None`, optional):
             The MCP hubs that provide MCPs.
         skill_hubs (`list[SkillHubBase] | None`, optional):
@@ -347,6 +357,7 @@ def create_app(
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None
     )
+    app.state.enable_channel_worker = enable_channel_worker
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state

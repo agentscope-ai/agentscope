@@ -14,6 +14,7 @@ that wants them subscribes through the
 import asyncio
 import inspect
 import json
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
@@ -22,7 +23,6 @@ from fastapi import HTTPException
 from .._bus_ops import (
     abandon_inbox_consumer,
     deliver_to_inbox,
-    enqueue_channel_output,
     enqueue_run_trigger,
     has_pending_inbox_or_release,
     publish_session_event,
@@ -73,7 +73,7 @@ from ...message import AssistantMsg, HintBlock, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
-    from ..channel import ChannelLifecycleDispatcher
+    from ..channel import ChannelClients
 
 
 @dataclass(frozen=True)
@@ -125,7 +125,7 @@ class ChatService:
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
-        channel_dispatcher: "ChannelLifecycleDispatcher | None" = None,
+        channel_clients: "ChannelClients | None" = None,
     ) -> None:
         """Initialize chat service.
 
@@ -187,11 +187,12 @@ class ChatService:
                 injection style). Each is invoked once per produced
                 event to mirror a UI feed onto another session; see
                 :class:`~agentscope.app._types.EventProjector`.
-            channel_dispatcher (`ChannelLifecycleDispatcher | None`, \
-optional):
-                The node's channel dispatcher, forwarded to
-                the run context so a channel-originated session's
-                agent gets that channel's platform tools.
+            channel_clients (`ChannelClients | None`, optional):
+                Factory for unconnected channel instances, used to give
+                a channel-originated session's agent that channel's
+                platform tools and chat context, and to deliver the
+                reply — none of which needs the long connection, so the
+                run works wherever it lands.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -216,7 +217,7 @@ optional):
             except (TypeError, ValueError):
                 pass
         self._extra_agent_tools = extra_agent_tools
-        self._channel_dispatcher = channel_dispatcher
+        self._channel_clients = channel_clients
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -771,11 +772,11 @@ optional):
                 # system-prompt attachment share it.
                 # -------------------------------------------------------------
                 channel = (
-                    self._channel_dispatcher.get_local_channel(
+                    await self._channel_clients.get(
                         session_record.source_channel_id,
                     )
                     if session_record.source_channel_id
-                    and self._channel_dispatcher is not None
+                    and self._channel_clients is not None
                     else None
                 )
                 channel_tools = (
@@ -1011,20 +1012,21 @@ optional):
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
             events_key = MessageBusKeys.session_events(session_id)
-            # Channel-bound run: signal the output forwarder so the reply
-            # is streamed back to the platform chat. Covers scheduled /
+            # Channel-bound run: start streaming the reply back to the
+            # platform chat. Delivery is plain REST, so this node does it
+            # itself instead of handing the run off to whichever node
+            # holds the channel's connection. Covers scheduled /
             # background wakes, not just inbound channel messages.
+            deliver_task: asyncio.Task | None = None
             if (
                 session_record.source == SessionSource.CHANNEL
                 and session_record.source_channel_id
                 and session_record.source_chat_id
             ):
-                await enqueue_channel_output(
-                    self._message_bus,
+                deliver_task = await self._start_channel_delivery(
                     session_id=session_id,
                     channel_id=session_record.source_channel_id,
                     chat_id=session_record.source_chat_id,
-                    user_id=user_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None
@@ -1300,6 +1302,81 @@ optional):
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+                # The reply's terminal event is on the bus by now, so
+                # delivery is about to finish; collect it rather than
+                # leaving the task orphaned.
+                if deliver_task is not None:
+                    await asyncio.gather(deliver_task, return_exceptions=True)
+
+    async def _start_channel_delivery(
+        self,
+        *,
+        session_id: str,
+        channel_id: str,
+        chat_id: str,
+        agent_id: str,
+    ) -> "asyncio.Task | None":
+        """Begin streaming this run's reply back to its platform chat.
+
+        Started before the run so the subscription is in place for the
+        first event; the caller collects the task once the run's
+        terminal event has been published.
+
+        Args:
+            session_id (`str`): The run's session.
+            channel_id (`str`): The channel the session came from.
+            chat_id (`str`): The platform chat to deliver into.
+            agent_id (`str`): The agent that owns the session; pinned on
+                a confirmation card so a click resumes this exact run.
+
+        Returns:
+            `asyncio.Task | None`: The delivery task, or ``None`` when
+            no client could be built.
+        """
+        from ..channel import ChannelEvent, event_stream
+
+        if self._channel_clients is None:
+            return None
+        channel = await self._channel_clients.get(channel_id)
+        if channel is None:
+            logger.error(
+                "channel '%s' has no client; the reply for session '%s' "
+                "cannot be delivered",
+                channel_id,
+                session_id,
+            )
+            return None
+
+        # Synthetic send target — a background run has no inbound
+        # message. Carries the run's identity so a confirmation card can
+        # pin its exact target and skip re-resolving routing on click.
+        target = ChannelEvent(
+            channel_id=channel_id,
+            channel_user_id="",
+            chat_id=chat_id,
+            metadata={"session_id": session_id, "agent_id": agent_id},
+        )
+
+        async def _deliver() -> None:
+            """Feed the run's event stream to the channel."""
+            try:
+                async with aclosing(
+                    event_stream(self._message_bus, session_id),
+                ) as events:
+                    await channel.send_response(target, events)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "channel '%s' failed to deliver the reply for "
+                    "session '%s'",
+                    channel_id,
+                    session_id,
+                )
+
+        return asyncio.create_task(
+            _deliver(),
+            name=f"channel-deliver:{session_id}",
+        )
 
     async def _project_event(
         self,

@@ -15,15 +15,18 @@ from ._base import (
     ChannelStatus,
     ChatKind,
 )
+from ._clients import ChannelClients
 from ._dispatcher import ChannelLifecycleDispatcher
 from ._errors import ChannelError
 from ._gateway import ChannelGateway
 from ._registry import ChannelTypeRegistry, ChannelTypeSchema
+from ._stream import event_stream
 from ._discord import DiscordChannel
 from ._feishu import FeishuChannel
 
 __all__ = [
     "ChannelBase",
+    "ChannelClients",
     "ChannelCapability",
     "ChannelConfirmationResultEvent",
     "ChannelError",
@@ -36,4 +39,5 @@ __all__ = [
     "ChannelTypeSchema",
     "DiscordChannel",
     "FeishuChannel",
+    "event_stream",
 ]
