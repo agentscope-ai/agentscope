@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Self
 from .._base import StorageBase
 from .._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
@@ -39,6 +40,7 @@ from ._mappers import _from_record, _to_record
 from ._tables import (
     _Base,
     AgentRow,
+    ChannelRow,
     CredentialRow,
     KnowledgeBaseRow,
     KnowledgeDocumentRow,
@@ -332,6 +334,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         record: Any,
         *,
         preserve_created_at: bool = True,
+        extra: dict[str, Any] | None = None,
     ) -> Any:
         """Atomically insert-or-update *record* via *row_cls*.
 
@@ -355,6 +358,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 original one on an update) is read back into the
                 returned record.  Set `False` on pure-create paths
                 where no prior row can exist, to skip that read.
+            extra (`dict[str, Any] | None`, optional):
+                Column values that are not record fields, so the
+                generic mapper cannot produce them (e.g. a channel's
+                ``platform_bot_id``).  Written and refreshed on
+                conflict alongside the promoted columns.
 
         Returns:
             `Any`:
@@ -373,7 +381,9 @@ class AsyncSQLAlchemyStorage(StorageBase):
             col: getattr(new_row, col)
             for col in ("id", "created_at", "updated_at", "payload") + indexed
         }
+        values.update(extra or {})
         update_cols = ("updated_at", "payload") + indexed
+        update_cols += tuple(extra or ())
 
         async with self._session() as sess:
             await sess.execute(
@@ -1311,6 +1321,96 @@ class AsyncSQLAlchemyStorage(StorageBase):
         async with self._session() as sess:
             rows = (await sess.execute(select(ScheduleRow))).scalars().all()
         return [_to_record(r, ScheduleRecord) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Channels
+    #
+    # ``platform_bot_id`` is a promoted column rather than a record
+    # field, so the bot-uniqueness index the Redis backend keeps as a
+    # separate key is just a UNIQUE constraint here.
+    # ------------------------------------------------------------------
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and its bot-uniqueness column."""
+        await self._write_row(
+            ChannelRow,
+            record,
+            extra={"platform_bot_id": platform_bot_id},
+        )
+        return record.id
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Fetch a channel record by its global id."""
+        async with self._session() as sess:
+            row = await sess.get(ChannelRow, channel_id)
+        return None if row is None else _to_record(row, ChannelRecord)
+
+    async def list_channels(self, user_id: str) -> list[ChannelRecord]:
+        """Return all channel records owned by *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(ChannelRow).where(
+                            ChannelRow.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, ChannelRecord) for r in rows]
+
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Every channel across every user (used on reconcile)."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (await sess.execute(select(ChannelRow))).scalars().all()
+        return [_to_record(r, ChannelRecord) for r in rows]
+
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record.
+
+        ``platform_bot_id`` is accepted for interface parity with the
+        Redis backend, which keeps a separate index key; here the
+        UNIQUE column goes with the row.
+        """
+        from sqlalchemy import delete
+
+        _ = platform_bot_id
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(ChannelRow).where(ChannelRow.id == channel_id),
+            )
+            await sess.commit()
+        return result.rowcount > 0
+
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel bound to a platform bot, if any."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            return (
+                await sess.execute(
+                    select(ChannelRow.id).where(
+                        ChannelRow.platform_bot_id == platform_bot_id,
+                    ),
+                )
+            ).scalar_one_or_none()
 
     # ------------------------------------------------------------------
     # Messages

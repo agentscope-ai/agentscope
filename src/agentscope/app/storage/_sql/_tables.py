@@ -335,6 +335,35 @@ class SkillRow(_JsonRecordMixin):
     _indexed_fields = ("user_id", "name")
 
 
+class ChannelRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.ChannelRecord`.
+
+    ``platform_bot_id`` is globally unique — no two channels may drive
+    the same platform bot — but it is deliberately NOT a record field
+    (it is extracted from ``credentials`` on write and passed alongside
+    the record), so it is not listed in ``_indexed_fields``; the write
+    path sets this column explicitly.
+    """
+
+    __tablename__ = "channels"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    platform_bot_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("platform_bot_id", name="uq_channels_bot"),
+    )
+
+    _indexed_fields = ("user_id",)
+
+
 class MessageRow(_Base):
     """One row per persisted :class:`~agentscope.message.Msg`.
 
