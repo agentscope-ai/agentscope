@@ -359,9 +359,10 @@ optional):
 
         A member reports through ``TeamSay``; a member that failed or
         was interrupted never got there, so without this the leader
-        waits forever for an answer that is not coming. Delivered the
-        same way ``TeamSay`` delivers — a ``HintBlock`` into the
-        leader's inbox, waking the leader when it is idle.
+        waits forever for an answer that is not coming. Delivered as a
+        system reminder in the leader's inbox — not as a team message,
+        because the member did not say this, the framework did — waking
+        the leader when it is idle.
 
         Best-effort: a failure to notify is logged and dropped rather
         than replacing the failure being reported.
@@ -377,24 +378,38 @@ optional):
                 The failing member's display name, as the leader knows
                 it from the roster.
             finished_reason (`ReplyFinishedReason`):
-                How the reply ended.
+                How the reply ended, which decides what the leader is
+                asked to consider.
             detail (`str`):
-                One-line, already-sanitized explanation.
+                One-line, already-sanitized explanation of the error.
         """
         if not isinstance(team_ctx, _WorkerContext):
             return
+
+        if finished_reason == ReplyFinishedReason.INTERRUPTED:
+            reminder = (
+                f"Team member {worker_name!r} was interrupted by the user "
+                f"mid-run, so its task is unfinished. The user may be "
+                f"talking to that member directly right now. Check with "
+                f"the user, or ask the member what happened, so it does "
+                f"not end up an orphan working on something you no longer "
+                f"track."
+            )
+        else:
+            reminder = (
+                f"Team member {worker_name!r} failed to finish its task. "
+                f"Error: {detail}. Decide what to do next from the cause: "
+                f"if it looks avoidable, retry the task or delete this "
+                f"member and create a new one to run it; if it is an "
+                f"operational failure such as an invalid API key, report "
+                f"it upward or handle it another way instead of retrying."
+            )
+
         try:
             hint = HintBlock(
-                hint=(
-                    f'<team-message from="{worker_name}">\n'
-                    f"[system] This member's turn ended as "
-                    f"{finished_reason.value} without reporting: {detail}\n"
-                    f"The task it was given is unfinished — decide whether "
-                    f"to re-dispatch it or adjust the plan.\n"
-                    f"</team-message>"
-                ),
+                hint=f"<system-reminder>{reminder}</system-reminder>",
                 source=json.dumps(
-                    {"label": "team", "sublabel": worker_name},
+                    {"label": "System", "sublabel": "Reminder"},
                     ensure_ascii=False,
                 ),
             )

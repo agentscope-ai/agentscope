@@ -260,15 +260,17 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
                 "hint": (
-                    '<team-message from="worker">\n'
-                    "[system] This member's turn ended as error without "
-                    "reporting: model exploded\n"
-                    "The task it was given is unfinished — decide whether "
-                    "to re-dispatch it or adjust the plan.\n"
-                    "</team-message>"
+                    "<system-reminder>Team member 'worker' failed to "
+                    "finish its task. Error: model exploded. Decide what "
+                    "to do next from the cause: if it looks avoidable, "
+                    "retry the task or delete this member and create a "
+                    "new one to run it; if it is an operational failure "
+                    "such as an invalid API key, report it upward or "
+                    "handle it another way instead of retrying."
+                    "</system-reminder>"
                 ),
                 "source": json.dumps(
-                    {"label": "team", "sublabel": "worker"},
+                    {"label": "System", "sublabel": "Reminder"},
                     ensure_ascii=False,
                 ),
             },
@@ -282,9 +284,14 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             self._events(ReplyFinishedReason.INTERRUPTED),
         )
         self.assertEqual(len(delivered), 1)
-        self.assertIn(
-            "ended as interrupted without reporting",
+        self.assertEqual(
             delivered[0]["hint"],
+            "<system-reminder>Team member 'worker' was interrupted by the "
+            "user mid-run, so its task is unfinished. The user may be "
+            "talking to that member directly right now. Check with the "
+            "user, or ask the member what happened, so it does not end up "
+            "an orphan working on something you no longer track."
+            "</system-reminder>",
         )
 
     async def test_completed_worker_turn_is_silent(self) -> None:
@@ -318,6 +325,6 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(delivered), 1)
         self.assertIn(
-            "ended as error without reporting",
+            "Team member 'worker' failed to finish its task. Error: ",
             delivered[0]["hint"],
         )
