@@ -1,36 +1,34 @@
 # -*- coding: utf-8 -*-
-"""The SOP definition model.
+"""The SOP definition.
 
-A SOP is authored once and run many times. Everything here is part of that
-authored definition — it says what the procedure *is*, never what any
-particular run *did*. The per-run side lives in :mod:`._run`.
+Here a SOP is **code**: a step holds the :class:`~..agent.Agent` that will
+run it, already built, with whatever model, tools and workspace you gave
+it. There is no id to resolve and no spec to materialise, because at this
+layer you are holding the object already::
 
-Kept out on purpose, because they only mean something once a service is
-underneath: how a run gets **triggered** (manually, on a schedule, off an
-inbound event), which **workspace** its steps share, where a finished step
-**notifies**, and whether agents may **message each other** mid-run. None
-of those exist at this layer — there is no scheduler, no workspace
-manager, no channels, no message bus — so a service that grows them wraps
-this definition rather than pushing the fields down into it.
+    SOPStep(
+        title="Write the code",
+        agent=Agent(..., offloader=workspace),
+        acceptance=Acceptance(criteria="Changes stay inside src/"),
+    )
+
+That makes a definition **not serialisable**, and deliberately so. A
+service that stores SOPs keeps its own records — agent ids, model names,
+the rest — and builds one of these before running it, exactly the way
+``AgentData`` becomes a live ``Agent`` today. The run itself
+(:mod:`._run`) stays plain data, and that is the half worth persisting.
+
+Everything needing a service underneath stays out for the same reason: how
+a run is **triggered**, which **workspace** its steps share, where a step
+**notifies**, whether agents may **message each other**. There is no
+scheduler, workspace manager, channel or message bus at this layer.
 """
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from ..agent import Agent
 from .._utils._common import _generate_id, _generate_timestamp
-
-ExecutorMode = Literal["reuse_state", "reset_state", "new_agent"]
-"""How a step's executor relates to the SOP's runs.
-
-- ``reuse_state``: the same agent, keeping its state across every run. The
-  conversation simply continues — along with its clutter.
-- ``reset_state``: the same agent, starting from clean state each run.
-  What it learned carries over through its long-term memory rather than
-  its context.
-- ``new_agent``: a fresh agent built from :attr:`Executor.spec` every run.
-  Nothing carries over: fully reproducible, and it pays the ramp-up every
-  time.
-"""
 
 AcceptanceKind = Literal["llm", "human"]
 """How a step is verified done.
@@ -39,38 +37,6 @@ Script-based checks are deliberately absent: they drag in "where does it
 run" and "how is the environment installed", neither of which a SOP author
 can answer from a form.
 """
-
-
-class AgentSpec(BaseModel):
-    """An agent described inline, for the ``new_agent`` executor mode.
-
-    Everything here is a reference by name, not a live object, because a
-    definition has to survive being written down.
-    """
-
-    name: str
-    """The agent name."""
-
-    system_prompt: str = ""
-    """The system prompt."""
-
-    model: str = ""
-    """The chat model to use, by name."""
-
-
-class Executor(BaseModel):
-    """Who runs a step."""
-
-    mode: ExecutorMode = "reset_state"
-    """How the executor relates to runs. See :data:`ExecutorMode`."""
-
-    agent_ref: str | None = None
-    """Which existing agent to use. Opaque here — whoever drives the run
-    decides what it points at. Required unless ``mode`` is
-    ``new_agent``."""
-
-    spec: AgentSpec | None = None
-    """The agent to build. Required when ``mode`` is ``new_agent``."""
 
 
 class Acceptance(BaseModel):
@@ -101,14 +67,31 @@ class SOPStep(BaseModel):
     to the agent that runs it.
     """
 
-    id: str = Field(default_factory=_generate_id)
-    """The step identifier."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    """The step holds a live agent, which is not a pydantic type."""
 
     title: str
     """A short name for the step."""
 
+    agent: Agent
+    """The agent that runs this step, already built.
+
+    Reuse one agent across several steps and they share its context and
+    its workspace; give each its own and they do not. Run the same SOP
+    twice with the same agent and its state carries over; build a fresh
+    one per run and nothing does. All of that is decided here, in the
+    construction — there is no mode to declare.
+    """
+
+    acceptance: Acceptance = Field(default_factory=Acceptance)
+    """How the step is verified done."""
+
+    id: str = Field(default_factory=_generate_id)
+    """The step identifier."""
+
     instruction: str = ""
-    """What the executing agent is asked to achieve."""
+    """What the agent is asked to achieve. Appended to whatever its
+    upstream steps handed over."""
 
     blocked_by: list[str] = Field(default_factory=list)
     """Ids of steps that must finish first. Empty means it can start as
@@ -117,12 +100,6 @@ class SOPStep(BaseModel):
     Only this direction is stored; the reverse (``blocks``) is derived, so
     there is never a second copy to keep in sync.
     """
-
-    executor: Executor = Field(default_factory=Executor)
-    """Who runs the step."""
-
-    acceptance: Acceptance = Field(default_factory=Acceptance)
-    """How the step is verified done."""
 
     max_attempts: int = 3
     """How many failed acceptances before the step is given up on."""
@@ -142,21 +119,24 @@ class SOP(BaseModel):
     """A reusable, step-by-step procedure with an acceptance gate on every
     step."""
 
-    id: str = Field(default_factory=_generate_id)
-    """The SOP identifier."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    """Its steps hold live agents."""
 
     name: str
     """The SOP name."""
+
+    steps: list[SOPStep] = Field(default_factory=list)
+    """The steps. List order is for display only; execution order comes
+    from :attr:`SOPStep.blocked_by`."""
+
+    id: str = Field(default_factory=_generate_id)
+    """The SOP identifier."""
 
     description: str = ""
     """What this procedure is for."""
 
     inputs: list[SOPInput] = Field(default_factory=list)
     """What a run must be given."""
-
-    steps: list[SOPStep] = Field(default_factory=list)
-    """The steps. List order is for display only; execution order comes
-    from :attr:`SOPStep.blocked_by`."""
 
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the SOP was authored."""

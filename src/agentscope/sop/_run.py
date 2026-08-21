@@ -71,8 +71,8 @@ class StepRun(BaseModel):
     """How many times acceptance has been attempted."""
 
     executor_ref: str | None = None
-    """Which executor actually ran it. Opaque here — whatever the driver
-    put in, so it can find its way back to the same one."""
+    """Which agent actually ran it, by name. Recorded so a finished run
+    still says who did what once the agents themselves are gone."""
 
     submission: str = ""
     """The text the agent submitted as its result. This is the only thing

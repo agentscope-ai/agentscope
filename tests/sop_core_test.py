@@ -7,6 +7,7 @@ buys.
 """
 from unittest import TestCase
 
+from agentscope.agent import Agent
 from agentscope.sop import (
     SOP,
     Acceptance,
@@ -20,6 +21,12 @@ from agentscope.sop import (
     new_run,
     next_actions,
 )
+from tests.utils import MockModel
+
+
+def _agent(name: str = "worker") -> Agent:
+    """A stand-in agent — the core never calls it, it only carries it."""
+    return Agent(name=name, system_prompt="", model=MockModel())
 
 
 def _linear_sop(max_attempts: int = 3) -> SOP:
@@ -27,16 +34,23 @@ def _linear_sop(max_attempts: int = 3) -> SOP:
     return SOP(
         name="linear",
         steps=[
-            SOPStep(id="a", title="A", max_attempts=max_attempts),
+            SOPStep(
+                id="a",
+                title="A",
+                agent=_agent(),
+                max_attempts=max_attempts,
+            ),
             SOPStep(
                 id="b",
                 title="B",
+                agent=_agent(),
                 blocked_by=["a"],
                 max_attempts=max_attempts,
             ),
             SOPStep(
                 id="c",
                 title="C",
+                agent=_agent(),
                 blocked_by=["b"],
                 max_attempts=max_attempts,
             ),
@@ -59,10 +73,15 @@ class SOPCoreTest(TestCase):
         sop = SOP(
             name="diamond",
             steps=[
-                SOPStep(id="a", title="A"),
-                SOPStep(id="b", title="B", blocked_by=["a"]),
-                SOPStep(id="c", title="C", blocked_by=["a"]),
-                SOPStep(id="d", title="D", blocked_by=["b", "c"]),
+                SOPStep(id="a", title="A", agent=_agent()),
+                SOPStep(id="b", title="B", agent=_agent(), blocked_by=["a"]),
+                SOPStep(id="c", title="C", agent=_agent(), blocked_by=["a"]),
+                SOPStep(
+                    id="d",
+                    title="D",
+                    agent=_agent(),
+                    blocked_by=["b", "c"],
+                ),
             ],
         )
         run = new_run(sop)
@@ -148,6 +167,7 @@ class SOPCoreTest(TestCase):
                 SOPStep(
                     id="a",
                     title="A",
+                    agent=_agent(),
                     acceptance=Acceptance(kind="human", approver="lead"),
                 ),
             ],
@@ -171,8 +191,8 @@ class SOPCoreTest(TestCase):
         sop = SOP(
             name="cycle",
             steps=[
-                SOPStep(id="a", title="A", blocked_by=["b"]),
-                SOPStep(id="b", title="B", blocked_by=["a"]),
+                SOPStep(id="a", title="A", agent=_agent(), blocked_by=["b"]),
+                SOPStep(id="b", title="B", agent=_agent(), blocked_by=["a"]),
             ],
         )
         run = new_run(sop)
