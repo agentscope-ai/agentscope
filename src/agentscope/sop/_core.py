@@ -30,7 +30,6 @@ from ._model import SOP, SOPStep
 from ._run import RunState, SOPRun, StepRun, VerificationRecord
 from ._verifier import VerifyResult
 from ..message import DataBlock, TextBlock
-from .._utils._common import _generate_timestamp
 
 # ══════════════════════════════════════════════════════════════════════
 # Actions — what a driver is being asked to carry out
@@ -100,7 +99,7 @@ def is_ready(sop: SOP, run: SOPRun, step_id: str) -> bool:
     if step is None:
         return False
     return all(
-        (r := run.step(b)) is not None and r.state == "completed"
+        (r := run.steps.get(b)) is not None and r.state == "completed"
         for b in step.blocked_by
     )
 
@@ -118,9 +117,10 @@ def overall_state(run: SOPRun) -> RunState:
             ``failed`` when any did, otherwise ``running``.
     """
     unsettled = ("pending", "running", "verifying", "awaiting_approval")
-    if any(s.state in unsettled for s in run.steps):
+    records = run.steps.values()
+    if any(r.state in unsettled for r in records):
         return "running"
-    if any(s.state == "failed" for s in run.steps):
+    if any(r.state == "failed" for r in records):
         return "failed"
     return "completed"
 
@@ -151,7 +151,8 @@ def upstream_submissions(
         return {}
     out: dict[str, str] = {}
     for blocker_id in step.blocked_by:
-        blocker, record = _step(sop, blocker_id), run.step(blocker_id)
+        blocker = _step(sop, blocker_id)
+        record = run.steps.get(blocker_id)
         if blocker is not None and record is not None:
             out[blocker.subject] = record.submission
     return out
@@ -174,11 +175,14 @@ def next_actions(sop: SOP, run: SOPRun) -> list[Action]:
             What to do, or one :class:`Settle` when the run is over.
     """
     actions: list[Action] = []
-    for record in run.steps:
-        if record.state == "pending" and is_ready(sop, run, record.step_id):
-            actions.append(Dispatch(record.step_id))
+    for step in sop.steps:
+        record = run.steps.get(step.id)
+        if record is None:
+            continue
+        if record.state == "pending" and is_ready(sop, run, step.id):
+            actions.append(Dispatch(step.id))
         elif record.state in ("verifying", "awaiting_approval"):
-            actions.append(Judge(record.step_id))
+            actions.append(Judge(step.id))
 
     if actions:
         return actions
@@ -204,11 +208,10 @@ def mark_dispatched(run: SOPRun, step_id: str) -> None:
         step_id (`str`):
             The step being dispatched.
     """
-    record = run.step(step_id)
+    record = run.steps.get(step_id)
     if record is None:
         return
     record.state = "running"
-    record.started_at = record.started_at or _generate_timestamp()
 
 
 def mark_submitted(run: SOPRun, step_id: str, submission: str) -> None:
@@ -222,7 +225,7 @@ def mark_submitted(run: SOPRun, step_id: str, submission: str) -> None:
         submission (`str`):
             The text it submitted.
     """
-    record = run.step(step_id)
+    record = run.steps.get(step_id)
     if record is None:
         return
     record.submission = submission
@@ -237,11 +240,14 @@ def record_verification(
 ) -> None:
     """Apply a verifier's verdict and move the step accordingly.
 
-    ``pending`` parks the step — no attempt is spent, because nothing was
-    judged. ``passed`` completes it. ``failed`` sends it back to its agent
-    with the reason, unless that was its
+    ``pending`` parks the step and writes nothing — no attempt is spent,
+    because nothing was judged. ``passed`` completes it. ``failed`` sends
+    it back to its agent with the reason, unless that was its
     :attr:`~._model.SOPStep.max_attempts` refusal, in which case the step
     fails and everything downstream of it is skipped.
+
+    The attempt count is not tracked separately: it is how many verdicts
+    have been recorded.
 
     Args:
         sop (`SOP`):
@@ -253,7 +259,7 @@ def record_verification(
         result (`VerifyResult`):
             What its verifier concluded.
     """
-    record, step = run.step(step_id), _step(sop, step_id)
+    record, step = run.steps.get(step_id), _step(sop, step_id)
     if record is None or step is None:
         return
 
@@ -261,10 +267,8 @@ def record_verification(
         record.state = "awaiting_approval"
         return
 
-    record.attempts += 1
     record.verifications.append(
         VerificationRecord(
-            attempt=record.attempts,
             passed=result.status == "passed",
             message=result.message,
             verified_by=result.verified_by,
@@ -273,10 +277,8 @@ def record_verification(
 
     if result.status == "passed":
         record.state = "completed"
-        record.finished_at = _generate_timestamp()
-    elif record.attempts >= step.max_attempts:
+    elif len(record.verifications) >= step.max_attempts:
         record.state = "failed"
-        record.finished_at = _generate_timestamp()
         skip_unreachable(sop, run)
     else:
         # Back to the agent, with the reason waiting in `feedback`.
@@ -296,7 +298,7 @@ def feedback(run: SOPRun, step_id: str) -> str:
         `str`:
             The refusal message, or ``""`` on a first attempt.
     """
-    record = run.step(step_id)
+    record = run.steps.get(step_id)
     if record is None or not record.verifications:
         return ""
     last = record.verifications[-1]
@@ -318,34 +320,18 @@ def skip_unreachable(sop: SOP, run: SOPRun) -> None:
     changed = True
     while changed:
         changed = False
-        for record in run.steps:
-            if record.state != "pending":
-                continue
-            step = _step(sop, record.step_id)
-            if step is None:
+        for step in sop.steps:
+            record = run.steps.get(step.id)
+            if record is None or record.state != "pending":
                 continue
             blocked = any(
-                (r := run.step(b)) is not None
+                (r := run.steps.get(b)) is not None
                 and r.state in ("failed", "skipped")
                 for b in step.blocked_by
             )
             if blocked:
                 record.state = "skipped"
-                record.finished_at = _generate_timestamp()
                 changed = True
-
-
-def settle(run: SOPRun, state: RunState) -> None:
-    """Close the run out.
-
-    Args:
-        run (`SOPRun`):
-            The run to close.
-        state (`RunState`):
-            How it ended.
-    """
-    run.state = state
-    run.finished_at = _generate_timestamp()
 
 
 def new_run(
@@ -369,7 +355,7 @@ def new_run(
     return SOPRun(
         sop_id=sop.id,
         inputs=list(inputs or []),
-        steps=[StepRun(step_id=s.id) for s in sop.steps],
+        steps={s.id: StepRun() for s in sop.steps},
     )
 
 

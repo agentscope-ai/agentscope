@@ -1,9 +1,22 @@
 # -*- coding: utf-8 -*-
-"""The SOP runtime model.
+"""What a run of a SOP did.
 
-One :class:`SOP` definition produces many :class:`SOPRun` instances. This
-module holds only what a particular run did — its state machine, what each
-step handed back, and how each acceptance went.
+One :class:`~._model.SOP` definition produces many runs. A definition
+holds live agents and verifiers and cannot be written down; everything
+here is plain data, and this is the half worth persisting — dump a run and
+the progress outlives the process that made it.
+
+Nothing in here is a cursor. There is no "current step" and no "next
+index": a pass over a run recomputes what can proceed from the steps' own
+states, so picking a half-finished run back up is the same operation as
+starting one.
+
+The three fields a step keeps are the three that cannot be worked out
+again. Its ``state`` says whether to run it or skip it. Its ``submission``
+is what the next steps read — and because a completed step is *skipped*
+rather than re-run, losing it would leave them with nothing. Its
+``verifications`` are the verdicts so far, which say both why it was sent
+back and, by their number, how close it is to being given up on.
 """
 from typing import Literal
 
@@ -24,108 +37,79 @@ StepState = Literal[
 """Where a step stands in a run.
 
 - ``pending``: not dispatched — either still blocked, or simply next up.
-- ``running``: handed to its executor.
-- ``verifying``: the executor submitted; acceptance is being judged.
-- ``awaiting_approval``: waiting on a person.
-- ``completed`` / ``failed``: settled. ``failed`` means acceptance kept
+- ``running``: handed to its agent.
+- ``verifying``: the agent submitted; the verifier has not answered yet.
+- ``awaiting_approval``: the verifier said ``pending`` — it is waiting on
+  something outside, most often a person.
+- ``completed`` / ``failed``: settled. ``failed`` means the verifier kept
   refusing until ``max_attempts`` ran out.
-- ``skipped``: unreachable because something upstream failed.
+- ``skipped``: unreachable, because something upstream failed.
 
 Note there is no ``ready``: whether a step can start is recomputed from
-:attr:`~.SOPStep.blocked_by` and the other steps' states, never stored.
+:attr:`~._model.SOPStep.blocked_by` and the other steps' states.
 """
 
-RunState = Literal["running", "completed", "failed", "cancelled"]
-"""Where a run stands overall."""
+RunState = Literal["running", "completed", "failed"]
+"""Where a run stands overall. Always derived — see
+:func:`~._core.overall_state` — never stored."""
 
 
 class VerificationRecord(BaseModel):
-    """One acceptance attempt."""
+    """One settled verdict on a step.
 
-    attempt: int
-    """Which attempt this was, counting from 1."""
+    A verifier answering ``pending`` writes nothing here: nothing was
+    judged, so no attempt was spent.
+    """
 
     passed: bool
     """Whether the step was accepted."""
 
     message: str = ""
-    """Why it was refused. This is what goes back to the agent, so it has
-    to say what is missing, not just that something is."""
+    """Why it was refused. This goes back to the agent verbatim on the
+    retry, so it has to say what is missing rather than that something
+    is."""
 
     verified_by: str = ""
-    """Who judged: a model name, or the approver."""
+    """Who decided — a model, a person, an external system."""
 
     checked_at: str = Field(default_factory=_generate_timestamp)
-    """When the judgement was made."""
+    """When the verdict was reached."""
 
 
 class StepRun(BaseModel):
     """What one step did in one run."""
 
-    step_id: str
-    """The :class:`~.SOPStep` this belongs to."""
-
     state: StepState = "pending"
     """Where the step stands. See :data:`StepState`."""
 
-    attempts: int = 0
-    """How many times acceptance has been attempted."""
-
-    executor_ref: str | None = None
-    """Which agent actually ran it, by name. Recorded so a finished run
-    still says who did what once the agents themselves are gone."""
-
     submission: str = ""
-    """The text the agent submitted as its result. This is the only thing
-    that crosses to the next step: no files, no context, no artifacts."""
+    """The text the agent handed back. This is the only thing that
+    crosses to the next step — no files, no context, no artifacts — so it
+    outlives the step being skipped on later passes."""
 
     verifications: list[VerificationRecord] = Field(default_factory=list)
-    """Every acceptance attempt, oldest first."""
-
-    started_at: str | None = None
-    """When the step was dispatched."""
-
-    finished_at: str | None = None
-    """When the step settled."""
+    """Every settled verdict, oldest first. Its length is the attempt
+    count, and its last entry is the reason the agent is being asked to
+    try again."""
 
 
 class SOPRun(BaseModel):
     """One execution of a SOP."""
 
-    id: str = Field(default_factory=_generate_id)
-    """The run identifier."""
-
     sop_id: str
     """The SOP being run."""
 
-    state: RunState = "running"
-    """Where the run stands."""
+    id: str = Field(default_factory=_generate_id)
+    """The run identifier."""
 
     inputs: list[TextBlock | DataBlock] = Field(default_factory=list)
     """What the run was started with. Content rather than named values:
     nothing routes an input to a particular step, so it is simply what the
-    first steps get to read — and being blocks, it can carry images and
-    files as easily as text."""
+    first steps get to read — and being blocks, it carries images and
+    files as readily as text."""
 
-    steps: list[StepRun] = Field(default_factory=list)
-    """One entry per step of the SOP."""
+    steps: dict[str, StepRun] = Field(default_factory=dict)
+    """``step_id`` → how that step is going."""
 
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the run was created."""
-
-    finished_at: str | None = None
-    """When the run settled."""
-
-    def step(self, step_id: str) -> StepRun | None:
-        """Return the record for ``step_id``, or ``None`` if this run has
-        no such step.
-
-        Args:
-            step_id (`str`):
-                The step to look up.
-
-        Returns:
-            `StepRun | None`:
-                The matching record.
-        """
-        return next((s for s in self.steps if s.step_id == step_id), None)

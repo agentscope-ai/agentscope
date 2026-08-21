@@ -12,7 +12,9 @@ Three layers, deliberately separate:
   layer it is code: a step holds the agent that runs it and the verifier
   that judges it, both already built.
 - :class:`SOPRun` and :class:`StepRun` are one **run** — what actually
-  happened. Plain data, and the half worth persisting.
+  happened. Plain data, and the half worth persisting. It holds no cursor:
+  a step keeps only what cannot be worked out again, and every pass
+  recomputes what can proceed.
 - :mod:`._core` decides **what to do next**, as pure functions over those
   two. It is shared by every driver, so readiness, retries and failure
   spreading behave the same wherever a SOP runs.

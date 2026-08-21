@@ -113,7 +113,7 @@ class SOPCoreTest(TestCase):
         core.mark_submitted(run, "a", "here is the plan")
 
         self.assertEqual([Judge("a")], next_actions(sop, run))
-        self.assertEqual("here is the plan", run.step("a").submission)
+        self.assertEqual("here is the plan", run.steps["a"].submission)
 
     def test_refusal_sends_the_step_back_with_a_reason(self) -> None:
         """Below the attempt limit, a refused step keeps working."""
@@ -128,8 +128,8 @@ class SOPCoreTest(TestCase):
             _failed("no acceptance criteria"),
         )
 
-        self.assertEqual("running", run.step("a").state)
-        self.assertEqual(1, run.step("a").attempts)
+        self.assertEqual("running", run.steps["a"].state)
+        self.assertEqual(1, len(run.steps["a"].verifications))
         self.assertEqual("no acceptance criteria", core.feedback(run, "a"))
 
     def test_running_out_of_attempts_fails_the_step(self) -> None:
@@ -141,8 +141,8 @@ class SOPCoreTest(TestCase):
         core.record_verification(sop, run, "a", _failed("first"))
         core.record_verification(sop, run, "a", _failed("second"))
 
-        self.assertEqual("failed", run.step("a").state)
-        self.assertIsNotNone(run.step("a").finished_at)
+        self.assertEqual("failed", run.steps["a"].state)
+        self.assertEqual(2, len(run.steps["a"].verifications))
 
     def test_a_failure_strands_everything_behind_it(self) -> None:
         """Skipping cascades — B is stranded, and so is C behind it."""
@@ -152,8 +152,8 @@ class SOPCoreTest(TestCase):
         core.mark_submitted(run, "a", "nope")
         core.record_verification(sop, run, "a", _failed("not close"))
 
-        self.assertEqual("skipped", run.step("b").state)
-        self.assertEqual("skipped", run.step("c").state)
+        self.assertEqual("skipped", run.steps["b"].state)
+        self.assertEqual("skipped", run.steps["c"].state)
         self.assertEqual([Settle("failed")], next_actions(sop, run))
 
     def test_a_finished_run_settles_completed(self) -> None:
@@ -182,13 +182,12 @@ class SOPCoreTest(TestCase):
             VerifyResult(status="pending"),
         )
 
-        self.assertEqual("awaiting_approval", run.step("a").state)
-        self.assertEqual(0, run.step("a").attempts)
-        self.assertEqual([], run.step("a").verifications)
+        self.assertEqual("awaiting_approval", run.steps["a"].state)
+        self.assertEqual([], run.steps["a"].verifications)
         self.assertEqual([Judge("a")], next_actions(sop, run))
 
         core.record_verification(sop, run, "a", _passed("lead"))
-        self.assertEqual("completed", run.step("a").state)
+        self.assertEqual("completed", run.steps["a"].state)
 
     def test_a_dependency_cycle_is_reported_not_hung_on(self) -> None:
         """Two steps blocking each other settles as failed, not silence."""
@@ -233,7 +232,7 @@ class SOPCoreTest(TestCase):
         core.mark_dispatched(run, "a")
         core.mark_submitted(run, "a", "done")
 
-        step, record = sop.steps[0], run.step("a")
+        step, record = sop.steps[0], run.steps["a"]
         result = asyncio.run(
             step.verifier.verify(sop, run, step, record),
         )
