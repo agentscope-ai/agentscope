@@ -299,7 +299,7 @@ class ReActConfig(BaseModel):
 
     max_iters: int = Field(
         title="Max Iterations",
-        default=20,
+        default=50,
         description="The maximum number of reasoning-acting iterations in "
         "one reply",
     )

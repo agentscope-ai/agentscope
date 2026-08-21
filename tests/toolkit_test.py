@@ -3,11 +3,12 @@
 """Toolkit test case."""
 import base64
 import json
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, AsyncGenerator, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 
+from pydantic import BaseModel, Field
 from utils import AnyString
 
 from agentscope.mcp import HttpMCPConfig, MCPClient
@@ -1132,6 +1133,125 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             response.content[0].text,
             f"started{expected_dict_text}",
+        )
+
+    async def test_custom_input_schema(self) -> None:
+        """Test overriding the auto-extracted schema with a custom one."""
+
+        def set_mode(mode: str) -> str:
+            """Set the working mode.
+
+            Args:
+                mode: The mode to use
+            """
+            return f"Mode set to {mode}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    set_mode,
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "description": "The mode to use",
+                                "enum": ["fast", "slow"],
+                            },
+                        },
+                        "required": ["mode"],
+                    },
+                ),
+            ],
+        )
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "set_mode",
+                        "description": "Set the working mode.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "mode": {
+                                    "type": "string",
+                                    "description": "The mode to use",
+                                    "enum": ["fast", "slow"],
+                                },
+                            },
+                            "required": ["mode"],
+                        },
+                    },
+                },
+            ],
+        )
+
+    async def test_base_model_input_schema(self) -> None:
+        """Test passing a pydantic BaseModel class as the input schema."""
+
+        class SetModeInput(BaseModel):
+            """The input model of the set_mode tool."""
+
+            mode: Literal["fast", "slow"] = Field(
+                description="The mode to use",
+            )
+            level: int = Field(
+                default=5,
+                ge=1,
+                le=10,
+                description="The level to use",
+            )
+
+        def set_mode(mode: str, level: int = 5) -> str:
+            """Set the working mode."""
+            return f"Mode set to {mode} at level {level}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    set_mode,
+                    input_schema=SetModeInput,
+                ),
+            ],
+        )
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "set_mode",
+                        "description": "Set the working mode.",
+                        "parameters": {
+                            "type": "object",
+                            "description": (
+                                "The input model of the set_mode tool."
+                            ),
+                            "properties": {
+                                "mode": {
+                                    "type": "string",
+                                    "description": "The mode to use",
+                                    "enum": ["fast", "slow"],
+                                },
+                                "level": {
+                                    "type": "integer",
+                                    "description": "The level to use",
+                                    "default": 5,
+                                    "minimum": 1,
+                                    "maximum": 10,
+                                },
+                            },
+                            "required": ["mode"],
+                        },
+                    },
+                },
+            ],
         )
 
 
