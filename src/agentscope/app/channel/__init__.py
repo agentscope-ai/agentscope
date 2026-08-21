@@ -12,9 +12,11 @@ from ._base import (
     ChannelCapability,
     ChannelConfirmationResultEvent,
     ChannelEvent,
+    ChannelHeartbeat,
     ChannelStatus,
     ChatKind,
 )
+from ._clients import ChannelClients
 from ._dispatcher import ChannelLifecycleDispatcher
 from ._errors import ChannelError
 from ._gateway import ChannelGateway
@@ -25,9 +27,11 @@ from ._whatsapp import WhatsAppChannel
 
 __all__ = [
     "ChannelBase",
+    "ChannelClients",
     "ChannelCapability",
     "ChannelConfirmationResultEvent",
     "ChannelError",
+    "ChannelHeartbeat",
     "ChannelEvent",
     "ChannelStatus",
     "ChatKind",

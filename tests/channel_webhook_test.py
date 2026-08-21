@@ -24,6 +24,7 @@ from agentscope.app._router._whatsapp_webhook import (  # noqa: E402
     create_whatsapp_webhook_router,
 )
 from agentscope.app.channel import (  # noqa: E402
+    ChannelClients,
     ChannelEvent,
     ChannelLifecycleDispatcher,
     ChannelTypeRegistry,
@@ -729,19 +730,19 @@ def test_replayed_gateway_trigger_runs_one_user_turn_after_persistence() -> (
     asyncio.run(run())
 
 
-def test_shared_chat_metadata_hydrates_another_dispatcher_instance() -> None:
-    """A worker that missed the webhook can refresh its retained adapter."""
+def test_shared_chat_metadata_hydrates_another_client_instance() -> None:
+    """An API process can hydrate a client from worker-observed metadata."""
 
     async def run() -> None:
         bus = InMemoryMessageBus()
         record = _record()
-        channel = WhatsAppChannel(
-            record.id,
-            WhatsAppChannel.Credentials(**record.credentials),
-            WhatsAppChannel.Config(),
+        storage = AsyncMock()
+        storage.get_channel.return_value = record
+        clients = ChannelClients(
+            storage=storage,
+            type_registry=ChannelTypeRegistry([WhatsAppChannel]),
+            message_bus=bus,
         )
-        dispatcher = _dispatcher(bus)
-        dispatcher._instances[record.id] = MagicMock(channel=channel)
         await bus.registry_set(
             MessageBusKeys.channel_seen_chats(record.id),
             "group-1",
@@ -751,8 +752,9 @@ def test_shared_chat_metadata_hydrates_another_dispatcher_instance() -> None:
             ),
         )
 
-        await dispatcher.hydrate_channel(record.id)
+        channel = await clients.get(record.id)
 
+        assert isinstance(channel, WhatsAppChannel)
         assert await channel.chat_name("group-1") == "Project"
         assert await channel.list_bot_chats() == [
             {

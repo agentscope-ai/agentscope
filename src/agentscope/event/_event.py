@@ -147,6 +147,10 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    cache_input_tokens: int = 0
+    """Number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """Number of input tokens used to create the prompt cache."""
     finished_reason: FinishedReason = Field(
         default=FinishedReason.COMPLETED,
     )
