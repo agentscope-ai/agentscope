@@ -34,6 +34,7 @@ from ..._utils._common import _generate_id
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
+    from .._service._access import ResourceAccessService
     from ..storage import AgentRecord, StorageBase
     from ..workspace_manager import WorkspaceManagerBase
 
@@ -168,6 +169,7 @@ class AgentInvite(_TeamToolBase):
         session_id: str,
         agent_id: str,
         invitable_pool: list["AgentRecord"],
+        resource_access_service: "ResourceAccessService | None" = None,
     ) -> None:
         """Bind the base dependencies plus the invitable pool snapshot.
 
@@ -188,6 +190,10 @@ class AgentInvite(_TeamToolBase):
             invitable_pool (`list[AgentRecord]`):
                 Snapshot of currently-invitable agents. Must be
                 non-empty — the caller skips construction otherwise.
+            resource_access_service (`ResourceAccessService | None`):
+                Resolves the selected agent against the caller's current
+                access grants. ``None`` preserves direct construction for
+                owner-only integrations.
         """
         super().__init__(
             storage,
@@ -201,6 +207,7 @@ class AgentInvite(_TeamToolBase):
         self._pool_by_id: dict[str, "AgentRecord"] = {
             a.id: a for a in invitable_pool
         }
+        self._resource_access_service = resource_access_service
 
         # Build enum + a human-readable per-target rundown for the LLM.
         enum_values = [
@@ -266,12 +273,10 @@ class AgentInvite(_TeamToolBase):
 
             team = await self._require_leader_team("invite members")
 
-            # Re-fetch fresh — the snapshot could be stale if the user
-            # just toggled the invite off.
-            fresh = await self._storage.get_agent(
-                self._user_id,
-                invited.id,
-            )
+            # Re-fetch fresh — both the invite settings and a cross-owner
+            # access grant may have changed since the toolkit snapshot was
+            # assembled.
+            fresh = await self._resolve_fresh_agent(invited)
             if (
                 fresh is None
                 or not fresh.data.invite_config.invitable
@@ -401,7 +406,7 @@ class AgentInvite(_TeamToolBase):
             team.data.members = [
                 *existing_members,
                 TeamMember(
-                    owner_id=self._user_id,
+                    owner_id=invited.user_id,
                     agent_id=invited.id,
                     session_id=borrowed.id,
                     role="invited",
@@ -453,6 +458,30 @@ class AgentInvite(_TeamToolBase):
                 content=[TextBlock(text=f"AgentInvite failed: {e}")],
                 state=ToolResultState.ERROR,
             )
+
+    async def _resolve_fresh_agent(
+        self,
+        invited: "AgentRecord",
+    ) -> "AgentRecord | None":
+        """Resolve a snapshot entry without losing its owner namespace."""
+        if self._resource_access_service is None:
+            return await self._storage.get_agent(invited.user_id, invited.id)
+
+        # Keep the web-framework exception dependency local to the app-only
+        # access-service path. A revoked share is a normal stale-snapshot
+        # outcome for this tool, not an unhandled tool failure.
+        from fastapi import HTTPException
+
+        try:
+            fresh = await self._resource_access_service.resolve_agent(
+                self._user_id,
+                invited.id,
+            )
+            return fresh if fresh.user_id == invited.user_id else None
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return None
+            raise
 
 
 def _resolve_target(

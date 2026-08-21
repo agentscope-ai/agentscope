@@ -1698,7 +1698,8 @@ class RedisStorage(StorageBase):
              worker's session.
            - ``role == "invited"`` — the member is a pre-existing
              user-owned agent that was borrowed via ``AgentInvite``.
-             Only remove the team-scoped session via
+             Only remove the team-scoped session from the team owner's
+             namespace via
              :meth:`delete_session`; the underlying
              :class:`AgentRecord` and its other sessions must survive.
 
@@ -1745,7 +1746,7 @@ class RedisStorage(StorageBase):
                 await self.delete_agent(member.owner_id, member.agent_id)
             else:  # invited
                 await self.delete_session(
-                    member.owner_id,
+                    user_id,
                     member.agent_id,
                     member.session_id,
                 )
