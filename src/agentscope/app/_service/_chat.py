@@ -13,6 +13,7 @@ that wants them subscribes through the
 """
 import asyncio
 import inspect
+from contextlib import aclosing
 import json
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
@@ -22,7 +23,6 @@ from fastapi import HTTPException
 from .._bus_ops import (
     abandon_inbox_consumer,
     deliver_to_inbox,
-    enqueue_channel_output,
     enqueue_run_trigger,
     has_pending_inbox_or_release,
     publish_session_event,
@@ -94,6 +94,11 @@ class _WorkerContext:
 
 
 _TeamContext = _LeaderContext | _WorkerContext
+
+# How long the run waits for its reply to finish reaching the platform.
+# The terminal event is already published by then, so this is a backstop
+# against a stream that never ends, not a delivery budget.
+CHANNEL_DELIVERY_DRAIN_SECS = 30.0
 
 
 class ChatService:
@@ -1011,20 +1016,21 @@ class ChatService:
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
             events_key = MessageBusKeys.session_events(session_id)
-            # Channel-bound run: signal the output forwarder so the reply
-            # is streamed back to the platform chat. Covers scheduled /
-            # background wakes, not just inbound channel messages.
+            # Channel-bound run: start streaming the reply back to the
+            # platform chat. Delivery is plain REST, so this node does it
+            # rather than handing the run to whichever one holds the
+            # channel's connection. Covers scheduled / background wakes,
+            # not just inbound channel messages.
+            deliver_task: asyncio.Task | None = None
             if (
                 session_record.source == SessionSource.CHANNEL
                 and session_record.source_channel_id
                 and session_record.source_chat_id
             ):
-                await enqueue_channel_output(
-                    self._message_bus,
+                deliver_task = await self._start_channel_delivery(
                     session_id=session_id,
                     channel_id=session_record.source_channel_id,
                     chat_id=session_record.source_chat_id,
-                    user_id=user_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None
@@ -1300,6 +1306,117 @@ class ChatService:
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+                if deliver_task is not None:
+                    await self._collect_channel_delivery(
+                        deliver_task,
+                        session_id,
+                    )
+
+    async def _start_channel_delivery(
+        self,
+        *,
+        session_id: str,
+        channel_id: str,
+        chat_id: str,
+        agent_id: str,
+    ) -> "asyncio.Task | None":
+        """Begin streaming this run's reply back to its platform chat.
+
+        Started before the run so the subscription is in place for the
+        first event; the caller collects it once the run is done.
+
+        Args:
+            session_id (`str`): The run's session.
+            channel_id (`str`): The channel the session came from.
+            chat_id (`str`): The platform chat to deliver into.
+            agent_id (`str`): The agent that owns the session; pinned on
+                a confirmation card so a click resumes this exact run.
+
+        Returns:
+            `asyncio.Task | None`: The delivery task, or ``None`` when
+            no client could be built.
+        """
+        from ..channel import ChannelEvent, event_stream
+
+        if self._channel_clients is None:
+            return None
+        channel = await self._channel_clients.get(channel_id)
+        if channel is None:
+            logger.error(
+                "channel '%s' has no client; the reply for session '%s' "
+                "cannot be delivered",
+                channel_id,
+                session_id,
+            )
+            return None
+
+        # Synthetic send target — a background run has no inbound
+        # message. Carries the run's identity so a confirmation card can
+        # pin its exact target and skip re-resolving routing on click.
+        target = ChannelEvent(
+            channel_id=channel_id,
+            channel_user_id="",
+            chat_id=chat_id,
+            metadata={"session_id": session_id, "agent_id": agent_id},
+        )
+
+        async def _deliver() -> None:
+            """Feed the run's event stream to the channel."""
+            try:
+                async with aclosing(
+                    event_stream(self._message_bus, session_id),
+                ) as events:
+                    await channel.send_response(target, events)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "channel '%s' failed to deliver the reply for "
+                    "session '%s'",
+                    channel_id,
+                    session_id,
+                )
+
+        return asyncio.create_task(
+            _deliver(),
+            name=f"channel-deliver:{session_id}",
+        )
+
+    async def _collect_channel_delivery(
+        self,
+        deliver_task: "asyncio.Task",
+        session_id: str,
+    ) -> None:
+        """Wait for the reply to finish reaching the platform.
+
+        The run's terminal event is already published, so delivery is
+        only flushing its last call and returns almost at once. It is
+        bounded anyway: this runs while the session lock is held, so a
+        stream that never terminates would keep the session locked and
+        nothing could ever resume it.
+
+        Args:
+            deliver_task (`asyncio.Task`): The delivery task to collect.
+            session_id (`str`): The run's session, for the log line.
+        """
+        try:
+            await asyncio.wait_for(
+                deliver_task,
+                timeout=CHANNEL_DELIVERY_DRAIN_SECS,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.error(
+                "channel delivery for session '%s' did not finish; "
+                "abandoning it to release the session",
+                session_id,
+            )
+        except asyncio.CancelledError:
+            deliver_task.cancel()
+            raise
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "channel delivery for session '%s' failed",
+                session_id,
+            )
 
     async def _project_event(
         self,
