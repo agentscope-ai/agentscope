@@ -7,7 +7,6 @@ from abc import abstractmethod
 from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
 
-import shortuuid
 from pydantic import BaseModel, Field
 
 from ..message import (
@@ -109,9 +108,11 @@ class FormatterBase(BaseModel):
                 ):
                     # If supported, promote the block
 
-                    # Create an identifier for such multimodal data for
-                    # accurate reference (in terms of order, position, etc.)
-                    identifier = shortuuid.uuid()
+                    # Reuse the block's own stable id as the identifier so
+                    # repeated formatting of the same unchanged Msg history
+                    # (e.g. on every LLM call) produces the same text, rather
+                    # than a fresh random id each time.
+                    identifier = block.id
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
