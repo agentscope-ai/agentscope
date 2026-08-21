@@ -85,8 +85,6 @@ class _LeaderContext:
 class _WorkerContext:
     """This session is a worker; its leader is fully resolved."""
 
-    leader_session_id: str
-    leader_agent_id: str
     leader_name: str
     role: Literal["worker"] = "worker"
 
@@ -188,7 +186,7 @@ class ChatService:
             channel_dispatcher (`ChannelLifecycleDispatcher | None`, \
 optional):
                 The node's channel dispatcher, forwarded to
-                :func:`get_toolkit` so a channel-originated session's
+                the run context so a channel-originated session's
                 agent gets that channel's platform tools.
         """
         self._storage = storage
@@ -647,11 +645,7 @@ optional):
                                     f"{session_id!r} cannot run."
                                 ),
                             )
-                        team_ctx = _WorkerContext(
-                            leader_session_id=leader.session_id,
-                            leader_agent_id=leader.agent.id,
-                            leader_name=leader.name,
-                        )
+                        team_ctx = _WorkerContext(leader_name=leader.name)
 
                 channel = (
                     self._channel_dispatcher.get_local_channel(

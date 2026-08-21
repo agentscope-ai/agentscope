@@ -107,8 +107,14 @@ class _TeamToolBase(ToolBase):
             raise _TeamToolError(f"team {session.team_id} no longer exists.")
         return team
 
-    async def _require_leader_team(self) -> "TeamRecord":
+    async def _require_leader_team(self, leader_only: str) -> "TeamRecord":
         """Return the team this session **leads**.
+
+        Args:
+            leader_only (`str`):
+                What only the leader may do, e.g. ``"add members"`` —
+                spliced into the rejection so the LLM keeps a concrete
+                next step.
 
         Returns:
             `TeamRecord`: The team whose leader is this session.
@@ -120,7 +126,8 @@ class _TeamToolBase(ToolBase):
         team = await self._require_team()
         if team.session_id != self._session_id:
             raise _TeamToolError(
-                "only the team leader can do this; this session is a worker.",
+                f"only the team leader can {leader_only}; this session "
+                f"is a worker.",
             )
         return team
 

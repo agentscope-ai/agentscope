@@ -264,7 +264,7 @@ class AgentInvite(_TeamToolBase):
                 return _error(resolve_err)
             assert invited is not None  # narrows for mypy
 
-            team = await self._require_leader_team()
+            team = await self._require_leader_team("invite members")
 
             # Re-fetch fresh — the snapshot could be stale if the user
             # just toggled the invite off.

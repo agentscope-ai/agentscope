@@ -1786,11 +1786,11 @@ class TestEnsureTeamMembersMigration(_TeamToolsTestBase):
 
 
 class TestResolveTeamLeader(_TeamToolsTestBase):
-    """``_resolve_team_leader`` reads the leader and backfills its id."""
+    """``_resolve_team_leader`` resolves the leader without writing."""
 
-    async def test_legacy_team_backfills_leader_agent_id(self) -> None:
-        """A record without ``leader_agent_id`` resolves via the leader
-        session, then persists the id so later reads skip that hop."""
+    async def test_legacy_team_resolves_via_leader_session(self) -> None:
+        """A record without ``leader_agent_id`` still resolves, via the
+        leader session, and is left untouched on disk."""
         from agentscope.app.storage._model import TeamData, TeamRecord
         from agentscope.app.storage._utils import _resolve_team_leader
 
@@ -1814,7 +1814,7 @@ class TestResolveTeamLeader(_TeamToolsTestBase):
                 "session_id": self.leader_session.id,
                 "agent_id": self.leader_agent.id,
                 "name": self.leader_agent.data.name,
-                "persisted_leader_agent_id": self.leader_agent.id,
+                "persisted_leader_agent_id": None,
             },
         )
 

@@ -27,8 +27,9 @@ Task series, …) in two ways:
    refresh point because the toolkit never changed; only the
    underlying storage state did, which the next tool reads fresh.
 
-Selection of the right subset happens inline in :func:`get_toolkit`;
-there is no separate "team tool factory" helper.
+Which subset is attached is decided by the caller-resolved team role
+that :func:`get_toolkit` receives; there is no separate "team tool
+factory" helper.
 """
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._agent_invite import AgentInvite

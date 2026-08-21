@@ -15,7 +15,7 @@ from ...message import (
     ToolResultState,
 )
 from ...middleware import MiddlewareBase
-from ...types import ReplyFinishedReason
+from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
 
 
 class TeamMemberLoopMiddleware(MiddlewareBase):
@@ -25,12 +25,27 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
      the team leader.
     2. When exceeds the max iteration numbers, the agent is guided to send
     team leader a message to ask for permission to continue the operation.
+
+    A member that keeps ending without reporting is nudged at most
+    ``max_nudges`` times; after that the reply is released as an
+    ``ERROR`` so it terminates and the failure travels the normal
+    error path instead of looping under the session lock forever.
     """
 
-    def __init__(self, leader_name: str) -> None:
-        """Initialize the middleware."""
+    def __init__(self, leader_name: str, max_nudges: int = 3) -> None:
+        """Initialize the middleware.
+
+        Args:
+            leader_name (`str`):
+                The name of the team leader, i.e. the only valid
+                ``TeamSay(to=...)`` target that counts as a report.
+            max_nudges (`int`, defaults to 3):
+                How many times one reply may be forced to continue
+                before it is failed instead.
+        """
         super().__init__()
         self._leader_name: str = leader_name
+        self._max_nudges: int = max_nudges
 
     def _last_tool_call_reports_to_leader(self, agent: "Agent") -> bool:
         """Whether this reply's final tool call successfully reports back."""
@@ -59,7 +74,12 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
             # tool therefore invalidates an earlier progress report.
             if last_tool_call.name != "TeamSay":
                 return False
-            kwargs = _json_loads_with_repair(last_tool_call.input)
+            try:
+                kwargs = _json_loads_with_repair(last_tool_call.input)
+            except Exception:  # pylint: disable=broad-except
+                # Unparsable arguments (e.g. a truncated stream) cannot
+                # have produced a successful report.
+                return False
             if kwargs.get("to") not in [None, self._leader_name]:
                 return False
 
@@ -85,6 +105,7 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Discard normal `ReplyEndEvent`s until `TeamSay` reports success."""
+        nudges = 0
 
         async for evt in next_handler(**input_kwargs):
             if not isinstance(evt, ReplyEndEvent):
@@ -92,55 +113,76 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
                 continue
 
             # For the ReplyEndEvent
-            instruction = None
             if self._last_tool_call_reports_to_leader(agent):
                 # The report has been delivered successfully, so let the
                 # original reply-end event escape the middleware chain.
                 yield evt
                 continue
 
-            match evt.finished_reason:
-                case ReplyFinishedReason.EXCEED_MAX_ITERS:
-                    # Add instruction to guide agent to report to leader
-                    instruction = (
-                        "<system-reminder>You're now reach the max ReAct "
-                        f"iteration numbers {agent.react_config.max_iters}. "
-                        "Now you should call `TeamSay` to report to the "
-                        "leader and ask for permission to continue."
-                        "</system-reminder>"
-                    )
-                    # Reduce the current iter to allow the agent to call the
-                    # `TeamSay` and avoid duplicated reply end event
-                    agent.state.cur_iter = agent.react_config.max_iters - 1
-                case ReplyFinishedReason.COMPLETED:
-                    instruction = (
-                        "<system-reminder>You MUST call the tool `TeamSay` "
-                        "to report to the leader to finish your task."
-                        "</system-reminder>"
-                    )
-                # TODO: When the subagent fails, the leader should be aware of
+            if evt.finished_reason not in (
+                ReplyFinishedReason.COMPLETED,
+                ReplyFinishedReason.EXCEED_MAX_ITERS,
+            ):
+                # Interrupted / already-failed endings cannot be continued
+                # by swallowing their ReplyEndEvent.  Forward unchanged.
+                # TODO: When the subagent fails, the leader should be aware
                 #  of that.
-                case ReplyFinishedReason.ERROR:
-                    pass
-                case ReplyFinishedReason.INTERRUPTED:
-                    pass
+                yield evt
+                continue
 
-            if instruction:
-                # Inject the hint block into the context
-                hint_block = HintBlock(
-                    hint=instruction,
-                    source=json.dumps(
-                        {"label": "System", "sublabel": "Reminder"},
+            if nudges >= self._max_nudges:
+                # Out of patience: end the reply as an error so it stops
+                # holding the session, and let the error path report it.
+                yield ReplyEndEvent(
+                    session_id=evt.session_id,
+                    reply_id=evt.reply_id,
+                    finished_reason=ReplyFinishedReason.ERROR,
+                    error=ErrorInfo(
+                        type=ErrorType.INTERNAL,
+                        message=(
+                            f"{agent.name} ended {nudges} replies in a row "
+                            f"without reporting to {self._leader_name} via "
+                            f"TeamSay; giving up on this turn."
+                        ),
                     ),
                 )
-                agent.state.append_context(agent.name, [hint_block])
-                yield HintBlockEvent(
-                    reply_id=agent.state.reply_id,
-                    block_id=hint_block.id,
-                    source=hint_block.source,
-                    hint=instruction,
+                continue
+
+            nudges += 1
+            if evt.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+                instruction = (
+                    "<system-reminder>You have reached the maximum number "
+                    f"of ReAct iterations ({agent.react_config.max_iters}). "
+                    "Call `TeamSay` now to report to the leader and ask for "
+                    "permission to continue.</system-reminder>"
                 )
             else:
-                # Interrupted/error endings cannot be continued by swallowing
-                # their ReplyEndEvent.  Forward them unchanged.
-                yield evt
+                instruction = (
+                    "<system-reminder>You MUST call the tool `TeamSay` "
+                    "to report to the leader to finish your task."
+                    "</system-reminder>"
+                )
+
+            # Free one iteration so the agent can actually make the
+            # TeamSay call. Both endings need this: a COMPLETED reply on
+            # the very last iteration would otherwise come straight back
+            # as EXCEED_MAX_ITERS with no reasoning in between, which the
+            # agent rejects as a swallow-without-progress loop.
+            agent.state.cur_iter = min(
+                agent.state.cur_iter,
+                agent.react_config.max_iters - 1,
+            )
+
+            hint_block = HintBlock(
+                hint=instruction,
+                source=json.dumps(
+                    {"label": "System", "sublabel": "Reminder"},
+                ),
+            )
+            agent.state.append_context(agent.name, [hint_block])
+            yield HintBlockEvent(
+                reply_id=agent.state.reply_id,
+                block_id=hint_block.id,
+                source=hint_block.source,
+                hint=instruction,
+            )

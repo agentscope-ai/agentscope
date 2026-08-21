@@ -126,23 +126,24 @@ async def _resolve_team_leader(
     user_id: str,
     team: "TeamRecord",
 ) -> "_TeamLeader | None":
-    """Resolve *team*'s leader, lazily backfilling ``leader_agent_id``.
+    """Resolve *team*'s leader.
 
     The single read path for the leader's identity, shared by the team
-    tools, the chat run context and the session router. Records written
-    before :attr:`TeamRecord.leader_agent_id` existed pay one extra
-    session read on first resolve, then persist the id so later calls
-    go straight to the agent record. The name is always read fresh —
-    an agent can be renamed at any time and ``TeamSay`` routes by name.
+    tools, the chat run context and the session router. Teams created
+    with :attr:`TeamRecord.leader_agent_id` go straight to the agent
+    record; older ones pay one extra session read every time, which
+    beats writing to the team record on what are mostly read paths
+    (including a GET endpoint) for one saved lookup. The name is always
+    read fresh — an agent can be renamed at any time and ``TeamSay``
+    routes by name.
 
     Args:
         storage (`StorageBase`):
-            Storage backend for the lookups and the backfill write.
+            Storage backend for the lookups.
         user_id (`str`):
             The team owner (also the leader agent's owner).
         team (`TeamRecord`):
-            The team whose leader to resolve (mutated in place when
-            backfilled).
+            The team whose leader to resolve.
 
     Returns:
         `_TeamLeader | None`:
@@ -156,8 +157,6 @@ async def _resolve_team_leader(
         if session is None:
             return None
         agent_id = session.agent_id
-        team.leader_agent_id = agent_id
-        await storage.upsert_team(user_id, team)
 
     agent = await storage.get_agent(user_id, agent_id)
     if agent is None:

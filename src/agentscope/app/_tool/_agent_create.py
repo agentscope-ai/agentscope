@@ -289,7 +289,7 @@ optional):
                 error chunk on failure.
         """
         try:
-            team = await self._require_leader_team()
+            team = await self._require_leader_team("add members")
 
             # Look up leader session for chat-model inheritance + name.
             leader_session = await self._storage.get_session(

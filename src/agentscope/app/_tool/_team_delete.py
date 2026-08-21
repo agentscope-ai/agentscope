@@ -56,7 +56,7 @@ This is irreversible.
                 precondition fails.
         """
         try:
-            team = await self._require_leader_team()
+            team = await self._require_leader_team("dissolve the team")
 
             # Local import to avoid a circular dependency between
             # ``_tools`` and ``_service`` at module load.

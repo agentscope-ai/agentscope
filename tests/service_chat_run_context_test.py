@@ -62,11 +62,6 @@ class _Storage:
         self.get_team_calls += 1
         return self.team if team_id == self.team.id else None
 
-    async def upsert_team(self, user_id: str, team: TeamRecord) -> None:
-        """Accept the lazy ``leader_agent_id`` backfill write."""
-        del user_id
-        self.team = team
-
     async def update_session_state(self, *_: object, **__: object) -> None:
         """Accept the post-run state persistence."""
 
@@ -86,8 +81,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
     """Team identity is read once and shared by toolkit + middleware."""
 
     async def test_worker_run_fetches_team_once(self) -> None:
-        """One ``get_team`` read serves both consumers of the role, and
-        the legacy team record gets its ``leader_agent_id`` backfilled."""
+        """One ``get_team`` read serves both consumers of the role."""
         user_id = "user-1"
         worker_agent = AgentRecord(
             id="agent-w",
@@ -201,7 +195,6 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             {
                 "get_team_calls": storage.get_team_calls,
-                "backfilled_leader_agent_id": storage.team.leader_agent_id,
                 "team_role": toolkit_kwargs["team_role"],
                 "channel_tools": toolkit_kwargs["channel_tools"],
                 "leader_names": [
@@ -213,7 +206,6 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             },
             {
                 "get_team_calls": 1,
-                "backfilled_leader_agent_id": "agent-l",
                 "team_role": "worker",
                 "channel_tools": [],
                 "leader_names": ["Leader"],
