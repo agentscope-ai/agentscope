@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Channel instances for processes that do not hold the connection.
+"""The channel runtime of a process that holds no connection.
+
+Owns two things: the channel instances such a process builds, and the
+reply deliveries it runs through them.
 
 A channel has exactly one piece of connection-bound state: the inbound
 long connection opened by ``start_listening``. Everything else — sending
@@ -20,18 +23,26 @@ therefore keep no state across calls.
 A replaced instance is retired rather than closed: a run that borrowed
 it still holds it — its platform tools stay callable for the whole turn
 — and closing the HTTP client underneath would break them. Retired
-instances are released when the
-factory shuts down, which bounds what a rotation costs to one idle
-client per rotation.
+instances are released when this shuts down, which bounds what a
+rotation costs to one idle client per rotation.
+
+Deliveries are owned here for the same reason the connections are owned
+by the lifecycle dispatcher: a background task needs a component whose
+lifecycle can cancel it. The node running the agent is the one that
+delivers, and that node may well have no dispatcher — this is what it
+has instead.
 """
+import asyncio
 import json
+from contextlib import aclosing
 from types import TracebackType
 
 from ..._logging import logger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
-from ._base import ChannelBase
+from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
+from ._stream import open_reply_stream
 
 
 class ChannelClients:
@@ -40,22 +51,24 @@ class ChannelClients:
     def __init__(
         self,
         storage: StorageBase,
-        type_registry: ChannelTypeRegistry,
         message_bus: MessageBus,
+        type_registry: ChannelTypeRegistry,
     ) -> None:
-        """Bind storage and the registry that knows the channel classes.
+        """Bind storage, the bus, and the registry of channel classes.
 
         Args:
             storage (`StorageBase`): Source of channel records.
+            message_bus (`MessageBus`): Where a delivery reads the run's
+                events from.
             type_registry (`ChannelTypeRegistry`): Builds instances from
                 a record's type, credentials and config.
-            message_bus (`MessageBus`): Shared observed-chat metadata.
         """
         self._storage = storage
-        self._types = type_registry
         self._bus = message_bus
+        self._types = type_registry
         self._cache: dict[str, tuple[str, ChannelBase]] = {}
         self._retired: list[ChannelBase] = []
+        self._deliveries: set[asyncio.Task] = set()
 
     async def __aenter__(self) -> "ChannelClients":
         """Enter the factory's lifecycle; nothing is built up front."""
@@ -67,11 +80,14 @@ class ChannelClients:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        """Release every instance this factory built.
+        """Stop delivering, then release every instance built here.
 
-        Nothing is borrowing them by now: the runs that could have are
-        torn down with the process.
+        Deliveries go first: they are what borrows the instances, so
+        nothing is using one by the time it is closed.
         """
+        for task in list(self._deliveries):
+            task.cancel()
+        await asyncio.gather(*self._deliveries, return_exceptions=True)
         for channel_id in list(self._cache):
             self._retire(channel_id)
         for channel in self._retired:
@@ -164,3 +180,78 @@ class ChannelClients:
             except (TypeError, ValueError):
                 pass
             observe(chat_id, chat_type, chat_name)
+
+    async def deliver(
+        self,
+        *,
+        session_id: str,
+        channel_id: str,
+        chat_id: str,
+        agent_id: str,
+    ) -> None:
+        """Start streaming a run's reply back to its platform chat.
+
+        Returns as soon as the delivery is under way — the caller is
+        mid-run and must not wait on the platform. The task is held here
+        so it is neither garbage-collected in flight nor left behind at
+        shutdown.
+
+        Args:
+            session_id (`str`): The run whose reply is delivered.
+            channel_id (`str`): The channel the session came from.
+            chat_id (`str`): The platform chat to deliver into.
+            agent_id (`str`): The agent that owns the session; pinned on
+                a confirmation card so a click resumes this exact run.
+        """
+        channel = await self.get(channel_id)
+        if channel is None:
+            logger.error(
+                "channel '%s' has no client; the reply for session '%s' "
+                "cannot be delivered",
+                channel_id,
+                session_id,
+            )
+            return
+
+        # Synthetic send target — a background run has no inbound
+        # message. Carries the run's identity so a confirmation card can
+        # pin its exact target and skip re-resolving routing on click.
+        target = ChannelEvent(
+            channel_id=channel_id,
+            channel_user_id="",
+            chat_id=chat_id,
+            metadata={"session_id": session_id, "agent_id": agent_id},
+        )
+
+        # Subscribe before returning: the caller is about to run the
+        # agent, and the run drops its event log when it persists, so a
+        # subscription opened any later could miss the whole reply.
+        try:
+            events = await open_reply_stream(self._bus, session_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "channel '%s' could not read the reply for session '%s'",
+                channel_id,
+                session_id,
+            )
+            return
+
+        async def _run() -> None:
+            """Feed the run's event stream to the channel."""
+            try:
+                async with aclosing(events):
+                    await channel.send_response(target, events)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "channel '%s' failed to deliver the reply for "
+                    "session '%s'",
+                    channel_id,
+                    session_id,
+                )
+
+        task = asyncio.create_task(
+            _run(),
+            name=f"channel-deliver:{session_id}",
+        )
+        self._deliveries.add(task)
+        task.add_done_callback(self._deliveries.discard)

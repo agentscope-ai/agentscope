@@ -22,7 +22,6 @@ from fastapi import HTTPException
 from .._bus_ops import (
     abandon_inbox_consumer,
     deliver_to_inbox,
-    enqueue_channel_output,
     enqueue_run_trigger,
     has_pending_inbox_or_release,
     publish_session_event,
@@ -1011,20 +1010,21 @@ class ChatService:
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
             events_key = MessageBusKeys.session_events(session_id)
-            # Channel-bound run: signal the output forwarder so the reply
-            # is streamed back to the platform chat. Covers scheduled /
-            # background wakes, not just inbound channel messages.
+            # Channel-bound run: start streaming the reply back to the
+            # platform chat. Delivery is plain REST, so this node does it
+            # rather than handing the run to whichever one holds the
+            # channel's connection. Covers scheduled / background wakes,
+            # not just inbound channel messages.
             if (
                 session_record.source == SessionSource.CHANNEL
                 and session_record.source_channel_id
                 and session_record.source_chat_id
+                and self._channel_clients is not None
             ):
-                await enqueue_channel_output(
-                    self._message_bus,
+                await self._channel_clients.deliver(
                     session_id=session_id,
                     channel_id=session_record.source_channel_id,
                     chat_id=session_record.source_chat_id,
-                    user_id=user_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None

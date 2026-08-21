@@ -54,7 +54,7 @@ class ContextConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     """Allow arbitrary types in the pydantic model."""
 
-    trigger_ratio: float = Field(default=0.8, gt=0, lt=0.9)
+    trigger_ratio: float = Field(default=0.8, gt=0, le=0.9)
     """When the token exceeds this ratio of the maximum context length, the
     context will be compressed. To reserve the context for context compression,
     the maximum ratio is 0.9."""
