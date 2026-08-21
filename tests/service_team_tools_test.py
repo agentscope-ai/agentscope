@@ -31,6 +31,7 @@ from agentscope.app._tool import (
     TeamSay,
 )
 from agentscope.app._types import SubAgentTemplate
+from agentscope.app._router._session import _build_team_detail
 from agentscope.app._service import ResourceAccessService
 from agentscope.app.access import (
     ResourceAccessPolicyBase,
@@ -1636,6 +1637,42 @@ class TestAgentInviteCrossOwner(_AgentInviteTestBase):
 
         self.assertEqual(chunk.state, ToolResultState.ERROR)
         self.assertIn("no longer invitable", chunk.content[0].text)
+
+    async def test_revoked_agent_is_hidden_from_team_detail(self) -> None:
+        """A stale roster must not bypass a revoked cross-owner grant."""
+        shared_agent, policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+        invite = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+        result = await invite(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+        self.assertNotEqual(result.state, ToolResultState.ERROR)
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        policy.allowed = False
+
+        detail = await _build_team_detail(
+            self.storage,
+            access,
+            self.user_id,
+            team,
+        )
+        self.assertEqual(detail.members, [])
 
 
 class TestAgentInviteRejections(_AgentInviteTestBase):

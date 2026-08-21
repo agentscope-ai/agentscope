@@ -5,10 +5,11 @@ Unlike :class:`AgentCreate`, which spawns a brand-new worker
 (``source='team'``) from a :class:`SubAgentTemplate`, this tool
 **borrows** a pre-existing user-owned agent by minting a fresh
 team-scoped :class:`SessionRecord` on top of the *existing*
-:class:`AgentRecord`.  The borrowed agent keeps its system prompt,
-context/react configs, workspace, MCP, skills, and model choice; only
-a new session is created so it can hold a parallel conversation for
-the team.
+:class:`AgentRecord`. The borrowed agent keeps its definition, including
+its system prompt and context/react configs. An agent owned by the leader
+may reuse its existing session configuration; a cross-owner agent instead
+runs in a fresh leader-owned workspace with the leader's chat model and
+without the owner's MCPs, skills, cache, or session permissions.
 
 When the team is dissolved or the leader is deleted, only the borrowed
 session is cleaned up — the underlying :class:`AgentRecord` survives
@@ -189,7 +190,9 @@ class AgentInvite(_TeamToolBase):
                 The calling agent id.
             invitable_pool (`list[AgentRecord]`):
                 Snapshot of currently-invitable agents. Must be
-                non-empty — the caller skips construction otherwise.
+                non-empty — the caller skips construction otherwise. When
+                no access service is supplied, the constructor is responsible
+                for ensuring every snapshot entry is safe for the caller.
             resource_access_service (`ResourceAccessService | None`):
                 Resolves the selected agent against the caller's current
                 access grants. ``None`` preserves direct construction for
@@ -326,13 +329,12 @@ class AgentInvite(_TeamToolBase):
             # not block the invite.
             leader_name = leader.name if leader else leader_session.agent_id
 
-            # Prefer the invited agent's own primary session for
-            # workspace + chat-model reuse: it already has any MCP /
-            # skills / cache set up. Fall back to a freshly-generated
-            # workspace id + the leader's chat model when the agent has
-            # never been opened — the underlying workspace is created
-            # lazily by the workspace manager on first chat, so a bare
-            # id is enough.
+            # A leader-owned invite may reuse its primary session's workspace
+            # and model configuration. Cross-owner sessions are stored under
+            # the leader, so they intentionally never reuse the owner's
+            # session: they get a fresh workspace, the leader's chat model,
+            # and none of the owner's MCPs, skills, cache, or permissions.
+            # The workspace itself is created lazily on first chat.
             invited_sessions = await self._storage.list_sessions(
                 self._user_id,
                 invited.id,
@@ -463,25 +465,24 @@ class AgentInvite(_TeamToolBase):
         self,
         invited: "AgentRecord",
     ) -> "AgentRecord | None":
-        """Resolve a snapshot entry without losing its owner namespace."""
+        """Resolve a snapshot entry without losing its owner namespace.
+
+        Without an access service, the invitable pool is trusted to contain
+        only entries that the caller may use. Production toolkit assembly
+        supplies the service and therefore re-checks current grants here.
+        """
         if self._resource_access_service is None:
             return await self._storage.get_agent(invited.user_id, invited.id)
 
-        # Keep the web-framework exception dependency local to the app-only
-        # access-service path. A revoked share is a normal stale-snapshot
-        # outcome for this tool, not an unhandled tool failure.
-        from fastapi import HTTPException
-
-        try:
-            fresh = await self._resource_access_service.resolve_agent(
-                self._user_id,
-                invited.id,
-            )
-            return fresh if fresh.user_id == invited.user_id else None
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                return None
-            raise
+        fresh = await self._resource_access_service.try_resolve_agent(
+            self._user_id,
+            invited.id,
+        )
+        return (
+            fresh
+            if fresh is not None and fresh.user_id == invited.user_id
+            else None
+        )
 
 
 def _resolve_target(
