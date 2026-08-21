@@ -29,10 +29,9 @@ interface KnowledgeDocumentsPanelProps {
 }
 
 /**
- * A row that the panel renders. Either a server-side document (the
- * canonical record after upload returns) or a still-uploading local
- * task. Uploads that have already produced a `documentId` are routed
- * through the server row so the panel never double-renders one.
+ * A row that the panel renders. Either a server-side document — with
+ * the upload task that produced it, while one is still around — or a
+ * task whose document the list has not caught up with yet.
  */
 type Row =
 	| { kind: 'server'; doc: KnowledgeDocumentView; localTask: UploadTask | null }
@@ -261,7 +260,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 	const [detailTarget, setDetailTarget] = useState<KnowledgeDocumentView | null>(null);
 
 	const { enqueue, cancel, dismiss, tasksForKb, clearFinishedForKb } = useUploadContext();
-	const { documents, refetch } = useKnowledgeDocuments(knowledgeBaseId);
+	const { documents, loading, refetch } = useKnowledgeDocuments(knowledgeBaseId);
 	const tasks = tasksForKb(knowledgeBaseId);
 	const { statuses } = useDocumentStatusPolling({
 		knowledgeBaseId,
@@ -304,26 +303,29 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 		void refetch();
 	}, [terminalIdsKey, refetch]);
 
-	// Merge tasks + documents into a single ordered row list.
+	// Merge tasks + documents into a single ordered row list, uploads
+	// first — they're the rows the user just acted on.
+	//
+	// Every task keeps its row for its whole life: it renders from
+	// local state until the server list catches up, then hands over to
+	// the document record. Rendering a task only once its document is
+	// listed would make a freshly uploaded file disappear between the
+	// upload response and the next list refresh — which only happens
+	// when indexing finishes.
 	const rows: Row[] = useMemo(() => {
-		const tasksByDocId = new Map<string, UploadTask>();
-		const tasksWithoutDoc: UploadTask[] = [];
-		for (const task of tasks) {
-			if (task.documentId) tasksByDocId.set(task.documentId, task);
-			else tasksWithoutDoc.push(task);
-		}
-		const docRows: Row[] = documents.map((doc) => ({
+		const unclaimed = new Map(documents.map((doc) => [doc.id, doc]));
+		const taskRows: Row[] = tasks.map((task) => {
+			const doc = task.documentId ? unclaimed.get(task.documentId) : undefined;
+			if (!doc) return { kind: 'local', task };
+			unclaimed.delete(doc.id);
+			return { kind: 'server', doc, localTask: task };
+		});
+		const documentRows: Row[] = [...unclaimed.values()].map((doc) => ({
 			kind: 'server',
 			doc,
-			localTask: tasksByDocId.get(doc.id) ?? null,
+			localTask: null,
 		}));
-		const localRows: Row[] = tasksWithoutDoc.map((task) => ({
-			kind: 'local',
-			task,
-		}));
-		// Local-only rows go first (they're either uploading or queued
-		// — both are user-visible "I just hit upload" states).
-		return [...localRows, ...docRows];
+		return [...taskRows, ...documentRows];
 	}, [documents, tasks]);
 
 	const onUploadClick = useCallback(() => {
@@ -443,7 +445,13 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 					dragOver ? 'border-primary bg-primary/5' : 'border-border bg-transparent',
 				)}
 			>
-				{rows.length === 0 ? (
+				{rows.length === 0 && loading ? (
+					// First load — an empty state here would claim the
+					// knowledge base has no documents before we know.
+					<div className="flex justify-center py-10">
+						<Loader2 className="text-muted-foreground size-4 animate-spin" />
+					</div>
+				) : rows.length === 0 ? (
 					<Empty className="border-none py-6">
 						<EmptyHeader>
 							<EmptyMedia variant="icon">
@@ -468,10 +476,13 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 					<div className="flex flex-col gap-y-2 p-2">
 						{rows.map((row) => (
 							<RowView
+								// Keyed by document id once one exists so the
+								// local → server handover reuses the same node
+								// instead of remounting the row.
 								key={
 									row.kind === 'server'
-										? `srv-${row.doc.id}`
-										: `tsk-${row.task.taskId}`
+										? row.doc.id
+										: (row.task.documentId ?? row.task.taskId)
 								}
 								row={row}
 								onCancel={cancel}
