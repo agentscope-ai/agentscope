@@ -55,13 +55,13 @@ tasks discovered during implementation
 ## When NOT to Use This Tool
 
 Skip using this tool when:
-- There is only a single, straightforward task
+- There is only **one single, straightforward** task
 - The task is trivial and tracking it provides no organizational benefit
 - The task can be completed in less than 3 trivial steps
 - The task is purely conversational or informational
 
-NOTE that you should not use this tool if there is only one trivial task to \
-do. In this case you are better off just doing the task directly.
+NOTE that you should **NOT** use this tool if there is only one trivial task \
+to do. In this case you are better off just doing the task directly.
 
 ## Task Fields
 

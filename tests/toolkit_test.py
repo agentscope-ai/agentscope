@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """Toolkit test case."""
+import base64
 import json
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, AsyncGenerator, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 
+from pydantic import BaseModel, Field
 from utils import AnyString
 
+from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
     TextBlock,
@@ -27,6 +30,10 @@ from agentscope.tool import (
 from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
+)
+from agentscope.exception import (
+    ToolNotFoundError,
+    ToolGroupInactiveError,
 )
 
 
@@ -206,6 +213,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello, world!",
                     },
@@ -225,6 +234,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello, world!",
                     },
@@ -260,6 +271,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "a",
                         "text": "123",
                     },
@@ -278,6 +291,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "b",
                         "text": "456",
                     },
@@ -296,6 +311,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "b",
                         "text": "789",
                     },
@@ -314,6 +331,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -337,6 +356,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "2",
                         "name": None,
                         "source": {
@@ -360,6 +381,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -388,12 +411,16 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "a",
                         # All consecutive TextBlocks merged
                         "text": "123456789",
                     },
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -404,6 +431,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "2",
                         "name": None,
                         "source": {
@@ -417,6 +446,47 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_2",
             },
+        )
+
+    async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
+        """Base64 chunks with padding should merge as bytes, not strings."""
+        response = ToolResponse()
+        first = base64.b64encode(b"hello").decode("ascii")
+        second = base64.b64encode(b"world").decode("ascii")
+
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="image",
+                        source=Base64Source(
+                            data=first,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="image",
+                        source=Base64Source(
+                            data=second,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(len(response.content), 1)
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        self.assertEqual(
+            base64.b64decode(merged.source.data),
+            b"helloworld",
         )
 
 
@@ -494,6 +564,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Result: 8",
                     },
@@ -513,6 +585,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Result: 8",
                     },
@@ -560,6 +634,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The weather in Chengdu is sunny.",
                     },
@@ -578,6 +654,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The weather in Chengdu is sunny.",
                     },
@@ -713,6 +791,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": str(i),
                         },
@@ -732,6 +812,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "123",  # All consecutive TextBlocks merged
                     },
@@ -863,6 +945,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Product: 10.0",
                     },
@@ -882,6 +966,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Product: 10.0",
                     },
@@ -967,6 +1053,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": f"Number: {num}",
                         },
@@ -986,6 +1074,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         # All consecutive TextBlocks merged
                         "text": "Number: 5Number: 6Number: 7",
@@ -1043,6 +1133,125 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             response.content[0].text,
             f"started{expected_dict_text}",
+        )
+
+    async def test_custom_input_schema(self) -> None:
+        """Test overriding the auto-extracted schema with a custom one."""
+
+        def set_mode(mode: str) -> str:
+            """Set the working mode.
+
+            Args:
+                mode: The mode to use
+            """
+            return f"Mode set to {mode}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    set_mode,
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "description": "The mode to use",
+                                "enum": ["fast", "slow"],
+                            },
+                        },
+                        "required": ["mode"],
+                    },
+                ),
+            ],
+        )
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "set_mode",
+                        "description": "Set the working mode.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "mode": {
+                                    "type": "string",
+                                    "description": "The mode to use",
+                                    "enum": ["fast", "slow"],
+                                },
+                            },
+                            "required": ["mode"],
+                        },
+                    },
+                },
+            ],
+        )
+
+    async def test_base_model_input_schema(self) -> None:
+        """Test passing a pydantic BaseModel class as the input schema."""
+
+        class SetModeInput(BaseModel):
+            """The input model of the set_mode tool."""
+
+            mode: Literal["fast", "slow"] = Field(
+                description="The mode to use",
+            )
+            level: int = Field(
+                default=5,
+                ge=1,
+                le=10,
+                description="The level to use",
+            )
+
+        def set_mode(mode: str, level: int = 5) -> str:
+            """Set the working mode."""
+            return f"Mode set to {mode} at level {level}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    set_mode,
+                    input_schema=SetModeInput,
+                ),
+            ],
+        )
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "set_mode",
+                        "description": "Set the working mode.",
+                        "parameters": {
+                            "type": "object",
+                            "description": (
+                                "The input model of the set_mode tool."
+                            ),
+                            "properties": {
+                                "mode": {
+                                    "type": "string",
+                                    "description": "The mode to use",
+                                    "enum": ["fast", "slow"],
+                                },
+                                "level": {
+                                    "type": "integer",
+                                    "description": "The level to use",
+                                    "default": 5,
+                                    "minimum": 1,
+                                    "maximum": 10,
+                                },
+                            },
+                            "required": ["mode"],
+                        },
+                    },
+                },
+            ],
         )
 
 
@@ -1198,6 +1407,8 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": """The currently activated tool group(s): group_2.
 <tool-instructions>
@@ -1232,6 +1443,8 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": """The currently activated tool group(s): group_1, group_2.
 <tool-instructions>
@@ -1266,6 +1479,8 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All tool groups are currently deactivated.",
                     },
@@ -1274,6 +1489,62 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "state": "success",
             },
         )
+
+    async def test_broken_mcp_is_skipped_not_fatal(self) -> None:
+        """One unreachable MCP must not take the whole reply down with
+        it: an expired token or a server that is simply down would
+        otherwise end the conversation instead of just withdrawing that
+        server's tools."""
+        toolkit = Toolkit(
+            mcps=[
+                MCPClient(
+                    name="broken",
+                    is_stateful=False,
+                    # Nothing listens on port 1; the connection is
+                    # refused rather than hanging.
+                    mcp_config=HttpMCPConfig(
+                        url="http://127.0.0.1:1/mcp",
+                        timeout=1.0,
+                    ),
+                ),
+            ],
+        )
+
+        self.assertEqual(await toolkit.get_tool_schemas(), [])
+
+    async def test_check_tool_available_distinguishes_inactive_group(
+        self,
+    ) -> None:
+        """A tool in an inactive group raises ToolGroupInactiveError with
+        the activation hint (matching call_tool), while an unregistered
+        name still raises ToolNotFoundError."""
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="group_1",
+                    description="Group 1",
+                    tools=[Tool1()],
+                ),
+            ],
+        )
+
+        # Inactive group -> the agent-facing check names the group and
+        # the meta tool, instead of claiming the tool doesn't exist.
+        with self.assertRaises(ToolGroupInactiveError) as ctx:
+            await toolkit.check_tool_available("tool_1", [])
+        self.assertIn("group_1", str(ctx.exception))
+        self.assertIn(
+            toolkit.builtin_meta_tool.tool.name,
+            str(ctx.exception),
+        )
+
+        # Activated group -> resolves normally.
+        tool = await toolkit.check_tool_available("tool_1", ["group_1"])
+        self.assertEqual(tool.name, "tool_1")
+
+        # Unregistered name -> still not found.
+        with self.assertRaises(ToolNotFoundError):
+            await toolkit.check_tool_available("no_such_tool", [])
 
 
 class RemoveTitleFieldTest(TestCase):

@@ -2,9 +2,10 @@
 """Event types for agent execution."""
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Dict, Literal, List, TypeAlias
+from typing import Any, Dict, Literal, List, Self, TypeAlias
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing_extensions import deprecated
 
 from .._utils._common import _generate_id
 from ..message import (
@@ -14,6 +15,11 @@ from ..message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
+)
+from ..model import FinishedReason
 from ..permission import PermissionRule
 
 
@@ -55,6 +61,7 @@ class EventType(StrEnum):
     REQUIRE_EXTERNAL_EXECUTION = "REQUIRE_EXTERNAL_EXECUTION"
 
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
+    USER_INTERRUPT = "USER_INTERRUPT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
     CUSTOM = "CUSTOM"
@@ -88,6 +95,20 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
+class ReplyEndReason(StrEnum):
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
+
+
 class ReplyEndEvent(EventBase):
     """Reply end event."""
 
@@ -97,6 +118,11 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
+    """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):
@@ -121,6 +147,14 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    cache_input_tokens: int = 0
+    """Number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """Number of input tokens used to create the prompt cache."""
+    finished_reason: FinishedReason = Field(
+        default=FinishedReason.COMPLETED,
+    )
+    """The finished reason of this model call."""
 
 
 class TextBlockStartEvent(EventBase):
@@ -346,6 +380,15 @@ class ToolResultDataDeltaEvent(EventBase):
     url: str | None = None
     """URL pointing to the binary content, mutually exclusive with `data`."""
 
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
+
 
 class ToolResultEndEvent(EventBase):
     """Tool result end event."""
@@ -360,10 +403,18 @@ class ToolResultEndEvent(EventBase):
     """ID of the corresponding tool call."""
     state: ToolResultState
     """Final execution state of the tool call."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the tool result event."""
 
 
+@deprecated(
+    "ExceedMaxItersEvent is deprecated and will be removed; check the "
+    "'finished_reason' field of ReplyEndEvent against "
+    "ReplyFinishedReason.EXCEED_MAX_ITERS instead.",
+)
 class ExceedMaxItersEvent(EventBase):
-    """Exceeded max iteration event."""
+    """Deprecated exceeded max iteration event, still emitted for backward
+    compatibility without semantics; use ``ReplyEndEvent.finished_reason``."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""
@@ -424,6 +475,31 @@ class UserConfirmResultEvent(EventBase):
     """ID of the reply message associated with this run."""
     confirm_results: list[ConfirmResult]
     """Confirmation results for each pending tool call."""
+
+
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply.
+
+    Delivered to :meth:`Agent.reply_stream` (or :meth:`Agent.reply`) to
+    abort a reply that is currently waiting on external input — either
+    user confirmation (:class:`RequireUserConfirmEvent`) or external
+    execution (:class:`RequireExternalExecutionEvent`).
+
+    On receipt, the agent closes every pending tool call with an
+    interrupted tool result, emits a fallback assistant message, ends
+    the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
+    enter the reasoning-acting loop.
+
+    .. note:: This event is only meaningful for parked replies. To
+        interrupt a running (actively-generating) reply, cancel the
+        underlying task instead — the agent handles that path via its
+        own ``CancelledError`` cleanup.
+    """
+
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this interrupt targets."""
 
 
 class ExternalExecutionResultEvent(EventBase):
@@ -499,6 +575,7 @@ AgentEvent: TypeAlias = (
     | ToolResultDataDeltaEvent
     | ToolResultEndEvent
     | UserConfirmResultEvent
+    | UserInterruptEvent
     | ExternalExecutionResultEvent
     | CustomEvent
 )

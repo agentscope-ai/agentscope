@@ -18,6 +18,7 @@ from agentscope.permission import (
 )
 from agentscope.tool import ToolBase, ToolChunk
 from agentscope._logging import logger
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -176,11 +177,14 @@ class ToolStop(ToolBase):
 
         # Path 2: task exists in the global registry (another worker, or
         # a different session on this worker).
-        if await self._message_bus.bg_task_exists(
-            self._session_id,
+        if await self._message_bus.registry_exists(
+            MessageBusKeys.bg_tasks(self._session_id),
             task_id,
         ):
-            await self._message_bus.task_publish_cancel(task_id)
+            await self._message_bus.publish(
+                MessageBusKeys.task_cancel_channel(),
+                {"task_id": task_id},
+            )
             logger.info(
                 "Background task cancel broadcast via ToolStop (remote): "
                 "task_id=%s, session_id=%s",
@@ -289,11 +293,13 @@ class BackgroundTaskManager:
                 "agent_id": agent_id,
                 "started_at": time.time(),
             },
+            ensure_ascii=False,
         )
-        await self._message_bus.bg_task_register(
-            session_id,
+        await self._message_bus.registry_set(
+            MessageBusKeys.bg_tasks(session_id),
             task_id,
             metadata,
+            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
         )
 
         logger.info(
@@ -336,8 +342,8 @@ class BackgroundTaskManager:
                 The task id to unregister from the global registry.
         """
         try:
-            await self._message_bus.bg_task_unregister(
-                session_id,
+            await self._message_bus.registry_del(
+                MessageBusKeys.bg_tasks(session_id),
                 task_id,
             )
         except Exception as e:  # pylint: disable=broad-except

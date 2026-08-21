@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Type, Any, AsyncGenerator
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
-from ._model_response import StructuredResponse, ChatResponse
+from ._model_response import StructuredResponse, ChatResponse, FinishedReason
 from ._model_card import ModelCard
+from ._utils import _StreamAccumulator
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..credential import CredentialBase
+from ..exception import StructuredOutputError, ToolJSONDecodeError
 from ..message import (
     Msg,
     TextBlock,
@@ -24,13 +26,12 @@ from ..message import (
     ThinkingBlock,
     ToolResultBlock,
     DataBlock,
-    URLSource,
-    Base64Source,
     HintBlock,
 )
 from ..tool import ToolChoice
 
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
+_MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
 class ChatModelBase:
@@ -107,6 +108,29 @@ class ChatModelBase:
         """
         return ()
 
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Return kwargs that disable thinking for this provider.
+
+        Subclasses whose API supports a thinking/reasoning toggle
+        should override this to return the appropriate kwargs dict
+        (e.g. ``{"extra_body": {"enable_thinking": False}}``).
+
+        Used by the structured-output fallback mechanism.
+        """
+        return {}
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        """Provider exceptions that indicate the request shape was rejected
+        (e.g. a forced ``tool_choice`` while thinking is enabled), so that
+        another structured-output strategy may succeed. Subclasses should
+        return the provider's bad-request exception types; the default is
+        empty, i.e. only local structured-output failures trigger a fallback.
+        """
+        return ()
+
     @classmethod
     def list_models(
         cls,
@@ -179,17 +203,26 @@ class ChatModelBase:
                 Additional keyword arguments passed to the underlying API.
         """
 
-        retryable = tuple(self._get_retryable_exceptions())
+        retryable = self._get_retryable_exceptions()
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
+            # The accumulated chat response
             try:
-                return await self._call_api(
+                res = await self._call_api(
                     self.model,
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
                     **kwargs,
                 )
+                break
+            except asyncio.CancelledError:
+                return ChatResponse(
+                    content=[],
+                    is_last=True,
+                    finished_reason=FinishedReason.INTERRUPTED,
+                )
+
             except Exception as e:
                 if not isinstance(e, retryable):
                     raise
@@ -210,12 +243,51 @@ class ChatModelBase:
                         self.max_retries + 1,
                         self.model,
                     )
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError(
-            f"Failed to call model {self.model} after "
-            f"{self.max_retries + 1} retries.",
-        )
+        else:
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError(
+                f"Failed to call model {self.model} after "
+                f"{self.max_retries + 1} retries.",
+            )
+
+        # =====================================================================
+        # Consume the model calling result
+        # =====================================================================
+        if isinstance(res, ChatResponse):
+            return res
+
+        async def _stream() -> AsyncGenerator[ChatResponse, None]:
+            """The wrapper around model calling."""
+            # For backward compatibility
+            yield_acc_res = True
+            acc_res = _StreamAccumulator()
+            try:
+                async for chunk in res:
+                    if not chunk.is_last:
+                        acc_res.append_chat_response(chunk)
+                        acc_res.id = chunk.id
+                        # Empty-content deltas are "carrier" chunks used
+                        # by subclasses to propagate usage / id metadata
+                        # (e.g. OpenAI-compatible APIs emit a trailing
+                        # usage-only chunk with no choices). We absorb
+                        # their metadata into ``acc_res`` above but do
+                        # not surface them to the consumer, which keeps
+                        # the visible stream free of spurious empty
+                        # deltas.
+                        if not chunk.content:
+                            continue
+                    else:
+                        yield_acc_res = False
+                    yield chunk
+            except asyncio.CancelledError:
+                acc_res.finished_reason = FinishedReason.INTERRUPTED
+                yield_acc_res = True
+
+            if yield_acc_res:
+                yield acc_res.build()
+
+        return _stream()
 
     @abstractmethod
     async def _call_api(
@@ -371,13 +443,10 @@ class ChatModelBase:
         if tools:
             acc_texts.append(json.dumps(tools, ensure_ascii=False))
 
-        # Add the multimodal tokens
-        for block in data_blocks:
-            if isinstance(block.source, URLSource):
-                # We don't download the content here to avoid blocking
-                acc_texts.append(str(block.source.url))
-            elif isinstance(block.source, Base64Source):
-                cnt += len(block.source.data) // 4
+        # Add the multimodal tokens. Binary payloads are not consumed by
+        # multimodal models as base64 text, and file URLs should not count as
+        # only a path string. Use a stable flat estimate for all DataBlocks.
+        cnt += len(data_blocks) * _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE
 
         # Count the text tokens
         acc_text = "".join(acc_texts)
@@ -391,10 +460,24 @@ class ChatModelBase:
         structured_model: Type[BaseModel] | dict,
         **kwargs: Any,
     ) -> StructuredResponse:
-        """Generate required structured output by the given model.
+        """Generate structured output, trying fallback strategies in order.
 
-        Shares the same retry settings (``max_retries``, ``retry_delay``, and
-        ``_get_retryable_exceptions()``) as the ``__call__`` method.
+        Each strategy is retried on transient (retryable) errors. A
+        :class:`~agentscope.exception.StructuredOutputError` (the model did
+        not produce a valid structured output) or a provider error listed in
+        ``_get_structured_output_fallback_exceptions()`` (e.g. a provider
+        rejecting a forced ``tool_choice`` while thinking is enabled) moves
+        on to the next strategy; any other error is raised immediately. The
+        strategies are immutable and local to each call:
+
+        - ``forced``: current config + forced ``tool_choice``
+        - ``auto``: current config + ``auto`` ``tool_choice``
+        - ``no_think``: thinking disabled + forced ``tool_choice`` (skipped
+          when the provider exposes no thinking toggle)
+        - ``none``: current config + no ``tool_choice``
+
+        An explicit ``tool_choice`` in ``kwargs`` bypasses the strategy
+        ladder and is forwarded unchanged.
 
         Args:
             messages (`list[Msg]`):
@@ -406,49 +489,108 @@ class ChatModelBase:
             `StructuredResponse`:
                 The structured response generated by the model.
         """
-
         if len(messages) == 0:
             raise ValueError(
                 "The input messages cannot be empty for the "
                 "`generate_structured_output` method.",
             )
 
+        user_tool_choice = kwargs.pop("tool_choice", None)
+        if user_tool_choice is None:
+            forced_tc = ToolChoice(mode="generate_structured_output")
+            disable_kwargs = self._get_disable_thinking_kwargs()
+            # (name, extra `_call_api` kwargs, tool_choice), best first.
+            # The no-think strategy only applies when the provider can
+            # toggle it.
+            strategies = (
+                ("forced", {}, forced_tc),
+                ("auto", {}, ToolChoice(mode="auto")),
+                *(
+                    (("no_think", disable_kwargs, forced_tc),)
+                    if disable_kwargs
+                    else ()
+                ),
+                ("none", {}, None),
+            )
+        else:
+            strategies = (("explicit", {}, user_tool_choice),)
+
         retryable = tuple(self._get_retryable_exceptions())
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                return await self._call_api_with_structured_output(
-                    self.model,
-                    messages=messages,
-                    structured_model=structured_model,
-                    **kwargs,
-                )
-            except Exception as e:
-                if not isinstance(e, retryable):
-                    raise
-                last_error = e
-                if attempt < self.max_retries:
-                    logger.warning(
-                        "Attempt %d failed for model %s: %s. "
-                        "Retrying in %.1fs...",
-                        attempt + 1,
-                        self.model,
-                        str(e),
-                        self.retry_delay,
-                    )
-                    await asyncio.sleep(self.retry_delay)
-                else:
-                    logger.warning(
-                        "All %d attempt(s) failed for model %s.",
-                        self.max_retries + 1,
-                        self.model,
-                    )
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError(
-            f"Failed to generate structured output after "
-            f"{self.max_retries + 1} retries.",
+        fallback: tuple[Type[Exception], ...] = (
+            StructuredOutputError,
+            *self._get_structured_output_fallback_exceptions(),
         )
+        first_error: Exception | None = None
+        last_error: Exception | None = None
+        for name, extra_kwargs, tool_choice in strategies:
+            # Overlay disable-thinking kwargs; a nested `extra_body` is
+            # merged rather than overwritten so caller keys survive.
+            merged = {**kwargs, **extra_kwargs}
+            for key, val in extra_kwargs.items():
+                if isinstance(val, dict) and isinstance(kwargs.get(key), dict):
+                    merged[key] = {**kwargs[key], **val}
+
+            for attempt in range(self.max_retries + 1):
+                try:
+                    result = await self._call_api_with_structured_output(
+                        self.model,
+                        messages=messages,
+                        structured_model=structured_model,
+                        tool_choice=tool_choice,
+                        **merged,
+                    )
+                    if name not in ("forced", "explicit"):
+                        logger.info(
+                            "Structured output for %s: using fallback "
+                            "strategy '%s'.",
+                            self.model,
+                            name,
+                        )
+                    return result
+                except Exception as e:  # pylint: disable=broad-except
+                    # CancelledError / KeyboardInterrupt derive from
+                    # BaseException and are not caught here, so they
+                    # propagate as expected.
+                    if first_error is None:
+                        first_error = e
+                    last_error = e
+                    if isinstance(e, retryable):
+                        # Transient error: retry the same strategy. A
+                        # different strategy hits the same endpoint, so
+                        # switching would not help a rate limit or timeout.
+                        if attempt < self.max_retries:
+                            logger.warning(
+                                "Structured output attempt %d for %s "
+                                "failed: %s. Retrying in %.1fs...",
+                                attempt + 1,
+                                self.model,
+                                e,
+                                self.retry_delay,
+                            )
+                            await asyncio.sleep(self.retry_delay)
+                            continue
+                        raise  # retries exhausted -> give up
+                    if not isinstance(e, fallback):
+                        raise
+                    # Structured-output compatibility failure: try the next
+                    # strategy.
+                    logger.debug(
+                        "Structured output strategy '%s' failed for %s: %s. "
+                        "Trying next.",
+                        name,
+                        self.model,
+                        e,
+                    )
+                    break
+
+        if last_error is None:
+            raise RuntimeError(
+                f"No structured-output strategy is available for "
+                f"{self.model}.",
+            )
+        if first_error is not None and first_error is not last_error:
+            raise last_error from first_error
+        raise last_error
 
     async def _call_api_with_structured_output(
         self,
@@ -458,22 +600,15 @@ class ChatModelBase:
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
-        """This function constructs a 'generate_structured_output' tool to
-        help LLM generate structured output as a compromise for LLM APIs that
-        don't support structured output.
+        """Run a single structured-output attempt via a forced tool call.
 
-        If your subclasses inherit from `ChatModelBase` and the underlying
-        API supports structured output, you can override this method to
-        provide a more accurate implementation.
-
-        Note by default this method forces LLM to call the
-        'generate_structured_output' tool via tool_choice, and adds
-        instructions into the input messages. Subclasses whose underlying
-        API rejects forced tool_choice in certain modes (e.g. DashScope in
-        thinking mode) can pass ``tool_choice=ToolChoice(mode="auto")`` and
-        rely solely on the injected system-reminder prompt. LLM APIs that
-        don't support "required" tool choice may still fail (e.g. generate
-        text output and ignore the tool call, or fail in validation).
+        Constructs a ``generate_structured_output`` tool, asks the LLM to
+        call it (via ``tool_choice``), and validates the returned
+        arguments against ``structured_model``. Strategy selection and the
+        retry loop live in ``generate_structured_output``; this method
+        performs exactly one attempt with the given ``tool_choice`` and
+        ``kwargs``, and uses ``tool_choice`` as-is (``None`` is forwarded
+        unchanged, i.e. no forcing).
 
         Args:
             model_name (`str`):
@@ -484,20 +619,16 @@ class ChatModelBase:
                 A Pydantic model class or a JSON schema dict describing the
                 required output structure.
             tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``,
-                defaults to forcing the ``generate_structured_output`` tool.
+                The tool_choice forwarded to ``_call_api``, used as-is.
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
         """
-
+        func_name = "generate_structured_output"
         if isinstance(structured_model, dict):
             input_schema = structured_model
         else:
             input_schema = structured_model.model_json_schema()
 
-        func_name = "generate_structured_output"
-        if tool_choice is None:
-            tool_choice = ToolChoice(mode=func_name)
         instruction = (
             "<system-reminder>Now you **MUST** call the tool named "
             f"'{func_name}' to generate the structured output required "
@@ -537,49 +668,74 @@ class ChatModelBase:
 
         completed_response: ChatResponse | None = None
         if self.stream:
+            # ``_call_api`` yields raw incremental chunks whose ``is_last``
+            # is always ``False``; subclasses rely on the ``__call__``
+            # wrapper to accumulate them and emit a final ``is_last=True``
+            # chunk. Since this method calls ``_call_api`` directly (to
+            # avoid duplicating the retry logic in ``__call__``), we must
+            # replicate that accumulation here, otherwise the stream may
+            # end without ever producing an ``is_last=True`` chunk.
+            acc_res = _StreamAccumulator()
+
             async for chunk in res:
                 if chunk.is_last:
                     completed_response = chunk
+                    break
+                acc_res.append_chat_response(chunk)
+                acc_res.id = chunk.id
+
+            if completed_response is None:
+                completed_response = acc_res.build()
         else:
             completed_response = res
 
-        if completed_response is None:
-            raise RuntimeError(
+        if completed_response is None or not completed_response.content:
+            raise StructuredOutputError(
                 f"Failed to get the completed response from model "
                 f"{model_name}.",
             )
 
         structured_output: dict[str, Any] | None = None
-        for _ in completed_response.content:
-            if isinstance(_, ToolCallBlock) and _.name == func_name:
-                structured_output = _json_loads_with_repair(
-                    _.input,
-                    input_schema,
+        try:
+            for _ in completed_response.content:
+                if isinstance(_, ToolCallBlock) and _.name == func_name:
+                    structured_output = _json_loads_with_repair(
+                        _.input,
+                        input_schema,
+                    )
+                    break
+
+            if structured_output is None:
+                raise StructuredOutputError(
+                    "Failed to generate structured output for model.",
                 )
-                break
 
-        if structured_output is None:
-            raise RuntimeError(
-                "Failed to generate structured output for model.",
-            )
+            # Validate the output
+            if isinstance(structured_model, dict):
+                jsonschema.validate(structured_output, structured_model)
 
-        # Validate the output
-        if isinstance(structured_model, dict):
-            jsonschema.validate(structured_output, structured_model)
+            elif issubclass(structured_model, BaseModel):
+                structured_model.model_validate(structured_output)
 
-        elif issubclass(structured_model, BaseModel):
-            structured_model.model_validate(structured_output)
-
-        else:
-            raise ValueError(
-                "The structured_model is expected to be a subclass of "
-                "Pydantic.BaseModel or a dict, "
-                f"but got {type(structured_model)}.",
-            )
+            else:
+                raise ValueError(
+                    "The structured_model is expected to be a subclass of "
+                    "Pydantic.BaseModel or a dict, "
+                    f"but got {type(structured_model)}.",
+                )
+        except (
+            ToolJSONDecodeError,
+            jsonschema.ValidationError,
+            PydanticValidationError,
+        ) as e:
+            raise StructuredOutputError(
+                f"Invalid structured output from model {model_name}: {e}",
+            ) from e
 
         return StructuredResponse(
             id=completed_response.id,
             created_at=completed_response.created_at,
             content=structured_output,
             usage=completed_response.usage,
+            finished_reason=completed_response.finished_reason,
         )

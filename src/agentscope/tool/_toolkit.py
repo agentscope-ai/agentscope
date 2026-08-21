@@ -23,7 +23,7 @@ from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
-from .._utils._common import _json_loads_with_repair
+from .._utils._common import _describe_exception, _json_loads_with_repair
 from ..exception import (
     DeveloperOrientedException,
     ToolNotFoundError,
@@ -178,8 +178,8 @@ class Toolkit:
         .. note:: The preset keyword arguments is removed from the JSON
          schema, and the extended model is applied if it is set.
 
-         Args:
-             groups (`list[str] | None`, optional):
+        Args:
+            groups (`list[str] | None`, optional):
                 A list of group names to filter the tool function. The "basic"
                 group will always be included regardless of the filter. If not
                 provided, only the "basic" group will be included.
@@ -401,7 +401,7 @@ class Toolkit:
                 provided, only the "basic" group will be included.
 
         Returns:
-            `dict[str, Skill]`
+            `dict[str, Skill]`:
                 A dictionary of skill name and their corresponding Skill
                 objects.
         """
@@ -517,8 +517,20 @@ class Toolkit:
 
             # MCP tools
             for client in group.mcps:
-                tools = await client.list_tools()
-                cache_tools.extend(tools)
+                try:
+                    cache_tools.extend(await client.list_tools())
+                except Exception as e:
+                    # One unreachable MCP must not take the reply down
+                    # with it: an expired token or a server that is
+                    # simply down would otherwise end the conversation
+                    # rather than just withdraw that server's tools.
+                    logger.warning(
+                        "Skipping MCP '%s' in group '%s': listing its "
+                        "tools failed with %s",
+                        client.name,
+                        group.name,
+                        _describe_exception(e),
+                    )
 
             # Append cached tools into the available tools and solve the name
             # conflict
@@ -559,18 +571,26 @@ class Toolkit:
         """
         tools = await self._get_available_tools(activated_groups)
         if tool_name not in tools:
+            # The dict above is already filtered to the basic + activated
+            # groups, so a tool from an inactive group is missing from it.
+            # Look the name up across all registered groups to distinguish
+            # "inactive" from "doesn't exist" - the same fallback call_tool
+            # performs - so the agent gets the activation hint instead of a
+            # misleading not-found error.
+            all_tools = await self._get_available_tools(
+                [_.name for _ in self.tool_groups],
+            )
+            if tool_name in all_tools:
+                raise ToolGroupInactiveError(
+                    f"ToolGroupInactiveError: The tool '{tool_name}' in "
+                    f"group '{all_tools[tool_name].group}' is currently "
+                    f"inactive. You should first activate the group by "
+                    f"calling the "
+                    f"'{self.builtin_meta_tool.tool.name}' tool.",
+                )
             raise ToolNotFoundError(
                 f"ToolNotFoundError: The tool named '{tool_name}' doesn't "
                 f"exist.",
-            )
-
-        group_name = tools[tool_name].group
-        if group_name != "basic" and group_name not in activated_groups:
-            raise ToolGroupInactiveError(
-                f"ToolGroupInactiveError: The tool '{tool_name}' in group "
-                f"'{group_name}' is currently inactive. "
-                f"You should first activate the group by calling the "
-                f"'{self.builtin_meta_tool.tool.name}' tool.",
             )
 
         return tools[tool_name].tool
@@ -612,3 +632,60 @@ class Toolkit:
     def clear(self) -> None:
         """Clear the registered tools, skills and MCPs."""
         self.tool_groups.clear()
+
+    async def add_tool(
+        self,
+        tool: ToolBase | list[ToolBase],
+        group_name: str = "basic",
+    ) -> None:
+        """Add tool to the toolkit on-the-fly.
+
+        Args:
+            tool (`ToolBase | list[ToolBase]`):
+                The tool to be added.
+            group_name (`str`):
+                The group name of the tool to be added.
+        """
+
+        new_tools = tool if isinstance(tool, list) else [tool]
+
+        for group in self.tool_groups:
+            if group.name == group_name:
+                existing_tools = {_.name for _ in group.tools}
+                for new_tool in new_tools:
+                    if new_tool.name in existing_tools:
+                        logger.warning(
+                            "Duplicate tool name '%s' found in group '%s', "
+                            "overwriting it.",
+                            new_tool.name,
+                            group.name,
+                        )
+                        # override the existing tool
+                        group.tools = [
+                            t for t in group.tools if t.name != new_tool.name
+                        ] + [new_tool]
+                    else:
+                        group.tools.append(new_tool)
+                        existing_tools.add(new_tool.name)
+
+                return
+
+        raise ValueError(
+            f"Cannot find group '{group_name}' in toolkit, only "
+            f"{[_.name for _ in self.tool_groups]} are available.",
+        )
+
+    async def remove_tool(self, tool_name: str | list[str]) -> None:
+        """Remove tool from the toolkit on-the-fly.
+
+        Args:
+            tool_name (`str | list[str]`):
+                The name of the tool to be removed.
+        """
+        if isinstance(tool_name, str):
+            tool_name = [tool_name]
+
+        for group in self.tool_groups:
+            group.tools = [
+                tool for tool in group.tools if tool.name not in tool_name
+            ]

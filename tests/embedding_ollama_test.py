@@ -47,7 +47,7 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OllamaEmbeddingModel(
             credential=_cred(),
             model="nomic-embed-text",
-            parameters=OllamaEmbeddingModel.Parameters(dimensions=2),
+            dimensions=2,
         )
         model._call_api = AsyncMock(
             return_value=_mock_resp([[0.1, 0.2], [0.3, 0.4]]),
@@ -70,7 +70,7 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OllamaEmbeddingModel(
             credential=OllamaCredential(host="http://gpu:11434"),
             model="test",
-            parameters=OllamaEmbeddingModel.Parameters(dimensions=768),
+            dimensions=768,
         )
         self.assertEqual(model.dimensions, 768)
         self.assertEqual(model.host, "http://gpu:11434")
@@ -80,7 +80,7 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OllamaEmbeddingModel(
             credential=_cred(),
             model="test",
-            parameters=OllamaEmbeddingModel.Parameters(dimensions=1),
+            dimensions=1,
         )
         model.batch_size = 2
         call_count = 0

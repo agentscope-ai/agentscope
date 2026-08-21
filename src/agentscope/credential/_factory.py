@@ -65,6 +65,8 @@ class CredentialFactory:
         Args:
             credential_cls: The subclass to register.
         """
+        if credential_cls in cls._classes:
+            return
         cls._classes.append(credential_cls)
         cls._adapter = None  # invalidate so it's rebuilt on next use
 

@@ -8,5 +8,6 @@ reached over HTTP — see :mod:`agentscope.workspace._gateway_client`.
 """
 
 from ._docker_workspace import DockerWorkspace
+from ._docker_backend import DockerBackend
 
-__all__ = ["DockerWorkspace"]
+__all__ = ["DockerWorkspace", "DockerBackend"]
