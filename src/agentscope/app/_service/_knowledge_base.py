@@ -678,12 +678,17 @@ class KnowledgeBaseService:
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
-    ) -> tuple[KnowledgeDocumentRecord, AsyncIterator[bytes]]:
+    ) -> tuple[KnowledgeDocumentRecord, int | None, AsyncIterator[bytes]]:
         """Open the original uploaded file of a document for streaming.
 
         The bytes come straight from the blob store — the same blob
         the index worker parsed — in bounded 1 MiB chunks so a large
         download never holds the whole file in the API process.
+
+        The size is measured on the blob rather than read off the
+        record: ``data.size`` is what the upload request happened to
+        carry, and a ``Content-Length`` that disagrees with the body
+        breaks the response.
 
         Args:
             user_id (`str`):
@@ -694,10 +699,11 @@ class KnowledgeBaseService:
                 The document whose original file should be streamed.
 
         Returns:
-            `tuple[KnowledgeDocumentRecord, AsyncIterator[bytes]]`:
-                The document record (for filename / size /
-                content-type headers) and a lazy byte iterator that
-                opens the blob on first pull.
+            `tuple[KnowledgeDocumentRecord, int | None, AsyncIterator[bytes]]`:
+                The document record (for the filename / content-type
+                headers), the blob's measured byte length — ``None``
+                when the backend cannot measure it — and a lazy byte
+                iterator that opens the blob on first pull.
 
         Raises:
             `HTTPException`:
@@ -712,11 +718,17 @@ class KnowledgeBaseService:
         )
         blob_uri = document.data.blob_uri
         try:
-            available = await self._blob_store.exists(blob_uri)
+            # A measured size doubles as proof the blob is there, so the
+            # extra existence check only runs for backends that cannot
+            # measure.
+            size = await self._blob_store.size(blob_uri)
+            available = size is not None or await self._blob_store.exists(
+                blob_uri,
+            )
         except ValueError:
             # URI scheme unknown to this backend (e.g. records written
             # by a local:// deployment now running on s3://).
-            available = False
+            size, available = None, False
         if not available:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -731,7 +743,7 @@ class KnowledgeBaseService:
                         break
                     yield data
 
-        return document, _iter_content()
+        return document, size, _iter_content()
 
     async def delete_document(
         self,

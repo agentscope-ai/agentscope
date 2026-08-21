@@ -308,6 +308,42 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
                 "hello.md",
                 response.headers["content-disposition"],
             )
+            self.assertEqual(
+                response.headers["content-length"],
+                str(len(self._file_bytes)),
+            )
+
+    def test_content_length_is_measured_not_declared(self) -> None:
+        """The header comes from the blob, so a wrong record cannot lie.
+
+        A determinate download progress bar needs Content-Length, and a
+        value that disagrees with the body truncates the response — so
+        it is measured on the stored bytes, even when the record's
+        declared size is stale or zero.
+        """
+
+        async def _corrupt_declared_size() -> None:
+            storage = self._app.state.storage
+            record = await storage.get_knowledge_document(
+                "user-1",
+                self._kb_id,
+                "doc-1",
+            )
+            record.data.size = 0
+            await storage.upsert_knowledge_document("user-1", record)
+
+        with TestClient(self._app) as client:
+            client.portal.call(_corrupt_declared_size)
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/doc-1",
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.headers["content-length"],
+                str(len(self._file_bytes)),
+            )
+            self.assertEqual(response.content, self._file_bytes)
 
     def test_download_flag_forces_attachment(self) -> None:
         """``download=true`` switches the disposition to attachment."""

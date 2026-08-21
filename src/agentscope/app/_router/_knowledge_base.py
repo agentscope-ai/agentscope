@@ -927,7 +927,7 @@ async def read_knowledge_document(
             detail="X-User-ID header or download token is required.",
         )
 
-    record, content = await service.stream_document_content(
+    record, size, content = await service.stream_document_content(
         user_id=user_id,
         knowledge_base_id=knowledge_base_id,
         document_id=document_id,
@@ -946,10 +946,13 @@ async def read_knowledge_document(
         # sniff a scriptable type out of the bytes.
         "X-Content-Type-Options": "nosniff",
     }
-    # No Content-Length: ``data.size`` is the uploader's declaration,
-    # not a measurement, and a wrong one truncates the body on the
-    # wire. The blob store cannot size a stream, so the response is
-    # chunked instead — same trade-off as ``GET /workspace/files``.
+    # Measured on the blob, never read off the record: a wrong length
+    # truncates the body. Present, it turns the browser's download
+    # progress from a byte counter into a percentage; absent (backend
+    # cannot measure), the response is chunked — same rule as
+    # ``GET /workspace/files``.
+    if size is not None:
+        headers["Content-Length"] = str(size)
     return StreamingResponse(
         content,
         media_type=media_type,
