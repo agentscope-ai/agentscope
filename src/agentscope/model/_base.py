@@ -371,12 +371,13 @@ class ChatModelBase:
         messages: list[Msg],
         tools: list[dict] | None,
     ) -> int:
-        """A quick and unified method to estimate the token count of the
-        model input by dividing the total input size in bytes by 4.
+        """Conservatively estimate the token count of the model input.
 
         Note a standard way to count the tokens is first formatting the input
         messages into the API required format, then use the tokenizer of the
-        underlying API to count the tokens.
+        underlying API to count the tokens. The base implementation instead
+        counts one token per UTF-8 byte so that context-length guardrails do
+        not underestimate dense, structured, or non-ASCII text.
 
         Subclasses may override this method to provide a more accurate
         implementation tailored to their specific tokenizer.
@@ -450,7 +451,7 @@ class ChatModelBase:
 
         # Count the text tokens
         acc_text = "".join(acc_texts)
-        cnt += int(len(acc_text.encode("utf-8")) / 4 + 0.5)
+        cnt += len(acc_text.encode("utf-8"))
 
         return cnt
 

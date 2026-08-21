@@ -41,7 +41,27 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
             None,
         )
 
-        self.assertEqual(tokens, 2001)
+        self.assertEqual(tokens, 2002)
+
+    async def test_text_uses_conservative_utf8_byte_estimate(self) -> None:
+        """Dense ASCII and non-ASCII text are not underestimated."""
+        texts = [
+            (
+                "SELECT order_id, sum(amount * (1 - discount)) "
+                "FROM orders WHERE customer_id = 88392019482;"
+            ),
+            "上下文压缩不应因词数低估而跳过。",
+            '{"amount":10000.50,"customer_id":88392019482}',
+        ]
+
+        for text in texts:
+            with self.subTest(text=text):
+                tokens = await self.model.count_tokens(
+                    [UserMsg(name="user", content=[TextBlock(text=text)])],
+                    None,
+                )
+
+                self.assertEqual(tokens, len(text.encode("utf-8")))
 
     async def test_base64_and_url_data_blocks_have_same_estimate(self) -> None:
         """The same data block should not differ by source representation."""
