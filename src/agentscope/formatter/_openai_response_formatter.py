@@ -212,6 +212,25 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         None,
                     )
                     if reasoning_item_id:
+                        # Preserve the original reasoning/function-call
+                        # order.  Function calls are buffered so they can be
+                        # grouped with their ``function_call_output`` results,
+                        # but a reasoning item announced *after* an earlier
+                        # function call must not be replayed before it.  Flush
+                        # any pending calls first so the input mirrors
+                        # ``response.output`` (e.g. reasoning_1 ->
+                        # function_call_1 -> reasoning_2 -> function_call_2).
+                        if function_calls:
+                            if content_parts:
+                                items.append(
+                                    {
+                                        "role": msg.role,
+                                        "content": content_parts,
+                                    },
+                                )
+                                content_parts = []
+                            items.extend(function_calls)
+                            function_calls = []
                         if content_parts and block.thinking:
                             items.append(
                                 {

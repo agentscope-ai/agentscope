@@ -604,6 +604,146 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         ids = {b.reasoning_item_id for b in thinking_blocks}
         self.assertEqual(ids, {"rs_first", "rs_second"})
 
+    async def test_stream_interleaved_reasoning_and_function_calls(
+        self,
+    ) -> None:
+        """Interleaved reasoning/function_call items keep their order.
+
+        Exercises the exact sequence reported by the review:
+        ``reasoning_1 -> function_call_1 -> reasoning_2 -> function_call_2``.
+        The reasoning blocks must be created on their ``output_item.added``
+        events (so they sit *before* the following function-call blocks),
+        and passing the resulting assistant message through
+        ``OpenAIResponseFormatter`` must replay the items in that same order.
+        """
+        reasoning_item_1 = MagicMock()
+        reasoning_item_1.type = "reasoning"
+        reasoning_item_1.id = "rs_1"
+
+        fc_item_1 = MagicMock()
+        fc_item_1.type = "function_call"
+        fc_item_1.id = "fc_1"
+        fc_item_1.call_id = "call-1"
+        fc_item_1.name = "search"
+
+        reasoning_item_2 = MagicMock()
+        reasoning_item_2.type = "reasoning"
+        reasoning_item_2.id = "rs_2"
+
+        fc_item_2 = MagicMock()
+        fc_item_2.type = "function_call"
+        fc_item_2.id = "fc_2"
+        fc_item_2.call_id = "call-2"
+        fc_item_2.name = "update"
+
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-interleaved"
+        completed_resp.output = [
+            reasoning_item_1,
+            fc_item_1,
+            reasoning_item_2,
+            fc_item_2,
+        ]
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 10
+        completed_resp.usage.output_tokens = 5
+        completed_resp.usage.input_tokens_details = None
+
+        events = [
+            # reasoning_1 announced first -> thinking block "rs_1"
+            _make_event(
+                "response.output_item.added",
+                item=reasoning_item_1,
+                response=MagicMock(id="resp-interleaved"),
+            ),
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="First thought",
+                item_id="rs_1",
+            ),
+            # function_call_1 announced -> tool_call_mapping recorded
+            _make_event("response.output_item.added", item=fc_item_1),
+            _make_event(
+                "response.function_call_arguments.delta",
+                item_id="fc_1",
+                delta='{"q":"a"}',
+            ),
+            # reasoning_2 announced -> thinking block "rs_2"
+            _make_event("response.output_item.added", item=reasoning_item_2),
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="Second thought",
+                item_id="rs_2",
+            ),
+            # function_call_2 announced
+            _make_event("response.output_item.added", item=fc_item_2),
+            _make_event(
+                "response.function_call_arguments.delta",
+                item_id="fc_2",
+                delta='{"k":"v"}',
+            ),
+            _make_event("response.completed", response=completed_resp),
+        ]
+        mock_create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        self.mock_client.responses.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        final = responses[-1]
+
+        # 1) Assert the full ordered ``content`` structure mirrors
+        #    reasoning_1 -> function_call_1 -> reasoning_2 -> function_call_2.
+        types = [
+            (
+                "thinking" if isinstance(b, ThinkingBlock) else "tool",
+                getattr(b, "reasoning_item_id", None),
+                getattr(b, "id", None),
+            )
+            for b in final.content
+        ]
+        self.assertListEqual(
+            types,
+            [
+                ("thinking", "rs_1", "rs_1"),
+                ("tool", None, "call-1"),
+                ("thinking", "rs_2", "rs_2"),
+                ("tool", None, "call-2"),
+            ],
+        )
+
+        # 2) The accumulated assistant message, when replayed through the
+        #    OpenAI Responses formatter, must preserve the item order.
+        from agentscope.message import AssistantMsg
+        from agentscope.formatter import OpenAIResponseFormatter
+
+        replay_msg = AssistantMsg(
+            name="assistant",
+            content=[*final.content],
+        )
+        fmt = OpenAIResponseFormatter()
+        formatted = await fmt.format([replay_msg])
+        # The replayed sequence starts with reasoning_1 then function_call_1,
+        # then reasoning_2 then function_call_2.
+        top_level = []
+        for item in formatted:
+            if item.get("type") in ("reasoning", "function_call"):
+                top_level.append(
+                    (item.get("type"), item.get("id") or item.get("call_id")),
+                )
+
+        self.assertListEqual(
+            top_level,
+            [
+                ("reasoning", "rs_1"),
+                ("function_call", "call-1"),
+                ("reasoning", "rs_2"),
+                ("function_call", "call-2"),
+            ],
+        )
+
     async def test_stream_function_call(
         self,
     ) -> None:
