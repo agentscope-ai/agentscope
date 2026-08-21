@@ -15,8 +15,11 @@ live in one worker while runs execute on any node.
 Instances are cached per channel and rebuilt when the record's
 ``updated_at`` moves, so a credential rotation takes effect without a
 restart. A cached instance is shared by concurrent runs — channels must
-therefore keep no state across calls.
+therefore keep no state across calls. Whatever a replaced or evicted
+instance opened lazily is closed through ``aclose``.
 """
+from types import TracebackType
+
 from ..._logging import logger
 from ..storage import StorageBase
 from ._base import ChannelBase
@@ -42,6 +45,37 @@ class ChannelClients:
         self._types = type_registry
         self._cache: dict[str, tuple[str, ChannelBase]] = {}
 
+    async def __aenter__(self) -> "ChannelClients":
+        """Enter the factory's lifecycle; nothing is built up front."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Close every cached instance on shutdown."""
+        for channel_id in list(self._cache):
+            await self._evict(channel_id)
+
+    async def _evict(self, channel_id: str) -> None:
+        """Drop a cached instance, closing what it opened.
+
+        Args:
+            channel_id (`str`): The channel whose instance to discard.
+        """
+        cached = self._cache.pop(channel_id, None)
+        if cached is None:
+            return
+        try:
+            await cached[1].aclose()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "channel client '%s' did not close cleanly",
+                channel_id,
+            )
+
     async def get(self, channel_id: str) -> ChannelBase | None:
         """Return an instance for ``channel_id``, or ``None``.
 
@@ -58,7 +92,7 @@ class ChannelClients:
         """
         record = await self._storage.get_channel(channel_id)
         if record is None or not record.enabled:
-            self._cache.pop(channel_id, None)
+            await self._evict(channel_id)
             return None
 
         version = str(record.updated_at)
@@ -80,5 +114,7 @@ class ChannelClients:
             )
             return None
 
+        # Replacing a rotated instance: close the one going away.
+        await self._evict(channel_id)
         self._cache[channel_id] = (version, channel)
         return channel

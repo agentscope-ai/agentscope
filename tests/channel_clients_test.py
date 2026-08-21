@@ -6,6 +6,7 @@ able to use the channel: attach its platform tools to an agent, deliver
 a reply, and report its status. These cover the two pieces that make
 that work — the client factory and the status heartbeat.
 """
+import time
 from datetime import datetime
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
@@ -17,10 +18,11 @@ from agentscope.app.channel import (
     ChannelBase,
     ChannelClients,
     ChannelEvent,
+    ChannelHeartbeat,
     ChannelStatus,
     ChannelTypeRegistry,
 )
-from agentscope.app.channel._dispatcher import LIVENESS_TTL_SECS
+from agentscope.app.channel._base import LIVENESS_TTL_SECS
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
     ChannelBinding,
@@ -56,6 +58,7 @@ class _FakeChannel(ChannelBase):
         self.bot_id = credentials.bot_id
         self.status = ChannelStatus()
         self.listened = False
+        self.closed = False
 
     @property
     def channel_id(self) -> str:
@@ -68,6 +71,10 @@ class _FakeChannel(ChannelBase):
     ) -> None:
         """Mark that a connection was opened."""
         self.listened = True
+
+    async def aclose(self) -> None:
+        """Record that the factory released this instance."""
+        self.closed = True
 
     async def send_response(
         self,
@@ -159,6 +166,33 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
         storage.record = None
         self.assertIsNone(await clients.get("chan-1"))
 
+    async def test_replacing_and_dropping_close_the_old_instance(
+        self,
+    ) -> None:
+        """Nothing an evicted instance opened is left dangling."""
+        storage = _Storage(_record())
+        clients = self._clients(storage)
+        first = await clients.get("chan-1")
+
+        rotated = _record(bot_id="bot-2")
+        rotated.updated_at = "2099-01-01T00:00:00"
+        storage.record = rotated
+        second = await clients.get("chan-1")
+        self.assertTrue(first.closed)
+        self.assertFalse(second.closed)
+
+        storage.record = _record(enabled=False)
+        await clients.get("chan-1")
+        self.assertTrue(second.closed)
+
+    async def test_shutdown_closes_every_cached_instance(self) -> None:
+        """Leaving the factory's lifecycle releases what it built."""
+        storage = _Storage(_record())
+        async with self._clients(storage) as clients:
+            channel = await clients.get("chan-1")
+            self.assertFalse(channel.closed)
+        self.assertTrue(channel.closed)
+
     async def test_unregistered_type_has_no_client(self) -> None:
         """A record whose class this process was not given is skipped."""
         clients = ChannelClients(
@@ -183,11 +217,16 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
         bus: InMemoryMessageBus,
         node_id: str,
         state: str,
+        age_secs: float = 0.0,
     ) -> None:
+        """Write one node's report, optionally backdated."""
         await bus.registry_set(
             MessageBusKeys.channel_liveness("chan-1"),
             node_id,
-            ChannelStatus(state=state).model_dump_json(),
+            ChannelHeartbeat(
+                status=ChannelStatus(state=state),
+                reported_at=time.time() - age_secs,
+            ).model_dump_json(),
             ttl_secs=LIVENESS_TTL_SECS,
         )
 
@@ -207,6 +246,39 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             await self._service(bus).get_status("chan-1"),
             ChannelStatus(state="connected"),
+        )
+
+    async def test_a_restarted_node_leaves_no_ghost(self) -> None:
+        """The namespace TTL expires the hash, not one node's field, so
+        a worker that restarted under a fresh id would otherwise report
+        ``connected`` forever."""
+        bus = InMemoryMessageBus()
+        await self._beat(
+            bus,
+            "worker-a-old",
+            "connected",
+            age_secs=LIVENESS_TTL_SECS + 1,
+        )
+        await self._beat(bus, "worker-a-new", "connecting")
+
+        self.assertEqual(
+            await self._service(bus).get_status("chan-1"),
+            ChannelStatus(state="connecting"),
+        )
+
+    async def test_only_stale_reports_read_as_stopped(self) -> None:
+        """Every holder went away; nothing fresh is left to believe."""
+        bus = InMemoryMessageBus()
+        await self._beat(
+            bus,
+            "worker-a",
+            "connected",
+            age_secs=LIVENESS_TTL_SECS + 1,
+        )
+
+        self.assertEqual(
+            await self._service(bus).get_status("chan-1"),
+            ChannelStatus(state="stopped"),
         )
 
     async def test_connected_wins_over_a_retrying_node(self) -> None:

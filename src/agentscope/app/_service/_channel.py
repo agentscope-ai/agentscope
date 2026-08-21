@@ -5,6 +5,7 @@ Validates, writes the record, and publishes a lifecycle notification so
 every node's :class:`ChannelLifecycleDispatcher` reconciles its running
 instances against storage. Holds no channel instances.
 """
+import time
 from datetime import datetime
 
 from ..._utils._common import _generate_id
@@ -15,7 +16,7 @@ from ..storage import (
     SessionSettings,
     StorageBase,
 )
-from ..channel._base import ChannelStatus
+from ..channel._base import ChannelHeartbeat, ChannelStatus
 from ..channel._errors import ChannelError
 from ..channel._registry import ChannelTypeRegistry
 
@@ -152,10 +153,12 @@ class ChannelService:
     async def get_status(self, channel_id: str) -> ChannelStatus:
         """The channel's connection status, from whichever node holds it.
 
-        Nodes that run a channel heartbeat their view into a registry
-        with a TTL, so this answers correctly from an API replica that
-        holds no connection, and a node that dies simply stops
-        appearing.
+        Nodes that run a channel heartbeat their view into a registry,
+        so this answers correctly from an API replica that holds no
+        connection. Reports older than the heartbeat TTL are ignored —
+        the namespace expires as a whole, so a node that stopped
+        reporting can leave its last entry behind indefinitely while a
+        successor keeps the namespace alive.
 
         Args:
             channel_id (`str`): The channel to report on.
@@ -167,13 +170,16 @@ class ChannelService:
         except Exception:  # pylint: disable=broad-except
             return ChannelStatus(state="stopped")
 
+        now = time.time()
         best: ChannelStatus | None = None
         for raw in entries.values():
-            status = ChannelStatus.model_validate_json(raw)
-            if status.state == "connected":
-                return status
+            beat = ChannelHeartbeat.model_validate_json(raw)
+            if not beat.is_fresh(now):
+                continue
+            if beat.status.state == "connected":
+                return beat.status
             if best is None or best.state == "stopped":
-                best = status
+                best = beat.status
         return best or ChannelStatus(state="stopped")
 
     async def list_seen_chat_ids(self, channel_id: str) -> list[str]:

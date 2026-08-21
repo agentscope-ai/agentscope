@@ -12,6 +12,7 @@ own client and delivers it directly.
 """
 import asyncio
 import socket
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -21,17 +22,17 @@ from ..._utils._common import _generate_id
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import ChannelRecord, StorageBase
 from ._base import (
+    LIVENESS_TTL_SECS,
     ChannelBase,
     ChannelConfirmationResultEvent,
     ChannelEvent,
+    ChannelHeartbeat,
 )
 from ._gateway import ChannelGateway
 from ._registry import ChannelTypeRegistry
 
-# TTL (seconds) of a node's per-channel status heartbeat.
-LIVENESS_TTL_SECS = 30
-# How often the heartbeat is refreshed; well inside the TTL so a live
-# node never looks expired to a reader.
+# How often the heartbeat is refreshed; well inside
+# ``LIVENESS_TTL_SECS`` so a live node never looks expired to a reader.
 LIVENESS_REFRESH_SECS = 10
 
 
@@ -76,6 +77,7 @@ class ChannelLifecycleDispatcher:
     async def lifespan(self) -> AsyncIterator[None]:
         """Start reconcile/heartbeat loops; stop all instances on exit."""
         await self.reconcile()
+        await self._publish_status()
         self._tasks = [
             asyncio.create_task(self._listen(), name="channel-lifecycle"),
             asyncio.create_task(self._periodic(), name="channel-heartbeat"),
@@ -165,6 +167,14 @@ class ChannelLifecycleDispatcher:
             Exception,
         ):  # pylint: disable=broad-except
             pass
+        # Withdraw this node's report rather than leaving it to age out.
+        try:
+            await self._bus.registry_del(
+                MessageBusKeys.channel_liveness(channel_id),
+                self._node_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("channel '%s' status withdrawal failed", channel_id)
         logger.info("channel '%s' stopped", channel_id)
 
     # -- Loops --
@@ -201,15 +211,21 @@ class ChannelLifecycleDispatcher:
     async def _publish_status(self) -> None:
         """Write this node's view of each local channel's status.
 
-        Entries expire on their own, so a node that dies simply stops
-        appearing rather than leaving a stale ``connected`` behind.
+        Each report carries the time it was written: the namespace TTL
+        expires the whole hash, not this node's field, so a reader
+        cannot tell a live entry from one a restarted predecessor left
+        behind without the stamp.
         """
+        now = time.time()
         for channel_id, inst in list(self._instances.items()):
             try:
                 await self._bus.registry_set(
                     MessageBusKeys.channel_liveness(channel_id),
                     self._node_id,
-                    inst.channel.status.model_dump_json(),
+                    ChannelHeartbeat(
+                        status=inst.channel.status,
+                        reported_at=now,
+                    ).model_dump_json(),
                     ttl_secs=LIVENESS_TTL_SECS,
                 )
             except Exception:  # pylint: disable=broad-except

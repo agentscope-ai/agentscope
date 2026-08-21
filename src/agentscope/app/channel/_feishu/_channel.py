@@ -1151,6 +1151,17 @@ class FeishuChannel(ChannelBase):
             logger.debug("Feishu upload request failed")
             return None
 
+    async def aclose(self) -> None:
+        """Close the HTTP client this instance opened lazily.
+
+        The connection loop closes its own in ``start_listening``; this
+        covers the client-only instances, which never run it.
+        """
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+        self._token = None
+
     async def _ensure_ready(self) -> bool:
         """Make the instance able to call the platform, connected or not.
 
@@ -1164,7 +1175,17 @@ class FeishuChannel(ChannelBase):
             `bool`: Whether an authenticated client is available.
         """
         if self._token is None:
-            await self._refresh_token()
+            # Callers treat this as a readiness check and promise their
+            # own ``None`` on failure, so a network or auth blip must
+            # not escape and turn a read endpoint into a 500.
+            try:
+                await self._refresh_token()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "Feishu '%s' could not obtain a token",
+                    self._channel_id,
+                )
+                return False
         return self._token is not None
 
     async def _refresh_token(self) -> None:

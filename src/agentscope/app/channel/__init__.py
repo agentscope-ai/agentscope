@@ -12,6 +12,7 @@ from ._base import (
     ChannelCapability,
     ChannelConfirmationResultEvent,
     ChannelEvent,
+    ChannelHeartbeat,
     ChannelStatus,
     ChatKind,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "ChannelCapability",
     "ChannelConfirmationResultEvent",
     "ChannelError",
+    "ChannelHeartbeat",
     "ChannelEvent",
     "ChannelStatus",
     "ChatKind",

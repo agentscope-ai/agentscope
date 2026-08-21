@@ -84,10 +84,10 @@ def create_app(
     knowledge_chunkers: list[Type[ChunkerBase]] | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
-    enable_channel_worker: bool = True,
     mcp_hubs: list[MCPHubBase] | None = None,
     skill_hubs: list[SkillHubBase] | None = None,
     *,
+    enable_channel_worker: bool = True,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
@@ -186,6 +186,10 @@ def create_app(
             process is expected to consume tasks from the message
             bus.  No effect when ``knowledge_base_manager`` is
             ``None``.
+        mcp_hubs (`list[MCPHubBase] | None`, optional):
+            The MCP hubs that provide MCPs.
+        skill_hubs (`list[SkillHubBase] | None`, optional):
+            The SkillHubs that provide skills.
         enable_channel_worker (`bool`, defaults to ``True``):
             Whether this process holds the channels' long connections.
             ``True`` (embedded deployment) suits a desktop build or a
@@ -195,10 +199,6 @@ def create_app(
             connections or duplicate messages. The channel API, the
             client factory and webhook delivery stay available either
             way — only the connections move.
-        mcp_hubs (`list[MCPHubBase] | None`, optional):
-            The MCP hubs that provide MCPs.
-        skill_hubs (`list[SkillHubBase] | None`, optional):
-            The SkillHubs that provide skills.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to

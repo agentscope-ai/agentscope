@@ -108,12 +108,23 @@ class DiscordChannel(ChannelBase):
         self._config = config
         self.status = ChannelStatus()
         self._client: "discord.Client | None" = None
+        self._client_lock = asyncio.Lock()
         self._stopped = False
 
     @property
     def channel_id(self) -> str:
         """The unique channel instance identifier."""
         return self._channel_id
+
+    async def aclose(self) -> None:
+        """Close the client this instance logged in lazily.
+
+        The connection loop closes its own in ``start_listening``; this
+        covers the client-only instances, which never run it.
+        """
+        if self._client is not None and not self._stopped:
+            await self._client.close()
+            self._client = None
 
     async def _ensure_client(self) -> "discord.Client":
         """Return a client able to call the REST API, connected or not.
@@ -123,13 +134,24 @@ class DiscordChannel(ChannelBase):
         those a working REST client. Its gateway cache stays empty, so
         every read below goes through ``fetch_*`` rather than ``get_*``.
         """
-        if self._client is None:
-            import discord
+        if self._client is not None:
+            return self._client
+        # Publish only after login succeeds: a half-built client handed
+        # to a concurrent caller would make unauthenticated requests,
+        # and a failed one would be cached forever, skipping login.
+        async with self._client_lock:
+            if self._client is None:
+                import discord
 
-            intents = discord.Intents.default()
-            intents.message_content = True
-            self._client = discord.Client(intents=intents)
-            await self._client.login(self._bot_token)
+                intents = discord.Intents.default()
+                intents.message_content = True
+                client = discord.Client(intents=intents)
+                try:
+                    await client.login(self._bot_token)
+                except Exception:
+                    await client.close()
+                    raise
+                self._client = client
         return self._client
 
     # -- Lifecycle --
