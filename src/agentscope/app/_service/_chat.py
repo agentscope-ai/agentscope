@@ -13,6 +13,7 @@ that wants them subscribes through the
 """
 import asyncio
 import inspect
+import json
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from fastapi import HTTPException
 
 from .._bus_ops import (
     abandon_inbox_consumer,
+    deliver_to_inbox,
     enqueue_channel_output,
     enqueue_run_trigger,
     has_pending_inbox_or_release,
@@ -67,7 +69,7 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, Msg, ToolCallState
+from ...message import AssistantMsg, HintBlock, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
@@ -85,11 +87,20 @@ class _LeaderContext:
 class _WorkerContext:
     """This session is a worker; its leader is fully resolved."""
 
+    leader_session_id: str
+    leader_agent_id: str
     leader_name: str
     role: Literal["worker"] = "worker"
 
 
 _TeamContext = _LeaderContext | _WorkerContext
+
+# Endings that leave a team member's task unanswered. COMPLETED and
+# EXCEED_MAX_ITERS only escape ``TeamMemberLoopMiddleware`` after a
+# successful report, so the leader already knows about those.
+_LEADER_NOTIFY_REASONS = frozenset(
+    {ReplyFinishedReason.ERROR, ReplyFinishedReason.INTERRUPTED},
+)
 
 
 class ChatService:
@@ -336,12 +347,79 @@ optional):
             end_event.error.type if end_event.error else "error",
         )
 
+    async def _notify_leader_of_failure(
+        self,
+        user_id: str,
+        team_ctx: "_TeamContext | None",
+        worker_name: str,
+        finished_reason: ReplyFinishedReason,
+        detail: str,
+    ) -> None:
+        """Tell a worker's team leader that the worker stopped early.
+
+        A member reports through ``TeamSay``; a member that failed or
+        was interrupted never got there, so without this the leader
+        waits forever for an answer that is not coming. Delivered the
+        same way ``TeamSay`` delivers — a ``HintBlock`` into the
+        leader's inbox, waking the leader when it is idle.
+
+        Best-effort: a failure to notify is logged and dropped rather
+        than replacing the failure being reported.
+
+        Args:
+            user_id (`str`):
+                The owner of both sessions.
+            team_ctx (`_TeamContext | None`):
+                The run's team identity. Anything but a
+                :class:`_WorkerContext` is a no-op — a leader or a
+                team-less session has nobody to report to.
+            worker_name (`str`):
+                The failing member's display name, as the leader knows
+                it from the roster.
+            finished_reason (`ReplyFinishedReason`):
+                How the reply ended.
+            detail (`str`):
+                One-line, already-sanitized explanation.
+        """
+        if not isinstance(team_ctx, _WorkerContext):
+            return
+        try:
+            hint = HintBlock(
+                hint=(
+                    f'<team-message from="{worker_name}">\n'
+                    f"[system] This member's turn ended as "
+                    f"{finished_reason.value} without reporting: {detail}\n"
+                    f"The task it was given is unfinished — decide whether "
+                    f"to re-dispatch it or adjust the plan.\n"
+                    f"</team-message>"
+                ),
+                source=json.dumps(
+                    {"label": "team", "sublabel": worker_name},
+                    ensure_ascii=False,
+                ),
+            )
+            await deliver_to_inbox(
+                self._message_bus,
+                user_id=user_id,
+                session_id=team_ctx.leader_session_id,
+                agent_id=team_ctx.leader_agent_id,
+                payload=hint.model_dump(mode="json"),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to notify team leader %r that member %r stopped.",
+                team_ctx.leader_name,
+                worker_name,
+            )
+
     async def _report_failure(
         self,
         user_id: str,
         session_id: str,
         agent_id: str,
         error: Exception,
+        team_ctx: "_TeamContext | None" = None,
+        worker_name: str | None = None,
     ) -> None:
         """Tell the client about a failure that reached no reply.
 
@@ -370,6 +448,12 @@ optional):
                 The agent that was being assembled.
             error (`Exception`):
                 What went wrong while setting the run up.
+            team_ctx (`_TeamContext | None`, optional):
+                The run's team identity; a worker's leader is told the
+                run never happened.
+            worker_name (`str | None`, optional):
+                Display name used in that notification. Defaults to
+                ``agent_id`` when the agent record never loaded.
         """
         try:
             reply_id = _generate_id()
@@ -408,6 +492,14 @@ optional):
                 "error is logged above.",
                 session_id,
             )
+
+        await self._notify_leader_of_failure(
+            user_id,
+            team_ctx,
+            worker_name or agent_id,
+            ReplyFinishedReason.ERROR,
+            _classify_setup_error(error).message,
+        )
 
     async def interrupt(
         self,
@@ -550,6 +642,11 @@ optional):
             MessageBusKeys.session_lock(session_id),
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
+            # Bound before the try: an assembly failure reports through
+            # them, and may happen before either is resolved.
+            team_ctx: _TeamContext | None = None
+            worker_name: str = agent_id
+
             # Steps 1-6 assemble the run; step 7 performs it. A failure
             # here has no reply to attach to, so one is synthesized —
             # otherwise the client sees a stream that simply stops and is
@@ -588,6 +685,7 @@ optional):
                             f"agent {agent_id!r}."
                         ),
                     )
+                worker_name = agent_record.data.name
                 workspace = await self._workspace_manager.get_workspace(
                     user_id,
                     agent_id,
@@ -611,7 +709,6 @@ optional):
                 # 1b. Resolve team identity + channel binding ONCE; all
                 # downstream consumers reuse these instead of re-fetching.
                 # -------------------------------------------------------------
-                team_ctx: _TeamContext | None = None
                 if session_record.team_id is not None:
                     team = await self._storage.get_team(
                         user_id,
@@ -645,7 +742,11 @@ optional):
                                     f"{session_id!r} cannot run."
                                 ),
                             )
-                        team_ctx = _WorkerContext(leader_name=leader.name)
+                        team_ctx = _WorkerContext(
+                            leader_session_id=leader.session_id,
+                            leader_agent_id=leader.agent.id,
+                            leader_name=leader.name,
+                        )
 
                 channel = (
                     self._channel_dispatcher.get_local_channel(
@@ -874,7 +975,14 @@ optional):
                 # to make: these events share a channel with a live reply's,
                 # so publishing them unserialised would drop a "reply failed"
                 # into the middle of an answer another run is streaming.
-                await self._report_failure(user_id, session_id, agent_id, e)
+                await self._report_failure(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    e,
+                    team_ctx,
+                    worker_name,
+                )
                 return
 
             # ----------------------------------------------------------------
@@ -1060,6 +1168,8 @@ optional):
                                 session_id,
                                 agent_id,
                                 e,
+                                team_ctx,
+                                worker_name,
                             )
                         else:
                             await self._close_failed_reply(
@@ -1132,6 +1242,21 @@ optional):
                         state=agent.state,
                     )
                     await self._message_bus.log_trim(events_key)
+
+                    # A worker whose turn died never reached ``TeamSay``.
+                    # Told here, inside the shielded write, so an
+                    # interrupt cannot drop the notification.
+                    for msg in reply_msgs:
+                        if msg.finished_reason in _LEADER_NOTIFY_REASONS:
+                            await self._notify_leader_of_failure(
+                                user_id,
+                                team_ctx,
+                                agent_record.data.name,
+                                msg.finished_reason,
+                                msg.error.message
+                                if msg.error
+                                else "the turn stopped before it finished",
+                            )
 
                 persist_task = asyncio.create_task(_persist())
                 try:
