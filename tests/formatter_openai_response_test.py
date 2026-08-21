@@ -11,7 +11,6 @@ Key differences from OpenAI Chat formatter:
   - ThinkingBlock: only echoed when it has a "reasoning_item_id" attribute.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import (
     OpenAIResponseFormatter,
@@ -31,9 +30,6 @@ from agentscope.message import (
     ThinkingBlock,
     HintBlock,
 )
-
-
-_FIXED_ID = "TESTID1234567"
 
 
 class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
@@ -598,16 +594,8 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
-    async def test_chat_formatter_url_image_in_tool_result(
-        self,
-        _mock_uuid: object,
-    ) -> None:
-        """URL images in tool results are promoted to a follow-up user
-        message."""
+    async def test_chat_formatter_native_multimodal_tool_result(self) -> None:
+        """Multimodal tool results use the native ordered output array."""
         fmt = OpenAIResponseFormatter()
         msgs = [
             AssistantMsg(
@@ -624,11 +612,32 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                            TextBlock(text="The remote copy follows."),
+                            DataBlock(
                                 source=URLSource(
                                     url=self.image_url,
                                     media_type="image/png",
                                 ),
                             ),
+                            DataBlock(
+                                source=URLSource(
+                                    url="https://example.com/audio.mp3",
+                                    media_type="audio/mpeg",
+                                ),
+                            ),
+                            DataBlock(
+                                name="report.pdf",
+                                source=Base64Source(
+                                    data="JVBERi0xLjQgZmFrZQ==",
+                                    media_type="application/pdf",
+                                ),
+                            ),
+                            TextBlock(text="End of result."),
                         ],
                         state=ToolResultState.SUCCESS,
                     ),
@@ -638,12 +647,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         ]
         res = await fmt.format(msgs)
 
-        expected_tool_content = (
-            "Here is the map.\n"
-            f"<system-reminder>A(n) image file is returned "
-            f"and will be presented to you with the identifier "
-            f"[{_FIXED_ID}].</system-reminder>"
-        )
         self.assertListEqual(
             [
                 {
@@ -655,22 +658,18 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "type": "function_call_output",
                     "call_id": "call_img",
-                    "output": expected_tool_content,
-                },
-                {
-                    "role": "user",
-                    "content": [
+                    "output": [
                         {
                             "type": "input_text",
-                            "text": (
-                                "<system-reminder>The multimodal data "
-                                "and their identifiers are listed as "
-                                "follows:"
-                            ),
+                            "text": "Here is the map.",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_data_uri,
                         },
                         {
                             "type": "input_text",
-                            "text": f"- {_FIXED_ID} (image file): ",
+                            "text": "The remote copy follows.",
                         },
                         {
                             "type": "input_image",
@@ -678,7 +677,24 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         },
                         {
                             "type": "input_text",
-                            "text": "</system-reminder>",
+                            "text": (
+                                "<system-reminder>A(n) audio file is "
+                                "returned and can be accessed at the URL: "
+                                "https://example.com/audio.mp3."
+                                "</system-reminder>"
+                            ),
+                        },
+                        {
+                            "type": "input_file",
+                            "filename": "report.pdf",
+                            "file_data": (
+                                "data:application/pdf;base64,"
+                                "JVBERi0xLjQgZmFrZQ=="
+                            ),
+                        },
+                        {
+                            "type": "input_text",
+                            "text": "End of result.",
                         },
                     ],
                 },
@@ -775,7 +791,15 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     ToolResultBlock(
                         id="call_1",
                         name="func_1",
-                        output=[TextBlock(text="result_1")],
+                        output=[
+                            TextBlock(text="result_1"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
                         state=ToolResultState.SUCCESS,
                     ),
                     ToolResultBlock(
@@ -837,7 +861,13 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": "result_1",
+                    "output": [
+                        {"type": "input_text", "text": "result_1"},
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_data_uri,
+                        },
+                    ],
                 },
                 {
                     "type": "function_call_output",
