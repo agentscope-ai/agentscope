@@ -23,6 +23,22 @@ through the code.
 Because a verifier is a live object, it can also remember whether it has
 already asked. Anything that must outlive the process belongs in the
 driver's own storage, not here.
+
+**Whatever it needs from the outside, it takes at construction** — a
+model, an HTTP client, a workspace. That is the same rule the rest of this
+layer follows, and it is why ``verify`` is handed no such thing::
+
+    ws = LocalWorkspace(...)
+    agent = Agent(..., offloader=ws)
+
+    SOPStep(
+        subject="Run the tests",
+        agent=agent,
+        verifier=CommandVerifier(workspace=ws, command="pytest"),
+    )
+
+The engine never learns what a workspace is, which is what keeps it
+runnable without a service underneath.
 """
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable, Literal, TYPE_CHECKING
@@ -30,7 +46,7 @@ from typing import Awaitable, Callable, Literal, TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from ._model import SOPStep
+    from ._model import SOP, SOPStep
     from ._run import SOPRun, StepRun
 
 VerifyStatus = Literal["passed", "failed", "pending"]
@@ -57,22 +73,34 @@ class VerifierBase(ABC):
     @abstractmethod
     async def verify(
         self,
-        step: "SOPStep",
+        sop: "SOP",
         run: "SOPRun",
+        step: "SOPStep",
         step_run: "StepRun",
     ) -> VerifyResult:
         """Judge what a step handed back.
 
+        The four arguments are the whole picture, definition beside
+        runtime: ``sop`` and ``run`` for everything that has happened so
+        far, ``step`` and ``step_run`` for the one being judged. A verdict
+        that has to look further than the submission — at what an earlier
+        step produced, or at whether the agent really did the thing —
+        has what it needs, since ``step.agent`` is the live agent and its
+        state is right there.
+
         Args:
-            step (`SOPStep`):
-                The step being judged. Its own configuration lives on this
-                verifier, not here.
+            sop (`SOP`):
+                The definition being run. Needed to make sense of ``run``:
+                it is what turns a step id back into a subject.
             run (`SOPRun`):
-                The run in progress, for context.
+                The run in progress, carrying every step's record.
+            step (`SOPStep`):
+                The step being judged. :attr:`~.SOPStep.agent` is the
+                agent that ran it.
             step_run (`StepRun`):
-                The step's record. :attr:`~.StepRun.submission` is what
-                the agent handed back, and
-                :attr:`~.StepRun.verifications` is every earlier verdict.
+                Its record. :attr:`~.StepRun.submission` is what the agent
+                handed back, and :attr:`~.StepRun.verifications` is every
+                earlier verdict.
 
         Returns:
             `VerifyResult`:
@@ -87,7 +115,7 @@ class CallbackVerifier(VerifierBase):
     Enough for a script that wants to judge in Python, or to prompt on the
     console and block until a person answers::
 
-        CallbackVerifier(lambda step, run, rec: VerifyResult(
+        CallbackVerifier(lambda sop, run, step, rec: VerifyResult(
             status="passed" if "DONE" in rec.submission else "failed",
             message="say DONE when the report is written",
         ))
@@ -96,7 +124,7 @@ class CallbackVerifier(VerifierBase):
     def __init__(
         self,
         decide: Callable[
-            ["SOPStep", "SOPRun", "StepRun"],
+            ["SOP", "SOPRun", "SOPStep", "StepRun"],
             VerifyResult | Awaitable[VerifyResult],
         ],
         name: str = "callback",
@@ -105,9 +133,9 @@ class CallbackVerifier(VerifierBase):
 
         Args:
             decide (`Callable`):
-                Called with the step, the run and the step's record. May
-                be sync or async, and may return ``pending`` to be asked
-                again later.
+                Called with the same four arguments as
+                :meth:`VerifierBase.verify`. May be sync or async, and may
+                return ``pending`` to be asked again later.
             name (`str`, defaults to ``"callback"``):
                 Recorded as :attr:`VerifyResult.verified_by` when the
                 callable leaves it empty.
@@ -117,12 +145,13 @@ class CallbackVerifier(VerifierBase):
 
     async def verify(
         self,
-        step: "SOPStep",
+        sop: "SOP",
         run: "SOPRun",
+        step: "SOPStep",
         step_run: "StepRun",
     ) -> VerifyResult:
         """Ask the callable, awaiting it if it is a coroutine."""
-        result = self._decide(step, run, step_run)
+        result = self._decide(sop, run, step, step_run)
         if isinstance(result, Awaitable):
             result = await result
         if not result.verified_by:

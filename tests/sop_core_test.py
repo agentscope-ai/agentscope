@@ -4,11 +4,13 @@
 Every case here drives the state machine by hand — no models, no I/O —
 which is exactly what putting the decisions in pure functions buys.
 """
+import asyncio
 from unittest import TestCase
 
 from agentscope.agent import Agent
 from agentscope.sop import (
     SOP,
+    CallbackVerifier,
     Dispatch,
     Judge,
     Settle,
@@ -208,6 +210,45 @@ class SOPCoreTest(TestCase):
         self.assertEqual(
             {"A": "the plan"},
             core.upstream_submissions(sop, run, "b"),
+        )
+
+    def test_a_verifier_sees_the_whole_picture(self) -> None:
+        """verify() gets definition and runtime side by side, and can
+        reach the live agent through the step it is judging."""
+        seen = {}
+
+        def decide(sop, run, step, step_run) -> VerifyResult:
+            seen["sop"] = sop.name
+            seen["steps"] = len(run.steps)
+            seen["subject"] = step.subject
+            seen["agent"] = step.agent.name
+            seen["submission"] = step_run.submission
+            return VerifyResult(status="passed")
+
+        sop = SOP(
+            name="one",
+            steps=[_step("a", verifier=CallbackVerifier(decide))],
+        )
+        run = new_run(sop)
+        core.mark_dispatched(run, "a")
+        core.mark_submitted(run, "a", "done")
+
+        step, record = sop.steps[0], run.step("a")
+        result = asyncio.run(
+            step.verifier.verify(sop, run, step, record),
+        )
+
+        self.assertEqual("passed", result.status)
+        self.assertEqual("callback", result.verified_by)
+        self.assertEqual(
+            {
+                "sop": "one",
+                "steps": 1,
+                "subject": "A",
+                "agent": "worker",
+                "submission": "done",
+            },
+            seen,
         )
 
     def test_a_step_may_be_seeded_with_planning_tasks(self) -> None:
