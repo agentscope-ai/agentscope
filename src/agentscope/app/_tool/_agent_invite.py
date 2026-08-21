@@ -349,7 +349,6 @@ class AgentInvite(_TeamToolBase):
                         user_id=self._user_id,
                         agent_id=invited.id,
                         session_id=_generate_id(),
-                        storage=self._storage,
                     )
                 )
                 borrowed_chat_model = leader_session.config.chat_model_config

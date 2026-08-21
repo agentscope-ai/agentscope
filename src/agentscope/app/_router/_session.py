@@ -340,7 +340,6 @@ async def create_session(
             user_id=user_id,
             agent_id=body.agent_id,
             session_id=_generate_id(),
-            storage=storage,
         )
     )
 

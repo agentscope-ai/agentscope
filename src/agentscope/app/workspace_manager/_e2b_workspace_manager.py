@@ -47,12 +47,15 @@ from ...workspace._e2b._constants import (
     DEFAULT_TIMEOUT,
 )
 from ._base import WorkspaceManagerBase, IsolationPolicy
-from ._prewarm import WorkspacePrewarmMixin
+from ._prewarm import PrewarmConfig, WorkspacePrewarmMixin
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
 
-class E2BWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
+class E2BWorkspaceManager(
+    WorkspacePrewarmMixin[E2BWorkspace],
+    WorkspaceManagerBase,
+):
     """Manages :class:`E2BWorkspace` instances with TTL-based caching.
 
     Use the manager as an ``async with`` context manager: entering it
@@ -76,8 +79,7 @@ class E2BWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
-        prewarm: int = 0,
-        max_creating: int = 4,
+        prewarm: PrewarmConfig | None = None,
     ) -> None:
         """Initialize the E2B workspace manager.
 
@@ -121,15 +123,11 @@ class E2BWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up
                 to look for idle workspaces. Defaults to 5 minutes.
-            prewarm (`int`, defaults to `0`):
-                Sandboxes to keep created and idle, ready to be handed
-                to the next session that needs one. ``0`` disables
-                pre-warming. Idle sandboxes stay running, so they bill
-                while they wait — keep the buffer small.
-            max_creating (`int`, defaults to `4`):
-                Ceiling on sandbox creations running at once, so a
-                burst of sessions queues instead of flooding the E2B
-                API.
+            prewarm (`PrewarmConfig | None`, optional):
+                Keep this many sandboxes created and idle, ready to be
+                handed to the next session that needs one. ``None``
+                disables pre-warming. Idle sandboxes stay running, so
+                they bill while they wait — keep the buffer small.
         """
         self._template = template
         self._api_key = api_key
@@ -143,11 +141,7 @@ class E2BWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
-        WorkspacePrewarmMixin.__init__(
-            self,
-            prewarm=prewarm,
-            max_creating=max_creating,
-        )
+        WorkspacePrewarmMixin.__init__(self, prewarm=prewarm)
         WorkspaceManagerBase.__init__(self, isolation=isolation)
 
         # workspace_id → (workspace, last_access_monotonic)
@@ -232,6 +226,27 @@ class E2BWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
                 workspace,
                 time.monotonic(),
             )
+
+    async def _dispose_prewarmed(self, workspace: E2BWorkspace) -> None:
+        """Kill a sandbox nobody claimed.
+
+        ``close`` only pauses, so that the next ``initialize`` can
+        reattach by metadata. An unclaimed sandbox has no such future:
+        its id was never persisted, nothing will look it up, and a
+        paused sandbox bills for its snapshot indefinitely.
+        """
+        sandbox = workspace._sandbox  # pylint: disable=protected-access
+        if sandbox is not None:
+            try:
+                await sandbox.kill()
+            except Exception as e:
+                logger.warning(
+                    "E2BWorkspaceManager: failed to kill unclaimed "
+                    "sandbox %s: %s",
+                    workspace.workspace_id,
+                    e,
+                )
+        await workspace.close()
 
     # ── public API ────────────────────────────────────────────────
 

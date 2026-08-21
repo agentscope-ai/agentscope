@@ -247,7 +247,6 @@ class ChannelGateway:
                 user_id=record.user_id,
                 agent_id=agent_id,
                 session_id=session_id,
-                storage=self._storage,
             ),
             chat_model_config=ChatModelConfig(
                 **record.session.chat_model_config,

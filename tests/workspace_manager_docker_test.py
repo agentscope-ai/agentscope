@@ -9,6 +9,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 from agentscope.app.workspace_manager import (
+    PrewarmConfig,
     DockerWorkspaceManager,
     IsolationPolicy,
 )
@@ -74,6 +75,14 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
         )
         self.assertTrue(os.path.isdir(os.path.join(self.basedir, "fixed-id")))
 
+    async def test_workspace_id_cannot_escape_the_basedir(self) -> None:
+        """A caller-supplied id may not point the bind-mount outside."""
+        manager = DockerWorkspaceManager(self.basedir)
+
+        for workspace_id in ("../../etc", "/etc", "a/../../../etc"):
+            with self.assertRaises(ValueError):
+                manager._workdir_for(workspace_id)
+
     async def test_prewarmed_container_is_handed_over_without_rebuild(
         self,
     ) -> None:
@@ -82,7 +91,7 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
         manager = DockerWorkspaceManager(
             self.basedir,
             isolation=IsolationPolicy.PER_SESSION,
-            prewarm=1,
+            prewarm=PrewarmConfig(size=1),
         )
         manager._start_prewarm()
         await asyncio.sleep(0.05)
@@ -104,7 +113,10 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
 
     async def test_aexit_closes_buffered_and_cached_workspaces(self) -> None:
         """Neither the buffer nor the cache survives shutdown."""
-        manager = DockerWorkspaceManager(self.basedir, prewarm=2)
+        manager = DockerWorkspaceManager(
+            self.basedir,
+            prewarm=PrewarmConfig(size=2),
+        )
         async with manager:
             await asyncio.sleep(0.05)
             await manager.get_workspace("u1", "a1", "s1", "cached-id")

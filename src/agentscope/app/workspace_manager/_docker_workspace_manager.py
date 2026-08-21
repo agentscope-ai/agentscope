@@ -41,12 +41,15 @@ from ...workspace._docker._make_dockerfile import (
     DEFAULT_GATEWAY_PORT,
 )
 from ._base import WorkspaceManagerBase, IsolationPolicy
-from ._prewarm import WorkspacePrewarmMixin
+from ._prewarm import PrewarmConfig, WorkspacePrewarmMixin
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
 
-class DockerWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
+class DockerWorkspaceManager(
+    WorkspacePrewarmMixin[DockerWorkspace],
+    WorkspaceManagerBase,
+):
     """Manages :class:`DockerWorkspace` instances with TTL-based caching.
 
     The manager owns a single set of image-build parameters
@@ -73,8 +76,7 @@ class DockerWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
-        prewarm: int = 0,
-        max_creating: int = 4,
+        prewarm: PrewarmConfig | None = None,
     ) -> None:
         """Initialize the docker workspace manager.
 
@@ -119,14 +121,10 @@ class DockerWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up
                 to look for idle workspaces. Defaults to 5 minutes.
-            prewarm (`int`, defaults to `0`):
-                Containers to keep built and idle, ready to be handed
-                to the next session that needs one. ``0`` disables
-                pre-warming.
-            max_creating (`int`, defaults to `4`):
-                Ceiling on container builds running at once, so a
-                burst of sessions queues instead of stampeding the
-                Docker daemon.
+            prewarm (`PrewarmConfig | None`, optional):
+                Keep this many containers built and idle, ready to be
+                handed to the next session that needs one. ``None``
+                disables pre-warming.
         """
         self._basedir = os.path.abspath(basedir)
         self._base_image = base_image
@@ -136,11 +134,7 @@ class DockerWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
         self._env = dict(env or {})
         self._default_mcps = list(default_mcps or [])
         self._skill_paths = list(skill_paths or [])
-        WorkspacePrewarmMixin.__init__(
-            self,
-            prewarm=prewarm,
-            max_creating=max_creating,
-        )
+        WorkspacePrewarmMixin.__init__(self, prewarm=prewarm)
         WorkspaceManagerBase.__init__(self, isolation=isolation)
         self._ttl = ttl
         self._sweep_interval = sweep_interval
@@ -159,8 +153,24 @@ class DockerWorkspaceManager(WorkspacePrewarmMixin, WorkspaceManagerBase):
         two users can never share a bind-mount — and so the directory
         can be created alongside a pre-warmed container, long before
         the ``(user, agent)`` that will own it is known.
+
+        A session may name its own ``workspace_id``, and this path is
+        bind-mounted read-write into the container, so a value that
+        escapes ``basedir`` would hand the container the host
+        filesystem. Anything not landing strictly inside is rejected.
+
+        Raises:
+            `ValueError`:
+                If ``workspace_id`` resolves outside ``basedir``.
         """
-        return os.path.join(self._basedir, workspace_id)
+        root = os.path.realpath(self._basedir)
+        workdir = os.path.realpath(os.path.join(root, workspace_id))
+        if not workdir.startswith(root + os.sep):
+            raise ValueError(
+                f"workspace_id {workspace_id!r} escapes the workspace "
+                f"base directory",
+            )
+        return workdir
 
     # ── workspace construction ────────────────────────────────────
 

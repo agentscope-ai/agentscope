@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Workspace manager implementations."""
 
+import asyncio
 import hashlib
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
@@ -52,6 +54,26 @@ class WorkspaceManagerBase(ABC):
                 Isolation grain for the manager.
         """
         self._isolation: IsolationPolicy = isolation
+        self._storage: "StorageBase | None" = None
+        # Serialises read-binding-then-mint per (user, agent), so two
+        # concurrent first sessions cannot each mint a workspace.
+        self._bind_locks: defaultdict[
+            tuple[str, str],
+            asyncio.Lock,
+        ] = defaultdict(asyncio.Lock)
+
+    def bind_storage(self, storage: "StorageBase") -> None:
+        """Hand the manager the backend holding workspace bindings.
+
+        Wired by :func:`agentscope.app.create_app` rather than taken as
+        a constructor argument, because the application author builds
+        the manager before the app exists to supply a storage backend.
+
+        Args:
+            storage (`StorageBase`):
+                The application's storage backend.
+        """
+        self._storage = storage
 
     async def assign_workspace_id(
         self,
@@ -59,7 +81,6 @@ class WorkspaceManagerBase(ABC):
         user_id: str,
         agent_id: str,
         session_id: str,
-        storage: "StorageBase | None" = None,
     ) -> str:
         """Mint a workspace id under :attr:`_isolation`.
 
@@ -68,9 +89,13 @@ class WorkspaceManagerBase(ABC):
 
         * ``PER_SESSION`` → fresh UUID.
         * ``PER_AGENT`` → the id an earlier session of this
-          ``(user, agent)`` already bound, else a fresh one. With
-          ``storage`` absent the binding cannot be read, so a
+          ``(user, agent)`` already bound, else a fresh one. Without a
+          storage backend the binding cannot be read, so a
           deterministic BLAKE2b of ``user::agent`` stands in for it.
+          Reading the binding and minting a replacement is serialised
+          per ``(user, agent)``, but only within this process: two app
+          workers racing the very first session of one pair can still
+          bind two workspaces to it.
         * ``PER_USER`` → deterministic BLAKE2b of ``user::``.
 
         Managers that pre-warm override this to draw the fresh ids from
@@ -85,9 +110,6 @@ class WorkspaceManagerBase(ABC):
             session_id (`str`):
                 The session id being provisioned (only used by the
                 per-session grain to underline its randomness).
-            storage (`StorageBase | None`, optional):
-                Backend to read the ``(user, agent)`` binding from.
-                ``None`` falls back to the deterministic hash.
 
         Returns:
             `str`:
@@ -99,16 +121,22 @@ class WorkspaceManagerBase(ABC):
                 f"user::{user_id}".encode("utf-8"),
                 digest_size=8,
             ).hexdigest()
-        if self._isolation is IsolationPolicy.PER_AGENT:
-            if storage is None:
-                return hashlib.blake2b(
-                    f"{user_id}::{agent_id}".encode("utf-8"),
-                    digest_size=8,
-                ).hexdigest()
-            for record in await storage.list_sessions(user_id, agent_id):
+        if self._isolation is not IsolationPolicy.PER_AGENT:
+            return await self._mint_workspace_id()
+
+        if self._storage is None:
+            return hashlib.blake2b(
+                f"{user_id}::{agent_id}".encode("utf-8"),
+                digest_size=8,
+            ).hexdigest()
+        async with self._bind_locks[(user_id, agent_id)]:
+            for record in await self._storage.list_sessions(
+                user_id,
+                agent_id,
+            ):
                 if record.config.workspace_id:
                     return record.config.workspace_id
-        return await self._mint_workspace_id()
+            return await self._mint_workspace_id()
 
     async def _mint_workspace_id(self) -> str:
         """Produce an id for a workspace nobody holds yet.
