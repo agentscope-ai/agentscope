@@ -19,6 +19,7 @@ import socket
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import AsyncIterator
 
 from ..._logging import logger
@@ -47,7 +48,7 @@ class ChannelInstance:
 
     channel: ChannelBase
     task: asyncio.Task
-    version: str
+    version: datetime
 
 
 class ChannelLifecycleDispatcher:

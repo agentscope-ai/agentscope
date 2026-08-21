@@ -335,8 +335,6 @@ def _channel_record(user_id: str) -> ChannelRecord:
                 "parameters": {},
             },
         ),
-        created_at="t",
-        updated_at="t",
     )
 
 
