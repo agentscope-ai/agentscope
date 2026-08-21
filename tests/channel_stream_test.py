@@ -13,7 +13,7 @@ from contextlib import aclosing
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._bus_ops import publish_session_event
-from agentscope.app.channel import event_stream
+from agentscope.app.channel._stream import open_reply_stream
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.event import (
     ReplyEndEvent,
@@ -27,7 +27,8 @@ from agentscope.types import ReplyFinishedReason
 async def _drain(bus: InMemoryMessageBus, session_id: str) -> list[str]:
     """Collect the stream's event types until it terminates."""
     types: list[str] = []
-    async with aclosing(event_stream(bus, session_id)) as events:
+    stream = await open_reply_stream(bus, session_id)
+    async with aclosing(stream) as events:
         async for evt in events:
             types.append(evt.get("type", ""))
     return types

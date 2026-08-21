@@ -41,7 +41,7 @@ from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
-from ._stream import event_stream
+from ._stream import open_reply_stream
 
 
 class ChannelClients:
@@ -196,12 +196,23 @@ class ChannelClients:
             metadata={"session_id": session_id, "agent_id": agent_id},
         )
 
+        # Subscribe before returning: the caller is about to run the
+        # agent, and the run drops its event log when it persists, so a
+        # subscription opened any later could miss the whole reply.
+        try:
+            events = await open_reply_stream(self._bus, session_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "channel '%s' could not read the reply for session '%s'",
+                channel_id,
+                session_id,
+            )
+            return
+
         async def _run() -> None:
             """Feed the run's event stream to the channel."""
             try:
-                async with aclosing(
-                    event_stream(self._bus, session_id),
-                ) as events:
+                async with aclosing(events):
                     await channel.send_response(target, events)
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
