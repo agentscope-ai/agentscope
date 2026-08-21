@@ -6,6 +6,10 @@ node's live channel set match the enabled records, driven by lifecycle
 notifications and a periodic sweep (which also self-heals lost
 notifications and refreshes the status heartbeat).
 
+It answers no queries. With the connections in a dedicated worker the
+API replicas have no dispatcher to ask, so status is published to the
+bus and read from there instead.
+
 It also forwards each channel-bound run's output back to the platform:
 on an outbound signal it subscribes to the run's event stream (gap-free
 — subscribe **first**, then replay the log, deduplicating by Redis-Stream
@@ -15,6 +19,8 @@ rendering (streaming, confirmation cards); the dispatcher only feeds it
 the events.
 """
 import asyncio
+import socket
+import time
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncGenerator, AsyncIterator
@@ -25,18 +31,20 @@ from ...event import EventType
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import ChannelRecord, StorageBase
 from ._base import (
+    LIVENESS_TTL_SECS,
     ChannelBase,
     ChannelConfirmationResultEvent,
     ChannelEvent,
-    ChannelStatus,
+    ChannelHeartbeat,
 )
 from ._gateway import ChannelGateway
 from ._registry import ChannelTypeRegistry
 
 # Max seconds to wait for a channel-bound run's reply before giving up.
 RESPONSE_TIMEOUT_SECS = 60.0
-# TTL (seconds) of a node's per-channel status heartbeat.
-LIVENESS_TTL_SECS = 30
+# How often the heartbeat is refreshed; well inside
+# ``LIVENESS_TTL_SECS`` so a live node never looks expired to a reader.
+LIVENESS_REFRESH_SECS = 10
 
 # Events that end a reply's event stream.
 _TERMINAL_EVENTS = frozenset(
@@ -78,24 +86,15 @@ class ChannelLifecycleDispatcher:
         self._types = type_registry
         self._gateway = gateway
         self._instances: dict[str, ChannelInstance] = {}
-        self._node_id = _generate_id()
+        self._node_id = f"{socket.gethostname()}:{_generate_id()[:8]}"
         self._tasks: list[asyncio.Task] = []
         self._forward_tasks: set[asyncio.Task] = set()
-
-    def get_local_channel(self, channel_id: str) -> ChannelBase | None:
-        """Return this node's live channel for ``channel_id``, if running —
-        how a channel-originated run's agent tools reach it.
-
-        Args:
-            channel_id (`str`): The channel to look up.
-        """
-        inst = self._instances.get(channel_id)
-        return inst.channel if inst else None
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
         """Start reconcile/heartbeat loops; stop all instances on exit."""
         await self.reconcile()
+        await self._publish_status()
         self._tasks = [
             asyncio.create_task(self._listen(), name="channel-lifecycle"),
             asyncio.create_task(self._periodic(), name="channel-heartbeat"),
@@ -190,6 +189,14 @@ class ChannelLifecycleDispatcher:
             Exception,
         ):  # pylint: disable=broad-except
             pass
+        # Withdraw this node's report rather than leaving it to age out.
+        try:
+            await self._bus.registry_del(
+                MessageBusKeys.channel_liveness(channel_id),
+                self._node_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("channel '%s' status withdrawal failed", channel_id)
         logger.info("channel '%s' stopped", channel_id)
 
     # -- Loops --
@@ -369,43 +376,43 @@ class ChannelLifecycleDispatcher:
                 pass
 
     async def _periodic(self) -> None:
-        """Periodic reconcile (self-heals lost lifecycle events)."""
-        interval = max(5.0, LIVENESS_TTL_SECS / 2)
+        """Reconcile and publish status on a fixed interval.
+
+        The reconcile self-heals lost lifecycle events; the heartbeat is
+        what makes status readable from processes that hold no
+        connection — with a dedicated channel worker that is every API
+        replica.
+        """
         while True:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(LIVENESS_REFRESH_SECS)
             await self.reconcile()
+            await self._publish_status()
 
-    # -- Read APIs (for the router) --
+    async def _publish_status(self) -> None:
+        """Write this node's view of each local channel's status.
 
-    async def get_status(self, channel_id: str) -> ChannelStatus:
-        """The channel's live connection status, or ``stopped`` if it is not
-        running here (disabled / not yet started).
-
-        Args:
-            channel_id (`str`): The channel to report on.
+        Each report carries the time it was written: the namespace TTL
+        expires the whole hash, not this node's field, so a reader
+        cannot tell a live entry from one a restarted predecessor left
+        behind without the stamp.
         """
-        inst = self._instances.get(channel_id)
-        return inst.channel.status if inst else ChannelStatus(state="stopped")
-
-    async def list_bot_chats(self, channel_id: str) -> list[dict]:
-        """Chats the bot is in, via the local channel if running.
-
-        Args:
-            channel_id (`str`): The channel to query.
-        """
-        inst = self._instances.get(channel_id)
-        return await inst.channel.list_bot_chats() if inst else []
-
-    async def list_seen_chat_ids(self, channel_id: str) -> list[str]:
-        """Chat_ids passively recorded from inbound messages.
-
-        Args:
-            channel_id (`str`): The channel to list seen chats for.
-        """
-        fields = await self._bus.registry_getall(
-            MessageBusKeys.channel_seen_chats(channel_id),
-        )
-        return sorted(fields.keys())
+        now = time.time()
+        for channel_id, inst in list(self._instances.items()):
+            try:
+                await self._bus.registry_set(
+                    MessageBusKeys.channel_liveness(channel_id),
+                    self._node_id,
+                    ChannelHeartbeat(
+                        status=inst.channel.status,
+                        reported_at=now,
+                    ).model_dump_json(),
+                    ttl_secs=LIVENESS_TTL_SECS,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "channel '%s' status heartbeat failed",
+                    channel_id,
+                )
 
     async def dispatch(
         self,

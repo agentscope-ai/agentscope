@@ -16,14 +16,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..channel import (
     ChannelError,
-    ChannelLifecycleDispatcher,
+    ChannelClients,
     ChannelStatus,
     ChannelTypeRegistry,
     ChannelTypeSchema,
 )
 from .._service import ChannelService
 from ..deps import (
-    get_channel_dispatcher,
+    get_channel_clients,
     get_channel_service,
     get_channel_type_registry,
     get_current_user_id,
@@ -232,12 +232,13 @@ async def disable_channel(
 async def channel_status(
     channel_id: str,
     storage: StorageBase = Depends(get_storage),
-    dispatcher: ChannelLifecycleDispatcher = Depends(get_channel_dispatcher),
+    service: ChannelService = Depends(get_channel_service),
     user_id: str = Depends(get_current_user_id),
 ) -> ChannelStatus:
-    """The channel's live connection status."""
+    """The channel's live connection status, from whichever node holds
+    it — this replica need not be the one connected."""
     await _owned(channel_id, user_id, storage)
-    return await dispatcher.get_status(channel_id)
+    return await service.get_status(channel_id)
 
 
 @channel_router.get("/{channel_id}/sessions")
@@ -256,14 +257,20 @@ async def list_channel_sessions(
 async def list_chat_ids(
     channel_id: str,
     storage: StorageBase = Depends(get_storage),
-    dispatcher: ChannelLifecycleDispatcher = Depends(get_channel_dispatcher),
+    service: ChannelService = Depends(get_channel_service),
+    clients: ChannelClients = Depends(get_channel_clients),
     user_id: str = Depends(get_current_user_id),
 ) -> ChannelChatIdsResponse:
-    """Known chats for routing config: platform list ∪ passively seen."""
+    """Known chats for routing config: platform list ∪ passively seen.
+
+    The platform list is fetched over REST through a client, so it
+    answers from a replica that holds no connection.
+    """
     await _owned(channel_id, user_id, storage)
     chats: list[ChannelChatId] = []
     platform_ids: set[str] = set()
-    for chat in await dispatcher.list_bot_chats(channel_id):
+    channel = await clients.get(channel_id)
+    for chat in await channel.list_bot_chats() if channel else []:
         cid = chat.get("chat_id", "")
         if cid:
             platform_ids.add(cid)
@@ -274,7 +281,7 @@ async def list_chat_ids(
                     source="platform",
                 ),
             )
-    for cid in await dispatcher.list_seen_chat_ids(channel_id):
+    for cid in await service.list_seen_chat_ids(channel_id):
         if cid not in platform_ids:
             chats.append(ChannelChatId(chat_id=cid, source="recorded"))
     return ChannelChatIdsResponse(chats=chats)
