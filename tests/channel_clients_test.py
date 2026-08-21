@@ -166,32 +166,40 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
         storage.record = None
         self.assertIsNone(await clients.get("chan-1"))
 
-    async def test_replacing_and_dropping_close_the_old_instance(
+    async def test_a_replaced_instance_stays_usable_for_borrowers(
         self,
     ) -> None:
-        """Nothing an evicted instance opened is left dangling."""
-        storage = _Storage(_record())
-        clients = self._clients(storage)
-        first = await clients.get("chan-1")
-
-        rotated = _record(bot_id="bot-2")
-        rotated.updated_at = "2099-01-01T00:00:00"
-        storage.record = rotated
-        second = await clients.get("chan-1")
-        self.assertTrue(first.closed)
-        self.assertFalse(second.closed)
-
-        storage.record = _record(enabled=False)
-        await clients.get("chan-1")
-        self.assertTrue(second.closed)
-
-    async def test_shutdown_closes_every_cached_instance(self) -> None:
-        """Leaving the factory's lifecycle releases what it built."""
+        """A run that already took this instance may still be streaming
+        a reply through it, so rotation must not close it underneath."""
         storage = _Storage(_record())
         async with self._clients(storage) as clients:
-            channel = await clients.get("chan-1")
-            self.assertFalse(channel.closed)
-        self.assertTrue(channel.closed)
+            borrowed = await clients.get("chan-1")
+
+            rotated = _record(bot_id="bot-2")
+            rotated.updated_at = "2099-01-01T00:00:00"
+            storage.record = rotated
+            await clients.get("chan-1")
+            self.assertFalse(borrowed.closed)
+
+            storage.record = _record(enabled=False)
+            await clients.get("chan-1")
+            self.assertFalse(borrowed.closed)
+
+    async def test_shutdown_releases_cached_and_retired_instances(
+        self,
+    ) -> None:
+        """Nothing the factory built outlives it."""
+        storage = _Storage(_record())
+        async with self._clients(storage) as clients:
+            retired = await clients.get("chan-1")
+
+            rotated = _record(bot_id="bot-2")
+            rotated.updated_at = "2099-01-01T00:00:00"
+            storage.record = rotated
+            cached = await clients.get("chan-1")
+
+        self.assertTrue(retired.closed)
+        self.assertTrue(cached.closed)
 
     async def test_unregistered_type_has_no_client(self) -> None:
         """A record whose class this process was not given is skipped."""

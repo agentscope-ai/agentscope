@@ -15,8 +15,14 @@ live in one worker while runs execute on any node.
 Instances are cached per channel and rebuilt when the record's
 ``updated_at`` moves, so a credential rotation takes effect without a
 restart. A cached instance is shared by concurrent runs — channels must
-therefore keep no state across calls. Whatever a replaced or evicted
-instance opened lazily is closed through ``aclose``.
+therefore keep no state across calls.
+
+A replaced instance is retired rather than closed: a run that borrowed
+it still holds it — its platform tools stay callable for the whole turn
+— and closing the HTTP client underneath would break them. Retired
+instances are released when the
+factory shuts down, which bounds what a rotation costs to one idle
+client per rotation.
 """
 from types import TracebackType
 
@@ -44,6 +50,7 @@ class ChannelClients:
         self._storage = storage
         self._types = type_registry
         self._cache: dict[str, tuple[str, ChannelBase]] = {}
+        self._retired: list[ChannelBase] = []
 
     async def __aenter__(self) -> "ChannelClients":
         """Enter the factory's lifecycle; nothing is built up front."""
@@ -55,26 +62,34 @@ class ChannelClients:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        """Close every cached instance on shutdown."""
-        for channel_id in list(self._cache):
-            await self._evict(channel_id)
+        """Release every instance this factory built.
 
-    async def _evict(self, channel_id: str) -> None:
-        """Drop a cached instance, closing what it opened.
+        Nothing is borrowing them by now: the runs that could have are
+        torn down with the process.
+        """
+        for channel_id in list(self._cache):
+            self._retire(channel_id)
+        for channel in self._retired:
+            try:
+                await channel.aclose()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning("a channel client did not close cleanly")
+        self._retired.clear()
+
+    def _retire(self, channel_id: str) -> None:
+        """Drop a cached instance without closing it.
+
+        A concurrent run may still hold this instance through the
+        platform tools attached to its toolkit, so closing here would
+        pull the connection out from under an in-flight call. It is
+        released at shutdown instead.
 
         Args:
-            channel_id (`str`): The channel whose instance to discard.
+            channel_id (`str`): The channel whose instance to retire.
         """
         cached = self._cache.pop(channel_id, None)
-        if cached is None:
-            return
-        try:
-            await cached[1].aclose()
-        except Exception:  # pylint: disable=broad-except
-            logger.warning(
-                "channel client '%s' did not close cleanly",
-                channel_id,
-            )
+        if cached is not None:
+            self._retired.append(cached[1])
 
     async def get(self, channel_id: str) -> ChannelBase | None:
         """Return an instance for ``channel_id``, or ``None``.
@@ -92,7 +107,7 @@ class ChannelClients:
         """
         record = await self._storage.get_channel(channel_id)
         if record is None or not record.enabled:
-            await self._evict(channel_id)
+            self._retire(channel_id)
             return None
 
         version = str(record.updated_at)
@@ -114,7 +129,7 @@ class ChannelClients:
             )
             return None
 
-        # Replacing a rotated instance: close the one going away.
-        await self._evict(channel_id)
+        # Retire the rotated instance; borrowers keep working.
+        self._retire(channel_id)
         self._cache[channel_id] = (version, channel)
         return channel
