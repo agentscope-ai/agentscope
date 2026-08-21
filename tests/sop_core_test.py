@@ -1,26 +1,25 @@
 # -*- coding: utf-8 -*-
 """Tests for the SOP decision core.
 
-Every case here drives the state machine by hand — no agents, no models,
-no I/O — which is exactly what putting the decisions in pure functions
-buys.
+Every case here drives the state machine by hand — no models, no I/O —
+which is exactly what putting the decisions in pure functions buys.
 """
 from unittest import TestCase
 
 from agentscope.agent import Agent
 from agentscope.sop import (
     SOP,
-    Acceptance,
-    AskApproval,
     Dispatch,
     Judge,
-    PollApproval,
     Settle,
     SOPStep,
+    VerifyResult,
     core,
     new_run,
     next_actions,
 )
+from agentscope.state import Task
+
 from tests.utils import MockModel
 
 
@@ -29,33 +28,44 @@ def _agent(name: str = "worker") -> Agent:
     return Agent(name=name, system_prompt="", model=MockModel())
 
 
+def _step(step_id: str, blocked_by: list | None = None, **kw) -> SOPStep:
+    """A step with an agent already attached."""
+    return SOPStep(
+        id=step_id,
+        subject=step_id.upper(),
+        agent=_agent(),
+        blocked_by=blocked_by or [],
+        **kw,
+    )
+
+
 def _linear_sop(max_attempts: int = 3) -> SOP:
-    """A → B → C, each accepted by an LLM."""
+    """A → B → C."""
     return SOP(
         name="linear",
         steps=[
-            SOPStep(
-                id="a",
-                title="A",
-                agent=_agent(),
-                max_attempts=max_attempts,
-            ),
-            SOPStep(
-                id="b",
-                title="B",
-                agent=_agent(),
-                blocked_by=["a"],
-                max_attempts=max_attempts,
-            ),
-            SOPStep(
-                id="c",
-                title="C",
-                agent=_agent(),
-                blocked_by=["b"],
-                max_attempts=max_attempts,
-            ),
+            _step("a", max_attempts=max_attempts),
+            _step("b", ["a"], max_attempts=max_attempts),
+            _step("c", ["b"], max_attempts=max_attempts),
         ],
     )
+
+
+def _passed(by: str = "judge") -> VerifyResult:
+    """An accepting verdict."""
+    return VerifyResult(status="passed", verified_by=by)
+
+
+def _failed(why: str) -> VerifyResult:
+    """A refusing verdict."""
+    return VerifyResult(status="failed", message=why, verified_by="judge")
+
+
+def _complete(sop: SOP, run: object, step_id: str, text: str = "ok") -> None:
+    """Walk a step all the way through to completed."""
+    core.mark_dispatched(run, step_id)
+    core.mark_submitted(run, step_id, text)
+    core.record_verification(sop, run, step_id, _passed())
 
 
 class SOPCoreTest(TestCase):
@@ -73,15 +83,10 @@ class SOPCoreTest(TestCase):
         sop = SOP(
             name="diamond",
             steps=[
-                SOPStep(id="a", title="A", agent=_agent()),
-                SOPStep(id="b", title="B", agent=_agent(), blocked_by=["a"]),
-                SOPStep(id="c", title="C", agent=_agent(), blocked_by=["a"]),
-                SOPStep(
-                    id="d",
-                    title="D",
-                    agent=_agent(),
-                    blocked_by=["b", "c"],
-                ),
+                _step("a"),
+                _step("b", ["a"]),
+                _step("c", ["a"]),
+                _step("d", ["b", "c"]),
             ],
         )
         run = new_run(sop)
@@ -118,8 +123,7 @@ class SOPCoreTest(TestCase):
             sop,
             run,
             "a",
-            False,
-            "no acceptance criteria",
+            _failed("no acceptance criteria"),
         )
 
         self.assertEqual("running", run.step("a").state)
@@ -132,8 +136,8 @@ class SOPCoreTest(TestCase):
         run = new_run(sop)
         core.mark_dispatched(run, "a")
         core.mark_submitted(run, "a", "nope")
-        core.record_verification(sop, run, "a", False, "first")
-        core.record_verification(sop, run, "a", False, "second")
+        core.record_verification(sop, run, "a", _failed("first"))
+        core.record_verification(sop, run, "a", _failed("second"))
 
         self.assertEqual("failed", run.step("a").state)
         self.assertIsNotNone(run.step("a").finished_at)
@@ -144,7 +148,7 @@ class SOPCoreTest(TestCase):
         run = new_run(sop)
         core.mark_dispatched(run, "a")
         core.mark_submitted(run, "a", "nope")
-        core.record_verification(sop, run, "a", False, "not close")
+        core.record_verification(sop, run, "a", _failed("not close"))
 
         self.assertEqual("skipped", run.step("b").state)
         self.assertEqual("skipped", run.step("c").state)
@@ -159,42 +163,34 @@ class SOPCoreTest(TestCase):
 
         self.assertEqual([Settle("completed")], next_actions(sop, run))
 
-    def test_human_acceptance_is_asked_once_then_polled(self) -> None:
-        """The first pass asks a person; later passes only check back."""
-        sop = SOP(
-            name="review",
-            steps=[
-                SOPStep(
-                    id="a",
-                    title="A",
-                    agent=_agent(),
-                    acceptance=Acceptance(kind="human", approver="lead"),
-                ),
-            ],
-        )
+    def test_pending_parks_the_step_and_spends_no_attempt(self) -> None:
+        """Waiting on an answer is not a refusal, so it costs nothing.
+
+        The step is simply judged again on the next pass — which is how a
+        human verifier avoids being a special case in the engine.
+        """
+        sop = _linear_sop()
         run = new_run(sop)
         core.mark_dispatched(run, "a")
         core.mark_submitted(run, "a", "please review")
-        run.step("a").state = "awaiting_approval"
+        core.record_verification(
+            sop,
+            run,
+            "a",
+            VerifyResult(status="pending"),
+        )
 
-        self.assertEqual([AskApproval("a")], next_actions(sop, run))
+        self.assertEqual("awaiting_approval", run.step("a").state)
+        self.assertEqual(0, run.step("a").attempts)
+        self.assertEqual([], run.step("a").verifications)
+        self.assertEqual([Judge("a")], next_actions(sop, run))
 
-        core.mark_awaiting_approval(run, "a")
-        self.assertEqual([PollApproval("a")], next_actions(sop, run))
-
-        core.record_verification(sop, run, "a", True, verified_by="lead")
+        core.record_verification(sop, run, "a", _passed("lead"))
         self.assertEqual("completed", run.step("a").state)
-        self.assertEqual([Settle("completed")], next_actions(sop, run))
 
     def test_a_dependency_cycle_is_reported_not_hung_on(self) -> None:
         """Two steps blocking each other settles as failed, not silence."""
-        sop = SOP(
-            name="cycle",
-            steps=[
-                SOPStep(id="a", title="A", agent=_agent(), blocked_by=["b"]),
-                SOPStep(id="b", title="B", agent=_agent(), blocked_by=["a"]),
-            ],
-        )
+        sop = SOP(name="cycle", steps=[_step("a", ["b"]), _step("b", ["a"])])
         run = new_run(sop)
 
         actions = next_actions(sop, run)
@@ -207,21 +203,23 @@ class SOPCoreTest(TestCase):
         """The handover is text, keyed by the step that produced it."""
         sop = _linear_sop()
         run = new_run(sop)
-        _complete(sop, run, "a", submission="the plan")
+        _complete(sop, run, "a", text="the plan")
 
         self.assertEqual(
             {"A": "the plan"},
             core.upstream_submissions(sop, run, "b"),
         )
 
+    def test_a_step_may_be_seeded_with_planning_tasks(self) -> None:
+        """Preset tasks narrow the agent's freedom without removing it."""
+        step = _step(
+            "a",
+            tasks=[
+                Task(subject="Read the spec", description="", metadata={}),
+                Task(subject="Sketch the API", description="", metadata={}),
+            ],
+        )
 
-def _complete(
-    sop: SOP,
-    run: object,
-    step_id: str,
-    submission: str = "ok",
-) -> None:
-    """Walk a step all the way through to completed."""
-    core.mark_dispatched(run, step_id)
-    core.mark_submitted(run, step_id, submission)
-    core.record_verification(sop, run, step_id, True, verified_by="judge")
+        self.assertEqual(2, len(step.tasks))
+        self.assertEqual("Read the spec", step.tasks[0].subject)
+        self.assertEqual([], _step("b").tasks)

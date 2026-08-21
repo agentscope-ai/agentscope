@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Standard operating procedures — fixed, reusable, step-by-step
-procedures with an acceptance gate on every step.
+procedures with a verifier on every step.
 
 A SOP fixes the skeleton and leaves the flesh to the agents: the order of
 the steps and what each must prove are authored by a person, while how any
@@ -9,9 +9,10 @@ one step gets done is left entirely to the agent that runs it.
 Three layers, deliberately separate:
 
 - :class:`SOP` and :class:`SOPStep` are the **definition**, and at this
-  layer it is code: a step holds the agent that runs it, already built.
+  layer it is code: a step holds the agent that runs it and the verifier
+  that judges it, both already built.
 - :class:`SOPRun` and :class:`StepRun` are one **run** — what actually
-  happened.
+  happened. Plain data, and the half worth persisting.
 - :mod:`._core` decides **what to do next**, as pure functions over those
   two. It is shared by every driver, so readiness, retries and failure
   spreading behave the same wherever a SOP runs.
@@ -30,21 +31,13 @@ these definitions before running it — the way ``AgentData`` becomes a live
 from . import _core as core
 from ._core import (
     Action,
-    AskApproval,
     Dispatch,
     Judge,
-    PollApproval,
     Settle,
     new_run,
     next_actions,
 )
-from ._model import (
-    SOP,
-    Acceptance,
-    AcceptanceKind,
-    SOPInput,
-    SOPStep,
-)
+from ._model import SOP, SOPStep
 from ._run import (
     RunState,
     SOPRun,
@@ -52,14 +45,22 @@ from ._run import (
     StepState,
     VerificationRecord,
 )
+from ._verifier import (
+    CallbackVerifier,
+    VerifierBase,
+    VerifyResult,
+    VerifyStatus,
+)
 
 __all__ = [
     # definition
     "SOP",
     "SOPStep",
-    "SOPInput",
-    "Acceptance",
-    "AcceptanceKind",
+    # verification
+    "VerifierBase",
+    "VerifyResult",
+    "VerifyStatus",
+    "CallbackVerifier",
     # runtime
     "SOPRun",
     "StepRun",
@@ -73,7 +74,5 @@ __all__ = [
     "Action",
     "Dispatch",
     "Judge",
-    "AskApproval",
-    "PollApproval",
     "Settle",
 ]

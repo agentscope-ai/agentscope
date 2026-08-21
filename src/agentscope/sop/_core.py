@@ -17,6 +17,10 @@ Two drivers put it to work, and they differ in shape, not just in I/O:
   person, so it asks :func:`next_actions` once per trigger, carries those
   out, and parks.
 
+Note there is no separate action for human sign-off. A verifier that needs
+a person returns ``pending``; the step parks and is simply judged again on
+a later pass. Waiting on a person and waiting on a model take one path.
+
 Both get the same answers, because both ask the same function.
 """
 from dataclasses import dataclass
@@ -24,6 +28,8 @@ from typing import Union
 
 from ._model import SOP, SOPStep
 from ._run import RunState, SOPRun, StepRun, VerificationRecord
+from ._verifier import VerifyResult
+from ..message import DataBlock, TextBlock
 from .._utils._common import _generate_timestamp
 
 # ══════════════════════════════════════════════════════════════════════
@@ -41,26 +47,15 @@ class Dispatch:
 
 @dataclass
 class Judge:
-    """Judge a submitted step against its acceptance criteria."""
+    """Ask a step's verifier what it makes of the submission.
+
+    Also issued for a step already waiting on an outside answer: a
+    verifier that returns ``pending`` is simply asked again, so waiting on
+    a person and waiting on a model are the same path through the engine.
+    """
 
     step_id: str
     """The step to judge."""
-
-
-@dataclass
-class AskApproval:
-    """Put a step in front of a person for the first time."""
-
-    step_id: str
-    """The step awaiting sign-off."""
-
-
-@dataclass
-class PollApproval:
-    """See whether a person has answered yet."""
-
-    step_id: str
-    """The step still waiting."""
 
 
 @dataclass
@@ -74,7 +69,7 @@ class Settle:
     """Why, when it did not simply finish."""
 
 
-Action = Union[Dispatch, Judge, AskApproval, PollApproval, Settle]
+Action = Union[Dispatch, Judge, Settle]
 """One thing a driver should do. See :func:`next_actions`."""
 
 
@@ -135,7 +130,7 @@ def upstream_submissions(
     run: SOPRun,
     step_id: str,
 ) -> dict[str, str]:
-    """Collect what a step's blockers submitted, keyed by their title.
+    """Collect what a step's blockers submitted, keyed by their subject.
 
     This is the whole handover between steps: text, nothing else.
 
@@ -149,7 +144,7 @@ def upstream_submissions(
 
     Returns:
         `dict[str, str]`:
-            Blocker title → the text it submitted.
+            Blocker subject → the text it submitted.
     """
     step = _step(sop, step_id)
     if step is None:
@@ -158,7 +153,7 @@ def upstream_submissions(
     for blocker_id in step.blocked_by:
         blocker, record = _step(sop, blocker_id), run.step(blocker_id)
         if blocker is not None and record is not None:
-            out[blocker.title] = record.submission
+            out[blocker.subject] = record.submission
     return out
 
 
@@ -182,17 +177,8 @@ def next_actions(sop: SOP, run: SOPRun) -> list[Action]:
     for record in run.steps:
         if record.state == "pending" and is_ready(sop, run, record.step_id):
             actions.append(Dispatch(record.step_id))
-        elif record.state == "verifying":
+        elif record.state in ("verifying", "awaiting_approval"):
             actions.append(Judge(record.step_id))
-        elif record.state == "awaiting_approval":
-            asked = any(
-                v.verified_by == _PENDING for v in record.verifications
-            )
-            actions.append(
-                PollApproval(record.step_id)
-                if asked
-                else AskApproval(record.step_id),
-            )
 
     if actions:
         return actions
@@ -208,12 +194,6 @@ def next_actions(sop: SOP, run: SOPRun) -> list[Action]:
 # ══════════════════════════════════════════════════════════════════════
 # Transitions
 # ══════════════════════════════════════════════════════════════════════
-
-_PENDING = "__awaiting__"
-"""Marker on the record written when a person has been asked but has not
-answered. Lets :func:`next_actions` tell "ask" from "poll" without a
-second field."""
-
 
 def mark_dispatched(run: SOPRun, step_id: str) -> None:
     """Note that a step has been handed to its executor.
@@ -249,42 +229,18 @@ def mark_submitted(run: SOPRun, step_id: str, submission: str) -> None:
     record.state = "verifying"
 
 
-def mark_awaiting_approval(run: SOPRun, step_id: str) -> None:
-    """Note that a person has been asked and has not answered yet.
-
-    Args:
-        run (`SOPRun`):
-            The run in progress.
-        step_id (`str`):
-            The step now waiting on a person.
-    """
-    record = run.step(step_id)
-    if record is None:
-        return
-    record.state = "awaiting_approval"
-    record.verifications.append(
-        VerificationRecord(
-            attempt=record.attempts + 1,
-            passed=False,
-            message="waiting for a person",
-            verified_by=_PENDING,
-        ),
-    )
-
-
 def record_verification(
     sop: SOP,
     run: SOPRun,
     step_id: str,
-    passed: bool,
-    message: str = "",
-    verified_by: str = "",
+    result: VerifyResult,
 ) -> None:
-    """Settle one acceptance attempt and move the step accordingly.
+    """Apply a verifier's verdict and move the step accordingly.
 
-    Passing completes the step. Failing sends it back to its agent with
-    the reason — unless it has now failed
-    :attr:`~._model.SOPStep.max_attempts` times, in which case the step
+    ``pending`` parks the step — no attempt is spent, because nothing was
+    judged. ``passed`` completes it. ``failed`` sends it back to its agent
+    with the reason, unless that was its
+    :attr:`~._model.SOPStep.max_attempts` refusal, in which case the step
     fails and everything downstream of it is skipped.
 
     Args:
@@ -294,33 +250,28 @@ def record_verification(
             The run in progress.
         step_id (`str`):
             The step that was judged.
-        passed (`bool`):
-            Whether it was accepted.
-        message (`str`, optional):
-            Why it was refused. This goes back to the agent verbatim, so
-            it should say what is missing.
-        verified_by (`str`, optional):
-            The judging model, or the approver.
+        result (`VerifyResult`):
+            What its verifier concluded.
     """
     record, step = run.step(step_id), _step(sop, step_id)
     if record is None or step is None:
         return
 
-    # Drop the "waiting" placeholder, if a person was asked.
-    record.verifications = [
-        v for v in record.verifications if v.verified_by != _PENDING
-    ]
+    if result.status == "pending":
+        record.state = "awaiting_approval"
+        return
+
     record.attempts += 1
     record.verifications.append(
         VerificationRecord(
             attempt=record.attempts,
-            passed=passed,
-            message=message,
-            verified_by=verified_by,
+            passed=result.status == "passed",
+            message=result.message,
+            verified_by=result.verified_by,
         ),
     )
 
-    if passed:
+    if result.status == "passed":
         record.state = "completed"
         record.finished_at = _generate_timestamp()
     elif record.attempts >= step.max_attempts:
@@ -397,14 +348,19 @@ def settle(run: SOPRun, state: RunState) -> None:
     run.finished_at = _generate_timestamp()
 
 
-def new_run(sop: SOP, inputs: dict[str, str] | None = None) -> SOPRun:
+def new_run(
+    sop: SOP,
+    inputs: list[TextBlock | DataBlock] | None = None,
+    /,
+) -> SOPRun:
     """Start a run of ``sop``, with one pending record per step.
 
     Args:
         sop (`SOP`):
             The definition to run.
-        inputs (`dict[str, str] | None`, optional):
-            Values for the SOP's declared inputs.
+        inputs (`list[TextBlock | DataBlock] | None`, optional):
+            What the run is started with. Content rather than named
+            values, so it carries images and files as readily as text.
 
     Returns:
         `SOPRun`:
@@ -412,7 +368,7 @@ def new_run(sop: SOP, inputs: dict[str, str] | None = None) -> SOPRun:
     """
     return SOPRun(
         sop_id=sop.id,
-        inputs=dict(inputs or {}),
+        inputs=list(inputs or []),
         steps=[StepRun(step_id=s.id) for s in sop.steps],
     )
 

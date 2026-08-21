@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..message import DataBlock, TextBlock
 from .._utils._common import _generate_id, _generate_timestamp
 
 StepState = Literal[
@@ -100,8 +101,11 @@ class SOPRun(BaseModel):
     state: RunState = "running"
     """Where the run stands."""
 
-    inputs: dict[str, str] = Field(default_factory=dict)
-    """What the run was started with, keyed by :attr:`~.SOPInput.name`."""
+    inputs: list[TextBlock | DataBlock] = Field(default_factory=list)
+    """What the run was started with. Content rather than named values:
+    nothing routes an input to a particular step, so it is simply what the
+    first steps get to read — and being blocks, it can carry images and
+    files as easily as text."""
 
     steps: list[StepRun] = Field(default_factory=list)
     """One entry per step of the SOP."""
