@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Short-lived capability tokens for browser-native file downloads.
+"""Short-lived signed download tokens.
 
-A browser only streams a response to disk when it issues the request
-itself — a navigation or ``<a download>`` — and such a request cannot
-carry a custom header. Fetching with ``X-User-ID`` and building a blob
-works, but buffers the whole file in the tab.
+A browser-native fetch (an ``<iframe>`` PDF preview, an ``<img>`` tag,
+or a click-to-download navigation) carries no custom headers, so it
+cannot present ``X-User-ID``.  These helpers mint and verify a
+capability that rides in the URL instead: an HMAC over
+``(expires_at, user_id, path)`` keyed by the app-wide download secret.
 
-So the credential has to travel in the URL. A token minted here says
-"this exact user was already authenticated, and may read this exact
-path for the next minute" — a capability, not an identity. Only
-``GET /workspace/files`` accepts one, and minting depends on the normal
-identity dependency, so swapping in OAuth/JWT later changes where the
-capability comes from without touching how it is checked.
+The scheme is identical to the one
+:class:`~agentscope.app._service._workspace.WorkspaceService` uses for
+workspace files; it lives here as free functions so other routers
+(knowledge base document preview in v1) can sign against the same
+``app.state.download_secret`` without depending on the workspace
+service.
 """
 import base64
 import hashlib
@@ -19,43 +20,8 @@ import hmac
 import time
 
 # Long enough to survive a slow round trip and the user's click, short
-# enough that a token leaked through an access log or browser history
-# is already dead. There is no revocation list to fall back on.
+# enough that a token leaked through a log or history is already dead.
 DEFAULT_DOWNLOAD_TOKEN_TTL = 60
-
-
-def _b64(raw: bytes) -> str:
-    """Encode without padding, which is not URL-safe to round-trip."""
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def _unb64(text: str) -> bytes:
-    """Reverse :func:`_b64`, restoring the stripped padding."""
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
-def _signature(secret: str, expires_at: int, user_id: str, path: str) -> bytes:
-    """Compute the MAC binding an expiry, a user and a path together.
-
-    ``\\0`` separates the fields because it cannot occur in any of them,
-    so no combination of values can be re-cut into a different triple.
-
-    Args:
-        secret (`str`):
-            The app-wide signing secret.
-        expires_at (`int`):
-            Unix timestamp after which the token is refused.
-        user_id (`str`):
-            The user the capability was granted to.
-        path (`str`):
-            The one path the capability covers.
-
-    Returns:
-        `bytes`:
-            The raw HMAC-SHA256 digest.
-    """
-    message = f"{expires_at}\0{user_id}\0{path}".encode("utf-8")
-    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
 
 
 def sign_download_token(
@@ -68,13 +34,14 @@ def sign_download_token(
 
     Args:
         secret (`str`):
-            The app-wide signing secret.
+            The app-wide signing secret
+            (``app.state.download_secret``).
         user_id (`str`):
             The already-authenticated caller.
         path (`str`):
-            The path the token authorizes, verbatim as the download
-            request will send it.
-        ttl (`int`, defaults to 60):
+            The resource the token authorizes, verbatim as the
+            download request will re-derive it.
+        ttl (`int`, defaults to ``60``):
             Seconds the token stays valid.
 
     Returns:
@@ -83,7 +50,11 @@ def sign_download_token(
     """
     expires_at = int(time.time()) + ttl
     signature = _signature(secret, expires_at, user_id, path)
-    token = f"{expires_at}.{_b64(user_id.encode('utf-8'))}.{_b64(signature)}"
+    token = (
+        f"{expires_at}"
+        f".{_b64(user_id.encode('utf-8'))}"
+        f".{_b64(signature)}"
+    )
     return token, expires_at
 
 
@@ -91,7 +62,7 @@ def verify_download_token(secret: str, token: str, path: str) -> str:
     """Return the user a token was granted to, for this path.
 
     The path is not read out of the token but re-derived from the
-    request, so a token for one file cannot be replayed against
+    request, so a token for one resource cannot be replayed against
     another.
 
     Args:
@@ -100,7 +71,7 @@ def verify_download_token(secret: str, token: str, path: str) -> str:
         token (`str`):
             The token from the request.
         path (`str`):
-            The path the request is asking for.
+            The resource the request is asking for.
 
     Returns:
         `str`:
@@ -124,3 +95,41 @@ def verify_download_token(secret: str, token: str, path: str) -> str:
     if expires_at < time.time():
         raise ValueError("Expired download token.")
     return user_id
+
+
+def _signature(
+    secret: str,
+    expires_at: int,
+    user_id: str,
+    path: str,
+) -> bytes:
+    """Compute the MAC binding an expiry, a user and a path.
+
+    ``\\0`` separates the fields because it cannot occur in any of
+    them, so no combination can be re-cut into a different triple.
+
+    Args:
+        secret (`str`): The signing secret.
+        expires_at (`int`): Unix timestamp after which to refuse.
+        user_id (`str`): The user the capability was granted to.
+        path (`str`): The one resource the capability covers.
+
+    Returns:
+        `bytes`: The raw HMAC-SHA256 digest.
+    """
+    message = f"{expires_at}\0{user_id}\0{path}".encode("utf-8")
+    return hmac.new(
+        secret.encode("utf-8"),
+        message,
+        hashlib.sha256,
+    ).digest()
+
+
+def _b64(raw: bytes) -> str:
+    """Encode without padding, which is not URL-safe to round-trip."""
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _unb64(text: str) -> bytes:
+    """Reverse :func:`_b64`, restoring the stripped padding."""
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))

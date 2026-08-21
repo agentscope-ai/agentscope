@@ -3,6 +3,7 @@
 from ._access import (
     AgentView,
     CredentialView,
+    KnowledgeBaseStatusCounts,
     KnowledgeBaseView,
     ResourceAccessService,
 )
@@ -20,16 +21,20 @@ from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ._toolkit import get_toolkit
+from ._download_token import sign_download_token, verify_download_token
+from ._workspace import GitStatus, WorkspaceService, WorkspaceStatus
 
 __all__ = [
     "AgentView",
     "ChannelService",
     "ChatService",
     "CredentialView",
+    "GitStatus",
     "IndexSweeper",
     "IndexTaskConsumer",
     "IndexWorker",
     "KnowledgeBaseService",
+    "KnowledgeBaseStatusCounts",
     "KnowledgeBaseView",
     "MCPRenderError",
     "ResourceAccessService",
@@ -37,6 +42,10 @@ __all__ = [
     "SessionStatus",
     "SessionProjection",
     "SubagentHitlProjector",
+    "WorkspaceService",
+    "sign_download_token",
+    "verify_download_token",
+    "WorkspaceStatus",
     "get_embedding_model",
     "get_model",
     "get_tts_model",

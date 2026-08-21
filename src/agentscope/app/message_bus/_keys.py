@@ -150,11 +150,47 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------------------
 
     _INBOX = "agentscope:inbox:{sid}"
+    _INBOX_LOCK = "agentscope:inbox:lock:{sid}"
+    _INBOX_CONSUMER = "agentscope:inbox:consumer:{sid}"
+
+    INBOX_LOCK_TTL_SECS = 30
+    """Lease for the inbox hand-off lock. The critical sections it
+    guards are a single queue op plus a single registry op, so a lease
+    this short only ever matters when a process dies inside one."""
+
+    INBOX_CONSUMER_FIELD = "running"
+    """Field name inside the per-session inbox-consumer registry."""
 
     @classmethod
     def inbox(cls, session_id: str) -> str:
         """Per-session inbox drain-queue key."""
         return cls._INBOX.format(sid=session_id)
+
+    @classmethod
+    def inbox_lock(cls, session_id: str) -> str:
+        """Per-session lock serialising inbox hand-off.
+
+        Held only around two tiny critical sections — the producer's
+        "push then read consumer flag" and the consumer's "drain then
+        clear consumer flag". Making those two mutually exclusive is
+        what stops an entry pushed just as a run finishes from being
+        both missed by that run and skipped by the producer's wake-up
+        decision.
+        """
+        return cls._INBOX_LOCK.format(sid=session_id)
+
+    @classmethod
+    def inbox_consumer(cls, session_id: str) -> str:
+        """Per-session registry recording whether a run is currently
+        consuming this inbox.
+
+        Deliberately **not** derived from
+        :meth:`session_lock` — the lock is still held while a finished
+        run persists its state, and during that window no further drain
+        will happen, so producers must already treat the session as
+        having no consumer.
+        """
+        return cls._INBOX_CONSUMER.format(sid=session_id)
 
     # ------------------------------------------------------------------
     # Run trigger queue (wakeup / resume)
@@ -252,31 +288,17 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._INDEX_TASKS_SIGNAL
 
     # ------------------------------------------------------------------
-    # Channel output forwarding — a durable queue of "a channel session
-    # is producing output" signals. Each node running channel adapters
-    # drains it; the node that pops a signal (and hosts that channel)
-    # subscribes to the session's event stream and forwards the reply
-    # back to the platform chat. Queue + atomic pop → exactly one node
-    # forwards, even though every node runs the adapter.
+    # Channels. A reply never travels through the bus: delivery is plain
+    # REST, so the node running the agent sends it directly. What does
+    # cross nodes is coordination — reconcile nudges, the status
+    # heartbeat that lets a connection-free replica answer, and the
+    # per-chat buffers.
     # ------------------------------------------------------------------
 
-    _CHANNEL_OUTBOUND_QUEUE = "agentscope:channel:outbound"
-    _CHANNEL_OUTBOUND_SIGNAL = "agentscope:channel:outbound:wake"
     _CHANNEL_LIFECYCLE = "agentscope:channel:lifecycle"
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
-    _CHANNEL_FORWARD = "agentscope:channel:forward:{sid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
-
-    @classmethod
-    def channel_outbound_queue(cls) -> str:
-        """Durable queue of channel output-forward signals."""
-        return cls._CHANNEL_OUTBOUND_QUEUE
-
-    @classmethod
-    def channel_outbound_signal(cls) -> str:
-        """Pub/sub nudge for channel output-forward consumers."""
-        return cls._CHANNEL_OUTBOUND_SIGNAL
 
     @classmethod
     def channel_lifecycle(cls) -> str:
@@ -302,11 +324,6 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
             chat=chat_id,
             uid=user_id,
         )
-
-    @classmethod
-    def channel_forward_lease(cls, session_id: str) -> str:
-        """Per-run lock so exactly one node forwards a reply."""
-        return cls._CHANNEL_FORWARD.format(sid=session_id)
 
     @classmethod
     def channel_seen_chats(cls, channel_id: str) -> str:

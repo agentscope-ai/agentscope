@@ -21,7 +21,7 @@ workspace at {workdir} with the following structure:
 ```
 {workdir}
 ├── data/        # offloaded multimodal files (images, etc.) — system-managed
-├── skills/      # reusable skills, each in its own subdirectory
+├── skills/      # reusable skills, grouped by the agent that owns them
 └── sessions/    # offloaded session context and tool results — system-managed
 ```
 

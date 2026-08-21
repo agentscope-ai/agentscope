@@ -10,11 +10,10 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from fastapi import UploadFile
 
-from agentscope.app._service._skill_upload import (
+from agentscope.app._service import WorkspaceService
+from agentscope.app._service._workspace import (
     SkillUploadError,
     UploadManifest,
-    _tar_stream,
-    _validate_manifest,
 )
 from agentscope.workspace import LocalWorkspace
 from agentscope.workspace._base import WorkspaceBase
@@ -122,10 +121,9 @@ class AddSkillArchiveLocalTest(IsolatedAsyncioTestCase):
             "zip",
             "pack",
         )
-        self.assertEqual(
-            sorted(os.listdir(self.tmp)),
-            [".mcp", "skills"],
-        )
+        # No ``.mcp``: it is only written once an agent/session
+        # diverges from ``default_mcps``.
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["skills"])
 
 
 class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
@@ -143,7 +141,7 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
         self.tmp = self.enterContext(tempfile.TemporaryDirectory())
         self.workspace = LocalWorkspace(workdir=self.tmp)
         await self.workspace.initialize()
-        self.skills_dir = os.path.join(self.tmp, "skills")
+        self.skills_dir = os.path.join(self.tmp, "skills", "default")
 
     async def test_directory_name_is_suffixed_when_taken(self) -> None:
         """A repeated name gets a numeric suffix rather than an error."""
@@ -222,25 +220,28 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
         manifest = self._manifest(
             {"pack/SKILL.md": b"x", "pack/lib/run.py": b"y"},
         )
-        self.assertEqual(_validate_manifest(manifest), "pack")
+        self.assertEqual(
+            WorkspaceService.validate_manifest(manifest, 2),
+            "pack",
+        )
 
     def test_rejects_multiple_roots(self) -> None:
         """Files from two folders are not one skill."""
         manifest = self._manifest({"a/SKILL.md": b"x", "b/run.py": b"y"})
         with self.assertRaises(SkillUploadError):
-            _validate_manifest(manifest)
+            WorkspaceService.validate_manifest(manifest, 2)
 
     def test_rejects_traversal(self) -> None:
         """A ``..`` segment is refused before anything is read."""
         manifest = self._manifest({"pack/../../SKILL.md": b"x"})
         with self.assertRaises(SkillUploadError):
-            _validate_manifest(manifest)
+            WorkspaceService.validate_manifest(manifest, 1)
 
     def test_rejects_missing_skill_md(self) -> None:
         """The root must hold a SKILL.md."""
         manifest = self._manifest({"pack/readme.md": b"x"})
         with self.assertRaises(SkillUploadError):
-            _validate_manifest(manifest)
+            WorkspaceService.validate_manifest(manifest, 1)
 
     def test_rejects_oversized_file(self) -> None:
         """A single part over the per-file limit is refused."""
@@ -253,7 +254,19 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
             },
         )
         with self.assertRaises(SkillUploadError):
-            _validate_manifest(manifest)
+            WorkspaceService.validate_manifest(manifest, 2)
+
+    def test_rejects_part_count_mismatch(self) -> None:
+        """A manifest that does not describe the parts sent is refused.
+
+        The tar headers come from the manifest, so a mismatch would
+        pair one file's size with another's bytes.
+        """
+        manifest = self._manifest(
+            {"pack/SKILL.md": b"x", "pack/lib/run.py": b"y"},
+        )
+        with self.assertRaises(SkillUploadError):
+            WorkspaceService.validate_manifest(manifest, 1)
 
     async def test_stream_round_trips(self) -> None:
         """The emitted tar reads back with the same members."""
@@ -264,7 +277,10 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
         manifest = self._manifest(files)
         chunks = [
             chunk
-            async for chunk in _tar_stream(manifest, self._uploads(files))
+            async for chunk in WorkspaceService.tar_stream(
+                manifest,
+                self._uploads(files),
+            )
         ]
 
         archive = tarfile.open(fileobj=io.BytesIO(b"".join(chunks)))
@@ -283,5 +299,5 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
         )
         uploads = self._uploads({"pack/SKILL.md": b"much longer"})
         with self.assertRaises(SkillUploadError):
-            async for _ in _tar_stream(manifest, uploads):
+            async for _ in WorkspaceService.tar_stream(manifest, uploads):
                 pass

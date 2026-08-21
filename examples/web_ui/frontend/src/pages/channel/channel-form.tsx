@@ -131,12 +131,17 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 		const required = schema.required ?? [];
 		return Object.entries(schema.properties).map(([key, def]) => ({
 			key,
-			title: (def.title as string) || key,
-			description: def.description as string | undefined,
+			title: t(`channel.fields.${key}.title`, {
+				defaultValue: (def.title as string) || key,
+			}),
+			description:
+				t(`channel.fields.${key}.description`, {
+					defaultValue: (def.description as string) || '',
+				}) || undefined,
 			format: def.format as string | undefined,
 			required: required.includes(key),
 		}));
-	}, [typeSchema]);
+	}, [t, typeSchema]);
 
 	const configFields = React.useMemo(() => {
 		const schema = typeSchema?.config_schema as
@@ -145,12 +150,17 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 		if (!schema?.properties) return [];
 		return Object.entries(schema.properties).map(([key, def]) => ({
 			key,
-			title: (def.title as string) || key,
-			description: def.description as string | undefined,
+			title: t(`channel.fields.${key}.title`, {
+				defaultValue: (def.title as string) || key,
+			}),
+			description:
+				t(`channel.fields.${key}.description`, {
+					defaultValue: (def.description as string) || '',
+				}) || undefined,
 			type: def.type as string | undefined,
 			default: def.default,
 		}));
-	}, [typeSchema]);
+	}, [t, typeSchema]);
 
 	const selectedModelCard = React.useMemo(() => {
 		if (!value.chatModelConfig) return null;

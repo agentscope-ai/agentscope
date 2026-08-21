@@ -140,6 +140,11 @@
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"greeting": "Where should we start?",
+		"maxItersExceeded": {
+			"title": "Reached the iteration limit",
+			"description": "Send a new message to keep going, or continue the current task.",
+			"continue": "Continue"
+		},
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",
@@ -262,6 +267,9 @@
 		"dimension": {
 			"label": "Dimension"
 		},
+		"chunker": {
+			"label": "Chunker"
+		},
 		"policy": {
 			"lockedTitle": "Dimension is locked to {{dimension}}d",
 			"lockedDescription": "This server already pins all knowledge bases to {{dimension}}-dim embeddings. Only compatible models are listed below.",
@@ -272,7 +280,8 @@
 		"errors": {
 			"nameRequired": "Please give the knowledge base a name.",
 			"embeddingRequired": "Please pick an embedding model.",
-			"dimensionRequired": "Please pick a dimension."
+			"dimensionRequired": "Please pick a dimension.",
+			"chunkerRequired": "Please pick a chunking strategy."
 		}
 	},
 	"dialog-knowledge-base-edit": {
@@ -288,6 +297,9 @@
 		},
 		"embeddingModel": {
 			"label": "Embedding model"
+		},
+		"chunker": {
+			"label": "Chunker"
 		},
 		"errors": {
 			"nameRequired": "Please give the knowledge base a name."
@@ -373,6 +385,35 @@
 			"chunkPosition": "Chunk {{index}} of {{total}}",
 			"emptyTitle": "No matches",
 			"emptyDescription": "No chunks scored above the threshold for this query."
+		},
+		"config": {
+			"title": "Configuration",
+			"embeddingModel": "Embedding model",
+			"dimensions": "Dimensions",
+			"credential": "Credential",
+			"chunker": "Chunker",
+			"counts": "Contents",
+			"countsValue": "{{documents}} documents · {{chunks}} chunks",
+			"status": "Indexing",
+			"statusValue": "{{ready}} ready · {{indexing}} in progress · {{failed}} failed",
+			"createdAt": "Created"
+		},
+		"documentDetail": {
+			"description": "{{count}} indexed chunks",
+			"chunksTab": "Chunks",
+			"previewTab": "Preview",
+			"chunksEmptyTitle": "No chunks",
+			"chunksEmptyDescription": "This document has no indexed chunks yet.",
+			"chunksUnsupportedTitle": "Chunk browsing unavailable",
+			"chunksUnsupportedDescription": "The configured vector store does not support listing chunks.",
+			"previousPage": "Previous",
+			"nextPage": "Next",
+			"pageIndicator": "Page {{page}} of {{pageCount}}",
+			"previewUnavailableTitle": "No inline preview",
+			"previewUnavailableDescription": "This file type cannot be previewed in the browser.",
+			"previewTooLargeTitle": "File too large to preview",
+			"previewTooLargeDescription": "This file exceeds the inline preview limit. Download it to view the original.",
+			"downloadButton": "Download original file"
 		}
 	},
 	"llm-select": {
@@ -394,6 +435,26 @@
 			"description": "Add a credential that supports embedding to get started."
 		},
 		"addCredential": "Add Credential"
+	},
+	"chunker-select": {
+		"placeholder": "Select a chunker",
+		"loading": "Loading…",
+		"empty": "No chunkers available"
+	},
+	"chunker-types": {
+		"approx_token": {
+			"label": "Approx Token",
+			"params": {
+				"chunk_size": {
+					"label": "Chunk Size",
+					"description": "Maximum number of approximate tokens per chunk."
+				},
+				"overlap": {
+					"label": "Overlap",
+					"description": "Number of approximate tokens shared between consecutive chunks."
+				}
+			}
+		}
 	},
 	"dimension-select": {
 		"placeholder": "Select a dimension",
@@ -595,14 +656,16 @@
 			"emptyTitle": "No results",
 			"emptyDescription": "Nothing matches “{{query}}”."
 		},
-		"loading": "Loading…"
-	},
-	"team-sidebar": {
-		"membersHeading": "Members",
-		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
-		"running": "Running",
-		"idle": "Idle",
-		"missingSession": "(no session)"
+		"loading": "Loading…",
+		"team": {
+			"membersHeading": "Members",
+			"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+			"emptyTitle": "No team",
+			"emptyDescription": "This session is not part of a team. The agent forms one with TeamCreate.",
+			"running": "Running",
+			"idle": "Idle",
+			"missingSession": "(no session)"
+		}
 	},
 	"channel": {
 		"title": "Channels",
@@ -636,6 +699,34 @@
 			"showToolMessagesDesc": "Display tool call/result messages in the channel.",
 			"showThinking": "Show Thinking",
 			"showThinkingDesc": "Display model reasoning process in the channel."
+		},
+		"fields": {
+			"app_id": {
+				"title": "App ID",
+				"description": "Feishu App ID"
+			},
+			"app_secret": {
+				"title": "App Secret",
+				"description": "Feishu App Secret"
+			},
+			"bot_token": {
+				"title": "Bot Token"
+			},
+			"application_id": {
+				"title": "Application ID"
+			},
+			"only_at_reply": {
+				"title": "Reply only when mentioned",
+				"description": "In group chats, reply only when the bot is @mentioned"
+			},
+			"show_tool_process": {
+				"title": "Show tool process",
+				"description": "Show tool calls and results inline in the reply"
+			},
+			"show_thinking": {
+				"title": "Show thinking",
+				"description": "Show the model's reasoning inline in the reply"
+			}
 		},
 		"edit": {
 			"title": "Edit Channel",
@@ -739,5 +830,16 @@
 	"agent-menu": {
 		"settings": "Settings",
 		"delete": "Delete agent"
+	},
+	"workdir": {
+		"title": "Working directory",
+		"description": "Pick the agent's working directory.",
+		"root": "Workspace root",
+		"parent": "Up one level",
+		"errorTitle": "Could not list this folder",
+		"pathPlaceholder": "Type or paste a path",
+		"empty": "This folder is empty",
+		"pressEnter": "Press Enter to check this path first",
+		"gitTooltip": "{{staged}} staged · {{unstaged}} modified · {{untracked}} untracked\nLine counts exclude untracked files"
 	}
 }

@@ -288,8 +288,8 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_active_session_skipped(self) -> None:
-        """If the target session is already running, no chat run is
+    async def test_active_session_not_spawned_while_locked(self) -> None:
+        """While the target session holds its run lock, no chat run is
         spawned for it."""
         bus = _FakeBus()
         chat = _FakeChatService()
@@ -469,6 +469,42 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat.calls[0]["input_msg"],
             UserConfirmResultEvent,
         )
+
+    async def test_wake_running_session_requeues_until_free(self) -> None:
+        """A ``wake`` whose target is still running is NOT dropped.
+
+        Producers only enqueue one after finding no registered inbox
+        consumer, and a finishing run gives that registration up before
+        releasing its session lock — so a held lock is no evidence that
+        anything is still going to drain the inbox. Dropping here is
+        what used to strand a payload until the next user turn.
+        """
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="w2")
+        bus._locks.add(lock_key)
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {"user_id": "u", "session_id": "w2", "agent_id": "wa2"},
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+
+            await asyncio.sleep(0.25)
+            self.assertEqual(chat.calls, [])
+
+            bus._locks.discard(lock_key)
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["session_id"], "w2")
+        self.assertIsNone(chat.calls[0]["input_msg"])
 
 
 class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
