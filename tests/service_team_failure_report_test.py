@@ -45,6 +45,7 @@ class _Storage:
         self.sessions = sessions
         self.agents = agents
         self.team = team
+        self.fail_writes = False
 
     async def get_session(
         self,
@@ -73,10 +74,14 @@ class _Storage:
         return self.team if team_id == self.team.id else None
 
     async def update_session_state(self, *_: object, **__: object) -> None:
-        """Accept the post-run state persistence."""
+        """Accept the post-run state persistence, or fail it on demand."""
+        if self.fail_writes:
+            raise RuntimeError("storage is down")
 
     async def upsert_message(self, *_: object, **__: object) -> None:
-        """Accept persisted replies."""
+        """Accept persisted replies, or fail them on demand."""
+        if self.fail_writes:
+            raise RuntimeError("storage is down")
 
 
 class _WorkspaceManager:
@@ -85,6 +90,14 @@ class _WorkspaceManager:
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
         return SimpleNamespace(workdir="/tmp/agentscope-team-failure-test")
+
+
+class _FailingWorkspaceManager:
+    """A backend that is down — assembly dies before the agent exists."""
+
+    async def get_workspace(self, *_: object, **__: object) -> object:
+        """Fail the way an unreachable sandbox does."""
+        raise RuntimeError("workspace backend unreachable")
 
 
 def _agent(agent_id: str, name: str, source: str = "user") -> AgentRecord:
@@ -165,6 +178,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             team=self.team,
         )
         self.bus = InMemoryMessageBus()
+        self.workspace_manager: object = _WorkspaceManager()
 
     async def _run(
         self,
@@ -173,6 +187,8 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
         events: list,
         *,
         model_fails: bool = False,
+        workspace_fails: bool = False,
+        persist_fails: bool = False,
     ) -> list[dict]:
         """Run one turn and return whatever landed in the leader's inbox."""
 
@@ -183,6 +199,11 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             if model_fails:
                 raise RuntimeError("no credential for the worker")
             return object()
+
+        if workspace_fails:
+            self.workspace_manager = _FailingWorkspaceManager()
+        if persist_fails:
+            self.storage.fail_writes = True
 
         class _Access:
             """Resolve any agent of this user."""
@@ -200,7 +221,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
 
         service = ChatService(
             storage=self.storage,
-            workspace_manager=_WorkspaceManager(),
+            workspace_manager=self.workspace_manager,
             scheduler_manager=object(),
             background_task_manager=object(),
             message_bus=self.bus,
@@ -260,14 +281,17 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
                 "hint": (
-                    "<system-reminder>Team member 'worker' failed to "
-                    "finish its task. Error: model exploded. Decide what "
-                    "to do next from the cause: if it looks avoidable, "
-                    "retry the task or delete this member and create a "
-                    "new one to run it; if it is an operational failure "
-                    "such as an invalid API key, report it upward or "
-                    "handle it another way instead of retrying."
-                    "</system-reminder>"
+                    "<system-reminder>Team member 'worker' stopped "
+                    "without finishing its task. Error: model exploded. "
+                    "Judge the cause before you act: a transient or "
+                    "input-specific failure is worth another attempt — "
+                    "re-dispatch it, or replace the member with a fresh "
+                    "one — whereas a systemic failure such as invalid "
+                    "credentials or an exhausted quota will fail "
+                    "identically every time, so raise it with the user "
+                    "instead of retrying. Treat the task as having "
+                    "produced nothing usable unless the member already "
+                    "reported partial results.</system-reminder>"
                 ),
                 "source": json.dumps(
                     {"label": "System", "sublabel": "Reminder"},
@@ -284,14 +308,28 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             self._events(ReplyFinishedReason.INTERRUPTED),
         )
         self.assertEqual(len(delivered), 1)
-        self.assertEqual(
-            delivered[0]["hint"],
-            "<system-reminder>Team member 'worker' was interrupted by the "
-            "user mid-run, so its task is unfinished. The user may be "
-            "talking to that member directly right now. Check with the "
-            "user, or ask the member what happened, so it does not end up "
-            "an orphan working on something you no longer track."
-            "</system-reminder>",
+        self.assertDictEqual(
+            delivered[0],
+            {
+                "type": "hint",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
+                "hint": (
+                    "<system-reminder>Team member 'worker' was "
+                    "interrupted mid-task and has stopped. Someone "
+                    "cancelled that run deliberately — possibly the "
+                    "user, who may be working with this member directly. "
+                    "Do not silently re-dispatch it: ask the user what "
+                    "should happen to the task, or ask the member how "
+                    "far it got. Left unresolved, the member is stranded "
+                    "with work nobody is tracking.</system-reminder>"
+                ),
+                "source": json.dumps(
+                    {"label": "System", "sublabel": "Reminder"},
+                    ensure_ascii=False,
+                ),
+            },
         )
 
     async def test_completed_worker_turn_is_silent(self) -> None:
@@ -324,7 +362,69 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             model_fails=True,
         )
         self.assertEqual(len(delivered), 1)
+        self.assertDictEqual(
+            delivered[0],
+            {
+                "type": "hint",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
+                "hint": (
+                    "<system-reminder>Team member 'worker' stopped "
+                    "without finishing its task. Error: The session "
+                    "could not be prepared — check the agent's model, "
+                    "tools and knowledge bases. Judge the cause before "
+                    "you act: a transient or input-specific failure is "
+                    "worth another attempt — re-dispatch it, or replace "
+                    "the member with a fresh one — whereas a systemic "
+                    "failure such as invalid credentials or an exhausted "
+                    "quota will fail identically every time, so raise it "
+                    "with the user instead of retrying. Treat the task "
+                    "as having produced nothing usable unless the member "
+                    "already reported partial results.</system-reminder>"
+                ),
+                "source": json.dumps(
+                    {"label": "System", "sublabel": "Reminder"},
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+    async def test_workspace_failure_still_reaches_the_leader(self) -> None:
+        """Assembly dying before the workspace resolves still reports.
+
+        The team identity has to be resolved ahead of every fallible
+        assembly step, or a worker whose sandbox is down goes silent.
+        """
+        delivered = await self._run(
+            self.worker_session,
+            self.worker_agent.id,
+            [],
+            workspace_fails=True,
+        )
+        self.assertEqual(len(delivered), 1)
         self.assertIn(
-            "Team member 'worker' failed to finish its task. Error: ",
+            "Team member 'worker' stopped without finishing its task.",
             delivered[0]["hint"],
+        )
+
+    async def test_persistence_failure_still_reaches_the_leader(self) -> None:
+        """A storage failure must not swallow the notification."""
+        with self.assertRaises(RuntimeError):
+            await self._run(
+                self.worker_session,
+                self.worker_agent.id,
+                self._events(
+                    ReplyFinishedReason.ERROR,
+                    ErrorInfo(type=ErrorType.INTERNAL, message="boom"),
+                ),
+                persist_fails=True,
+            )
+        entries = await self.bus.queue_drain(
+            MessageBusKeys.inbox(self.leader_session.id),
+        )
+        self.assertEqual(len(entries), 1)
+        self.assertIn(
+            "Error: boom.",
+            entries[0][1]["hint"],
         )

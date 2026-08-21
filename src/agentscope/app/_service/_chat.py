@@ -95,13 +95,6 @@ class _WorkerContext:
 
 _TeamContext = _LeaderContext | _WorkerContext
 
-# Endings that leave a team member's task unanswered. COMPLETED and
-# EXCEED_MAX_ITERS only escape ``TeamMemberLoopMiddleware`` after a
-# successful report, so the leader already knows about those.
-_LEADER_NOTIFY_REASONS = frozenset(
-    {ReplyFinishedReason.ERROR, ReplyFinishedReason.INTERRUPTED},
-)
-
 
 class ChatService:
     """Run an agent against a session, persisting input/reply messages
@@ -386,23 +379,34 @@ optional):
         if not isinstance(team_ctx, _WorkerContext):
             return
 
+        # Error messages come from several sources and only some end in
+        # punctuation; the reminder reads as prose either way.
+        detail = detail.strip()
+        if detail and detail[-1] not in ".!?":
+            detail += "."
+
         if finished_reason == ReplyFinishedReason.INTERRUPTED:
             reminder = (
-                f"Team member {worker_name!r} was interrupted by the user "
-                f"mid-run, so its task is unfinished. The user may be "
-                f"talking to that member directly right now. Check with "
-                f"the user, or ask the member what happened, so it does "
-                f"not end up an orphan working on something you no longer "
-                f"track."
+                f"Team member {worker_name!r} was interrupted mid-task and "
+                f"has stopped. Someone cancelled that run deliberately — "
+                f"possibly the user, who may be working with this member "
+                f"directly. Do not silently re-dispatch it: ask the user "
+                f"what should happen to the task, or ask the member how "
+                f"far it got. Left unresolved, the member is stranded with "
+                f"work nobody is tracking."
             )
         else:
             reminder = (
-                f"Team member {worker_name!r} failed to finish its task. "
-                f"Error: {detail}. Decide what to do next from the cause: "
-                f"if it looks avoidable, retry the task or delete this "
-                f"member and create a new one to run it; if it is an "
-                f"operational failure such as an invalid API key, report "
-                f"it upward or handle it another way instead of retrying."
+                f"Team member {worker_name!r} stopped without finishing "
+                f"its task. Error: {detail} Judge the cause before you "
+                f"act: a transient or input-specific failure is worth "
+                f"another attempt — re-dispatch it, or replace the member "
+                f"with a fresh one — whereas a systemic failure such as "
+                f"invalid credentials or an exhausted quota will fail "
+                f"identically every time, so raise it with the user "
+                f"instead of retrying. Treat the task as having produced "
+                f"nothing usable unless the member already reported "
+                f"partial results."
             )
 
         try:
@@ -701,28 +705,11 @@ optional):
                         ),
                     )
                 worker_name = agent_record.data.name
-                workspace = await self._workspace_manager.get_workspace(
-                    user_id,
-                    agent_id,
-                    session_id,
-                    session_record.config.workspace_id,
-                )
-
-                # Add workspace working directory to the permission context
-                working_dirs = (
-                    session_record.state.permission_context.working_directories
-                )
-                if workspace.workdir not in working_dirs:
-                    working_dirs[
-                        workspace.workdir
-                    ] = AdditionalWorkingDirectory(
-                        path=workspace.workdir,
-                        source="session",
-                    )
 
                 # -------------------------------------------------------------
-                # 1b. Resolve team identity + channel binding ONCE; all
-                # downstream consumers reuse these instead of re-fetching.
+                # 1b. Resolve the team identity ONCE, before anything that
+                # can fail: a worker whose assembly dies still has to reach
+                # its leader. Downstream consumers reuse this.
                 # -------------------------------------------------------------
                 if session_record.team_id is not None:
                     team = await self._storage.get_team(
@@ -763,6 +750,29 @@ optional):
                             leader_name=leader.name,
                         )
 
+                workspace = await self._workspace_manager.get_workspace(
+                    user_id,
+                    agent_id,
+                    session_id,
+                    session_record.config.workspace_id,
+                )
+
+                # Add workspace working directory to the permission context
+                working_dirs = (
+                    session_record.state.permission_context.working_directories
+                )
+                if workspace.workdir not in working_dirs:
+                    working_dirs[
+                        workspace.workdir
+                    ] = AdditionalWorkingDirectory(
+                        path=workspace.workdir,
+                        source="session",
+                    )
+
+                # -------------------------------------------------------------
+                # 1c. Resolve the channel binding ONCE; the toolkit and the
+                # system-prompt attachment share it.
+                # -------------------------------------------------------------
                 channel = (
                     self._channel_dispatcher.get_local_channel(
                         session_record.source_channel_id,
@@ -1244,34 +1254,45 @@ optional):
                 # acquire the lock and load a stale state from storage
                 # before this write lands.
                 async def _persist() -> None:
-                    for msg in reply_msgs:
-                        await self._storage.upsert_message(
-                            user_id,
-                            session_id,
-                            msg,
-                        )
-                    await self._storage.update_session_state(
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        state=agent.state,
-                    )
-                    await self._message_bus.log_trim(events_key)
-
-                    # A worker whose turn died never reached ``TeamSay``.
-                    # Told here, inside the shielded write, so an
-                    # interrupt cannot drop the notification.
-                    for msg in reply_msgs:
-                        if msg.finished_reason in _LEADER_NOTIFY_REASONS:
-                            await self._notify_leader_of_failure(
+                    try:
+                        for msg in reply_msgs:
+                            await self._storage.upsert_message(
                                 user_id,
-                                team_ctx,
-                                agent_record.data.name,
-                                msg.finished_reason,
-                                msg.error.message
-                                if msg.error
-                                else "the turn stopped before it finished",
+                                session_id,
+                                msg,
                             )
+                        await self._storage.update_session_state(
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            session_id=session_id,
+                            state=agent.state,
+                        )
+                        await self._message_bus.log_trim(events_key)
+                    finally:
+                        # A worker whose turn died never reached
+                        # ``TeamSay``. Sent from inside the shielded
+                        # write so an interrupt cannot drop it, and from
+                        # a ``finally`` so a storage failure cannot
+                        # either — the leader has to learn about the
+                        # dead turn even when recording it went wrong.
+                        # COMPLETED / EXCEED_MAX_ITERS stay silent:
+                        # those only escape the member middleware after
+                        # a successful report.
+                        for msg in reply_msgs:
+                            if msg.finished_reason in (
+                                ReplyFinishedReason.ERROR,
+                                ReplyFinishedReason.INTERRUPTED,
+                            ):
+                                await self._notify_leader_of_failure(
+                                    user_id,
+                                    team_ctx,
+                                    worker_name,
+                                    msg.finished_reason,
+                                    msg.error.message
+                                    if msg.error
+                                    else "The turn stopped before it "
+                                    "finished.",
+                                )
 
                 persist_task = asyncio.create_task(_persist())
                 try:
