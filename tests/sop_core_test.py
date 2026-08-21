@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for the SOP decision core.
+"""Tests for the SOP decision functions.
 
 Every case here drives the state machine by hand — no models, no I/O —
 which is exactly what putting the decisions in pure functions buys.
@@ -14,12 +14,14 @@ from agentscope.sop import (
     Dispatch,
     Judge,
     Settle,
+    SOPRunStatus,
     SOPStep,
-    VerifyResult,
-    core,
+    SOPStepState,
+    VerificationRecord,
     new_run,
     next_actions,
 )
+from agentscope.sop import _engine as core
 from agentscope.state import Task
 
 from tests.utils import MockModel
@@ -53,14 +55,14 @@ def _linear_sop(max_attempts: int = 3) -> SOP:
     )
 
 
-def _passed(by: str = "judge") -> VerifyResult:
+def _passed(by: str = "judge") -> VerificationRecord:
     """An accepting verdict."""
-    return VerifyResult(status="passed", verified_by=by)
+    return VerificationRecord(passed=True, verified_by=by)
 
 
-def _failed(why: str) -> VerifyResult:
+def _failed(why: str) -> VerificationRecord:
     """A refusing verdict."""
-    return VerifyResult(status="failed", message=why, verified_by="judge")
+    return VerificationRecord(passed=False, message=why, verified_by="judge")
 
 
 def _complete(sop: SOP, run: object, step_id: str, text: str = "ok") -> None:
@@ -128,9 +130,11 @@ class SOPCoreTest(TestCase):
             _failed("no acceptance criteria"),
         )
 
-        self.assertEqual("running", run.steps["a"].state)
+        self.assertEqual(SOPStepState.PENDING, run.steps["a"].state)
         self.assertEqual(1, len(run.steps["a"].verifications))
         self.assertEqual("no acceptance criteria", core.feedback(run, "a"))
+        # Back in the queue, so the next pass asks it again.
+        self.assertEqual([Dispatch("a")], next_actions(sop, run))
 
     def test_running_out_of_attempts_fails_the_step(self) -> None:
         """The attempt limit is a hard stop, not a suggestion."""
@@ -141,20 +145,23 @@ class SOPCoreTest(TestCase):
         core.record_verification(sop, run, "a", _failed("first"))
         core.record_verification(sop, run, "a", _failed("second"))
 
-        self.assertEqual("failed", run.steps["a"].state)
+        self.assertEqual(SOPStepState.FAILED, run.steps["a"].state)
         self.assertEqual(2, len(run.steps["a"].verifications))
 
     def test_a_failure_strands_everything_behind_it(self) -> None:
-        """Skipping cascades — B is stranded, and so is C behind it."""
+        """A stranded step needs no state of its own — it never ran."""
         sop = _linear_sop(max_attempts=1)
         run = new_run(sop)
         core.mark_dispatched(run, "a")
         core.mark_submitted(run, "a", "nope")
         core.record_verification(sop, run, "a", _failed("not close"))
 
-        self.assertEqual("skipped", run.steps["b"].state)
-        self.assertEqual("skipped", run.steps["c"].state)
-        self.assertEqual([Settle("failed")], next_actions(sop, run))
+        self.assertEqual(SOPStepState.PENDING, run.steps["b"].state)
+        self.assertEqual(SOPStepState.PENDING, run.steps["c"].state)
+        self.assertEqual(
+            [Settle(SOPRunStatus.FAILED, "no step can proceed")],
+            next_actions(sop, run),
+        )
 
     def test_a_finished_run_settles_completed(self) -> None:
         """Nothing left and nothing failed means the run is done."""
@@ -163,31 +170,28 @@ class SOPCoreTest(TestCase):
         for step_id in ("a", "b", "c"):
             _complete(sop, run, step_id)
 
-        self.assertEqual([Settle("completed")], next_actions(sop, run))
+        self.assertEqual(
+            [Settle(SOPRunStatus.COMPLETED)],
+            next_actions(sop, run),
+        )
 
-    def test_pending_parks_the_step_and_spends_no_attempt(self) -> None:
-        """Waiting on an answer is not a refusal, so it costs nothing.
+    def test_no_answer_yet_leaves_the_step_being_verified(self) -> None:
+        """A verifier with nothing to say costs the step nothing.
 
-        The step is simply judged again on the next pass — which is how a
+        It stays in VERIFYING and is simply asked again — which is how a
         human verifier avoids being a special case in the engine.
         """
         sop = _linear_sop()
         run = new_run(sop)
         core.mark_dispatched(run, "a")
         core.mark_submitted(run, "a", "please review")
-        core.record_verification(
-            sop,
-            run,
-            "a",
-            VerifyResult(status="pending"),
-        )
 
-        self.assertEqual("awaiting_approval", run.steps["a"].state)
+        self.assertEqual(SOPStepState.VERIFYING, run.steps["a"].state)
         self.assertEqual([], run.steps["a"].verifications)
         self.assertEqual([Judge("a")], next_actions(sop, run))
 
         core.record_verification(sop, run, "a", _passed("lead"))
-        self.assertEqual("completed", run.steps["a"].state)
+        self.assertEqual(SOPStepState.COMPLETED, run.steps["a"].state)
 
     def test_a_dependency_cycle_is_reported_not_hung_on(self) -> None:
         """Two steps blocking each other settles as failed, not silence."""
@@ -197,7 +201,7 @@ class SOPCoreTest(TestCase):
         actions = next_actions(sop, run)
         self.assertEqual(1, len(actions))
         self.assertIsInstance(actions[0], Settle)
-        self.assertEqual("failed", actions[0].state)
+        self.assertEqual(SOPRunStatus.FAILED, actions[0].status)
         self.assertTrue(actions[0].reason)
 
     def test_a_step_reads_what_its_blockers_submitted(self) -> None:
@@ -216,13 +220,13 @@ class SOPCoreTest(TestCase):
         reach the live agent through the step it is judging."""
         seen = {}
 
-        def decide(sop, run, step, step_run) -> VerifyResult:
+        def decide(sop, run, step, step_run) -> VerificationRecord:
             seen["sop"] = sop.name
             seen["steps"] = len(run.steps)
             seen["subject"] = step.subject
             seen["agent"] = step.agent.name
             seen["submission"] = step_run.submission
-            return VerifyResult(status="passed")
+            return VerificationRecord(passed=True)
 
         sop = SOP(
             name="one",
@@ -237,7 +241,7 @@ class SOPCoreTest(TestCase):
             step.verifier.verify(sop, run, step, record),
         )
 
-        self.assertEqual("passed", result.status)
+        self.assertTrue(result.passed)
         self.assertEqual("callback", result.verified_by)
         self.assertEqual(
             {

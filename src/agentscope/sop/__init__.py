@@ -6,21 +6,22 @@ A SOP fixes the skeleton and leaves the flesh to the agents: the order of
 the steps and what each must prove are authored by a person, while how any
 one step gets done is left entirely to the agent that runs it.
 
-Three layers, deliberately separate:
+Three pieces, deliberately separate:
 
 - :class:`SOP` and :class:`SOPStep` are the **definition**, and at this
   layer it is code: a step holds the agent that runs it and the verifier
   that judges it, both already built.
-- :class:`SOPRun` and :class:`StepRun` are one **run** — what actually
-  happened. Plain data, and the half worth persisting. It holds no cursor:
-  a step keeps only what cannot be worked out again, and every pass
-  recomputes what can proceed.
-- :mod:`._core` decides **what to do next**, as pure functions over those
-  two. It is shared by every driver, so readiness, retries and failure
-  spreading behave the same wherever a SOP runs.
+- :class:`SOPRunState` is one **run** — what actually happened. Plain
+  data, and the half worth persisting. It holds no cursor: a step keeps
+  only what cannot be worked out again, and every pass recomputes what
+  can proceed.
+- :class:`SOPEngine` runs it, shaped like an agent. Feed it, watch the
+  events, and when something needs a person the stream simply ends —
+  nothing stays suspended.
 
 Steps hand over text and nothing else. There are no artifacts to declare:
-an agent submits its result as text, and the next step reads it.
+an agent submits its result with :class:`SubmitStepResult`, and the next
+step reads that.
 
 Everything needing a service underneath stays out: triggers and schedules,
 workspace allocation, notification channels, agent-to-agent messaging, and
@@ -30,29 +31,33 @@ these definitions before running it — the way ``AgentData`` becomes a live
 ``Agent`` today — rather than pushing its fields down into this layer.
 """
 
-from . import _core as core
-from ._core import (
+from ._engine import (
     Action,
     Dispatch,
     Judge,
+    RunSettledEvent,
     Settle,
+    SOPEngine,
+    SOPEvent,
+    StepStateEvent,
+    SubmitStepResult,
+    feedback,
+    find_step,
+    is_ready,
     new_run,
     next_actions,
+    overall_status,
+    upstream_submissions,
 )
-from ._model import SOP, SOPStep
 from ._run import (
-    RunState,
-    SOPRun,
+    SOPRunState,
+    SOPRunStatus,
+    SOPStepState,
     StepRun,
-    StepState,
     VerificationRecord,
 )
-from ._verifier import (
-    CallbackVerifier,
-    VerifierBase,
-    VerifyResult,
-    VerifyStatus,
-)
+from ._sop import SOP, SOPStep
+from ._verifier import CallbackVerifier, VerifierBase
 
 __all__ = [
     # definition
@@ -60,19 +65,27 @@ __all__ = [
     "SOPStep",
     # verification
     "VerifierBase",
-    "VerifyResult",
-    "VerifyStatus",
     "CallbackVerifier",
-    # runtime
-    "SOPRun",
-    "StepRun",
     "VerificationRecord",
-    "RunState",
-    "StepState",
+    # runtime
+    "SOPRunState",
+    "StepRun",
+    "SOPStepState",
+    "SOPRunStatus",
+    # running it
+    "SOPEngine",
+    "SubmitStepResult",
+    "StepStateEvent",
+    "RunSettledEvent",
+    "SOPEvent",
     # decisions
-    "core",
     "new_run",
     "next_actions",
+    "is_ready",
+    "overall_status",
+    "upstream_submissions",
+    "feedback",
+    "find_step",
     "Action",
     "Dispatch",
     "Judge",

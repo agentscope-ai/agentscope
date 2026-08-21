@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """What a run of a SOP did.
 
-One :class:`~._model.SOP` definition produces many runs. A definition
-holds live agents and verifiers and cannot be written down; everything
-here is plain data, and this is the half worth persisting — dump a run and
-the progress outlives the process that made it.
+One :class:`~._sop.SOP` definition produces many runs. A definition holds
+live agents and verifiers and cannot be written down; everything here is
+plain data, and this is the half worth persisting — dump a run and the
+progress outlives the process that made it.
 
 Nothing in here is a cursor. There is no "current step" and no "next
 index": a pass over a run recomputes what can proceed from the steps' own
@@ -18,47 +18,66 @@ rather than re-run, losing it would leave them with nothing. Its
 ``verifications`` are the verdicts so far, which say both why it was sent
 back and, by their number, how close it is to being given up on.
 """
-from typing import Literal
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 from ..message import DataBlock, TextBlock
 from .._utils._common import _generate_id, _generate_timestamp
 
-StepState = Literal[
-    "pending",
-    "running",
-    "verifying",
-    "awaiting_approval",
-    "completed",
-    "failed",
-    "skipped",
-]
-"""Where a step stands in a run.
 
-- ``pending``: not dispatched — either still blocked, or simply next up.
-- ``running``: handed to its agent.
-- ``verifying``: the agent submitted; the verifier has not answered yet.
-- ``awaiting_approval``: the verifier said ``pending`` — it is waiting on
-  something outside, most often a person.
-- ``completed`` / ``failed``: settled. ``failed`` means the verifier kept
-  refusing until ``max_attempts`` ran out.
-- ``skipped``: unreachable, because something upstream failed.
+class SOPStepState(StrEnum):
+    """Where a step stands in a run.
 
-Note there is no ``ready``: whether a step can start is recomputed from
-:attr:`~._model.SOPStep.blocked_by` and the other steps' states.
-"""
+    A step that never ran stays ``PENDING`` — including one stranded
+    behind a failure, which needs no state of its own to say so.
 
-RunState = Literal["running", "completed", "failed"]
-"""Where a run stands overall. Always derived — see
-:func:`~._core.overall_state` — never stored."""
+    Waiting is not a state either. An agent stopped on a permission
+    prompt is still ``RUNNING``, and a verifier that has not answered yet
+    leaves the step ``VERIFYING``, whether the answer is a second away or
+    a person is away for the weekend.
+    """
+
+    PENDING = "pending"
+    """Not dispatched — still blocked, next up, sent back to try again,
+    or never reached at all."""
+
+    RUNNING = "running"
+    """Handed to its agent."""
+
+    VERIFYING = "verifying"
+    """The agent submitted; its verifier has not settled yet."""
+
+    COMPLETED = "completed"
+    """Accepted."""
+
+    FAILED = "failed"
+    """Refused until :attr:`~._sop.SOPStep.max_attempts` ran out."""
+
+
+class SOPRunStatus(StrEnum):
+    """Where a run stands overall.
+
+    Always derived from the steps — see
+    :func:`~._engine.overall_status` — never stored.
+    """
+
+    RUNNING = "running"
+    """Something can still proceed."""
+
+    COMPLETED = "completed"
+    """Every step was accepted."""
+
+    FAILED = "failed"
+    """A step failed, or nothing left can ever proceed."""
 
 
 class VerificationRecord(BaseModel):
     """One settled verdict on a step.
 
-    A verifier answering ``pending`` writes nothing here: nothing was
-    judged, so no attempt was spent.
+    Only settled verdicts exist. A verifier with no answer yet returns
+    nothing at all rather than a record saying so, because a verdict that
+    has not happened is not a verdict.
     """
 
     passed: bool
@@ -72,15 +91,19 @@ class VerificationRecord(BaseModel):
     verified_by: str = ""
     """Who decided — a model, a person, an external system."""
 
-    checked_at: str = Field(default_factory=_generate_timestamp)
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """When the verification began. A verifier waiting on a person may
+    have started days before it settled."""
+
+    finished_at: str = Field(default_factory=_generate_timestamp)
     """When the verdict was reached."""
 
 
 class StepRun(BaseModel):
     """What one step did in one run."""
 
-    state: StepState = "pending"
-    """Where the step stands. See :data:`StepState`."""
+    state: SOPStepState = SOPStepState.PENDING
+    """Where the step stands."""
 
     submission: str = ""
     """The text the agent handed back. This is the only thing that
@@ -93,8 +116,13 @@ class StepRun(BaseModel):
     try again."""
 
 
-class SOPRun(BaseModel):
-    """One execution of a SOP."""
+class SOPRunState(BaseModel):
+    """One execution of a SOP, and the whole of what it is worth saving.
+
+    Named after :class:`~..state.AgentState` and playing the same part:
+    the engine holds one, everything it knows lives in it, and handing a
+    stored one back is how a run resumes.
+    """
 
     sop_id: str
     """The SOP being run."""

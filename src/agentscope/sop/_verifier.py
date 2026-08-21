@@ -7,26 +7,26 @@ whatever ``verify`` does inside — call a model, run a check, wait on a
 person, ask a ticketing system — is the subclass's business, and the
 engine never learns which.
 
-The only thing the engine needs back is one of three answers, and the
-third is what makes a human verifier stop being a special case::
+It answers with a :class:`~._run.VerificationRecord`, or with **nothing at
+all** when it has no answer yet. That second case is what keeps a human
+verifier from being a special case: it returns ``None``, posts its request
+however it likes, and hands back a real verdict once it has one. The
+engine asks again on its next pass, so waiting a second on a model and
+waiting a day on a person take the same path through the code — and
+neither holds a coroutine open.
 
-    passed   the step is done
-    failed   it is not, and `message` says what to fix
-    pending  no answer yet — ask again later
+Returning ``None`` rather than a record saying "not yet" is deliberate: a
+verdict that has not happened is not a verdict, and should not sit in a
+step's history pretending to be one.
 
-A verifier that needs a person returns ``pending`` on the first call,
-posts its request however it likes, and returns the real answer once it
-has one. The engine simply asks again on its next pass, so waiting an hour
-for a human and waiting a second for a model take exactly the same path
-through the code.
+Because a verifier is a live object, it can remember whether it has
+already asked. **At this layer only** — an object does not survive the
+process, so a verifier that has to outlive one keeps its pending state in
+the driver's own storage, never on ``self``.
 
-Because a verifier is a live object, it can also remember whether it has
-already asked. Anything that must outlive the process belongs in the
-driver's own storage, not here.
-
-**Whatever it needs from the outside, it takes at construction** — a
-model, an HTTP client, a workspace. That is the same rule the rest of this
-layer follows, and it is why ``verify`` is handed no such thing::
+Whatever it needs from the outside, it takes at construction — a model, an
+HTTP client, a workspace. That is the same rule the rest of this layer
+follows, and it is why ``verify`` is handed no such thing::
 
     ws = LocalWorkspace(...)
     agent = Agent(..., offloader=ws)
@@ -41,30 +41,12 @@ The engine never learns what a workspace is, which is what keeps it
 runnable without a service underneath.
 """
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, Literal, TYPE_CHECKING
+from typing import Awaitable, Callable, TYPE_CHECKING
 
-from pydantic import BaseModel
+from ._run import SOPRunState, StepRun, VerificationRecord
 
 if TYPE_CHECKING:
-    from ._model import SOP, SOPStep
-    from ._run import SOPRun, StepRun
-
-VerifyStatus = Literal["passed", "failed", "pending"]
-"""The three answers a verifier can give. See :mod:`._verifier`."""
-
-
-class VerifyResult(BaseModel):
-    """What a verifier concluded."""
-
-    status: VerifyStatus
-    """Whether the step is done, is not, or cannot be judged yet."""
-
-    message: str = ""
-    """Why it was refused. This goes back to the agent verbatim, so it has
-    to say what is missing rather than that something is."""
-
-    verified_by: str = ""
-    """Who decided — a model name, a person, an external system."""
+    from ._sop import SOP, SOPStep
 
 
 class VerifierBase(ABC):
@@ -74,38 +56,39 @@ class VerifierBase(ABC):
     async def verify(
         self,
         sop: "SOP",
-        run: "SOPRun",
+        run: SOPRunState,
         step: "SOPStep",
-        step_run: "StepRun",
-    ) -> VerifyResult:
+        step_run: StepRun,
+    ) -> VerificationRecord | None:
         """Judge what a step handed back.
 
         The four arguments are the whole picture, definition beside
         runtime: ``sop`` and ``run`` for everything that has happened so
         far, ``step`` and ``step_run`` for the one being judged. A verdict
         that has to look further than the submission — at what an earlier
-        step produced, or at whether the agent really did the thing —
-        has what it needs, since ``step.agent`` is the live agent and its
+        step produced, or at whether the agent really did the thing — has
+        what it needs, since ``step.agent`` is the live agent and its
         state is right there.
 
         Args:
             sop (`SOP`):
                 The definition being run. Needed to make sense of ``run``:
                 it is what turns a step id back into a subject.
-            run (`SOPRun`):
+            run (`SOPRunState`):
                 The run in progress, carrying every step's record.
             step (`SOPStep`):
-                The step being judged. :attr:`~.SOPStep.agent` is the
+                The step being judged. :attr:`~._sop.SOPStep.agent` is the
                 agent that ran it.
             step_run (`StepRun`):
-                Its record. :attr:`~.StepRun.submission` is what the agent
-                handed back, and :attr:`~.StepRun.verifications` is every
-                earlier verdict.
+                Its record. :attr:`~._run.StepRun.submission` is what the
+                agent handed back, and
+                :attr:`~._run.StepRun.verifications` is every earlier
+                verdict.
 
         Returns:
-            `VerifyResult`:
-                ``passed``, ``failed`` with a reason, or ``pending`` when
-                the answer has to come from somewhere else.
+            `VerificationRecord | None`:
+                The verdict, or ``None`` when there is no answer yet and
+                the engine should ask again later.
         """
 
 
@@ -113,19 +96,22 @@ class CallbackVerifier(VerifierBase):
     """Hands the decision to a callable.
 
     Enough for a script that wants to judge in Python, or to prompt on the
-    console and block until a person answers::
+    console and answer on the spot::
 
-        CallbackVerifier(lambda sop, run, step, rec: VerifyResult(
-            status="passed" if "DONE" in rec.submission else "failed",
-            message="say DONE when the report is written",
+        CallbackVerifier(lambda sop, run, step, rec: VerificationRecord(
+            passed="DONE" in rec.submission,
+            message="say DONE once the report is written",
         ))
+
+    Returning ``None`` from the callable parks the step, exactly as it
+    would from any other verifier.
     """
 
     def __init__(
         self,
         decide: Callable[
-            ["SOP", "SOPRun", "SOPStep", "StepRun"],
-            VerifyResult | Awaitable[VerifyResult],
+            ["SOP", SOPRunState, "SOPStep", StepRun],
+            VerificationRecord | None | Awaitable[VerificationRecord | None],
         ],
         name: str = "callback",
     ) -> None:
@@ -135,9 +121,10 @@ class CallbackVerifier(VerifierBase):
             decide (`Callable`):
                 Called with the same four arguments as
                 :meth:`VerifierBase.verify`. May be sync or async, and may
-                return ``pending`` to be asked again later.
+                return ``None`` to be asked again later.
             name (`str`, defaults to ``"callback"``):
-                Recorded as :attr:`VerifyResult.verified_by` when the
+                Recorded as
+                :attr:`~._run.VerificationRecord.verified_by` when the
                 callable leaves it empty.
         """
         self._decide = decide
@@ -146,14 +133,14 @@ class CallbackVerifier(VerifierBase):
     async def verify(
         self,
         sop: "SOP",
-        run: "SOPRun",
+        run: SOPRunState,
         step: "SOPStep",
-        step_run: "StepRun",
-    ) -> VerifyResult:
+        step_run: StepRun,
+    ) -> VerificationRecord | None:
         """Ask the callable, awaiting it if it is a coroutine."""
         result = self._decide(sop, run, step, step_run)
         if isinstance(result, Awaitable):
             result = await result
-        if not result.verified_by:
+        if result is not None and not result.verified_by:
             result.verified_by = self._name
         return result

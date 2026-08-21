@@ -66,6 +66,10 @@ class EventType(StrEnum):
 
     CUSTOM = "CUSTOM"
 
+    SOP_STEP_STATE = "SOP_STEP_STATE"
+
+    SOP_RUN_SETTLED = "SOP_RUN_SETTLED"
+
 
 class EventBase(BaseModel):
     """Base event class."""
