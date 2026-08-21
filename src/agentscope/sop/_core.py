@@ -19,10 +19,10 @@ Two drivers put it to work, and they differ in shape, not just in I/O:
 
 Both get the same answers, because both ask the same function.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Union
 
-from ._model import SOP, NotifyTarget, SOPStep
+from ._model import SOP, SOPStep
 from ._run import RunState, SOPRun, StepRun, VerificationRecord
 from .._utils._common import _generate_timestamp
 
@@ -64,17 +64,6 @@ class PollApproval:
 
 
 @dataclass
-class Announce:
-    """Post a step's completion to its notify targets."""
-
-    step_id: str
-    """The step that just completed."""
-
-    targets: list[NotifyTarget] = field(default_factory=list)
-    """Where to post."""
-
-
-@dataclass
 class Settle:
     """Nothing is left to do; the run has reached ``state``."""
 
@@ -85,7 +74,7 @@ class Settle:
     """Why, when it did not simply finish."""
 
 
-Action = Union[Dispatch, Judge, AskApproval, PollApproval, Announce, Settle]
+Action = Union[Dispatch, Judge, AskApproval, PollApproval, Settle]
 """One thing a driver should do. See :func:`next_actions`."""
 
 

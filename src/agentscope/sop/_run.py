@@ -70,12 +70,9 @@ class StepRun(BaseModel):
     attempts: int = 0
     """How many times acceptance has been attempted."""
 
-    agent_id: str | None = None
-    """The agent that actually ran it — freshly created when the executor
-    mode is ``per_run_agent``."""
-
-    session_id: str | None = None
-    """The session it actually ran in."""
+    executor_ref: str | None = None
+    """Which executor actually ran it. Opaque here — whatever the driver
+    put in, so it can find its way back to the same one."""
 
     submission: str = ""
     """The text the agent submitted as its result. This is the only thing
@@ -102,11 +99,6 @@ class SOPRun(BaseModel):
 
     state: RunState = "running"
     """Where the run stands."""
-
-    workspace_key: str | None = None
-    """The workspace the steps share. Freshly minted when the SOP's policy
-    is ``per_run``, taken from the SOP when ``persistent``, and ``None``
-    when ``none``."""
 
     inputs: dict[str, str] = Field(default_factory=dict)
     """What the run was started with, keyed by :attr:`~.SOPInput.name`."""

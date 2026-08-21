@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 """The SOP definition model.
 
-A SOP is authored once and run many times. Everything in this module is
-part of that authored definition — it says what the procedure *is*, never
-what any particular run *did*. The per-run side lives in :mod:`._run`.
+A SOP is authored once and run many times. Everything here is part of that
+authored definition — it says what the procedure *is*, never what any
+particular run *did*. The per-run side lives in :mod:`._run`.
+
+Kept out on purpose, because they only mean something once a service is
+underneath: how a run gets **triggered** (manually, on a schedule, off an
+inbound event), which **workspace** its steps share, where a finished step
+**notifies**, and whether agents may **message each other** mid-run. None
+of those exist at this layer — there is no scheduler, no workspace
+manager, no channels, no message bus — so a service that grows them wraps
+this definition rather than pushing the fields down into it.
 """
 from typing import Literal
 
@@ -11,28 +19,17 @@ from pydantic import BaseModel, Field
 
 from .._utils._common import _generate_id, _generate_timestamp
 
-TriggerKind = Literal["manual", "agent", "schedule", "event"]
-"""How a run is started. ``agent`` means another agent calls it (A2A)."""
-
-WorkspacePolicy = Literal["per_run", "persistent", "none"]
-"""The workspace every step of a run shares.
-
-- ``per_run``: a fresh workspace per run — shared inside the run, never
-  polluted between runs. The default.
-- ``persistent``: one workspace behind every run, so files accumulate.
-- ``none``: no shared filesystem; steps hand over text only.
-"""
-
-ExecutorMode = Literal["fixed_session", "per_run_session", "per_run_agent"]
+ExecutorMode = Literal["reuse_state", "reset_state", "new_agent"]
 """How a step's executor relates to the SOP's runs.
 
-- ``fixed_session``: one agent, **one session**, across every run. The
+- ``reuse_state``: the same agent, keeping its state across every run. The
   conversation simply continues — along with its clutter.
-- ``per_run_session``: one agent, a **new session each run**. What it
-  learned carries over through the agent's long-term memory rather than
+- ``reset_state``: the same agent, starting from clean state each run.
+  What it learned carries over through its long-term memory rather than
   its context.
-- ``per_run_agent``: a **new agent** (and session) every run. Nothing
-  carries over: fully reproducible, and it pays the ramp-up every time.
+- ``new_agent``: a fresh agent built from :attr:`Executor.spec` every run.
+  Nothing carries over: fully reproducible, and it pays the ramp-up every
+  time.
 """
 
 AcceptanceKind = Literal["llm", "human"]
@@ -43,15 +40,12 @@ run" and "how is the environment installed", neither of which a SOP author
 can answer from a form.
 """
 
-ChannelKind = Literal["feishu", "discord"]
-"""A messaging channel a step can notify."""
-
 
 class AgentSpec(BaseModel):
-    """An agent described inline, for the ``per_run_agent`` executor mode.
+    """An agent described inline, for the ``new_agent`` executor mode.
 
-    The fields mirror the Create Agent form, so an author sees the same
-    thing whether they build the agent here or over there.
+    Everything here is a reference by name, not a live object, because a
+    definition has to survive being written down.
     """
 
     name: str
@@ -61,21 +55,22 @@ class AgentSpec(BaseModel):
     """The system prompt."""
 
     model: str = ""
-    """The chat model name."""
+    """The chat model to use, by name."""
 
 
 class Executor(BaseModel):
     """Who runs a step."""
 
-    mode: ExecutorMode = "per_run_session"
+    mode: ExecutorMode = "reset_state"
     """How the executor relates to runs. See :data:`ExecutorMode`."""
 
-    agent_id: str | None = None
-    """The existing agent to use. Required unless ``mode`` is
-    ``per_run_agent``."""
+    agent_ref: str | None = None
+    """Which existing agent to use. Opaque here — whoever drives the run
+    decides what it points at. Required unless ``mode`` is
+    ``new_agent``."""
 
     spec: AgentSpec | None = None
-    """The agent to build. Required when ``mode`` is ``per_run_agent``."""
+    """The agent to build. Required when ``mode`` is ``new_agent``."""
 
 
 class Acceptance(BaseModel):
@@ -92,20 +87,11 @@ class Acceptance(BaseModel):
     """Free-form standard handed to the judge model, for ``kind="llm"``."""
 
     approver: str | None = None
-    """Who signs off, for ``kind="human"``."""
+    """Who signs off, for ``kind="human"``. How they are actually reached
+    is the driver's problem."""
 
     prompt: str | None = None
     """What the approver is asked, for ``kind="human"``."""
-
-
-class NotifyTarget(BaseModel):
-    """Where to post once a step finishes."""
-
-    channel: ChannelKind
-    """The messaging channel."""
-
-    chat: str
-    """The chat or group inside that channel."""
 
 
 class SOPStep(BaseModel):
@@ -138,9 +124,6 @@ class SOPStep(BaseModel):
     acceptance: Acceptance = Field(default_factory=Acceptance)
     """How the step is verified done."""
 
-    notify: list[NotifyTarget] = Field(default_factory=list)
-    """Where to post once it finishes."""
-
     max_attempts: int = 3
     """How many failed acceptances before the step is given up on."""
 
@@ -168,24 +151,8 @@ class SOP(BaseModel):
     description: str = ""
     """What this procedure is for."""
 
-    trigger: TriggerKind = "manual"
-    """How runs are started."""
-
     inputs: list[SOPInput] = Field(default_factory=list)
     """What a run must be given."""
-
-    workspace: WorkspacePolicy = "per_run"
-    """The workspace shared by the steps of a run. See
-    :data:`WorkspacePolicy`."""
-
-    allow_agent_chat: bool = False
-    """Whether a step's agent may message another step's agent mid-run.
-
-    Turning it on is convenient — a later step can ask an earlier one what
-    it meant instead of guessing from the handover text — but it makes the
-    step depend on another agent still being able to answer, which costs
-    reproducibility.
-    """
 
     steps: list[SOPStep] = Field(default_factory=list)
     """The steps. List order is for display only; execution order comes
@@ -193,15 +160,3 @@ class SOP(BaseModel):
 
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the SOP was authored."""
-
-    # ------------------------------------------------------------------
-    # Engine-maintained. Not authored, but its lifetime spans every run,
-    # so it cannot live on a single run either.
-    # ------------------------------------------------------------------
-    fixed_sessions: dict[str, str] = Field(default_factory=dict)
-    """``step_id`` → the session reused by a ``fixed_session`` executor.
-    Created on first use, then kept."""
-
-    persistent_workspace_key: str | None = None
-    """The long-lived workspace behind every run, when :attr:`workspace`
-    is ``persistent``."""

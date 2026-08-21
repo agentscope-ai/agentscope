@@ -19,14 +19,16 @@ Three layers, deliberately separate:
 Steps hand over text and nothing else. There are no artifacts to declare:
 an agent submits its result as text, and the next step reads it.
 
-Persistence is not this layer's business — a run lives in memory here, and
-the service keeps its own.
+Everything that needs a service underneath stays out: triggers and
+schedules, workspace allocation, notification channels, agent-to-agent
+messaging, and persistence. There is no scheduler, workspace manager,
+channel or message bus at this layer, so a service that has them wraps
+this definition rather than pushing its own fields down into it.
 """
 
 from . import _core as core
 from ._core import (
     Action,
-    Announce,
     AskApproval,
     Dispatch,
     Judge,
@@ -40,14 +42,10 @@ from ._model import (
     Acceptance,
     AcceptanceKind,
     AgentSpec,
-    ChannelKind,
     Executor,
     ExecutorMode,
-    NotifyTarget,
     SOPInput,
     SOPStep,
-    TriggerKind,
-    WorkspacePolicy,
 )
 from ._run import (
     RunState,
@@ -65,12 +63,8 @@ __all__ = [
     "Executor",
     "AgentSpec",
     "Acceptance",
-    "NotifyTarget",
-    "TriggerKind",
-    "WorkspacePolicy",
     "ExecutorMode",
     "AcceptanceKind",
-    "ChannelKind",
     # runtime
     "SOPRun",
     "StepRun",
@@ -86,6 +80,5 @@ __all__ = [
     "Judge",
     "AskApproval",
     "PollApproval",
-    "Announce",
     "Settle",
 ]
