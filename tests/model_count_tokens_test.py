@@ -18,7 +18,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up a mock model that uses ChatModelBase.count_tokens."""
-        self.model = MockModel()
+        self.model = MockModel(use_fallback_token_estimate=True)
 
     async def test_data_blocks_use_flat_multimodal_estimate(self) -> None:
         """Large base64 payloads are not counted as prompt text."""
@@ -61,7 +61,8 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
                     None,
                 )
 
-                self.assertEqual(tokens, len(text.encode("utf-8")))
+                byte_count = len(text.encode("utf-8"))
+                self.assertEqual(tokens, (byte_count * 4 + 4) // 5)
 
     async def test_base64_and_url_data_blocks_have_same_estimate(self) -> None:
         """The same data block should not differ by source representation."""
