@@ -125,6 +125,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             channel_clients = await stack.enter_async_context(
                 ChannelClients(
                     storage=storage,
+                    message_bus=message_bus,
                     type_registry=channel_type_registry,
                 ),
             )
