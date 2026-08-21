@@ -761,6 +761,17 @@
 			"failed": "连接失败"
 		},
 		"binding": {
+			"manualSetup": "手工配置",
+			"invalidQrCode": "服务器返回了无效的二维码地址。",
+			"qrCodeAlt": "频道授权二维码",
+			"scanDescription": "使用对应平台客户端扫码并确认授权。",
+			"retry": "重新生成二维码",
+			"state": {
+				"pending": "等待扫码",
+				"authorized": "授权完成",
+				"expired": "二维码已过期",
+				"failed": "授权失败"
+			},
 			"rule": "匹配规则",
 			"matchKey": "匹配字段",
 			"matchValue": "匹配值",

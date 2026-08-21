@@ -303,6 +303,13 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_FORWARD = "agentscope:channel:forward:{sid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
+    _CHANNEL_CREDENTIAL_BINDING = (
+        "agentscope:channel:credential_binding:{binding_id}"
+    )
+    _CHANNEL_CREDENTIAL_BINDING_LOCK = (
+        "agentscope:channel:credential_binding_lock:{binding_id}"
+    )
+    _CHANNEL_BOT_LOCK = "agentscope:channel:bot_lock:{bot_id}"
 
     @classmethod
     def channel_outbound_queue(cls) -> str:
@@ -348,3 +355,20 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def channel_seen_chats(cls, channel_id: str) -> str:
         """Registry namespace of chat_ids the bot has been messaged in."""
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
+
+    @classmethod
+    def channel_credential_binding(cls, binding_id: str) -> str:
+        """Private TTL registry for one channel credential binding."""
+        return cls._CHANNEL_CREDENTIAL_BINDING.format(binding_id=binding_id)
+
+    @classmethod
+    def channel_credential_binding_lock(cls, binding_id: str) -> str:
+        """Distributed lock guarding one credential binding record."""
+        return cls._CHANNEL_CREDENTIAL_BINDING_LOCK.format(
+            binding_id=binding_id,
+        )
+
+    @classmethod
+    def channel_bot_lock(cls, bot_id: str) -> str:
+        """Lock serializing uniqueness checks for one platform bot."""
+        return cls._CHANNEL_BOT_LOCK.format(bot_id=bot_id)

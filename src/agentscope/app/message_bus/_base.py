@@ -412,6 +412,9 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         If the namespace does not exist it is created. When
         ``ttl_secs`` is supplied, the namespace's TTL is refreshed
         (sliding) — individual fields do not carry independent TTLs.
+        Implementations must apply the value and expiry atomically so a
+        partial failure cannot leave a supposedly short-lived value
+        persistent.
 
         Args:
             namespace (`str`):

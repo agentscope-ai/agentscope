@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the channel router."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ...storage import (
     RoutingConfig,
@@ -17,7 +17,14 @@ class CreateChannelRequest(BaseModel):
         default=None,
         description="Optional display name.",
     )
-    credentials: dict = Field(description="Platform credentials.")
+    credentials: dict | None = Field(
+        default=None,
+        description="Platform credentials for manual setup.",
+    )
+    credential_binding_id: str | None = Field(
+        default=None,
+        description="Authorized QR binding session, instead of credentials.",
+    )
     platform_config: dict = Field(
         default_factory=dict,
         description="Non-secret platform options.",
@@ -25,6 +32,22 @@ class CreateChannelRequest(BaseModel):
     routing: RoutingConfig = Field(description="Inbound routing rules.")
     session: SessionSettings = Field(description="Session/model settings.")
     enabled: bool = Field(default=True, description="Start it enabled.")
+
+    @model_validator(mode="after")
+    def _exactly_one_credential_source(self) -> "CreateChannelRequest":
+        """Require either manual credentials or one QR binding session."""
+        if (self.credentials is None) == (self.credential_binding_id is None):
+            raise ValueError(
+                "Provide exactly one of 'credentials' or "
+                "'credential_binding_id'.",
+            )
+        return self
+
+
+class StartChannelCredentialBindingRequest(BaseModel):
+    """Start a QR-code binding session for a channel type."""
+
+    channel_type: str
 
 
 class UpdateChannelRequest(BaseModel):

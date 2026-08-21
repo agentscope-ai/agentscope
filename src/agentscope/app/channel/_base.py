@@ -35,6 +35,7 @@ from ...types import ReplyFinishedReason
 if TYPE_CHECKING:
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
+    from ._credential_binding import ChannelCredentialBindingBase
 
 _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
@@ -215,6 +216,11 @@ class ChannelBase(ABC):
     icon_url: str = ""
     """Brand icon URL for the management UI; empty falls back to a
     generated avatar."""
+
+    credential_binding: "ChannelCredentialBindingBase | None" = None
+    """Optional QR-code credential provider. A provider owns the external
+    authorization session and returns its secret result only to the channel
+    service; the WebUI sees status metadata, never the credentials."""
 
     class Credentials(BaseModel):
         """Secret connection fields (app id, tokens, ...). Subclasses

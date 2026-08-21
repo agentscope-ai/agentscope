@@ -79,7 +79,8 @@ storage-sql = [
 storage-s3 = ["aioboto3"]
 # ------------ Channel ------------
 channel = [
-    "lark-oapi>=1.4.0",
+    "lark-oapi>=1.7.2",
+    "segno>=1.6.6",
     "discord.py>=2.3",
 ]
 # ------------ Workspace (sandbox backends) ------------

@@ -39,6 +39,7 @@ from ._card_templates import (
     _build_toast,
     _parse_action,
 )
+from ._credential_binding import FeishuCredentialBinding
 
 if TYPE_CHECKING:
     import httpx
@@ -47,8 +48,8 @@ if TYPE_CHECKING:
         P2CardActionTrigger,
         P2CardActionTriggerResponse,
     )
-    from .....tool import ToolBase
-    from .....workspace import WorkspaceBase
+    from ....tool import ToolBase
+    from ....workspace import WorkspaceBase
 
 _API = "https://open.feishu.cn/open-apis"
 _TOKEN_EXPIRED_CODES = frozenset({99991663, 99991664})
@@ -95,6 +96,7 @@ class FeishuChannel(ChannelBase):
     description = "Group and direct-message bot with card interactions."
     icon_url = "https://www.google.com/s2/favicons?domain=feishu.cn&sz=128"
     platform_bot_id_field = "app_id"
+    credential_binding = FeishuCredentialBinding()
 
     class Credentials(BaseModel):
         """Feishu bot application credentials."""

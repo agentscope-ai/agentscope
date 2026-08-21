@@ -81,6 +81,10 @@ class InMemoryMessageBus(MessageBus):
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
+        self._registry_expiry_handles: dict[
+            str,
+            asyncio.TimerHandle,
+        ] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -101,6 +105,10 @@ class InMemoryMessageBus(MessageBus):
             for q in subs:
                 q.put_nowait(None)
         self._subscribers.clear()
+        for handle in self._registry_expiry_handles.values():
+            handle.cancel()
+        self._registry_expiry_handles.clear()
+        self._registries.clear()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -423,7 +431,8 @@ class InMemoryMessageBus(MessageBus):
     ) -> None:
         """Set ``field`` to ``value`` in the registry at ``namespace``.
 
-        ``ttl_secs`` is accepted for API compatibility but ignored.
+        A supplied ``ttl_secs`` refreshes a namespace-level timer, matching
+        the sliding TTL semantics of the Redis implementation.
 
         Args:
             namespace (`str`):
@@ -433,9 +442,28 @@ class InMemoryMessageBus(MessageBus):
             value (`str`):
                 Value to store.
             ttl_secs (`int | None`, optional):
-                Ignored (no TTL support).
+                Refresh the namespace expiry to this many seconds.
         """
         self._registries[namespace][field] = value
+        if ttl_secs is not None:
+            old_handle = self._registry_expiry_handles.pop(namespace, None)
+            if old_handle is not None:
+                old_handle.cancel()
+
+            if ttl_secs <= 0:
+                self._registries.pop(namespace, None)
+                return
+
+            def _expire() -> None:
+                self._registries.pop(namespace, None)
+                self._registry_expiry_handles.pop(namespace, None)
+
+            self._registry_expiry_handles[
+                namespace
+            ] = asyncio.get_running_loop().call_later(
+                ttl_secs,
+                _expire,
+            )
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the registry at ``namespace``.
@@ -449,6 +477,11 @@ class InMemoryMessageBus(MessageBus):
         reg = self._registries.get(namespace)
         if reg is not None:
             reg.pop(field, None)
+            if not reg:
+                self._registries.pop(namespace, None)
+                handle = self._registry_expiry_handles.pop(namespace, None)
+                if handle is not None:
+                    handle.cancel()
 
     async def registry_exists(self, namespace: str, field: str) -> bool:
         """Return whether ``field`` exists in the registry at
@@ -511,3 +544,6 @@ class InMemoryMessageBus(MessageBus):
                 Registry key to delete.
         """
         self._registries.pop(namespace, None)
+        handle = self._registry_expiry_handles.pop(namespace, None)
+        if handle is not None:
+            handle.cancel()

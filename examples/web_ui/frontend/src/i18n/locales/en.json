@@ -761,6 +761,17 @@
 			"failed": "Failed"
 		},
 		"binding": {
+			"manualSetup": "Manual setup",
+			"invalidQrCode": "The server returned an invalid QR code URL.",
+			"qrCodeAlt": "Channel authorization QR code",
+			"scanDescription": "Scan with the platform app and approve access.",
+			"retry": "Generate a new code",
+			"state": {
+				"pending": "Waiting to be scanned",
+				"authorized": "Authorization complete",
+				"expired": "This QR code has expired",
+				"failed": "Could not authorize"
+			},
 			"rule": "Match Rule",
 			"matchKey": "Match field",
 			"matchValue": "Match value",

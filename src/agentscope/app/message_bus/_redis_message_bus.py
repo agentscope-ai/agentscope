@@ -393,6 +393,9 @@ class RedisMessageBus(MessageBus):
     ) -> None:
         """Set ``field`` in the Redis Hash at ``namespace``.
 
+        When a TTL is supplied, ``HSET`` and ``EXPIRE`` are committed in one
+        Redis transaction so a partial write cannot become persistent.
+
         Args:
             namespace (`str`):
                 Hash key.
@@ -403,9 +406,16 @@ class RedisMessageBus(MessageBus):
             ttl_secs (`int | None`, optional):
                 Refresh the key's expiry (sliding TTL).
         """
-        await self._client.hset(namespace, field, value)
-        if ttl_secs is not None:
-            await self._client.expire(namespace, ttl_secs)
+        if ttl_secs is None:
+            await self._client.hset(namespace, field, value)
+            return
+
+        # A transaction is required for secret-bearing short-lived records:
+        # HSET succeeding without EXPIRE must never leave persistent state.
+        async with self._client.pipeline(transaction=True) as pipeline:
+            pipeline.hset(namespace, field, value)
+            pipeline.expire(namespace, ttl_secs)
+            await pipeline.execute()
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the Redis Hash at ``namespace``.

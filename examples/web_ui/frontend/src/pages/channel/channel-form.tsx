@@ -23,14 +23,19 @@ import {
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useTranslation } from '@/i18n/useI18n';
 import { BindingsEditor } from '@/pages/channel/bindings-editor';
+import { type CredentialMode, withCredentialMode } from '@/pages/channel/channel-form-state';
+import { CredentialBindingPanel } from '@/pages/channel/credential-binding-panel';
 
 export interface ChannelFormValue {
 	channelType: string;
 	name: string;
 	credentials: Record<string, string>;
+	credentialMode: CredentialMode;
+	credentialBindingId: string | null;
 	platformConfig: Record<string, unknown>;
 	bindings: ChannelBinding[];
 	chatModelConfig: ChatModelConfig | null;
@@ -43,6 +48,8 @@ export function defaultChannelForm(agentId = ''): ChannelFormValue {
 		channelType: 'feishu',
 		name: '',
 		credentials: {},
+		credentialMode: 'manual',
+		credentialBindingId: null,
 		platformConfig: {},
 		bindings: [
 			{
@@ -63,6 +70,8 @@ export function channelFormFromRecord(record: ChannelRecord): ChannelFormValue {
 		channelType: record.channel_type,
 		name: record.name ?? '',
 		credentials: {},
+		credentialMode: 'manual',
+		credentialBindingId: null,
 		platformConfig: record.platform_config ?? {},
 		bindings: record.routing.bindings,
 		chatModelConfig: record.session.chat_model_config,
@@ -82,10 +91,19 @@ function sessionSettings(v: ChannelFormValue) {
 }
 
 export function toCreateRequest(v: ChannelFormValue): CreateChannelRequest {
+	let credentialSource: Pick<CreateChannelRequest, 'credentials' | 'credential_binding_id'>;
+	if (v.credentialMode === 'qr_code') {
+		if (!v.credentialBindingId) {
+			throw new Error('QR credential binding is not authorized.');
+		}
+		credentialSource = { credential_binding_id: v.credentialBindingId };
+	} else {
+		credentialSource = { credentials: v.credentials };
+	}
 	return {
 		channel_type: v.channelType,
 		name: v.name.trim() || null,
-		credentials: v.credentials,
+		...credentialSource,
 		platform_config: v.platformConfig,
 		routing: { bindings: v.bindings },
 		enabled: true,
@@ -142,6 +160,7 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 			required: required.includes(key),
 		}));
 	}, [t, typeSchema]);
+	const qrMode = typeSchema?.credential_modes?.find((item) => item.type === 'qr_code');
 
 	const configFields = React.useMemo(() => {
 		const schema = typeSchema?.config_schema as
@@ -173,6 +192,27 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 		return null;
 	}, [groups, value.chatModelConfig?.type, value.chatModelConfig?.model]);
 
+	const credentialInputs = credentialFields.map((field) => (
+		<Field key={field.key}>
+			<FieldLabel>
+				{field.title}
+				{field.required && ' *'}
+			</FieldLabel>
+			<Input
+				className="text-sm"
+				type={field.format === 'password' ? 'password' : 'text'}
+				value={value.credentials[field.key] || ''}
+				onChange={(e) =>
+					set('credentials', {
+						...value.credentials,
+						[field.key]: e.target.value,
+					})
+				}
+				placeholder={field.description || field.title}
+			/>
+		</Field>
+	));
+
 	return (
 		<FieldGroup className="[&>[data-orientation=horizontal]>:last-child]:w-48">
 			{mode === 'edit' && (
@@ -197,27 +237,35 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 				/>
 			</Field>
 
-			{mode === 'create' &&
-				credentialFields.map((field) => (
-					<Field key={field.key}>
-						<FieldLabel>
-							{field.title}
-							{field.required && ' *'}
-						</FieldLabel>
-						<Input
-							className="text-sm"
-							type={field.format === 'password' ? 'password' : 'text'}
-							value={value.credentials[field.key] || ''}
-							onChange={(e) =>
-								set('credentials', {
-									...value.credentials,
-									[field.key]: e.target.value,
-								})
-							}
-							placeholder={field.description || field.title}
+			{mode === 'create' && qrMode ? (
+				<Tabs
+					value={value.credentialMode}
+					onValueChange={(modeValue) =>
+						onChange(withCredentialMode(value, modeValue as CredentialMode))
+					}
+				>
+					<TabsList className="mb-3 w-full bg-surface-muted">
+						<TabsTrigger value="qr_code" className="flex-1">
+							{qrMode.display_name}
+						</TabsTrigger>
+						<TabsTrigger value="manual" className="flex-1">
+							{t('channel.binding.manualSetup')}
+						</TabsTrigger>
+					</TabsList>
+					<TabsContent value="qr_code">
+						<CredentialBindingPanel
+							channelType={value.channelType}
+							description={qrMode.description}
+							onAuthorized={(bindingId) => set('credentialBindingId', bindingId)}
 						/>
-					</Field>
-				))}
+					</TabsContent>
+					<TabsContent value="manual">
+						<div className="space-y-4">{credentialInputs}</div>
+					</TabsContent>
+				</Tabs>
+			) : (
+				mode === 'create' && credentialInputs
+			)}
 
 			<Separator />
 
@@ -325,11 +373,20 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 	);
 }
 
-export function isChannelFormValid(v: ChannelFormValue, mode: 'create' | 'edit'): boolean {
+export function isChannelFormValid(
+	v: ChannelFormValue,
+	mode: 'create' | 'edit',
+	typeSchema?: ChannelTypeSchema,
+): boolean {
 	if (!v.name.trim()) return false;
 	if (!v.chatModelConfig) return false;
 	if (v.bindings.length === 0) return false;
 	if (v.bindings.some((b) => !b.agent_id)) return false;
 	if (mode === 'create' && !v.channelType) return false;
+	if (mode === 'create' && v.credentialMode === 'qr_code') return !!v.credentialBindingId;
+	if (mode === 'create' && typeSchema) {
+		const schema = typeSchema.credentials_schema as { required?: string[] };
+		if ((schema.required ?? []).some((key) => !v.credentials[key]?.trim())) return false;
+	}
 	return true;
 }

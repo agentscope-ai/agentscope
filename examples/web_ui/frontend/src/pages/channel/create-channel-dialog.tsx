@@ -51,19 +51,27 @@ export function CreateChannelDialog({ open, onOpenChange, onCreated, initialType
 					setChannelTypes(types);
 					// Default to the first enabled type when the initial
 					// channelType is not among the service's enabled types.
-					setForm((f) =>
-						types.some((ct) => ct.channel_type === f.channelType)
-							? f
-							: { ...f, channelType: types[0]?.channel_type ?? f.channelType },
-					);
+					setForm((f) => {
+						const pickedType =
+							types.find((ct) => ct.channel_type === f.channelType) ?? types[0];
+						return {
+							...f,
+							channelType: pickedType?.channel_type ?? f.channelType,
+							credentialMode: pickedType?.credential_modes?.some(
+								(mode) => mode.type === 'qr_code',
+							)
+								? 'qr_code'
+								: 'manual',
+						};
+					});
 				})
 				.catch(() => {});
 		}
 	}, [open, agents, initialType]);
 
-	const valid = isChannelFormValid(form, 'create');
 	// The platform is chosen in the gallery, so name the dialog after it.
 	const picked = channelTypes.find((ct) => ct.channel_type === form.channelType);
+	const valid = isChannelFormValid(form, 'create', picked);
 
 	const handleSubmit = async () => {
 		setError('');

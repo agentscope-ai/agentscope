@@ -19,8 +19,16 @@ from ._dispatcher import ChannelLifecycleDispatcher
 from ._errors import ChannelError
 from ._gateway import ChannelGateway
 from ._registry import ChannelTypeRegistry, ChannelTypeSchema
+from ._credential_binding import (
+    ChannelCredentialBindingBase,
+    ChannelCredentialBindingSession,
+    ChannelCredentialBindingState,
+    ChannelCredentialBindingStore,
+    ChannelCredentialBindingStatus,
+    ChannelCredentialMode,
+)
 from ._discord import DiscordChannel
-from ._feishu import FeishuChannel
+from ._feishu import FeishuChannel, FeishuCredentialBinding
 
 __all__ = [
     "ChannelBase",
@@ -34,6 +42,13 @@ __all__ = [
     "ChannelLifecycleDispatcher",
     "ChannelTypeRegistry",
     "ChannelTypeSchema",
+    "ChannelCredentialBindingBase",
+    "ChannelCredentialBindingSession",
+    "ChannelCredentialBindingState",
+    "ChannelCredentialBindingStore",
+    "ChannelCredentialBindingStatus",
+    "ChannelCredentialMode",
     "DiscordChannel",
     "FeishuChannel",
+    "FeishuCredentialBinding",
 ]
