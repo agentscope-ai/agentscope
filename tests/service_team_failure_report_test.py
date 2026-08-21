@@ -281,17 +281,15 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
                 "hint": (
-                    "<system-reminder>Team member 'worker' stopped "
-                    "without finishing its task. Error: model exploded. "
-                    "Judge the cause before you act: a transient or "
-                    "input-specific failure is worth another attempt — "
-                    "re-dispatch it, or replace the member with a fresh "
-                    "one — whereas a systemic failure such as invalid "
-                    "credentials or an exhausted quota will fail "
-                    "identically every time, so raise it with the user "
-                    "instead of retrying. Treat the task as having "
-                    "produced nothing usable unless the member already "
-                    "reported partial results.</system-reminder>"
+                    "<system-reminder>Team member 'worker' hit an error "
+                    "while running, so it never called TeamSay to "
+                    "report. Error: model exploded. Judge from the error "
+                    "type whether to retry — with this member or a fresh "
+                    "one — or to raise it with the user: invalid "
+                    "credentials or an exhausted quota will fail the "
+                    "same way again. Assume no usable output unless the "
+                    "member reported partial results earlier."
+                    "</system-reminder>"
                 ),
                 "source": json.dumps(
                     {"label": "System", "sublabel": "Reminder"},
@@ -370,18 +368,16 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
                 "hint": (
-                    "<system-reminder>Team member 'worker' stopped "
-                    "without finishing its task. Error: The session "
-                    "could not be prepared — check the agent's model, "
-                    "tools and knowledge bases. Judge the cause before "
-                    "you act: a transient or input-specific failure is "
-                    "worth another attempt — re-dispatch it, or replace "
-                    "the member with a fresh one — whereas a systemic "
-                    "failure such as invalid credentials or an exhausted "
-                    "quota will fail identically every time, so raise it "
-                    "with the user instead of retrying. Treat the task "
-                    "as having produced nothing usable unless the member "
-                    "already reported partial results.</system-reminder>"
+                    "<system-reminder>Team member 'worker' hit an error "
+                    "while running, so it never called TeamSay to "
+                    "report. Error: The session could not be prepared — "
+                    "check the agent's model, tools and knowledge bases. "
+                    "Judge from the error type whether to retry — with "
+                    "this member or a fresh one — or to raise it with "
+                    "the user: invalid credentials or an exhausted quota "
+                    "will fail the same way again. Assume no usable "
+                    "output unless the member reported partial results "
+                    "earlier.</system-reminder>"
                 ),
                 "source": json.dumps(
                     {"label": "System", "sublabel": "Reminder"},
@@ -404,7 +400,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(delivered), 1)
         self.assertIn(
-            "Team member 'worker' stopped without finishing its task.",
+            "Team member 'worker' hit an error while running",
             delivered[0]["hint"],
         )
 

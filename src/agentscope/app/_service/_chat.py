@@ -397,16 +397,13 @@ optional):
             )
         else:
             reminder = (
-                f"Team member {worker_name!r} stopped without finishing "
-                f"its task. Error: {detail} Judge the cause before you "
-                f"act: a transient or input-specific failure is worth "
-                f"another attempt — re-dispatch it, or replace the member "
-                f"with a fresh one — whereas a systemic failure such as "
-                f"invalid credentials or an exhausted quota will fail "
-                f"identically every time, so raise it with the user "
-                f"instead of retrying. Treat the task as having produced "
-                f"nothing usable unless the member already reported "
-                f"partial results."
+                f"Team member {worker_name!r} hit an error while running, "
+                f"so it never called TeamSay to report. Error: {detail} "
+                f"Judge from the error type whether to retry — with this "
+                f"member or a fresh one — or to raise it with the user: "
+                f"invalid credentials or an exhausted quota will fail the "
+                f"same way again. Assume no usable output unless the "
+                f"member reported partial results earlier."
             )
 
         try:
