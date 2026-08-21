@@ -279,8 +279,8 @@ class KnowledgeBaseService:
             view.chunk_count = sum(
                 document.data.chunk_count for document in documents
             )
-            view.status_counts = KnowledgeBaseStatusCounts(
-                **Counter(document.status for document in documents),
+            view.status_counts = KnowledgeBaseStatusCounts.model_validate(
+                Counter(document.status for document in documents),
             )
 
             cache_key = (

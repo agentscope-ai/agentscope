@@ -293,8 +293,9 @@ class ElasticsearchStore(VectorStoreBase):
         with ``_shard_doc`` / ``search_after`` — which needs
         Elasticsearch >= 7.12 and is unsupported on OpenSearch — so
         documents beyond the 10000-hit window still work), sorts them
-        in Python, and slices the requested page — O(chunks of one document) per page, which
-        is bounded and acceptable for an interactive detail view.
+        in Python, and slices the requested page — O(chunks of one
+        document) per page, which is bounded and acceptable for an
+        interactive detail view.
 
         Args:
             collection (`str`):
