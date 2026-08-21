@@ -117,7 +117,11 @@ class _TeamLeader:
 
     @property
     def name(self) -> str:
-        """The leader's current display name."""
+        """The leader's current display name.
+
+        Returns:
+            `str`: The leader agent's name, as read this call.
+        """
         return self.agent.data.name
 
 

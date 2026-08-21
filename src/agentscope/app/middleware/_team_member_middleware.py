@@ -48,7 +48,19 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
         self._max_nudges: int = max_nudges
 
     def _last_tool_call_reports_to_leader(self, agent: "Agent") -> bool:
-        """Whether this reply's final tool call successfully reports back."""
+        """Whether this reply's final tool call successfully reports back.
+
+        Args:
+            agent (`Agent`):
+                The replying member agent, read for its context and
+                the id of the reply in flight.
+
+        Returns:
+            `bool`:
+                ``True`` when the reply's last tool call is a
+                ``TeamSay`` addressed to the leader (or broadcast) that
+                returned ``SUCCESS``.
+        """
         for msg in reversed(agent.state.context):
             if (
                 msg.id != agent.state.reply_id
@@ -104,7 +116,27 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        """Discard normal `ReplyEndEvent`s until `TeamSay` reports success."""
+        """Discard normal `ReplyEndEvent`s until `TeamSay` reports success.
+
+        Args:
+            agent (`Agent`):
+                The replying member agent. Its context receives the
+                reminder hints, and its ``cur_iter`` is relaxed so a
+                nudged reply can still act.
+            input_kwargs (`dict`):
+                The reply arguments, forwarded to ``next_handler``
+                unchanged.
+            next_handler (`Callable[..., AsyncGenerator]`):
+                The rest of the middleware chain.
+
+        Yields:
+            `AgentEvent | Msg`:
+                Everything the inner reply produces, except a
+                ``ReplyEndEvent`` that arrives without a successful
+                report: that one is replaced by a reminder
+                ``HintBlockEvent`` (forcing another round) or, once the
+                nudge budget is spent, by an ``ERROR`` reply-end event.
+        """
         nudges = 0
 
         async for evt in next_handler(**input_kwargs):
