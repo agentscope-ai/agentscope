@@ -95,11 +95,6 @@ class _WorkerContext:
 
 _TeamContext = _LeaderContext | _WorkerContext
 
-# How long the run waits for its reply to finish reaching the platform.
-# The terminal event is already published by then, so this is a backstop
-# against a stream that never ends, not a delivery budget.
-CHANNEL_DELIVERY_DRAIN_SECS = 30.0
-
 
 class ChatService:
     """Run an agent against a session, persisting input/reply messages
@@ -659,6 +654,7 @@ class ChatService:
         otherwise a waiter can assemble an agent from a snapshot that the
         preceding holder replaces before releasing the lock."""
 
+        deliver_task: asyncio.Task | None = None
         async with self._message_bus.acquire_lock(
             MessageBusKeys.session_lock(session_id),
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
@@ -1021,7 +1017,6 @@ class ChatService:
             # rather than handing the run to whichever one holds the
             # channel's connection. Covers scheduled / background wakes,
             # not just inbound channel messages.
-            deliver_task: asyncio.Task | None = None
             if (
                 session_record.source == SessionSource.CHANNEL
                 and session_record.source_channel_id
@@ -1307,11 +1302,16 @@ class ChatService:
                     await persist_task
                     raise
 
-                if deliver_task is not None:
-                    await self._collect_channel_delivery(
-                        deliver_task,
-                        session_id,
-                    )
+        # Outside the lock. The terminal event is already published, so
+        # this only waits out the last call to the platform — but the
+        # run still owns the task rather than leaving it orphaned, and a
+        # slow platform no longer holds a session nothing could resume.
+        if deliver_task is not None:
+            try:
+                await deliver_task
+            except asyncio.CancelledError:
+                deliver_task.cancel()
+                raise
 
     async def _start_channel_delivery(
         self,
@@ -1380,43 +1380,6 @@ class ChatService:
             _deliver(),
             name=f"channel-deliver:{session_id}",
         )
-
-    async def _collect_channel_delivery(
-        self,
-        deliver_task: "asyncio.Task",
-        session_id: str,
-    ) -> None:
-        """Wait for the reply to finish reaching the platform.
-
-        The run's terminal event is already published, so delivery is
-        only flushing its last call and returns almost at once. It is
-        bounded anyway: this runs while the session lock is held, so a
-        stream that never terminates would keep the session locked and
-        nothing could ever resume it.
-
-        Args:
-            deliver_task (`asyncio.Task`): The delivery task to collect.
-            session_id (`str`): The run's session, for the log line.
-        """
-        try:
-            await asyncio.wait_for(
-                deliver_task,
-                timeout=CHANNEL_DELIVERY_DRAIN_SECS,
-            )
-        except (asyncio.TimeoutError, TimeoutError):
-            logger.error(
-                "channel delivery for session '%s' did not finish; "
-                "abandoning it to release the session",
-                session_id,
-            )
-        except asyncio.CancelledError:
-            deliver_task.cancel()
-            raise
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "channel delivery for session '%s' failed",
-                session_id,
-            )
 
     async def _project_event(
         self,
