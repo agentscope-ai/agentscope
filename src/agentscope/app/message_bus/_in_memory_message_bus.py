@@ -17,6 +17,7 @@ dependency.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import time
 import uuid
 from collections import defaultdict
@@ -27,15 +28,17 @@ from typing import Callable, Self
 from ._base import MessageBus
 
 
-class InMemoryMessageBus(MessageBus):
+class InMemoryMessageBus(  # pylint: disable=too-many-public-methods
+    MessageBus,
+):
     """In-memory implementation of :class:`MessageBus`.
 
     Mapping of bus modes to in-memory structures:
 
-    - **Mode A (drain queue)** — each key maps to a
-      :class:`list[tuple[str, dict]]` of ``(entry_id, payload)`` pairs.
-      ``queue_push`` appends; ``queue_drain`` pops from the front (FIFO)
-      and deletes the returned entries.
+    - **Mode A (drain queue)** — each key maps to
+      ``(entry_id, payload, expire_at)`` tuples. ``queue_push`` appends;
+      ``queue_drain`` pops from the front (FIFO) and deletes the returned
+      entries.
     - **Mode C (replay log)** — same underlying list structure, but
       ``log_read`` is non-destructive.  ``log_trim`` removes entries
       in-place.
@@ -153,7 +156,7 @@ class InMemoryMessageBus(MessageBus):
         now = time.monotonic()
         queue[:] = [e for e in queue if e[2] is None or e[2] > now]
         expire_at = now + ttl_secs if ttl_secs else None
-        queue.append((entry_id, payload, expire_at))
+        queue.append((entry_id, deepcopy(payload), expire_at))
         return entry_id
 
     async def queue_drain(
@@ -182,7 +185,64 @@ class InMemoryMessageBus(MessageBus):
         alive = [e for e in q if e[2] is None or e[2] > now]
         drained = alive[:max_count]
         self._queues[key] = alive[max_count:]
-        return [(entry_id, payload) for entry_id, payload, _ in drained]
+        return deepcopy(
+            [(entry_id, payload) for entry_id, payload, _ in drained],
+        )
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Return queue entries without removing them.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of oldest-first entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                Deep-copied ``(entry_id, payload)`` pairs.
+        """
+        q = self._queues.get(key, [])
+        now = time.monotonic()
+        alive = [entry for entry in q if entry[2] is None or entry[2] > now]
+        if q:
+            self._queues[key] = alive
+        return deepcopy(
+            [
+                (entry_id, payload)
+                for entry_id, payload, _expire_at in alive[:max_count]
+            ],
+        )
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Replace a queue while preserving the supplied payload order.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete replacement contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Fresh transport-level ids assigned to the new entries.
+        """
+        entries = [
+            (self._next_id(), deepcopy(payload), None) for payload in payloads
+        ]
+        if entries:
+            self._queues[key] = entries
+        else:
+            self._queues.pop(key, None)
+        return [entry_id for entry_id, _payload, _expire_at in entries]
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.

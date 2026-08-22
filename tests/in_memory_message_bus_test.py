@@ -12,7 +12,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
 
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 
 
 class TestQueuePrimitive(IsolatedAsyncioTestCase):
@@ -69,6 +69,40 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
     async def test_queue_delete_missing_is_noop(self) -> None:
         """Deleting a non-existent queue does not raise."""
         await self.bus.queue_delete("never-existed")
+
+    async def test_queue_read_is_non_destructive(self) -> None:
+        """Queue management can inspect entries without consuming them."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2})
+        first = await self.bus.queue_read("k", max_count=10)
+        second = await self.bus.queue_read("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in first],
+            [{"i": 1}, {"i": 2}],
+        )
+        self.assertEqual(first, second)
+
+    async def test_queue_read_returns_deep_copies(self) -> None:
+        """Mutating a read snapshot cannot corrupt the stored queue."""
+        original = {"nested": {"value": 1}}
+        await self.bus.queue_push("k", original)
+        original["nested"]["value"] = 2
+
+        first = await self.bus.queue_read("k", max_count=1)
+        first[0][1]["nested"]["value"] = 3
+        second = await self.bus.queue_read("k", max_count=1)
+
+        self.assertEqual(second[0][1]["nested"]["value"], 1)
+
+    async def test_queue_replace_preserves_new_order(self) -> None:
+        """An editable queue can be atomically replaced and reordered."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_replace("k", [{"i": 3}, {"i": 2}])
+        entries = await self.bus.queue_drain("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in entries],
+            [{"i": 3}, {"i": 2}],
+        )
 
     async def test_queue_isolation_between_keys(self) -> None:
         """Pushes to different keys are independent."""
@@ -470,7 +504,21 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
         sid = "s-purge"
         await self.bus.session_publish_event(sid, {"e": 1})
         await self.bus.inbox_push(sid, {"m": 1})
+        await self.bus.queue_push(
+            MessageBusKeys.chat_inputs(sid),
+            {"input": {"id": "queued"}},
+        )
         await self.bus.bg_task_register(sid, "t1", "{}")
+        await self.bus.registry_set(
+            MessageBusKeys.chat_input_pending_registry(),
+            sid,
+            '{"user_id":"u","agent_id":"a"}',
+        )
+        await self.bus.registry_set(
+            MessageBusKeys.chat_input_inflight_registry(),
+            sid,
+            '{"state":"claimed","payload":{"id":"queued"}}',
+        )
 
         await self.bus.session_purge(sid)
 
@@ -479,7 +527,26 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
             await self.bus.inbox_drain(sid, max_count=10),
             [],
         )
+        self.assertEqual(
+            await self.bus.queue_drain(
+                MessageBusKeys.chat_inputs(sid),
+                max_count=10,
+            ),
+            [],
+        )
         self.assertEqual(await self.bus.bg_task_list(sid), {})
+        self.assertFalse(
+            await self.bus.registry_exists(
+                MessageBusKeys.chat_input_pending_registry(),
+                sid,
+            ),
+        )
+        self.assertFalse(
+            await self.bus.registry_exists(
+                MessageBusKeys.chat_input_inflight_registry(),
+                sid,
+            ),
+        )
 
     async def test_task_cancel_pub_sub(self) -> None:
         """``task_publish_cancel`` → ``task_subscribe_cancel``

@@ -535,6 +535,14 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"chat_input_started"`` — one or more FIFO-queued user
+              messages have started their agent turn.
+            - ``"chat_input_failed"`` — a dequeued user turn failed before
+              the service could produce a usable reply.
+            - ``"chat_input_cancelled"`` — an already-started queued turn
+              was interrupted and will not be replayed automatically.
+            - ``"chat_queue_changed"`` — the editable pending-turn
+              snapshot changed after enqueue, edit, delete, or reorder.
 
         value (`dict`):
             Arbitrary JSON-serializable payload whose schema depends

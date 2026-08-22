@@ -71,6 +71,25 @@ class _FakeBus(MessageBus):
         self.queues[key] = self.queues.get(key, [])[max_count:]
         return entries
 
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return list(self.queues.get(key, [])[:max_count])
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        entries = []
+        for payload in payloads:
+            self._next += 1
+            entries.append((str(self._next), payload))
+        self.queues[key] = entries
+        return [entry_id for entry_id, _payload in entries]
+
     async def queue_delete(self, key: str) -> None:
         self.queues.pop(key, None)
 

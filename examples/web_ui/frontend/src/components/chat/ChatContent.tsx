@@ -9,15 +9,17 @@ import {
 import { GitBranch, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
-import { Button } from '../ui/button';
-import { DiffStats } from './tool-renderers/_shared';
 import type { GitStatus } from '@/api';
+import type { ChatQueueItem } from '@/api/chat';
 import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
+import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
+import { DiffStats } from '@/components/chat/tool-renderers/_shared';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
+import { Button } from '@/components/ui/button';
 import {
 	MessageScroller,
 	MessageScrollerButton,
@@ -44,12 +46,16 @@ interface ChatContentProps {
 	loading?: boolean;
 	/**
 	 * Reply lifecycle phase from ``useMessages`` — forwarded to
-	 * ``TextInput`` so the single send / stop button can pick its
-	 * icon, tooltip, disabled state and click handler from one source.
+	 * ``TextInput`` so it can show a separate Stop action while keeping
+	 * Send available for queued turns.
 	 */
 	phase: ReplyPhase;
+	/** Number of locally submitted user turns waiting to start. */
+	queuedCount: number;
+	queuedItems: ChatQueueItem[];
+	queueReorderDisabled: boolean;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => void;
+	onSend: (content: ContentBlock[]) => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -60,6 +66,10 @@ interface ChatContentProps {
 	className?: string;
 	/** Called when the user clicks the stop button. */
 	onInterrupt?: () => void;
+	onUpdateQueued: (itemId: string, text: string) => Promise<void>;
+	onDeleteQueued: (itemId: string) => Promise<void>;
+	onMoveQueued: (itemId: string, direction: -1 | 1) => Promise<void>;
+	onReorderQueued: (itemIds: string[]) => Promise<void>;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -90,12 +100,19 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	loading = false,
 	phase,
+	queuedCount,
+	queuedItems,
+	queueReorderDisabled,
 	disabled,
 	onSend,
 	onUserConfirm,
 	autoComplete,
 	className,
 	onInterrupt,
+	onUpdateQueued,
+	onDeleteQueued,
+	onMoveQueued,
+	onReorderQueued,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -236,6 +253,14 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 							footerSlot
 						)}
 					</FlipCard>
+					<QueuedMessages
+						items={queuedItems}
+						reorderDisabled={queueReorderDisabled}
+						onUpdate={onUpdateQueued}
+						onDelete={onDeleteQueued}
+						onMove={onMoveQueued}
+						onReorder={onReorderQueued}
+					/>
 					{/* Concentric radii: the pill stays rounded-[28px] on all four
 				    corners and floats on this surface, whose own radius is
 				    28 + the 4px padding. Matching them is what keeps the two
@@ -249,6 +274,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						allowedInputTypes={allowedInputTypes}
 						fileProcessor={fileProcessor}
 						phase={phase}
+						queuedCount={queuedCount}
 						onInterrupt={onInterrupt}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">

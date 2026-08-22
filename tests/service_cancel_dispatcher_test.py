@@ -59,6 +59,20 @@ class _FakeBus(MessageBus):
     ) -> list[tuple[str, dict]]:
         return []
 
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return []
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        return []
+
     async def queue_delete(self, key: str) -> None:
         return None
 

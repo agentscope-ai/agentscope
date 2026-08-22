@@ -99,8 +99,25 @@
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
-		"stop": "停止生成",
-		"stopping": "停止中 ..."
+		"queue": "加入队列",
+		"queued_one": "{{count}} 条消息正在排队",
+		"queued_other": "{{count}} 条消息正在排队",
+		"stop": "停止当前回复",
+		"stopping": "正在停止当前回复 ..."
+	},
+	"chatQueue": {
+		"title_one": "待发送消息（{{count}} 条）",
+		"title_other": "待发送消息（{{count}} 条）",
+		"attachmentOnly": "附件消息",
+		"drag": "拖动调整顺序",
+		"moveUp": "上移",
+		"moveDown": "下移",
+		"edit": "编辑",
+		"delete": "删除",
+		"save": "保存",
+		"cancel": "取消",
+		"processFailed": "排队消息处理失败。",
+		"processingCancelled": "排队消息处理已中断。"
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
