@@ -4,7 +4,6 @@ import base64
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from pydantic import Field
@@ -137,25 +136,25 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             `dict[str, Any]`:
                 A dictionary with ``"type": "input_audio"`` in OpenAI format.
         """
+        media_type_to_format = {
+            "audio/wav": "wav",
+            "audio/mp3": "mp3",
+            "audio/mpeg": "mp3",
+        }
+        media_type = source.media_type
+        if media_type not in media_type_to_format:
+            raise TypeError(
+                f"Unsupported audio media type: {media_type}, "
+                "only WAV and MP3 audio are supported.",
+            )
+        audio_format = media_type_to_format[media_type]
+
         if isinstance(source, Base64Source):
-            media_type = source.media_type
-            _AUDIO_FORMAT_MAP = {
-                "audio/wav": "wav",
-                "audio/mp3": "mp3",
-                "audio/mpeg": "mp3",
-            }
-            fmt = _AUDIO_FORMAT_MAP.get(media_type)
-            if fmt is None:
-                raise TypeError(
-                    f"Unsupported audio media type: {media_type}, "
-                    "only audio/wav, audio/mp3 and audio/mpeg"
-                    " are supported.",
-                )
             return {
                 "type": "input_audio",
                 "input_audio": {
                     "data": source.data,
-                    "format": fmt,
+                    "format": audio_format,
                 },
             }
 
@@ -164,23 +163,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             if url_str.startswith("file://"):
                 # Local file
                 local_path = url_str.removeprefix("file://")
-                extension = local_path.rsplit(".", 1)[-1].lower()
-                if extension not in ["wav", "mp3"]:
-                    raise TypeError(
-                        f"Unsupported audio file extension: {extension}, "
-                        "wav and mp3 are supported.",
-                    )
                 with open(local_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 # Remote URL — download and encode
-                parsed = urlparse(url_str)
-                extension = parsed.path.rsplit(".", 1)[-1].lower()
-                if extension not in ["wav", "mp3"]:
-                    raise TypeError(
-                        f"Unsupported audio file extension: {extension}, "
-                        "wav and mp3 are supported.",
-                    )
                 response = requests.get(url_str, timeout=30)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
@@ -189,7 +175,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 "type": "input_audio",
                 "input_audio": {
                     "data": data,
-                    "format": extension,
+                    "format": audio_format,
                 },
             }
 
