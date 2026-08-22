@@ -169,6 +169,8 @@ class GeminiChatModel(ChatModelBase):
         context_size: int = 1048576,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        stream_first_chunk_timeout: float | None = 120.0,
+        stream_idle_timeout: float | None = 30.0,
     ) -> None:
         """Initialize the Gemini chat model.
 
@@ -197,6 +199,11 @@ class GeminiChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
                 ``credentials``, ``http_options``).
+            stream_first_chunk_timeout (`float | None`, defaults to `120.0`):
+                Maximum seconds from call start to initial meaningful stream
+                content. Delay before first iteration counts toward it.
+            stream_idle_timeout (`float | None`, defaults to `30.0`):
+                Maximum seconds between meaningful chunks and stream end.
         """
         super().__init__(
             credential=credential,
@@ -206,6 +213,8 @@ class GeminiChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            stream_first_chunk_timeout=stream_first_chunk_timeout,
+            stream_idle_timeout=stream_idle_timeout,
         )
         self.formatter = formatter or GeminiChatFormatter()
         self.client_kwargs = client_kwargs or {}
