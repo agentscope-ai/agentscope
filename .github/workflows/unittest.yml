@@ -8,21 +8,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-26]
+        os: [ubuntu-latest, windows-latest, macos-15]
         python-version: ['3.11']
     env:
       OS: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@master
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install Bubblewrap (Linux only)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bubblewrap
     - name: Install Dev Dependencies
       run: |
         uv pip install -q -e .[dev]
@@ -31,7 +26,7 @@ jobs:
       env:
         GRPC_VERBOSITY: ERROR
       run: |
-        coverage run -m pytest tests -v
+        coverage run -m pytest tests
     - name: Generate coverage report
       run: |
         coverage report -m
