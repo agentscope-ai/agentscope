@@ -336,7 +336,7 @@ class Toolkit:
                     f"but got {type(res)}.",
                 )
 
-        except mcp.shared.exceptions.McpError as e:
+        except mcp.shared.exceptions.MCPError as e:
             chunk = ToolChunk(
                 content=[
                     TextBlock(

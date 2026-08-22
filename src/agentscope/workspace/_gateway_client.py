@@ -85,7 +85,7 @@ class GatewayMCPTool(ToolBase):
                 ``mcp__{mcp}__{tool}`` name and the URL path.
             tool (`mcp.types.Tool`):
                 Raw upstream tool descriptor as returned by the gateway.
-                ``inputSchema`` is forwarded verbatim;
+                ``input_schema`` is forwarded verbatim;
                 ``annotations.readOnlyHint`` drives the permission
                 policy.
             gateway (`GatewayClient`):
@@ -102,7 +102,7 @@ class GatewayMCPTool(ToolBase):
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
-        schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        schema = dict(tool.input_schema) if tool.input_schema else {}
         schema.setdefault("type", "object")
         schema.setdefault("properties", {})
         schema.setdefault("required", [])

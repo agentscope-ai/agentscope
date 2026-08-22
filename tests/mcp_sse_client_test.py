@@ -5,7 +5,7 @@ import json
 from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from mcp.server import FastMCP
+from mcp.server import MCPServer as FastMCP
 from pydantic import BaseModel
 
 from agentscope.mcp import MCPClient, HttpMCPConfig
@@ -28,9 +28,9 @@ async def tool_1(arg1: str, arg2: list[int]) -> str:
 
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
-    sse_server = FastMCP("SSE", port=8003)
+    sse_server = FastMCP("SSE")
     sse_server.tool(description="A test tool function.")(tool_1)
-    sse_server.run(transport="sse")
+    sse_server.run(transport="sse", port=8003)
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +58,9 @@ async def tool_with_model(name: str, config: _ItemConfig) -> str:
 def setup_defs_server() -> None:
     """Set up an SSE MCP server that exposes a tool with Pydantic
     sub-models."""
-    server = FastMCP("DefsSSE", port=8005)
+    server = FastMCP("DefsSSE")
     server.tool()(tool_with_model)
-    server.run(transport="sse")
+    server.run(transport="sse", port=8005)
 
 
 class SseMCPClientTest(IsolatedAsyncioTestCase):
