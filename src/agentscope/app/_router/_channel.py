@@ -64,12 +64,16 @@ def _to_response(
         )
     except ValueError:
         bot_id = ""
+    channel_cls = registry.get(record.channel_type)
     return ChannelResponse(
         id=record.id,
         channel_type=record.channel_type,
         name=record.name,
         user_id=record.user_id,
         platform_bot_id=bot_id,
+        supports_scheduled_tools=(
+            channel_cls is not None and channel_cls.supports_scheduled_tools
+        ),
         enabled=record.enabled,
         platform_config=record.platform_config,
         routing=record.routing,
