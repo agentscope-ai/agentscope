@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
 from agentscope.app.channel import (
+    DingTalkChannel,
     DiscordChannel,
     FeishuChannel,
     WhatsAppChannel,
@@ -157,6 +158,7 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
         ),
     ],
     channels=[
+        DingTalkChannel,
         DiscordChannel,
         FeishuChannel,
         WhatsAppChannel,

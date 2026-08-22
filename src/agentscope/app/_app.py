@@ -251,7 +251,7 @@ def create_app(
             preserves the historical owner-isolated behavior.
         channels (`list[Type[ChannelBase]] | None`, optional):
             Channel adapter classes this service allows (e.g.
-            ``[FeishuChannel, DiscordChannel]``).  Each class
+            ``[DingTalkChannel, FeishuChannel, DiscordChannel]``).  Each class
             self-describes its ``channel_type``, credentials and config,
             so the service registers it without a separate table; pass a
             custom :class:`~agentscope.app.channel.ChannelBase` subclass
