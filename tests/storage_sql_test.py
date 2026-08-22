@@ -15,9 +15,13 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from pydantic import SecretStr
 
+from utils import AnyString
+
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
+    ChannelBinding,
+    ChannelRecord,
     ChatModelConfig,
     EmbeddingModelConfig,
     KnowledgeBaseData,
@@ -25,9 +29,11 @@ from agentscope.app.storage import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
     MCPRecord,
+    RoutingConfig,
     ScheduleData,
     ScheduleRecord,
     SessionConfig,
+    SessionSettings,
     SessionSource,
     SkillRecord,
     AsyncSQLAlchemyStorage,
@@ -39,6 +45,30 @@ from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.credential import DashScopeCredential
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.message import AssistantMsg, UserMsg
+
+
+def _channel_record(
+    channel_id: str,
+    user_id: str = "user-1",
+) -> ChannelRecord:
+    """Build a minimal but complete :class:`ChannelRecord`."""
+    return ChannelRecord(
+        id=channel_id,
+        channel_type="feishu",
+        user_id=user_id,
+        credentials={"app_id": channel_id},
+        routing=RoutingConfig(
+            bindings=[ChannelBinding(match_value="*", agent_id="agent-x")],
+        ),
+        session=SessionSettings(
+            chat_model_config={
+                "type": "openai",
+                "credential_id": "cred-1",
+                "model": "gpt-4o",
+                "parameters": {},
+            },
+        ),
+    )
 
 
 def _agent_record(user_id: str, name: str = "agent-x") -> AgentRecord:
@@ -887,6 +917,131 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             await self.storage.get_mcp_by_name("user-1", "shared"),
         )
 
+    # ------------------------------------------------------------------
+    # Channels
+    # ------------------------------------------------------------------
+
+    async def test_channels_round_trip(self) -> None:
+        """Upsert / get / list / list-all / delete + the bot-id lookup."""
+        record = ChannelRecord(
+            id="chan-1",
+            channel_type="feishu",
+            name="产品群机器人",
+            user_id="user-1",
+            credentials={"app_id": "cli-1", "app_secret": "s3cret"},
+            platform_config={"only_at_reply": True},
+            routing=RoutingConfig(
+                bindings=[
+                    ChannelBinding(match_value="*", agent_id="agent-x"),
+                ],
+            ),
+            session=SessionSettings(
+                chat_model_config={
+                    "type": "openai",
+                    "credential_id": "cred-1",
+                    "model": "gpt-4o",
+                    "parameters": {},
+                },
+            ),
+        )
+        await self.storage.upsert_channel(record, "cli-1")
+
+        fetched = await self.storage.get_channel("chan-1")
+        self.assertDictEqual(
+            fetched.model_dump(mode="json"),
+            {
+                "id": "chan-1",
+                "channel_type": "feishu",
+                "name": "产品群机器人",
+                "user_id": "user-1",
+                "enabled": True,
+                "credentials": {"app_id": "cli-1", "app_secret": "s3cret"},
+                "platform_config": {"only_at_reply": True},
+                "routing": {
+                    "bindings": [
+                        {
+                            "match_key": "chat_id",
+                            "match_value": "*",
+                            "agent_id": "agent-x",
+                            "session_scope": "per_chat",
+                        },
+                    ],
+                },
+                "session": {
+                    "chat_model_config": {
+                        "type": "openai",
+                        "credential_id": "cred-1",
+                        "model": "gpt-4o",
+                        "parameters": {},
+                    },
+                    "fallback_chat_model_config": None,
+                    "permission_mode": "default",
+                },
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+            },
+        )
+
+        self.assertListEqual(
+            [c.id for c in await self.storage.list_channels("user-1")],
+            ["chan-1"],
+        )
+        self.assertListEqual(await self.storage.list_channels("user-2"), [])
+        self.assertListEqual(
+            [c.id for c in await self.storage.list_all_channels()],
+            ["chan-1"],
+        )
+
+        self.assertEqual(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-1"),
+            "chan-1",
+        )
+        self.assertIsNone(
+            await self.storage.get_channel_id_by_platform_bot_id("nope"),
+        )
+
+        self.assertTrue(await self.storage.delete_channel("chan-1", "cli-1"))
+        self.assertFalse(await self.storage.delete_channel("chan-1", "cli-1"))
+        self.assertIsNone(await self.storage.get_channel("chan-1"))
+        self.assertIsNone(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-1"),
+        )
+
+    async def test_platform_bot_id_is_globally_unique(self) -> None:
+        """A second channel may not claim a bot already bound elsewhere,
+        even under a different owner.
+
+        Rejected before the write rather than by the UNIQUE constraint:
+        MySQL's ``ON DUPLICATE KEY UPDATE`` fires on any unique-key
+        conflict, so leaving it to the constraint would overwrite the
+        holder there while raising on SQLite and Postgres.
+        """
+        await self.storage.upsert_channel(_channel_record("chan-1"), "cli-1")
+        with self.assertRaises(ValueError):
+            await self.storage.upsert_channel(
+                _channel_record("chan-2", user_id="user-2"),
+                "cli-1",
+            )
+
+        held = await self.storage.get_channel("chan-1")
+        self.assertEqual(held.user_id, "user-1")
+        self.assertIsNone(await self.storage.get_channel("chan-2"))
+
+    async def test_rebinding_a_channel_frees_the_old_bot_id(self) -> None:
+        """Re-upserting the same channel under a new bot id moves the
+        uniqueness claim with it."""
+        record = _channel_record("chan-1")
+        await self.storage.upsert_channel(record, "cli-1")
+        await self.storage.upsert_channel(record, "cli-2")
+
+        self.assertIsNone(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-1"),
+        )
+        self.assertEqual(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-2"),
+            "chan-1",
+        )
+
 
 class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
     """Boot via ``auto_migrate=True`` and confirm the schema is live.
@@ -916,6 +1071,30 @@ class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
                 await storage.upsert_agent("user-1", agent)
                 fetched = await storage.get_agent("user-1", agent.id)
                 self.assertEqual(fetched.id, agent.id)
+
+    async def test_migrations_alone_create_the_channels_table(self) -> None:
+        """``create_tables=False`` isolates the Alembic path, so a broken
+        or missing 0003 fails here instead of being masked by
+        ``metadata.create_all``."""
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            url = f"sqlite+aiosqlite:///{os.path.join(tmp, 'as.db')}"
+
+            async with AsyncSQLAlchemyStorage(
+                url,
+                auto_migrate=True,
+                create_tables=False,
+            ) as storage:
+                await storage.upsert_channel(
+                    _channel_record("chan-1"),
+                    "cli-1",
+                )
+                self.assertEqual(
+                    await storage.get_channel_id_by_platform_bot_id("cli-1"),
+                    "chan-1",
+                )
 
 
 class LegacyRecordShapeTest(IsolatedAsyncioTestCase):
