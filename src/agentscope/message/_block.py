@@ -136,9 +136,13 @@ class ToolCallState(StrEnum):
 
 
 class ToolCallBlock(BaseModel):
-    """The tool call block."""
+    """The tool call block.
 
-    model_config = ConfigDict(use_enum_values=True)
+    Allows extra provider-specific fields (e.g. the OpenAI Responses API's
+    ``call_id``) via ``extra="allow"`` without requiring subclassing.
+    """
+
+    model_config = ConfigDict(use_enum_values=True, extra="allow")
 
     type: Literal["tool_call"] = "tool_call"
     """The type of the tool call block, which is always 'tool_call'."""
@@ -193,9 +197,13 @@ class ToolResultState(StrEnum):
 
 
 class ToolResultBlock(BaseModel):
-    """The tool result block."""
+    """The tool result block.
 
-    model_config = ConfigDict(use_enum_values=True)
+    Allows extra provider-specific fields (e.g. the OpenAI Responses API's
+    ``call_id``) via ``extra="allow"`` without requiring subclassing.
+    """
+
+    model_config = ConfigDict(use_enum_values=True, extra="allow")
 
     type: Literal["tool_result"] = "tool_result"
     """The type of the tool result block, which is always 'tool_result'."""
