@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the :class:`RAGMiddleware` class."""
+import asyncio
+
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
@@ -380,6 +382,86 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.embedding_model.calls, [])
         self.assertEqual(agent.state.context, [])
 
+    async def test_static_inputs_are_isolated_between_concurrent_agents(
+        self,
+    ) -> None:
+        """A shared middleware keeps each concurrent reply's query."""
+        middleware = self._middleware(
+            mode="static",
+            top_k=1,
+            emit_hint_event=False,
+        )
+        agent_a = _make_agent()
+        agent_a.state.session_id = "session-a"
+        agent_b = _make_agent()
+        agent_b.state.session_id = "session-b"
+
+        entered_a = asyncio.Event()
+        entered_b = asyncio.Event()
+        release_a = asyncio.Event()
+        release_b = asyncio.Event()
+
+        async def run_reply(
+            agent: Any,
+            query: str,
+            entered: asyncio.Event,
+            release: asyncio.Event,
+        ) -> None:
+            async def reasoning_next(**_kwargs: Any) -> AsyncGenerator:
+                yield "reasoning-evt"
+
+            async def reply_next(**_kwargs: Any) -> AsyncGenerator:
+                entered.set()
+                await release.wait()
+                async for event in middleware.on_reasoning(
+                    agent=agent,
+                    input_kwargs={"tool_choice": None},
+                    next_handler=reasoning_next,
+                ):
+                    yield event
+
+            await _drain(
+                middleware.on_reply(
+                    agent=agent,
+                    input_kwargs={
+                        "inputs": UserMsg(name="user", content=query),
+                    },
+                    next_handler=reply_next,
+                ),
+            )
+
+        task_a = asyncio.create_task(
+            run_reply(
+                agent_a,
+                "query-a",
+                entered_a,
+                release_a,
+            ),
+        )
+        await entered_a.wait()
+        task_b = asyncio.create_task(
+            run_reply(
+                agent_b,
+                "query-b",
+                entered_b,
+                release_b,
+            ),
+        )
+        await entered_b.wait()
+
+        release_a.set()
+        await task_a
+        release_b.set()
+        await task_b
+
+        self.assertEqual(
+            [
+                [block.text for block in call if isinstance(block, TextBlock)]
+                for call in self.embedding_model.calls
+            ],
+            [["user: query-a"], ["user: query-b"]],
+        )
+
     async def test_multimodal_query_extraction(self) -> None:
         """DataBlocks reach the embedding model when it declares
         ``supports_multimodal``."""
@@ -550,3 +632,4 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             RAGMiddleware.Parameters(hint_template="{context} twice {context}")
         # Exactly one placeholder is fine.
         RAGMiddleware.Parameters(hint_template="wrapped: {context}.")
+
