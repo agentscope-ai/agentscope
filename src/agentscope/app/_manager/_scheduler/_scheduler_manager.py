@@ -10,6 +10,7 @@ from ....permission import PermissionContext
 from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
+from ...._utils._common import _generate_id
 from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
 from ...message_bus import MessageBus
 from ..._bus_ops import deliver_to_inbox
@@ -20,6 +21,7 @@ from ...storage import (
     SessionConfig,
     SessionSource,
 )
+from ...workspace_manager import WorkspaceManagerBase
 
 
 class SchedulerManager:
@@ -39,6 +41,7 @@ class SchedulerManager:
         self,
         storage: StorageBase,
         message_bus: MessageBus,
+        workspace_manager: WorkspaceManagerBase | None = None,
     ) -> None:
         """Initialize the scheduler manager.
 
@@ -50,11 +53,16 @@ class SchedulerManager:
                 The application message bus. Each scheduled fire pushes
                 a :class:`HintBlock` to the target session's inbox and
                 enqueues a wakeup via this bus.
+            workspace_manager (`WorkspaceManagerBase | None`, optional):
+                Resolves stable workspace bindings for sessions that cannot
+                inherit one from the schedule's source session. When omitted,
+                a fresh isolated workspace id is generated.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         self._storage = storage
         self._message_bus = message_bus
+        self._workspace_manager = workspace_manager
         self._scheduler = AsyncIOScheduler()
 
     # ------------------------------------------------------------------
@@ -92,6 +100,35 @@ class SchedulerManager:
     # Trigger construction
     # ------------------------------------------------------------------
 
+    async def _resolve_workspace_id(
+        self,
+        record: ScheduleRecord,
+        session_id: str,
+    ) -> str:
+        """Resolve the workspace binding for a scheduled session.
+
+        Agent-created schedules inherit their source session's workspace so
+        files and other workspace resources remain available when they fire.
+        Schedules without a live source session fall back to the configured
+        workspace isolation policy.
+        """
+        if record.data.source_session_id:
+            source_session = await self._storage.get_session(
+                record.user_id,
+                record.agent_id,
+                record.data.source_session_id,
+            )
+            if source_session and source_session.config.workspace_id:
+                return source_session.config.workspace_id
+
+        if self._workspace_manager is not None:
+            return self._workspace_manager.assign_workspace_id(
+                user_id=record.user_id,
+                agent_id=record.agent_id,
+                session_id=session_id,
+            )
+        return _generate_id()
+
     def _build_trigger(
         self,
         record: ScheduleRecord,
@@ -121,6 +158,7 @@ class SchedulerManager:
         # re-look these up on every fire.
         storage = self._storage
         message_bus = self._message_bus
+        resolve_workspace_id = self._resolve_workspace_id
 
         async def _trigger() -> None:
             logger.info(
@@ -163,8 +201,12 @@ class SchedulerManager:
                         state.permission_context = PermissionContext(
                             mode=record.data.permission_mode,
                         )
+                        workspace_id = await resolve_workspace_id(
+                            record,
+                            stateful_session_id,
+                        )
                         session_config = SessionConfig(
-                            workspace_id="",
+                            workspace_id=workspace_id,
                             chat_model_config=record.data.chat_model_config,
                         )
                         session = await storage.upsert_session(
@@ -195,14 +237,20 @@ class SchedulerManager:
                     state.permission_context = PermissionContext(
                         mode=record.data.permission_mode,
                     )
+                    session_id = _generate_id()
+                    workspace_id = await resolve_workspace_id(
+                        record,
+                        session_id,
+                    )
                     session = await storage.upsert_session(
                         user_id=record.user_id,
                         agent_id=record.agent_id,
                         config=SessionConfig(
-                            workspace_id="",
+                            workspace_id=workspace_id,
                             chat_model_config=record.data.chat_model_config,
                         ),
                         state=state,
+                        session_id=session_id,
                         source=SessionSource.SCHEDULE,
                         source_schedule_id=record.id,
                     )
