@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 # pylint: disable=protected-access
+import asyncio
 import hashlib
 import json
 import os
 import tempfile
-from typing import Any
+from typing import Any, AsyncGenerator, Callable
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import MockModel, AnyString
 
-from agentscope.model import StructuredResponse
-from agentscope.agent import Agent, ContextConfig
+from agentscope.model import ChatResponse, FinishedReason, StructuredResponse
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.event import ReplyEndEvent, UserInterruptEvent
+from agentscope.middleware import MiddlewareBase
 from agentscope.state import AgentState
 from agentscope.message import (
     UserMsg,
@@ -1519,6 +1523,403 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 instructions,
             ),
         )
+
+    def _make_self_compacting_agent(
+        self,
+        *,
+        cur_iter: int = 1,
+    ) -> tuple[Agent, MockModel]:
+        """Build an eligible agent with deterministic token usage."""
+        model = MockModel(context_size=200)
+        model.count_tokens = AsyncMock(return_value=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_react_rounds=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                cur_iter=cur_iter,
+                context=[UserMsg("User", "history", id="history")],
+            ),
+            toolkit=Toolkit(),
+        )
+        agent._prepare_model_input = AsyncMock(
+            return_value={"messages": [UserMsg("User", "history")]},
+        )
+        return agent, model
+
+    async def test_self_compaction_decision_controls_compression(self) -> None:
+        """Only a COMPRESS decision forces the regular compression path."""
+        for should_compact in (False, True):
+            with self.subTest(should_compact=should_compact):
+                agent, _ = self._make_self_compacting_agent()
+                agent._should_self_compact = AsyncMock(
+                    return_value=should_compact,
+                )
+                agent._run_compress_context = AsyncMock()
+
+                await agent.self_compact_context()
+
+                if should_compact:
+                    call = agent._run_compress_context.await_args
+                    self.assertEqual(
+                        call.kwargs["context_config"],
+                        agent.context_config,
+                    )
+                    self.assertIn(
+                        "reply that triggered this adaptive compression has "
+                        "completed",
+                        call.kwargs["instructions"].hint,
+                    )
+                    self.assertTrue(call.kwargs["force"])
+                    self.assertFalse(
+                        call.kwargs["fallback_to_truncation"],
+                    )
+                else:
+                    agent._run_compress_context.assert_not_awaited()
+
+        model = RecordingStructuredMockModel(context_size=200)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "task",
+                    "current_state": "complete",
+                    "important_discoveries": "none",
+                    "next_steps": "None",
+                    "context_to_preserve": "none",
+                },
+            ),
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "history", id="history")],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        await agent._run_compress_context(
+            force=True,
+            fallback_to_truncation=False,
+        )
+
+        self.assertIn("# Current State\ncomplete", agent.state.summary)
+
+    async def test_self_compaction_eligibility(self) -> None:
+        """Ineligible contexts do not invoke the model rubric."""
+        cases = (
+            ("disabled", False, False, 1, 100),
+            ("empty-context", True, True, 1, 100),
+            ("too-few-rounds", True, False, 0, 100),
+            ("below-minimum", True, False, 1, 79),
+            ("at-hard-threshold", True, False, 1, 160),
+        )
+        for name, enabled, empty_context, cur_iter, tokens in cases:
+            with self.subTest(name=name):
+                agent, model = self._make_self_compacting_agent(
+                    cur_iter=cur_iter,
+                )
+                agent.context_config.self_compact_enabled = enabled
+                if empty_context:
+                    agent.state.context = []
+                model.count_tokens.return_value = tokens
+                agent._should_self_compact = AsyncMock()
+
+                await agent.self_compact_context()
+
+                agent._should_self_compact.assert_not_awaited()
+
+    async def test_self_compaction_failures_keep_context(self) -> None:
+        """Optional token, rubric, and compression failures fail open."""
+        for stage in ("tokens", "rubric", "compression"):
+            with self.subTest(stage=stage):
+                agent, model = self._make_self_compacting_agent()
+                agent._should_self_compact = AsyncMock(return_value=True)
+                agent._run_compress_context = AsyncMock()
+
+                if stage == "tokens":
+                    model.count_tokens.side_effect = RuntimeError("tokens")
+                elif stage == "rubric":
+                    agent._should_self_compact.side_effect = RuntimeError(
+                        "rubric",
+                    )
+                else:
+                    agent._run_compress_context.side_effect = RuntimeError(
+                        "summary",
+                    )
+                await agent.self_compact_context()
+
+                self.assertEqual(agent.state.summary, "")
+                self.assertEqual(
+                    [msg.id for msg in agent.state.context],
+                    ["history"],
+                )
+
+        model = RecordingStructuredMockModel(
+            context_size=100000,
+            fail_structured_output_times=1,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                max_image_num=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                summary="existing summary",
+                context=_build_image_context(),
+            ),
+            toolkit=Toolkit(),
+        )
+        expected_state = agent.state.model_copy(deep=True)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "simulated compression overflow",
+        ):
+            await agent._run_compress_context(
+                force=True,
+                fallback_to_truncation=False,
+            )
+
+        self.assertEqual(agent.state, expected_state)
+
+    async def test_self_compaction_rubric_is_non_persistent(self) -> None:
+        """The rendered rubric is appended only to the model-call copy."""
+        agent, model = self._make_self_compacting_agent()
+        source_messages = [UserMsg("User", "history")]
+        model.generate_structured_output = AsyncMock(
+            return_value=StructuredResponse(
+                content={"decision": "COMPRESS"},
+            ),
+        )
+
+        should_compact = await agent._should_self_compact(
+            agent.context_config,
+            source_messages,
+            estimated_tokens=100,
+        )
+
+        self.assertTrue(should_compact)
+        self.assertEqual(len(source_messages), 1)
+        call = model.generate_structured_output.await_args
+        self.assertEqual(len(call.kwargs["messages"]), 2)
+        self.assertIn(
+            "50.0%",
+            call.kwargs["messages"][-1].get_text_content(),
+        )
+
+        model.generate_structured_output.return_value = StructuredResponse(
+            content={"decision": "CONTINUE"},
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+        with self.assertRaises(asyncio.CancelledError):
+            await agent._should_self_compact(
+                agent.context_config,
+                source_messages,
+                estimated_tokens=100,
+            )
+
+    async def test_self_compaction_runs_after_middleware_cleanup(
+        self,
+    ) -> None:
+        """Cleanup and compaction finish before consumers see reply end."""
+        order: list[str] = []
+
+        class CleanupMiddleware(MiddlewareBase):
+            """Record cleanup ordering around the reply stream."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                try:
+                    async for item in next_handler(**input_kwargs):
+                        yield item
+                finally:
+                    order.append("cleanup")
+
+        model = MockModel(context_size=200, stream=False)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+        model.count_tokens = AsyncMock(return_value=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            middlewares=[CleanupMiddleware()],
+            context_config=ContextConfig(
+                self_compact_enabled=True,
+                self_compact_min_react_rounds=0,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+
+        async def compact() -> None:
+            order.append("compact")
+
+        agent.self_compact_context = AsyncMock(side_effect=compact)
+
+        stream = agent.reply_stream(UserMsg("User", "go"))
+        async for event in stream:
+            if isinstance(event, ReplyEndEvent):
+                order.append("consumer")
+                break
+        await stream.aclose()
+
+        self.assertEqual(order, ["cleanup", "compact", "consumer"])
+        agent.self_compact_context.assert_awaited_once_with()
+
+        # Outside the adaptive eligibility window, retain the original
+        # lifecycle: consumers see ReplyEndEvent before middleware post-yield
+        # cleanup, and adaptive compaction is not invoked.
+        legacy_order: list[str] = []
+
+        class LegacyCleanupMiddleware(MiddlewareBase):
+            """Record reply-end ordering outside adaptive eligibility."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                try:
+                    async for item in next_handler(**input_kwargs):
+                        yield item
+                finally:
+                    legacy_order.append("cleanup")
+
+        for case, tokens in (("below-minimum", 79), ("hard-threshold", 160)):
+            with self.subTest(case=case):
+                legacy_order = []
+                legacy_model = MockModel(context_size=200, stream=False)
+                legacy_model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[TextBlock(text="done")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                legacy_model.count_tokens = AsyncMock(return_value=tokens)
+                legacy_agent = Agent(
+                    name="Friday",
+                    system_prompt="You are helpful.",
+                    model=legacy_model,
+                    middlewares=[LegacyCleanupMiddleware()],
+                    context_config=ContextConfig(
+                        trigger_ratio=0.8,
+                        reserve_ratio=0.1,
+                        self_compact_enabled=True,
+                        self_compact_min_ratio=0.4,
+                        self_compact_min_react_rounds=0,
+                    ),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                    toolkit=Toolkit(),
+                )
+                legacy_agent.self_compact_context = AsyncMock()
+
+                legacy_stream = legacy_agent.reply_stream(
+                    UserMsg("User", "go"),
+                )
+                async for event in legacy_stream:
+                    if isinstance(event, ReplyEndEvent):
+                        legacy_order.append("consumer")
+                        break
+                self.assertEqual(legacy_order, ["consumer"])
+                legacy_agent.self_compact_context.assert_not_awaited()
+
+                await legacy_stream.aclose()
+
+        class FailingCleanupMiddleware(MiddlewareBase):
+            """Raise while cleaning up after a completed reply."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                async for item in next_handler(**input_kwargs):
+                    yield item
+                raise RuntimeError("cleanup failed")
+
+        failing_model = MockModel(context_size=200, stream=False)
+        failing_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="done")], is_last=True)],
+        )
+        failing_agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=failing_model,
+            middlewares=[FailingCleanupMiddleware()],
+            context_config=ContextConfig(
+                self_compact_enabled=True,
+                self_compact_min_react_rounds=0,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        failing_agent.self_compact_context = AsyncMock()
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            _ = [
+                event
+                async for event in failing_agent.reply_stream(
+                    UserMsg("User", "go"),
+                )
+            ]
+        failing_agent.self_compact_context.assert_not_awaited()
+
+        interrupted_agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=MockModel(),
+            context_config=ContextConfig(self_compact_enabled=True),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        interrupted_agent.self_compact_context = AsyncMock()
+
+        events = [
+            event
+            async for event in interrupted_agent.reply_stream(
+                UserInterruptEvent(reply_id="not-parked"),
+            )
+        ]
+
+        self.assertEqual(events, [])
+        interrupted_agent.self_compact_context.assert_not_awaited()
 
     async def test_max_image_num_without_offloader(self) -> None:
         """The oldest images exceeding the limit are dropped and replaced by

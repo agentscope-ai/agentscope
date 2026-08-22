@@ -164,7 +164,15 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[SwallowOnceMiddleware()],
+            context_config=ContextConfig(
+                self_compact_enabled=True,
+                self_compact_min_react_rounds=0,
+            ),
             injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        agent.self_compact_context = AsyncMock()
+        agent._prepare_self_compaction_if_eligible = AsyncMock(
+            return_value=(agent.context_config, {}, 0),
         )
 
         events, final_msg = [], None
@@ -232,6 +240,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 ],
             },
         )
+        agent.self_compact_context.assert_awaited_once_with()
 
     async def test_on_reasoning_middleware_pre_yield(self) -> None:
         """Test on_reasoning middleware pre and yield positions."""
@@ -1266,6 +1275,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=instructions,
+                force=False,
+                fallback_to_truncation=True,
             )
 
         # Verify onion execution order: mw1_pre -> mw2_pre -> mw2_post ->
@@ -1327,6 +1338,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=replacement,
+                force=False,
+                fallback_to_truncation=True,
             )
 
     async def test_on_compress_context_middleware_short_circuit(
@@ -1419,6 +1432,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=None,
+                force=False,
+                fallback_to_truncation=True,
             )
 
     async def asyncTearDown(self) -> None:

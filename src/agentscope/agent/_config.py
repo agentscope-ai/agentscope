@@ -1,9 +1,44 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..model import ChatModelBase
+
+
+DEFAULT_SELF_COMPACT_RUBRIC_PROMPT = (
+    "<system-hint>You are deciding whether to compact the older "
+    "conversation now that the current reply has completed. The current "
+    "context usage is {context_usage_percent}% of the model context window. "
+    "Adaptive compaction is considered from "
+    "{self_compact_min_percent}%, and hard threshold compression will occur "
+    "at {trigger_percent}%. Compression will summarize the older portion of "
+    "the conversation while preserving a recent suffix. Choose COMPRESS "
+    "when the completed reply closed meaningful units of work, older tool "
+    "outputs or reasoning have become redundant, and the user's "
+    "requirements, artifacts, decisions, results, and pending work can be "
+    "preserved accurately in a concise continuation summary. Choose CONTINUE "
+    "when exact older details are still likely to be needed verbatim, the "
+    "work remains tightly coupled across the full trajectory, there is too "
+    "little useful history to summarize, or compression risks losing "
+    "unresolved constraints or evidence. Return COMPRESS or CONTINUE."
+    "</system-hint>"
+)
+
+
+DEFAULT_SELF_COMPACT_COMPRESSION_INSTRUCTIONS = (
+    "The reply that triggered this adaptive compression has completed. "
+    "Distinguish completed work from remaining work in the continuation "
+    "summary, and state explicitly when no work remains."
+)
+
+
+class _SelfCompactDecision(BaseModel):
+    """The model decision for adaptive context compaction."""
+
+    decision: Literal["COMPRESS", "CONTINUE"]
 
 
 class SummarySchema(BaseModel):
@@ -137,6 +172,56 @@ class ContextConfig(BaseModel):
         ),
     )
     """The tool result limit to avoid tool result bursting."""
+
+    self_compact_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to enable model-driven context compaction after a "
+            "reply completes. The hard token-threshold compression remains "
+            "enabled independently."
+        ),
+    )
+    """Whether to enable reply-end model-driven context compaction."""
+
+    self_compact_min_ratio: float = Field(default=0.5, gt=0, lt=0.9)
+    """The minimum context usage ratio at which the reply-end compaction
+    rubric is considered."""
+
+    self_compact_min_react_rounds: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Skip reply-end self-compaction until the completed reply has "
+            "run at least this many ReAct rounds."
+        ),
+    )
+    """The minimum number of completed ReAct rounds before probing."""
+
+    self_compact_rubric_prompt: str = Field(
+        default=DEFAULT_SELF_COMPACT_RUBRIC_PROMPT,
+        json_schema_extra={"format": "textarea"},
+    )
+    """The prompt used for the reply-end self-compaction decision."""
+
+    self_compact_compression_instructions: str = Field(
+        default=DEFAULT_SELF_COMPACT_COMPRESSION_INSTRUCTIONS,
+        json_schema_extra={"format": "textarea"},
+    )
+    """Additional summary instructions for adaptive compression."""
+
+    @model_validator(mode="after")
+    def _validate_self_compact_min_ratio(self) -> "ContextConfig":
+        """Validate the ordering of context compression ratios."""
+        if self.self_compact_enabled and not (
+            self.reserve_ratio
+            < self.self_compact_min_ratio
+            < self.trigger_ratio
+        ):
+            raise ValueError(
+                "Expected reserve_ratio < self_compact_min_ratio < "
+                "trigger_ratio when self-compaction is enabled.",
+            )
+        return self
 
     max_image_num: int = Field(
         title="Max Image Number",

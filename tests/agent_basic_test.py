@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from pydantic import ValidationError
+
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
@@ -181,6 +183,24 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             agent_1.injection_config.timezone,
             agent_2.injection_config.timezone,
         )
+
+    def test_self_compaction_ratios_are_validated(self) -> None:
+        """Adaptive compaction must leave room for both the reserved suffix
+        and the hard compression threshold."""
+        with self.assertRaises(ValidationError):
+            ContextConfig(
+                trigger_ratio=0.8,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.8,
+            )
+
+        with self.assertRaises(ValidationError):
+            ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.5,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+            )
 
     async def test_inconsistent_ratios_are_rejected(self) -> None:
         """The ratios across the context and injection configs must leave room
