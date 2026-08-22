@@ -281,22 +281,32 @@ class OpenAIResponseModel(ChatModelBase):
                     id=response_id,
                 )
 
-                if event_type == "response.reasoning_summary_text.delta":
-                    # Reasoning summary text is NOT emitted by all models.
-                    # As of 2026-05, o1 and o4-mini do not stream reasoning
-                    # summary deltas. This handler exists for forward
-                    # compatibility with models that do expose it.
-                    delta_res.append_thinking(
-                        event.delta,
-                        block_id=thinking_id,
-                    )
-
-                elif event_type == "response.output_text.delta":
-                    delta_res.append_text(event.delta, block_id=text_id)
-
-                elif event_type == "response.output_item.added":
+                if event_type == "response.output_item.added":
+                    # Create blocks in the order the output items are
+                    # announced by the stream, so that the block order in
+                    # ``content`` mirrors ``response.output`` even when no
+                    # reasoning summary deltas are streamed (e.g. o1 /
+                    # o4-mini as of 2026-05).
                     item = event.item
-                    if getattr(item, "type", None) == "function_call":
+                    item_type = getattr(item, "type", None)
+                    if item_type == "reasoning":
+                        # Use item.id as block_id so that later
+                        # reasoning_summary deltas (which carry item_id)
+                        # and the ``response.completed`` metadata both
+                        # accumulate into this same block, preserving the
+                        # reasoning item's original position relative to
+                        # the surrounding function calls.
+                        item_id = getattr(item, "id", None)
+                        block_id = (
+                            item_id
+                            if isinstance(item_id, str) and item_id
+                            else thinking_id
+                        )
+                        delta_res.append_thinking(
+                            thinking="",
+                            block_id=block_id,
+                        )
+                    elif item_type == "function_call":
                         # item.call_id (call_xxx) is used as ToolCallBlock.id
                         # so the formatter can echo it back as
                         # function_call.call_id / function_call_output.call_id.
@@ -308,6 +318,28 @@ class OpenAIResponseModel(ChatModelBase):
                             item.call_id,
                             getattr(item, "name", "") or "unknown",
                         )
+
+                elif event_type == "response.reasoning_summary_text.delta":
+                    # Reasoning summary text is NOT emitted by all models.
+                    # As of 2026-05, o1 and o4-mini do not stream reasoning
+                    # summary deltas. This handler exists for forward
+                    # compatibility with models that do expose it. Route the
+                    # delta into the reasoning block created on the matching
+                    # ``output_item.added`` event so that item order and id
+                    # are preserved.
+                    item_id = getattr(event, "item_id", None)
+                    block_id = (
+                        item_id
+                        if isinstance(item_id, str) and item_id
+                        else thinking_id
+                    )
+                    delta_res.append_thinking(
+                        event.delta,
+                        block_id=block_id,
+                    )
+
+                elif event_type == "response.output_text.delta":
+                    delta_res.append_text(event.delta, block_id=text_id)
 
                 elif event_type == "response.function_call_arguments.delta":
                     item_id = event.item_id
@@ -345,6 +377,9 @@ class OpenAIResponseModel(ChatModelBase):
                     # reasoning item (see the function-calling guide); the
                     # reasoning item may have an empty summary when the model
                     # does not expose it (e.g. o1/o4-mini as of 2026-05).
+                    # The block already exists (created on its
+                    # ``output_item.added`` event), so this only tags it with
+                    # the metadata rather than inserting a new block.
                     for output_item in getattr(resp, "output", []):
                         if getattr(output_item, "type", None) == "reasoning":
                             reasoning_item_id = getattr(
@@ -355,7 +390,7 @@ class OpenAIResponseModel(ChatModelBase):
                             if reasoning_item_id:
                                 delta_res.append_thinking(
                                     thinking="",
-                                    block_id=thinking_id,
+                                    block_id=reasoning_item_id,
                                     reasoning_item_id=reasoning_item_id,
                                 )
 
