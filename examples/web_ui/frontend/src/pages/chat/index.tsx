@@ -54,6 +54,7 @@ import { AudioProvider } from '@/context/AudioContext';
 import { useAgents } from '@/hooks/useAgents';
 import { useSessions } from '@/hooks/useSessions';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { clearClientExternalToolSelection } from '@/lib/client-external-tool-store';
 
 /**
  * The chat page's outer shell. Responsibilities split cleanly:
@@ -183,6 +184,7 @@ const ChatPageInner = () => {
 
 	const handleDeleteSession = async (sessionId: string) => {
 		await removeSession(sessionId);
+		if (urlAgentId) clearClientExternalToolSelection(urlAgentId, sessionId);
 		// If we just removed the session the URL is pointing at, fall
 		// back to the parent /chat/:agentId path; the redirect effect
 		// will then pick the next available session.

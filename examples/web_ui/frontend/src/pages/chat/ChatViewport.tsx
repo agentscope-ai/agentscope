@@ -230,6 +230,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		phase,
 		send,
 		onUserConfirm,
+		onClientExternalToolResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
@@ -806,6 +807,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onClientExternalToolResult={onClientExternalToolResult}
 									onInterrupt={interrupt}
 									// cwd={
 									// 	{cwd: view?.session.config.cwd, git: {

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The chat endpoint schema."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from ..._client_external_tool import ClientExternalToolDefinition
 from ....message import Msg
 from ....event import UserConfirmResultEvent, ExternalExecutionResultEvent
 
@@ -27,6 +28,26 @@ class ChatRequest(BaseModel):
     ) = Field(
         description="The input message(s), or agent event, or None.",
     )
+
+    client_external_tools: list[ClientExternalToolDefinition] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "External tools the active client can execute for this run."
+        ),
+    )
+
+    @field_validator("client_external_tools")
+    @classmethod
+    def validate_unique_client_external_tools(
+        cls,
+        value: list[ClientExternalToolDefinition],
+    ) -> list[ClientExternalToolDefinition]:
+        """Reject ambiguous duplicate client tool names."""
+        names = [tool.name for tool in value]
+        if len(names) != len(set(names)):
+            raise ValueError("Client external tool names must be unique.")
+        return value
 
 
 class ChatTriggerResponse(BaseModel):

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Literal
 from .message_bus._keys import MessageBusKeys
 
 if TYPE_CHECKING:
+    from ._client_external_tool import ClientExternalToolDefinition
     from .message_bus._base import MessageBus
 
     from agentscope.event import (
@@ -85,6 +86,7 @@ async def enqueue_run_trigger(
     | UserInterruptEvent
     | Msg
     | None = None,
+    client_external_tools: list[ClientExternalToolDefinition] | None = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
 
@@ -122,17 +124,22 @@ async def enqueue_run_trigger(
             should be ``None``) for ``wake``.  The function calls
             ``model_dump(mode="json")`` internally — callers pass the
             event object, not a pre-serialised dict.
+        client_external_tools:
+            External tools supported by the client that produced this
+            trigger. They remain scoped to the resulting run.
     """
-    await bus.queue_push(
-        MessageBusKeys.wakeup_queue(),
-        {
-            "user_id": user_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "kind": kind,
-            "input": inputs.model_dump(mode="json") if inputs else None,
-        },
-    )
+    payload: dict[str, object] = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "kind": kind,
+        "input": inputs.model_dump(mode="json") if inputs else None,
+    }
+    if client_external_tools:
+        payload["client_external_tools"] = [
+            tool.model_dump(mode="json") for tool in client_external_tools
+        ]
+    await bus.queue_push(MessageBusKeys.wakeup_queue(), payload)
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
 

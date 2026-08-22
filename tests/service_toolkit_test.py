@@ -9,11 +9,10 @@ Verifies the assembly rules:
 - workspace builtins are always included;
 - the four ``Task*`` planning tools are always included;
 - :class:`ToolStop` (from ``BackgroundTaskManager``) is always included;
+- client external tools are included only when declared for the run;
 - the four ``Schedule*`` tools only when ``session.config.chat_model_config``
   is set (they need a model to fire new runs with);
-- team tools are role-gated by ``agent_record.source``: ``"team"`` →
-  one ``TeamSay`` (worker variant); anything else → the full
-  leader-side toolset of four;
+- team tools are role-gated by the caller-resolved ``team_role``;
 - caller-supplied ``extra_factory`` results land at the end.
 """
 from typing import Any
@@ -24,6 +23,9 @@ from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import (
     BackgroundTaskManager,
     SchedulerManager,
+)
+from agentscope.app._client_external_tool import (
+    ClientExternalToolDefinition,
 )
 from agentscope.app._service import ResourceAccessService, get_toolkit
 from agentscope.app.access import DenyAllResourceAccessPolicy
@@ -234,6 +236,8 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         )
         # Background task control present.
         self.assertIn("ToolStop", names)
+        # No client tool is attached without a per-run declaration.
+        self.assertNotIn("RequestUserInput", names)
         # Schedule control present (model_config is set).
         self.assertTrue(
             {
@@ -248,6 +252,127 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         self.assertTrue(
             {"TeamCreate", "AgentCreate", "TeamSay", "TeamDelete"} <= names,
         )
+
+    async def test_client_external_tool_is_scoped_to_declaring_run(
+        self,
+    ) -> None:
+        """A validated client tool is attached only when supplied."""
+        agent = _make_agent(source="user")
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        definition = ClientExternalToolDefinition(
+            name="client__request_user_input",
+            description="Ask the user to choose.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                },
+                "required": ["question"],
+            },
+        )
+
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+            middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
+            client_external_tools=[definition],
+        )
+
+        tool = await toolkit.get_tool("client__request_user_input")
+        self.assertIsNotNone(tool)
+        self.assertEqual(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+                "is_external_tool": tool.is_external_tool,
+            },
+            {
+                "name": "client__request_user_input",
+                "description": "Ask the user to choose.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                    },
+                    "required": ["question"],
+                },
+                "is_external_tool": True,
+            },
+        )
+
+    async def test_client_external_tool_does_not_replace_server_tool(
+        self,
+    ) -> None:
+        """A client definition with a server tool name is rejected."""
+
+        class _ServerTool(_StubTool):
+            name: str = "client__shared_name"
+            description: str = "server implementation"
+            input_schema: dict = {
+                "type": "object",
+                "properties": {},
+            }
+
+        agent = _make_agent(source="user")
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "conflicts with a server tool",
+        ):
+            await get_toolkit(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                workspace=_FakeWorkspace(
+                    tools=[_ServerTool()],
+                ),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
+                scheduler_manager=SchedulerManager(
+                    storage=_NoOpStorage(),  # type: ignore[arg-type]
+                    message_bus=_NullBus(),  # type: ignore[arg-type]
+                ),
+                background_task_manager=BackgroundTaskManager(
+                    message_bus=_NullBus(),  # type: ignore[arg-type]
+                ),
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+                user_id="u",
+                agent_record=agent,
+                session_record=session,
+                extra_factory=None,
+                middlewares=[],
+                resource_access_service=_make_access(_NoOpStorage()),
+                client_external_tools=[
+                    ClientExternalToolDefinition(
+                        name="client__shared_name",
+                        description="client implementation",
+                        input_schema={
+                            "type": "object",
+                            "properties": {},
+                        },
+                    ),
+                ],
+            )
 
 
 class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
@@ -287,6 +412,7 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
         names = set(_tool_names(toolkit))
         # Only TeamSay from the team toolset.
         self.assertIn("TeamSay", names)
+        self.assertNotIn("RequestUserInput", names)
         for missing in (
             "TeamCreate",
             "AgentCreate",
