@@ -33,11 +33,12 @@ delivers, and that node may well have no dispatcher — this is what it
 has instead.
 """
 import asyncio
+import json
 from contextlib import aclosing
 from types import TracebackType
 
 from ..._logging import logger
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
@@ -133,6 +134,7 @@ class ChannelClients:
         version = str(record.updated_at)
         cached = self._cache.get(channel_id)
         if cached is not None and cached[0] == version:
+            await self._hydrate_seen_chats(channel_id, cached[1])
             return cached[1]
 
         try:
@@ -152,7 +154,32 @@ class ChannelClients:
         # Retire the rotated instance; borrowers keep working.
         self._retire(channel_id)
         self._cache[channel_id] = (version, channel)
+        await self._hydrate_seen_chats(channel_id, channel)
         return channel
+
+    async def _hydrate_seen_chats(
+        self,
+        channel_id: str,
+        channel: ChannelBase,
+    ) -> None:
+        """Refresh a client from shared passively observed chat metadata."""
+        observe = getattr(channel, "observe_chat", None)
+        if observe is None:
+            return
+        seen = await self._bus.registry_getall(
+            MessageBusKeys.channel_seen_chats(channel_id),
+        )
+        for chat_id, raw in seen.items():
+            chat_type = ""
+            chat_name = ""
+            try:
+                metadata = json.loads(raw)
+                if isinstance(metadata, dict):
+                    chat_type = str(metadata.get("chat_type", ""))
+                    chat_name = str(metadata.get("chat_name", ""))
+            except (TypeError, ValueError):
+                pass
+            observe(chat_id, chat_type, chat_name)
 
     async def deliver(
         self,

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from ..storage import ChannelRecord
     from ._base import ChannelBase
 
 
@@ -116,6 +117,18 @@ class ChannelTypeRegistry:
             channel_id,
             channel_cls.Credentials(**credentials),
             channel_cls.Config(**config),
+        )
+
+    def create_channel_from_record(
+        self,
+        record: "ChannelRecord",
+    ) -> "ChannelBase":
+        """Build a channel directly from its persisted record."""
+        return self.create_channel(
+            channel_type=record.channel_type,
+            channel_id=record.id,
+            credentials=record.credentials,
+            config=record.platform_config,
         )
 
     def schema_of(

@@ -295,10 +295,49 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # per-chat buffers.
     # ------------------------------------------------------------------
 
+    _CHANNEL_WEBHOOK_QUEUE = "agentscope:channel:webhook:inbound:{cid}"
+    _CHANNEL_WEBHOOK_SIGNAL = "agentscope:channel:webhook:wake"
+    _CHANNEL_WEBHOOK_DRAIN_LOCK = "agentscope:channel:webhook:drain:lock:{cid}"
+    _CHANNEL_WEBHOOK_DEDUPE = "agentscope:channel:webhook:dedupe:{cid}"
+    _CHANNEL_WEBHOOK_DEDUPE_LOCK = (
+        "agentscope:channel:webhook:dedupe:lock:{cid}:{mid}"
+    )
     _CHANNEL_LIFECYCLE = "agentscope:channel:lifecycle"
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
+
+    @classmethod
+    def channel_webhook_queue(cls, channel_id: str) -> str:
+        """Per-channel queue of inbound webhook payloads."""
+        return cls._CHANNEL_WEBHOOK_QUEUE.format(cid=channel_id)
+
+    @classmethod
+    def channel_webhook_signal(cls) -> str:
+        """Pub/sub nudge for inbound webhook consumers."""
+        return cls._CHANNEL_WEBHOOK_SIGNAL
+
+    @classmethod
+    def channel_webhook_drain_lock(cls, channel_id: str) -> str:
+        """Cross-process lease for one channel's ordered queue drain."""
+        return cls._CHANNEL_WEBHOOK_DRAIN_LOCK.format(cid=channel_id)
+
+    @classmethod
+    def channel_webhook_dedupe(cls, channel_id: str) -> str:
+        """Registry namespace of processed webhook message ids."""
+        return cls._CHANNEL_WEBHOOK_DEDUPE.format(cid=channel_id)
+
+    @classmethod
+    def channel_webhook_dedupe_lock(
+        cls,
+        channel_id: str,
+        message_id: str,
+    ) -> str:
+        """Distributed lease key for one inbound webhook message."""
+        return cls._CHANNEL_WEBHOOK_DEDUPE_LOCK.format(
+            cid=channel_id,
+            mid=message_id,
+        )
 
     @classmethod
     def channel_lifecycle(cls) -> str:
