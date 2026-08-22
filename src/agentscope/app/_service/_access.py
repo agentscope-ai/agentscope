@@ -412,6 +412,22 @@ class ResourceAccessService:
         ``source == "user"`` agents since team workers are not
         shareable.
         """
+        record = await self.try_resolve_agent(viewer_id, agent_id)
+        if record is None:
+            raise self._not_found(ResourceKind.AGENT, agent_id)
+        return record
+
+    async def try_resolve_agent(
+        self,
+        viewer_id: str,
+        agent_id: str,
+    ) -> AgentRecord | None:
+        """Resolve an agent for runtime use, returning ``None`` when hidden.
+
+        This is the non-raising counterpart of :meth:`resolve_agent` for
+        stale references such as team rosters or toolkit snapshots. Owner
+        reads include team workers; cross-owner refs only resolve user agents.
+        """
         record = await self._storage.get_agent(viewer_id, agent_id)
         if record is not None:
             return record
@@ -425,7 +441,7 @@ class ResourceAccessService:
             )
             if record is not None and record.source != "team":
                 return record
-        raise self._not_found(ResourceKind.AGENT, agent_id)
+        return None
 
     async def resolve_knowledge_base(
         self,
