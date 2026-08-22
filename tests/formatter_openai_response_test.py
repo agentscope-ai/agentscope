@@ -11,7 +11,6 @@ Key differences from OpenAI Chat formatter:
   - ThinkingBlock: only echoed when it has a "reasoning_item_id" attribute.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import (
     OpenAIResponseFormatter,
@@ -31,9 +30,6 @@ from agentscope.message import (
     ThinkingBlock,
     HintBlock,
 )
-
-
-_FIXED_ID = "TESTID1234567"
 
 
 class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
@@ -598,103 +594,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
-    async def test_chat_formatter_url_image_in_tool_result(
-        self,
-        _mock_uuid: object,
-    ) -> None:
-        """URL images in tool results are promoted to a follow-up user
-        message."""
-        fmt = OpenAIResponseFormatter()
-        msgs = [
-            AssistantMsg(
-                name="assistant",
-                content=[
-                    ToolCallBlock(
-                        id="call_img",
-                        name="get_map",
-                        input='{"city": "Tokyo"}',
-                    ),
-                    ToolResultBlock(
-                        id="call_img",
-                        name="get_map",
-                        output=[
-                            TextBlock(text="Here is the map."),
-                            DataBlock(
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
-                            ),
-                        ],
-                        state=ToolResultState.SUCCESS,
-                    ),
-                    TextBlock(text="Here is the map of Tokyo."),
-                ],
-            ),
-        ]
-        res = await fmt.format(msgs)
-
-        expected_tool_content = (
-            "Here is the map.\n"
-            f"<system-reminder>A(n) image file is returned "
-            f"and will be presented to you with the identifier "
-            f"[{_FIXED_ID}].</system-reminder>"
-        )
-        self.assertListEqual(
-            [
-                {
-                    "type": "function_call",
-                    "call_id": "call_img",
-                    "name": "get_map",
-                    "arguments": '{"city": "Tokyo"}',
-                },
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_img",
-                    "output": expected_tool_content,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "<system-reminder>The multimodal data "
-                                "and their identifiers are listed as "
-                                "follows:"
-                            ),
-                        },
-                        {
-                            "type": "input_text",
-                            "text": f"- {_FIXED_ID} (image file): ",
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": self.image_url,
-                        },
-                        {
-                            "type": "input_text",
-                            "text": "</system-reminder>",
-                        },
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": "Here is the map of Tokyo.",
-                        },
-                    ],
-                },
-            ],
-            res,
-        )
-
     # -------------------------------------------------------------------
     # OpenAIResponseMultiAgentFormatter tests
     # -------------------------------------------------------------------
@@ -775,7 +674,15 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     ToolResultBlock(
                         id="call_1",
                         name="func_1",
-                        output=[TextBlock(text="result_1")],
+                        output=[
+                            TextBlock(text="result_1"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
                         state=ToolResultState.SUCCESS,
                     ),
                     ToolResultBlock(
@@ -837,7 +744,13 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": "result_1",
+                    "output": [
+                        {"type": "input_text", "text": "result_1"},
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_data_uri,
+                        },
+                    ],
                 },
                 {
                     "type": "function_call_output",

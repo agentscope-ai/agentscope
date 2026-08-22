@@ -15,7 +15,6 @@ from ..message import (
     DataBlock,
     TextBlock,
     URLSource,
-    Base64Source,
 )
 
 
@@ -66,6 +65,43 @@ class FormatterBase(BaseModel):
                 raise TypeError(
                     f"Expected Msg object, got {type(msg)} instead.",
                 )
+
+    @staticmethod
+    def _convert_unsupported_data_block_to_string(block: DataBlock) -> str:
+        """Convert an unsupported data block into its textual fallback.
+
+        URL sources remain accessible through their URL. Base64 sources are
+        persisted to a temporary file so the model can still reference the
+        result when the target API cannot carry that media type directly.
+
+        Args:
+            block (`DataBlock`):
+                The unsupported data block to convert.
+
+        Returns:
+            `str`:
+                The textual fallback for the data block.
+        """
+        main_type = block.source.media_type.split("/")[0]
+
+        if isinstance(block.source, URLSource):
+            return (
+                f"<system-reminder>A(n) {main_type} file is returned "
+                f"and can be accessed at the URL: {block.source.url}."
+                f"</system-reminder>"
+            )
+
+        extension = mimetypes.guess_extension(block.source.media_type)
+        with tempfile.NamedTemporaryFile(
+            suffix=extension,
+            delete=False,
+        ) as temp_file:
+            decoded_data = base64.b64decode(block.source.data)
+            temp_file.write(decoded_data)
+            return (
+                f"<system-reminder>A(n) {main_type} file is returned and "
+                f"saved locally at: {temp_file.name}.</system-reminder>"
+            )
 
     def convert_tool_result_to_string(
         self,
@@ -127,35 +163,12 @@ class FormatterBase(BaseModel):
                         ],
                     )
 
-                # For unsupported media types, if it's a URL, include it in
-                # the textual output; if it's base64 data, save it locally
-                # and include the file path in the textual output.
-                # Note if you don't want to save the local file, you should
-                # transform the base64 data in the tool execution hook
-                # rather than changing the formatter.
-                elif isinstance(block.source, URLSource):
+                # For unsupported media types, retain the existing textual
+                # fallback rather than silently dropping the result.
+                else:
                     textual_output.append(
-                        f"<system-reminder>A(n) {main_type} file is returned "
-                        f"and can be accessed at the URL: {block.source.url}."
-                        f"</system-reminder>",
+                        self._convert_unsupported_data_block_to_string(block),
                     )
-
-                elif isinstance(block.source, Base64Source):
-                    # Have to save the base64 data locally
-                    extension = mimetypes.guess_extension(
-                        block.source.media_type,
-                    )
-                    with tempfile.NamedTemporaryFile(
-                        suffix=extension,
-                        delete=False,
-                    ) as temp_file:
-                        decoded_data = base64.b64decode(block.source.data)
-                        temp_file.write(decoded_data)
-                        textual_output.append(
-                            f"<system-reminder>A(n) {main_type} file is "
-                            f"returned and saved locally at: {temp_file.name}."
-                            f"</system-reminder>",
-                        )
 
         # Add system reminder tags if there is multimodal data to be promoted
         if multimodal_data:
