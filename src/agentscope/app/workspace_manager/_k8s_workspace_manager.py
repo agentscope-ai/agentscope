@@ -198,7 +198,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         del session_id
 
         if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

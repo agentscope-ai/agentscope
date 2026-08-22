@@ -285,6 +285,7 @@ def create_app(
     # Attach shared state that lifespan and dependencies read from app.state
     app.state.storage = storage
     app.state.message_bus = message_bus
+    workspace_manager.bind_storage(storage)
     app.state.workspace_manager = workspace_manager
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares

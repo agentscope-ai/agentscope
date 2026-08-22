@@ -336,7 +336,7 @@ async def create_session(
     # flows to force sharing); otherwise defer to the manager's
     # isolation policy — see ``WorkspaceManagerBase.assign_workspace_id``.
     resolved_workspace_id = body.workspace_id or (
-        workspace_manager.assign_workspace_id(
+        await workspace_manager.assign_workspace_id(
             user_id=user_id,
             agent_id=body.agent_id,
             session_id=_generate_id(),

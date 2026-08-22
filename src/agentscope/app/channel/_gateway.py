@@ -243,7 +243,7 @@ class ChannelGateway:
 
         fallback = record.session.fallback_chat_model_config
         session_config = SessionConfig(
-            workspace_id=self._workspace_manager.assign_workspace_id(
+            workspace_id=await self._workspace_manager.assign_workspace_id(
                 user_id=record.user_id,
                 agent_id=agent_id,
                 session_id=session_id,

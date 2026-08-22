@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 """Workspace manager implementations."""
 
+import asyncio
 import hashlib
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from enum import StrEnum
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from ..._utils._common import _generate_id
 from ...workspace import WorkspaceBase
+
+if TYPE_CHECKING:
+    from ..storage import StorageBase
 
 
 class IsolationPolicy(StrEnum):
@@ -49,8 +54,28 @@ class WorkspaceManagerBase(ABC):
                 Isolation grain for the manager.
         """
         self._isolation: IsolationPolicy = isolation
+        self._storage: "StorageBase | None" = None
+        # Serialises read-binding-then-mint per (user, agent), so two
+        # concurrent first sessions cannot each mint a workspace.
+        self._bind_locks: defaultdict[
+            tuple[str, str],
+            asyncio.Lock,
+        ] = defaultdict(asyncio.Lock)
 
-    def assign_workspace_id(
+    def bind_storage(self, storage: "StorageBase") -> None:
+        """Hand the manager the backend holding workspace bindings.
+
+        Wired by :func:`agentscope.app.create_app` rather than taken as
+        a constructor argument, because the application author builds
+        the manager before the app exists to supply a storage backend.
+
+        Args:
+            storage (`StorageBase`):
+                The application's storage backend.
+        """
+        self._storage = storage
+
+    async def assign_workspace_id(
         self,
         *,
         user_id: str,
@@ -59,13 +84,23 @@ class WorkspaceManagerBase(ABC):
     ) -> str:
         """Mint a workspace id under :attr:`_isolation`.
 
-        Pure function — no I/O, no storage access. Called by the
-        session-creation flow when the caller did not supply an
-        explicit ``workspace_id``.
+        Called by the session-creation flow when the caller did not
+        supply an explicit ``workspace_id``.
 
         * ``PER_SESSION`` → fresh UUID.
-        * ``PER_AGENT`` → deterministic BLAKE2b of ``user::agent``.
+        * ``PER_AGENT`` → the id an earlier session of this
+          ``(user, agent)`` already bound, else a fresh one. Without a
+          storage backend the binding cannot be read, so a
+          deterministic BLAKE2b of ``user::agent`` stands in for it.
+          Reading the binding and minting a replacement is serialised
+          per ``(user, agent)``, but only within this process: two app
+          workers racing the very first session of one pair can still
+          bind two workspaces to it.
         * ``PER_USER`` → deterministic BLAKE2b of ``user::``.
+
+        Managers that pre-warm override this to draw the fresh ids from
+        their buffer, so the id of an already-running workspace becomes
+        the binding rather than naming one still to be built.
 
         Args:
             user_id (`str`):
@@ -81,16 +116,34 @@ class WorkspaceManagerBase(ABC):
                 A workspace id.
         """
         del session_id
-        if self._isolation is IsolationPolicy.PER_AGENT:
-            return hashlib.blake2b(
-                f"{user_id}::{agent_id}".encode("utf-8"),
-                digest_size=8,
-            ).hexdigest()
         if self._isolation is IsolationPolicy.PER_USER:
             return hashlib.blake2b(
                 f"user::{user_id}".encode("utf-8"),
                 digest_size=8,
             ).hexdigest()
+        if self._isolation is not IsolationPolicy.PER_AGENT:
+            return await self._mint_workspace_id()
+
+        if self._storage is None:
+            return hashlib.blake2b(
+                f"{user_id}::{agent_id}".encode("utf-8"),
+                digest_size=8,
+            ).hexdigest()
+        async with self._bind_locks[(user_id, agent_id)]:
+            for record in await self._storage.list_sessions(
+                user_id,
+                agent_id,
+            ):
+                if record.config.workspace_id:
+                    return record.config.workspace_id
+            return await self._mint_workspace_id()
+
+    async def _mint_workspace_id(self) -> str:
+        """Produce an id for a workspace nobody holds yet.
+
+        The pre-warming managers override this to return the id of a
+        buffered, already-running workspace.
+        """
         return _generate_id()
 
     @abstractmethod

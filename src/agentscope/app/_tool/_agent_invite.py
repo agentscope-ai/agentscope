@@ -345,7 +345,7 @@ class AgentInvite(_TeamToolBase):
                 )
             else:
                 borrowed_workspace_id = (
-                    self._workspace_manager.assign_workspace_id(
+                    await self._workspace_manager.assign_workspace_id(
                         user_id=self._user_id,
                         agent_id=invited.id,
                         session_id=_generate_id(),
