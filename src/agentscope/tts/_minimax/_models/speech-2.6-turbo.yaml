@@ -1,0 +1,14 @@
+name: speech-2.6-turbo
+label: MiniMax Speech 2.6 Turbo
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+  - audio/wav
+  - audio/flac
+  - audio/pcm
+
+parameter_overrides: {}
