@@ -1,0 +1,12 @@
+name: MiniMax-M2.7-highspeed
+label: MiniMax M2.7 Highspeed
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+
+context_size: 200000
+output_size: 32000
