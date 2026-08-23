@@ -126,6 +126,8 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The required structured output is generated.",
                     },
@@ -136,7 +138,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             self.agent.state.reply_context.model_dump(),
             {
                 "reply_id": self.agent.state.reply_id,
-                "cur_iter": 2,
+                "cur_iter": 1,
                 "structured_schema": WeatherReport.model_json_schema(),
                 "structured_output": {"city": "Hangzhou", "temperature": 25.0},
             },
@@ -208,6 +210,8 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             [
                 {
                     "type": "tool_result",
+                    "created_at": AnyString(),
+                    "finished_at": None,
                     "id": "structured_call_0",
                     "name": "GenerateStructuredOutput",
                     "output": "Input validation failed for tool "
@@ -218,11 +222,15 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 },
                 {
                     "type": "tool_result",
+                    "created_at": AnyString(),
+                    "finished_at": None,
                     "id": "structured_call_1",
                     "name": "GenerateStructuredOutput",
                     "output": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Structured output generated "
                             "successfully.",
@@ -284,6 +292,8 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The maximum reasoning-acting iterations "
                         "are exceeded.",

@@ -16,11 +16,8 @@ from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
 
-def _default_id_factory() -> str:
-    return uuid.uuid4().hex
-
-
-_id_factory: Callable[[], str] = _default_id_factory
+_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
+_timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
 
 
 def set_id_factory(factory: Callable[[], str]) -> None:
@@ -52,9 +49,33 @@ def set_id_factory(factory: Callable[[], str]) -> None:
     _id_factory = factory
 
 
+def set_timestamp_factory(factory: Callable[[], str]) -> None:
+    """Override the global timestamp factory used by all AgentScope entities.
+
+    Args:
+        factory (`Callable[[], str]`):
+            A no-arg callable returning a string ID.
+
+    Raises:
+        TypeError: If ``factory`` is not callable.
+    """
+    if not callable(factory):
+        raise TypeError(
+            f"factory must be a callable, got {type(factory).__name__}",
+        )
+    global _timestamp_factory
+    _timestamp_factory = factory
+
+
 def _generate_id() -> str:
     """Generate an ID string using the current global ID factory."""
     return _id_factory()
+
+
+def _generate_timestamp() -> str:
+    """Generate a timestamp string using the current global
+    timestamp factory."""
+    return _timestamp_factory()
 
 
 def _normalize_local_path(path: str) -> str:
@@ -344,3 +365,25 @@ def _estimate_bytes(tokens: int) -> int:
     """Estimate the number of bytes with given tokens."""
 
     return int(tokens * 4)
+
+
+def _describe_exception(error: BaseException) -> str:
+    """Render an exception as something a person can act on.
+
+    Async transports run inside task groups, so what surfaces is often
+    an ``ExceptionGroup`` whose own message is ``"unhandled errors in a
+    TaskGroup (1 sub-exception)"`` — true, and of no use to anyone. The
+    real cause is a leaf, so leaves are what get reported.
+
+    Args:
+        error (`BaseException`):
+            The exception to describe.
+
+    Returns:
+        `str`:
+            The leaf causes, joined; the exception type when a leaf
+            carries no message of its own.
+    """
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(_describe_exception(sub) for sub in error.exceptions)
+    return str(error) or type(error).__name__

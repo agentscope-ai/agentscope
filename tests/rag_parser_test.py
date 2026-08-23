@@ -111,6 +111,31 @@ def _make_pptx_rich() -> bytes:
     return buffer.getvalue()
 
 
+def _make_pptx_with_special_table_cells() -> bytes:
+    """Build a PPTX table with pipes and a multi-line cell."""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    table = slide.shapes.add_table(
+        rows=2,
+        cols=2,
+        left=Inches(1),
+        top=Inches(1),
+        width=Inches(4),
+        height=Inches(1),
+    ).table
+    table.cell(0, 0).text = "A|B"
+    table.cell(0, 1).text = r"Path \| label"
+    table.cell(1, 0).text = "1|2"
+    table.cell(1, 1).text = "Line 1\vLine 2"
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_docx_simple(paragraphs: list[str]) -> bytes:
     """Build a DOCX in memory with plain text paragraphs."""
     from docx import Document as DocxDocument
@@ -138,6 +163,22 @@ def _make_docx_with_table() -> bytes:
     table.cell(1, 1).text = "2"
 
     doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_docx_with_special_table_cells() -> bytes:
+    """Build a DOCX table with pipes and a multi-line cell."""
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "A|B"
+    table.cell(0, 1).text = r"Path \| label"
+    table.cell(1, 0).text = "1|2"
+    table.cell(1, 1).text = "Line 1\nLine 2"
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -195,6 +236,8 @@ class TextParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "hello",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "x.txt",
                     "metadata": {},
@@ -214,6 +257,8 @@ class TextParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "preset",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "x.md",
                     "metadata": {},
@@ -264,6 +309,8 @@ class PDFParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "First page text\n",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.pdf",
                     "metadata": {"page": 1},
@@ -273,6 +320,8 @@ class PDFParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Second page text\n",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.pdf",
                     "metadata": {"page": 2},
@@ -330,6 +379,8 @@ class ImageParserTest(IsolatedAsyncioTestCase):
                     "content": {
                         "type": "data",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "source": {
                             "type": "base64",
                             "data": _PNG_PIXEL_B64,
@@ -355,6 +406,8 @@ class ImageParserTest(IsolatedAsyncioTestCase):
                     "content": {
                         "type": "data",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "source": {
                             "type": "base64",
                             "data": base64.b64encode(jpeg_bytes).decode(
@@ -411,6 +464,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=1>\nAlpha\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.pptx",
                     "metadata": {"slide": 1},
@@ -420,6 +475,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=2>\nBeta\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.pptx",
                     "metadata": {"slide": 2},
@@ -444,6 +501,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Alpha",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.pptx",
                     "metadata": {"slide": 1},
@@ -468,6 +527,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=1>\nHello\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 1},
@@ -485,6 +546,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                             "</slide>"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -494,9 +557,49 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=3>\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 3},
+                },
+            ],
+        )
+
+    async def test_markdown_table_escapes_special_cells(self) -> None:
+        """Pipes and line breaks do not corrupt Markdown table rows."""
+        pptx_bytes = _make_pptx_with_special_table_cells()
+        parser = PPTParser(
+            include_image=False,
+            separate_table=True,
+            slide_prefix=None,
+            slide_suffix=None,
+        )
+        sections = await parser.parse(pptx_bytes, "special.pptx")
+
+        expected_text = (
+            "\n".join(
+                [
+                    r"| A\|B | Path \\\| label |",
+                    "| --- | --- |",
+                    r"| 1\|2 | Line 1<br>Line 2 |",
+                ],
+            )
+            + "\n"
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": expected_text,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "special.pptx",
+                    "metadata": {"slide": 1},
                 },
             ],
         )
@@ -516,6 +619,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=1>\nHello\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 1},
@@ -525,6 +630,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=2>\nHeader",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -536,6 +643,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                             "| A | B |\n" "| --- | --- |\n" "| 1 | 2 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -545,6 +654,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Footer\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -554,6 +665,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=3>\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 3},
@@ -575,6 +688,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=1>\nHello\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 1},
@@ -584,6 +699,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=2>\nHeader",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -595,6 +712,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                             "| A | B |\n" "| --- | --- |\n" "| 1 | 2 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -604,6 +723,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Footer\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -613,6 +734,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=3>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 3},
@@ -621,6 +744,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                     "content": {
                         "type": "data",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "source": {
                             "type": "base64",
                             "data": _PNG_PIXEL_B64,
@@ -639,6 +764,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 3},
@@ -664,6 +791,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=1>\nHello\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 1},
@@ -673,6 +802,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=2>\nHeader",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -686,6 +817,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                             '[["A", "B"], ["1", "2"]]'
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -695,6 +828,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Footer\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
@@ -704,6 +839,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "<slide index=3>\n</slide>",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 3},
@@ -766,6 +903,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "| Alice | 25 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.xlsx",
                     "metadata": {},
@@ -795,6 +934,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             '["1", "2"]'
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.xlsx",
                     "metadata": {},
@@ -831,6 +972,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "| Q1 | 50 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "multi.xlsx",
                     "metadata": {},
@@ -862,6 +1005,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "| Q1 | 100 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "multi.xlsx",
                     "metadata": {"sheet": "Sales"},
@@ -876,6 +1021,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "| Q1 | 50 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "multi.xlsx",
                     "metadata": {"sheet": "Costs"},
@@ -901,6 +1048,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "Sheet: MySheet\n" "| A |\n" "| --- |\n" "| 1 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.xlsx",
                     "metadata": {},
@@ -924,6 +1073,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": ("| A |\n" "| --- |\n" "| 1 |\n"),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.xlsx",
                     "metadata": {},
@@ -952,6 +1103,8 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "| [A2] X |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.xlsx",
                     "metadata": {},
@@ -1008,6 +1161,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Hello\nWorld",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1036,8 +1191,43 @@ class WordParserTest(IsolatedAsyncioTestCase):
                             "After table"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_markdown_table_escapes_special_cells(self) -> None:
+        """Pipes and line breaks do not corrupt Markdown table rows."""
+        docx_bytes = _make_docx_with_special_table_cells()
+        parser = WordParser(include_image=False, separate_table=True)
+        sections = await parser.parse(docx_bytes, "special.docx")
+
+        expected_text = (
+            "\n".join(
+                [
+                    r"| A\|B | Path \\\| label |",
+                    "| --- | --- |",
+                    r"| 1\|2 | Line 1<br>Line 2 |",
+                ],
+            )
+            + "\n"
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": expected_text,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "special.docx",
                     "metadata": {},
                 },
             ],
@@ -1058,6 +1248,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Before table",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1069,6 +1261,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                             "| A | B |\n" "| --- | --- |\n" "| 1 | 2 |\n"
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1078,6 +1272,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "After table",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1103,6 +1299,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Before table",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1116,6 +1314,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                             '[["A", "B"], ["1", "2"]]'
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1125,6 +1325,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "After table",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "demo.docx",
                     "metadata": {},
@@ -1159,6 +1361,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "text": "Text before image\nText after image",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                     "source": "rich.docx",
                     "metadata": {},

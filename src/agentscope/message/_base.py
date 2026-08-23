@@ -62,6 +62,10 @@ class Usage(BaseModel):
     """The number of input tokens."""
     output_tokens: int
     """The number of output tokens."""
+    cache_input_tokens: int = 0
+    """The number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """The number of input tokens used to create the prompt cache."""
 
 
 class Msg(BaseModel):
@@ -237,7 +241,10 @@ class Msg(BaseModel):
                 return block
         return None
 
-    def append_event(self, event: AgentEvent) -> Self:
+    def append_event(  # pylint: disable=too-many-branches
+        self,
+        event: AgentEvent,
+    ) -> Self:
         """Update the message by applying a streaming event.
 
         Mutates ``self.content``, ``self.finished_at``, and ``self.usage``:
@@ -280,26 +287,33 @@ class Msg(BaseModel):
                     self.usage = Usage(
                         input_tokens=event.input_tokens,
                         output_tokens=event.output_tokens,
+                        cache_input_tokens=event.cache_input_tokens,
+                        cache_creation_input_tokens=(
+                            event.cache_creation_input_tokens
+                        ),
                     )
                 else:
                     self.usage.input_tokens += event.input_tokens
                     self.usage.output_tokens += event.output_tokens
+                    self.usage.cache_input_tokens += event.cache_input_tokens
+                    self.usage.cache_creation_input_tokens += (
+                        event.cache_creation_input_tokens
+                    )
 
             case EventType.TEXT_BLOCK_START:
                 self.content.append(TextBlock(id=event.block_id, text=""))
 
-            case EventType.TEXT_BLOCK_DELTA:
+            case EventType.TEXT_BLOCK_DELTA | EventType.TEXT_BLOCK_END:
                 block = self._find_block("text", event.block_id)
                 if block is None:
                     logger.warning(
                         "TextBlock %r not found, skipping.",
                         event.block_id,
                     )
-                else:
+                elif event.type == EventType.TEXT_BLOCK_DELTA:
                     block.text += event.delta
-
-            case EventType.TEXT_BLOCK_END:
-                pass
+                else:
+                    block.finished_at = event.created_at
 
             case EventType.DATA_BLOCK_START:
                 self.content.append(
@@ -312,14 +326,14 @@ class Msg(BaseModel):
                     ),
                 )
 
-            case EventType.DATA_BLOCK_DELTA:
+            case EventType.DATA_BLOCK_DELTA | EventType.DATA_BLOCK_END:
                 block = self._find_block("data", event.block_id)
                 if block is None:
                     logger.warning(
                         "DataBlock %s not found, skipping.",
                         event.block_id,
                     )
-                elif event.data:
+                elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
                     # Each delta is an independently base64-encoded chunk
                     # (with its own padding); naive string concat would
                     # corrupt the byte stream. Decode, concat bytes, re-encode.
@@ -332,39 +346,37 @@ class Msg(BaseModel):
                     block.source.data = base64.b64encode(
                         existing + incoming,
                     ).decode("ascii")
-
-            case EventType.DATA_BLOCK_END:
-                pass
+                elif event.type == EventType.DATA_BLOCK_END:
+                    block.finished_at = event.created_at
 
             case EventType.THINKING_BLOCK_START:
                 self.content.append(
                     ThinkingBlock(id=event.block_id, thinking=""),
                 )
 
-            case EventType.THINKING_BLOCK_DELTA:
+            case EventType.THINKING_BLOCK_DELTA | EventType.THINKING_BLOCK_END:
                 block = self._find_block("thinking", event.block_id)
                 if block is None:
                     logger.warning(
                         "ThinkingBlock %r not found, skipping.",
                         event.block_id,
                     )
-                else:
+                elif event.type == EventType.THINKING_BLOCK_DELTA:
                     block.thinking += event.delta
-
-            case EventType.THINKING_BLOCK_END:
-                pass
+                else:
+                    block.finished_at = event.created_at
 
             case EventType.HINT_BLOCK:
                 # One-shot event — the full HintBlock content arrives in
                 # a single event, so just append it to ``content`` for
                 # persistence and replay.
-                self.content.append(
-                    HintBlock(
-                        id=event.block_id,
-                        source=event.source,
-                        hint=event.hint,
-                    ),
+                hint_block = HintBlock(
+                    id=event.block_id,
+                    source=event.source,
+                    hint=event.hint,
                 )
+                hint_block.finished_at = hint_block.created_at
+                self.content.append(hint_block)
 
             case EventType.TOOL_CALL_START:
                 self.content.append(
@@ -375,19 +387,18 @@ class Msg(BaseModel):
                     ),
                 )
 
-            case EventType.TOOL_CALL_DELTA:
+            case EventType.TOOL_CALL_DELTA | EventType.TOOL_CALL_END:
                 block = self._find_block("tool_call", event.tool_call_id)
                 if block is None:
                     logger.warning(
                         "ToolCallBlock %r not found, skipping.",
                         event.tool_call_id,
                     )
-                else:
+                elif event.type == EventType.TOOL_CALL_DELTA:
                     assert isinstance(block, ToolCallBlock)
                     block.input += event.delta
-
-            case EventType.TOOL_CALL_END:
-                pass
+                else:
+                    block.finished_at = event.created_at
 
             case EventType.TOOL_RESULT_START:
                 self.content.append(
@@ -399,14 +410,18 @@ class Msg(BaseModel):
                     ),
                 )
 
-            case EventType.TOOL_RESULT_TEXT_DELTA:
+            case (
+                EventType.TOOL_RESULT_TEXT_DELTA
+                | EventType.TOOL_RESULT_DATA_DELTA
+                | EventType.TOOL_RESULT_END
+            ):
                 block = self._find_block("tool_result", event.tool_call_id)
                 if block is None:
                     logger.warning(
                         "ToolResultBlock %r not found, skipping.",
                         event.tool_call_id,
                     )
-                else:
+                elif event.type == EventType.TOOL_RESULT_TEXT_DELTA:
                     assert isinstance(block, ToolResultBlock)
                     if isinstance(block.output, str):
                         block.output = [TextBlock(text=block.output)]
@@ -415,15 +430,7 @@ class Msg(BaseModel):
                         block.output.append(TextBlock(text=event.delta))
                     else:
                         block.output[-1].text += event.delta
-
-            case EventType.TOOL_RESULT_DATA_DELTA:
-                block = self._find_block("tool_result", event.tool_call_id)
-                if block is None:
-                    logger.warning(
-                        "ToolResultBlock %r not found, skipping.",
-                        event.tool_call_id,
-                    )
-                else:
+                elif event.type == EventType.TOOL_RESULT_DATA_DELTA:
                     assert isinstance(block, ToolResultBlock)
                     if isinstance(block.output, str):
                         block.output = [TextBlock(text=block.output)]
@@ -441,26 +448,22 @@ class Msg(BaseModel):
                     block.output.append(
                         DataBlock(id=event.block_id, source=src),
                     )
-
-            case EventType.TOOL_RESULT_END:
-                block = self._find_block("tool_result", event.tool_call_id)
-                if block is None:
-                    logger.warning(
-                        "ToolResultBlock %r not found, skipping.",
-                        event.tool_call_id,
-                    )
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
                     block.metadata = event.metadata
-                # The paired ToolCallBlock's lifecycle ends with its
-                # result — flip it to FINISHED here so the SSE-rebuilt
-                # reply_msg matches ``agent.state.context``, which
-                # ``_update_tool_call_state`` mutates directly.
-                call_block = self._find_block("tool_call", event.tool_call_id)
-                if call_block is not None:
-                    assert isinstance(call_block, ToolCallBlock)
-                    call_block.state = ToolCallState.FINISHED
+                    block.finished_at = event.created_at
+                    # The paired ToolCallBlock's lifecycle ends with its
+                    # result — flip it to FINISHED here so the SSE-rebuilt
+                    # reply_msg matches ``agent.state.context``, which
+                    # ``_update_tool_call_state`` mutates directly.
+                    call_block = self._find_block(
+                        "tool_call",
+                        event.tool_call_id,
+                    )
+                    if call_block is not None:
+                        assert isinstance(call_block, ToolCallBlock)
+                        call_block.state = ToolCallState.FINISHED
 
             case EventType.REQUIRE_USER_CONFIRM:
                 for tool_call in event.tool_calls:
@@ -504,6 +507,8 @@ class Msg(BaseModel):
                 for result in event.execution_results:
                     if result.id in existing_ids:
                         continue
+                    if result.finished_at is None:
+                        result.finished_at = event.created_at
                     self.content.append(result)
 
         return self

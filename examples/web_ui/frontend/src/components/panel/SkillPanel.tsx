@@ -2,12 +2,22 @@ import { FileX, PlusCircle, Search, SearchX, Trash } from 'lucide-react';
 import { useState } from 'react';
 
 import type { Skill } from '@/api';
+import type { UploadOptions } from '@/api/workspace';
 import { AddSkillDialog } from '@/components/dialog/AddSkillDialog.tsx';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { PanelEmpty } from '@/components/panel/PanelEmpty';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
-import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item';
+import {
+	Item,
+	ItemActions,
+	ItemContent,
+	ItemDescription,
+	ItemMedia,
+	ItemTitle,
+} from '@/components/ui/item';
+import { useSkills } from '@/hooks/useSkills.ts';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
 interface SkillPanelProps {
@@ -16,11 +26,18 @@ interface SkillPanelProps {
 	/** Whether the skill list is still loading. */
 	loading?: boolean;
 	/**
-	 * Add a skill to the workspace.
+	 * Upload a picked folder as a skill.
 	 *
-	 * @param skillPath - Path of the skill to add.
+	 * @param files - The folder's files, carrying `webkitRelativePath`.
+	 * @param options - Progress and abort hooks.
 	 */
-	onAdd: (skillPath: string) => Promise<void>;
+	onUpload: (files: File[], options?: UploadOptions) => Promise<void>;
+	/**
+	 * Install skills the user already has.
+	 *
+	 * @param skillIds - The library record ids to add.
+	 */
+	onAddFromLibrary: (skillIds: string[]) => Promise<void>;
 	/**
 	 * Remove a skill by name.
 	 *
@@ -40,15 +57,26 @@ interface SkillPanelProps {
  *
  * @param skills - The skills to list.
  * @param loading - Whether the list is loading.
- * @param onAdd - Add-skill callback.
+ * @param onUpload - Folder-upload callback.
+ * @param onAddFromLibrary - Library-install callback.
  * @param onRemove - Remove-skill callback.
  * @returns The skill panel body.
  */
-export function SkillPanel({ skills, loading = false, onAdd, onRemove }: SkillPanelProps) {
+export function SkillPanel({
+	skills,
+	loading = false,
+	onUpload,
+	onAddFromLibrary,
+	onRemove,
+}: SkillPanelProps) {
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+	// The workspace stores only the skill itself, so the icon and author
+	// are looked up in the library, matched on the shared name.
+	const { skills: library } = useSkills();
+	const byName = new Map(library.map((skill) => [skill.name, skill]));
 
 	const filtered = search
 		? skills.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))
@@ -83,31 +111,64 @@ export function SkillPanel({ skills, loading = false, onAdd, onRemove }: SkillPa
 					}
 				/>
 			) : (
-				<div className="flex flex-col flex-1 min-h-0 overflow-y-auto gap-y-2">
-					{filtered.map((skill) => (
-						<Item key={skill.name} variant="outline">
-							<ItemContent>
-								<ItemTitle>{skill.name}</ItemTitle>
-								<ItemDescription>{skill.description}</ItemDescription>
-							</ItemContent>
-							<ItemActions>
-								<Button
-									variant="outline"
-									size="icon-sm"
-									onClick={() => {
-										setDeleteTarget(skill.name);
-										setDeleteOpen(true);
-									}}
-								>
-									<Trash />
-								</Button>
-							</ItemActions>
-						</Item>
-					))}
+				<div className="flex flex-col flex-1 min-h-0 overflow-y-auto scroll-fade gap-y-2">
+					{filtered.map((skill) => {
+						const installed = byName.get(skill.name);
+						return (
+							<Item key={skill.name} variant="outline" className="group/skill">
+								<ItemMedia>
+									<Avatar className="rounded-md">
+										<AvatarImage
+											src={installed?.icon_url ?? undefined}
+											alt={skill.name}
+											loading="lazy"
+										/>
+										<AvatarFallback className="rounded-md">
+											{skill.name.slice(0, 1).toUpperCase()}
+										</AvatarFallback>
+									</Avatar>
+								</ItemMedia>
+								<ItemContent>
+									<ItemTitle>
+										<span className="truncate font-medium">{skill.name}</span>
+										{installed?.author && (
+											<span className="text-xs text-muted-foreground">
+												@{installed.author}
+											</span>
+										)}
+									</ItemTitle>
+									<ItemDescription className="line-clamp-2">
+										{skill.description}
+									</ItemDescription>
+								</ItemContent>
+								<ItemActions>
+									{/* Only on hover: deleting is rare, and a
+									    button on every row competes with the
+									    content for attention. */}
+									<Button
+										variant="secondary"
+										size="icon-sm"
+										className="opacity-0 transition-opacity group-hover/skill:opacity-100 focus-visible:opacity-100"
+										onClick={() => {
+											setDeleteTarget(skill.name);
+											setDeleteOpen(true);
+										}}
+										title={t('common.delete')}
+									>
+										<Trash className="size-3" />
+									</Button>
+								</ItemActions>
+							</Item>
+						);
+					})}
 				</div>
 			)}
 
-			<AddSkillDialog onAdd={onAdd}>
+			<AddSkillDialog
+				present={new Set(skills.map((s) => s.name))}
+				onUpload={onUpload}
+				onAddFromLibrary={onAddFromLibrary}
+			>
 				<Button variant="default">
 					<PlusCircle />
 					{t('panel.skill.add')}

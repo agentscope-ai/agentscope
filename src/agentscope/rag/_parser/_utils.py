@@ -11,8 +11,8 @@ and :class:`PPTParser`:
   Markdown pipe-table; the default rendering for table content.
 - :func:`_table_to_json` — render the same shape as a JSON array
   prefixed with a one-line ``<system-info>`` marker; used when the
-  caller picks ``table_format="json"`` to avoid Markdown's
-  multi-line-cell ambiguity.
+  caller picks ``table_format="json"`` to preserve the extracted cell
+  strings instead of Markdown rendering.
 """
 import json
 
@@ -47,8 +47,28 @@ def _guess_image_media_type(data: bytes) -> str:
     return "image/jpeg"
 
 
+def _format_markdown_table_cell(cell: str) -> str:
+    """Escape content for use in a Markdown table cell.
+
+    Args:
+        cell (`str`):
+            The raw cell content.
+
+    Returns:
+        `str`:
+            The escaped single-line Markdown cell content.
+    """
+    normalised = cell.replace("\r\n", "\n").replace("\r", "\n")
+    escaped = normalised.replace("\\", "\\\\").replace("|", "\\|")
+    return escaped.replace("\n", "<br>")
+
+
 def _table_to_markdown(table_data: list[list[str]]) -> str:
     """Render a 2-D table as a Markdown pipe-table.
+
+    Pipe characters are escaped so they remain part of the cell, and
+    line endings within a cell are normalised and rendered as ``<br>``
+    tags so each table row stays on one physical Markdown line.
 
     Args:
         table_data (`list[list[str]]`):
@@ -66,14 +86,18 @@ def _table_to_markdown(table_data: list[list[str]]) -> str:
     if num_cols == 0:
         return ""
 
+    header = [_format_markdown_table_cell(cell) for cell in table_data[0]]
     lines = [
-        "| " + " | ".join(table_data[0]) + " |",
+        "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---"] * num_cols) + " |",
     ]
     for row in table_data[1:]:
         # Pad short rows so column counts match the header.
         padded = list(row) + [""] * max(0, num_cols - len(row))
-        lines.append("| " + " | ".join(padded[:num_cols]) + " |")
+        cells = [
+            _format_markdown_table_cell(cell) for cell in padded[:num_cols]
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
 

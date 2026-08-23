@@ -32,6 +32,9 @@ def _expected(
 ) -> dict:
     """Build the expected serialized-``ChatResponse`` dict, with
     ``AnyString`` placeholders for auto-generated fields."""
+    content = [
+        {"created_at": AnyString(), "finished_at": None, **b} for b in content
+    ]
     return {
         "content": content,
         "is_last": is_last,
@@ -49,6 +52,23 @@ class ChatResponseAppendTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """The async setup method."""
+
+    async def test_finished_reason_attribute_matches_mapping(self) -> None:
+        """Attribute access must return the explicitly provided reason."""
+        response = ChatResponse(
+            content=[],
+            is_last=True,
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+
+        self.assertEqual(
+            response.finished_reason,
+            response["finished_reason"],
+        )
+        self.assertEqual(
+            response.finished_reason,
+            FinishedReason.INTERRUPTED,
+        )
 
     # ------------------------------------------------------------------
     # append_text

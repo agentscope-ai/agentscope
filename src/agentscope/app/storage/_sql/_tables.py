@@ -34,12 +34,16 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 # Every id column is sized uniformly
 _ID_LEN = 255
+
+# User-chosen names. Bounded because MySQL cannot index a TEXT column.
+_NAME_LEN = 255
 
 
 class _Base(DeclarativeBase):
@@ -284,6 +288,51 @@ class KnowledgeDocumentRow(_JsonRecordMixin):
         "status",
         "lease_expires_at",
     )
+
+
+class MCPRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.MCPRecord`.
+
+    ``name`` is unique per user because the workspace relation joins on
+    it — two records sharing one would make that join ambiguous.
+    """
+
+    __tablename__ = "mcps"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(_NAME_LEN), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_mcps_user_name"),
+    )
+
+    _indexed_fields = ("user_id", "name")
+
+
+class SkillRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.SkillRecord`.
+
+    Same ``(user_id, name)`` uniqueness as :class:`MCPRow`.
+    """
+
+    __tablename__ = "skills"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(_NAME_LEN), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_skills_user_name"),
+    )
+
+    _indexed_fields = ("user_id", "name")
 
 
 class MessageRow(_Base):

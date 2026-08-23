@@ -7,31 +7,42 @@ The HTTP layer is intentionally thin — every endpoint translates the
 request into a single :class:`~agentscope.app._service.
 KnowledgeBaseService` call and returns the result.
 """
+from urllib.parse import quote
+
 from fastapi import (
     APIRouter,
     Depends,
     File,
     Form,
+    Header,
+    HTTPException,
     Path,
     Query,
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 
 from ..access import ResourceKind
 from ..deps import (
     get_current_user_id,
+    get_download_secret,
     get_knowledge_base_manager,
     get_knowledge_base_service,
+    get_knowledge_chunkers,
     get_knowledge_parsers,
     get_resource_access_service,
 )
 from ._schema import (
+    ChunkerInfo,
+    DocumentDownloadTokenResponse,
+    ListDocumentChunksResponse,
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
     KnowledgeDocumentView,
+    ListChunkersResponse,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
     ListKnowledgeDocumentsResponse,
@@ -46,11 +57,13 @@ from ...credential import CredentialFactory
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .._service import (
     KnowledgeBaseService,
+    sign_download_token,
+    verify_download_token,
     KnowledgeBaseView,
     ResourceAccessService,
 )
 from ...middleware import RAGMiddleware
-from ...rag import ParserBase
+from ...rag import ChunkerBase, ParserBase
 
 
 knowledge_base_router = APIRouter(
@@ -127,6 +140,46 @@ async def list_kb_embedding_models(
         )
 
     return ListKbEmbeddingModelsResponse(providers=providers, policy=policy)
+
+
+@knowledge_base_router.get(
+    "/chunkers",
+    response_model=ListChunkersResponse,
+    summary="List available chunker types and their parameter schemas",
+)
+async def list_chunkers(
+    _: str = Depends(get_current_user_id),
+    chunker_classes: list[type[ChunkerBase]] = Depends(
+        get_knowledge_chunkers,
+    ),
+) -> ListChunkersResponse:
+    """List every available chunker type with its parameter schema.
+
+    The front-end uses this to populate the chunker selector and
+    to render a dynamic parameter form when creating a knowledge
+    base.
+
+    Args:
+        _ (`str`):
+            Injected authenticated user ID; only used to gate the
+            endpoint behind authentication.
+        chunker_classes (`list[type[ChunkerBase]]`):
+            The chunker classes configured via
+            ``create_app(knowledge_chunkers=...)``.
+
+    Returns:
+        `ListChunkersResponse`:
+            All available chunker types with their JSON Schemas.
+    """
+    return ListChunkersResponse(
+        chunkers=[
+            ChunkerInfo(
+                type=cls.chunker_type,
+                parameter_schema=cls.Parameters.model_json_schema(),
+            )
+            for cls in chunker_classes
+        ],
+    )
 
 
 @knowledge_base_router.get(
@@ -246,6 +299,7 @@ async def create_knowledge_base(
         name=body.name,
         description=body.description,
         embedding_model_config=body.embedding_model_config,
+        chunker_config=body.chunker_config,
     )
     return CreateKnowledgeBaseResponse(knowledge_base_id=record.id)
 
@@ -256,31 +310,75 @@ async def create_knowledge_base(
     summary="List the caller's knowledge bases",
 )
 async def list_knowledge_bases(
+    id: str  # pylint: disable=redefined-builtin  # noqa: A002
+    | None = Query(
+        default=None,
+        description=(
+            "Filter down to one knowledge base — the list endpoint "
+            "doubles as get-single, RAGFlow style."
+        ),
+    ),
+    name: str
+    | None = Query(
+        default=None,
+        description="Case-insensitive substring filter on the name.",
+    ),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=30, ge=1, le=128),
+    orderby: str = Query(
+        default="create_time",
+        pattern="^(create_time|update_time)$",
+    ),
+    desc: bool = Query(default=True, description="Sort newest first."),
     user_id: str = Depends(get_current_user_id),
-    access: "ResourceAccessService" = Depends(get_resource_access_service),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
 ) -> ListKnowledgeBasesResponse:
-    """Return all knowledge bases visible to the authenticated user.
+    """Return the caller's knowledge bases, filtered and paginated.
 
     Includes the caller's own knowledge bases plus any shared to them
     through :class:`ResourceAccessPolicyBase`. Each entry carries an
-    ``editable`` flag: ``read`` grants search + attach; ``edit`` also
-    grants document add/delete and metadata update.
+    ``editable`` flag (``read`` grants search + attach; ``edit`` also
+    grants document add/delete and metadata update) plus the
+    aggregated document / chunk / per-status counts and the resolved
+    ``credential_name`` a detail page needs — the list is the single
+    source of truth; there is no separate get-single endpoint.
 
     Args:
+        id (`str | None`, optional):
+            Filter down to one knowledge base by id.
+        name (`str | None`, optional):
+            Case-insensitive substring filter on the display name.
+        page (`int`, defaults to ``1``):
+            1-based page number.
+        page_size (`int`, defaults to ``30``):
+            Knowledge bases per page (max 128).
+        orderby (`str`, defaults to ``"create_time"``):
+            Sort key — ``"create_time"`` or ``"update_time"``.
+        desc (`bool`, defaults to ``True``):
+            Sort newest first.
         user_id (`str`):
             Injected authenticated user ID.
-        access (`ResourceAccessService`):
-            Injected resource access service.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service.
 
     Returns:
         `ListKnowledgeBasesResponse`:
-            All visible knowledge bases paired with per-viewer
-            editability.
+            The requested page of views plus the filtered total.
     """
-    entries = await access.list_resource(user_id, ResourceKind.KNOWLEDGE_BASE)
+    views, total = await service.list_knowledge_base_views(
+        user_id,
+        knowledge_base_id=id,
+        name=name,
+        page=page,
+        page_size=page_size,
+        orderby=orderby,
+        desc=desc,
+    )
     return ListKnowledgeBasesResponse(
-        knowledge_bases=entries,
-        total=len(entries),
+        knowledge_bases=views,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -366,10 +464,34 @@ async def delete_knowledge_base(
 )
 async def list_knowledge_documents(
     knowledge_base_id: str = Path(description="The knowledge base id."),
+    id: str  # pylint: disable=redefined-builtin  # noqa: A002
+    | None = Query(
+        default=None,
+        description="Filter down to one document by id.",
+    ),
+    keywords: str
+    | None = Query(
+        default=None,
+        description="Case-insensitive substring filter on the filename.",
+    ),
+    status_filter: str
+    | None = Query(
+        default=None,
+        alias="status",
+        pattern="^(pending|parsing|chunking|indexing|ready|error)$",
+        description="Filter by indexing status.",
+    ),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=30, ge=1, le=128),
+    orderby: str = Query(
+        default="create_time",
+        pattern="^(create_time|update_time)$",
+    ),
+    desc: bool = Query(default=True, description="Sort newest first."),
     user_id: str = Depends(get_current_user_id),
     service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
 ) -> ListKnowledgeDocumentsResponse:
-    """List every document registered against a knowledge base.
+    """List a knowledge base's documents, filtered and paginated.
 
     Reads from the storage backend (service-mode source of truth), so
     documents in any lifecycle state — including ``pending`` /
@@ -378,6 +500,20 @@ async def list_knowledge_documents(
     Args:
         knowledge_base_id (`str`):
             The target knowledge base id.
+        id (`str | None`, optional):
+            Filter down to one document by id.
+        keywords (`str | None`, optional):
+            Case-insensitive substring filter on the filename.
+        status_filter (`str | None`, optional):
+            Filter by indexing status.
+        page (`int`, defaults to ``1``):
+            1-based page number.
+        page_size (`int`, defaults to ``30``):
+            Documents per page (max 128).
+        orderby (`str`, defaults to ``"create_time"``):
+            Sort key — ``"create_time"`` or ``"update_time"``.
+        desc (`bool`, defaults to ``True``):
+            Sort newest first.
         user_id (`str`):
             Injected authenticated user ID.
         service (`KnowledgeBaseService`):
@@ -385,13 +521,25 @@ async def list_knowledge_documents(
 
     Returns:
         `ListKnowledgeDocumentsResponse`:
-            One view per registered document.
+            The requested page of views plus the filtered total.
     """
-    records = await service.list_documents(user_id, knowledge_base_id)
+    records, total = await service.list_documents(
+        user_id,
+        knowledge_base_id,
+        document_id=id,
+        keywords=keywords,
+        doc_status=status_filter,
+        page=page,
+        page_size=page_size,
+        orderby=orderby,
+        desc=desc,
+    )
     views = [KnowledgeDocumentView.from_record(r) for r in records]
     return ListKnowledgeDocumentsResponse(
         documents=views,
-        total=len(views),
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -573,3 +721,240 @@ async def search_knowledge_base(
         top_k=body.top_k,
     )
     return SearchKnowledgeBaseResponse(results=results, total=len(results))
+
+
+# The media types a browser may render inline. Anything else (notably
+# text/html and image/svg+xml, which can run script) is forced to an
+# attachment so a crafted upload cannot XSS the app origin. Raster
+# image formats are enumerated rather than matched by ``image/``
+# prefix precisely so that SVG never slips through.
+_INLINE_MEDIA_TYPES = frozenset(
+    {
+        "text/plain",
+        "text/markdown",
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+    },
+)
+
+
+# Preview tokens outlive a download capability on purpose: a PDF
+# viewer embedded in an <iframe> re-requests the file as the reader
+# pages through it, and a 60-second window would 401 mid-read.
+_PREVIEW_TOKEN_TTL = 600
+
+
+def _document_token_path(knowledge_base_id: str, document_id: str) -> str:
+    """The resource string a document download token is bound to."""
+    return f"kb/{knowledge_base_id}/{document_id}"
+
+
+@knowledge_base_router.get(
+    "/{knowledge_base_id}/documents/{document_id}/chunks",
+    response_model=ListDocumentChunksResponse,
+    summary="Browse one document's chunks in order",
+)
+async def list_document_chunks(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The document id."),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=30, ge=1, le=128),
+    user_id: str = Depends(get_current_user_id),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+) -> ListDocumentChunksResponse:
+    """Return one page of a document's chunks, ``chunk_index`` ascending.
+
+    Pagination is stable: ``chunk_index`` is a dense, immutable
+    ``0..N-1`` sequence within a document, so page ``N`` always maps to
+    the same chunk range.  A document that is still indexing serves
+    the chunks persisted so far.
+
+    Args:
+        knowledge_base_id (`str`):
+            The parent knowledge base.
+        document_id (`str`):
+            The document whose chunks should be listed.
+        page (`int`, defaults to ``1``):
+            1-based page number.
+        page_size (`int`, defaults to ``30``):
+            Chunks per page (max 128).
+        user_id (`str`):
+            Injected authenticated user ID.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service.
+
+    Returns:
+        `ListDocumentChunksResponse`:
+            The page of chunks plus the document's total chunk count.
+    """
+    chunks, total = await service.list_document_chunks(
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+        page=page,
+        page_size=page_size,
+    )
+    return ListDocumentChunksResponse(
+        chunks=chunks,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@knowledge_base_router.post(
+    "/{knowledge_base_id}/documents/{document_id}/download_token",
+    response_model=DocumentDownloadTokenResponse,
+    summary="Mint a short-lived token for a browser-native fetch",
+)
+async def create_document_download_token(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The document id."),
+    user_id: str = Depends(get_current_user_id),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+    download_secret: str = Depends(get_download_secret),
+) -> DocumentDownloadTokenResponse:
+    """Mint a token so a browser can fetch the raw file directly.
+
+    ``<iframe>`` PDF previews, ``<img>`` tags and click-to-download
+    navigations carry no custom headers, so they cannot present
+    ``X-User-ID``; the token rides in the URL instead and is bound to
+    exactly this document.
+
+    Args:
+        knowledge_base_id (`str`):
+            The parent knowledge base.
+        document_id (`str`):
+            The document the token authorizes.
+        user_id (`str`):
+            Injected authenticated user ID.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service — resolved here only to
+            fail early with a proper 404 instead of a raw error page
+            on the browser navigation.
+        download_secret (`str`):
+            Injected app-wide signing secret.
+
+    Returns:
+        `DocumentDownloadTokenResponse`:
+            The token and its expiry.
+    """
+    await service.get_document(user_id, knowledge_base_id, document_id)
+    token, expires_at = sign_download_token(
+        download_secret,
+        user_id,
+        _document_token_path(knowledge_base_id, document_id),
+        ttl=_PREVIEW_TOKEN_TTL,
+    )
+    return DocumentDownloadTokenResponse(token=token, expires_at=expires_at)
+
+
+@knowledge_base_router.get(
+    "/{knowledge_base_id}/documents/{document_id}",
+    summary="Fetch the original uploaded file of a document",
+)
+async def read_knowledge_document(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The document id."),
+    download: bool = Query(
+        default=False,
+        description="Force a Content-Disposition attachment.",
+    ),
+    token: str
+    | None = Query(
+        default=None,
+        description=(
+            "A token from ``POST .../documents/{document_id}"
+            "/download_token``, accepted in place of the "
+            "``X-User-ID`` header so a browser navigation can fetch "
+            "the file directly."
+        ),
+    ),
+    x_user_id: str | None = Header(default=None),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+    download_secret: str = Depends(get_download_secret),
+) -> StreamingResponse:
+    """Stream the raw uploaded file back for preview or download.
+
+    Mirrors ``GET /workspace/files``: the body is piped chunk by chunk
+    from the blob store rather than read whole, so one large file
+    cannot exhaust the shared API process.  Only media types that
+    cannot carry script are served inline; everything else is forced
+    to an attachment.
+
+    Args:
+        knowledge_base_id (`str`):
+            The parent knowledge base.
+        document_id (`str`):
+            The document whose original file should be fetched.
+        download (`bool`, defaults to ``False``):
+            Force an attachment disposition.
+        token (`str | None`, optional):
+            Signed download token, accepted instead of ``X-User-ID``.
+        x_user_id (`str | None`, optional):
+            The normal identity header.
+        service (`KnowledgeBaseService`):
+            Injected knowledge base service.
+        download_secret (`str`):
+            Injected app-wide signing secret.
+
+    Returns:
+        `StreamingResponse`:
+            The file bytes with content-type / length / disposition
+            headers derived from the upload-time record.
+    """
+    if token is not None:
+        try:
+            user_id = verify_download_token(
+                download_secret,
+                token,
+                _document_token_path(knowledge_base_id, document_id),
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(e),
+            ) from e
+    elif x_user_id:
+        user_id = x_user_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-ID header or download token is required.",
+        )
+
+    record, size, content = await service.stream_document_content(
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+    )
+    data = record.data
+    media_type = (data.content_type or "").split(";")[
+        0
+    ].strip().lower() or "application/octet-stream"
+    inline = not download and media_type in _INLINE_MEDIA_TYPES
+    disposition = "inline" if inline else "attachment"
+    filename = quote(data.filename or "download")
+    headers = {
+        "Content-Disposition": (f"{disposition}; filename*=UTF-8''{filename}"),
+        "Cache-Control": "private, max-age=60",
+        # The declared type is authoritative — never let the browser
+        # sniff a scriptable type out of the bytes.
+        "X-Content-Type-Options": "nosniff",
+    }
+    # Measured on the blob, never read off the record: a wrong length
+    # truncates the body. Present, it turns the browser's download
+    # progress from a byte counter into a percentage; absent (backend
+    # cannot measure), the response is chunked — same rule as
+    # ``GET /workspace/files``.
+    if size is not None:
+        headers["Content-Length"] = str(size)
+    return StreamingResponse(
+        content,
+        media_type=media_type,
+        headers=headers,
+    )
