@@ -44,6 +44,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
 ]
@@ -82,6 +83,7 @@ channel = [
     "discord.py>=2.3",
     "python-telegram-bot[callback-data]>=22.8,<23.0",
     "markdown-it-py>=4,<5",
+    "dingtalk-stream>=0.24.3",
 ]
 # ------------ Workspace (sandbox backends) ------------
 workspace-docker = ["aiodocker"]

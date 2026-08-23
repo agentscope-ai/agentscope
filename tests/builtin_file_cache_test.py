@@ -245,6 +245,41 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         self.assertIn(files[2], cached_paths)
         self.assertIn(files[3], cached_paths)
 
+    async def test_cache_hit_refreshes_lru_recency(self) -> None:
+        """Test cache hits keep recently used files from being evicted."""
+        self.state.tool_context.max_cache_files = 3
+
+        files = []
+        for i in range(4):
+            file_path = os.path.join(self.temp_dir, f"file{i}.txt")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"Content {i}\n")
+            files.append(file_path)
+
+        for file_path in files[:3]:
+            await self.read_tool(
+                file_path=file_path,
+                _agent_state=self.state,
+            )
+
+        cache = await self.state.tool_context.get_cache(files[0])
+        self.assertIsNotNone(cache)
+
+        await self.read_tool(
+            file_path=files[3],
+            _agent_state=self.state,
+        )
+
+        cached_paths = [
+            entry.file_path
+            for entry in self.state.tool_context.read_file_cache
+        ]
+
+        self.assertIn(files[0], cached_paths)
+        self.assertNotIn(files[1], cached_paths)
+        self.assertIn(files[2], cached_paths)
+        self.assertIn(files[3], cached_paths)
+
     async def test_cache_without_state(self) -> None:
         """Test tools work without state (fallback mode)."""
         # Create a file

@@ -9,6 +9,7 @@ import {
 	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuPortal,
 	DropdownMenuSeparator,
 	DropdownMenuSub,
 	DropdownMenuSubContent,
@@ -18,6 +19,7 @@ import {
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils';
+import { credentialLabel } from '@/utils/common';
 
 interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	value?: ChatModelConfig | null;
@@ -52,7 +54,12 @@ export function LlmSelect({
 }: Props) {
 	const { groups, loading, refetch } = useAvailableModels();
 	const { t } = useTranslation();
-	const hasOptions = Object.keys(groups).length > 0;
+	// Credentials whose model list failed to load come back with an empty
+	// `models` array; drop them so they don't render empty submenus
+	const groupEntries = Object.entries(groups)
+		.map(([type, items]) => [type, items.filter((i) => i.models.length > 0)] as const)
+		.filter(([, usable]) => usable.length > 0);
+	const hasOptions = groupEntries.length > 0;
 
 	useEffect(() => {
 		if (refetchTrigger !== undefined && refetchTrigger > 0) refetch();
@@ -88,8 +95,8 @@ export function LlmSelect({
 						<p className="text-xs mt-1">{t('llm-select.empty.description')}</p>
 					</div>
 				) : (
-					Object.entries(groups).map(([type, items], idx) => {
-						const isSingle = items.length === 1;
+					groupEntries.map(([type, usable], idx) => {
+						const isSingle = usable.length === 1;
 						return (
 							<DropdownMenuGroup key={type}>
 								{idx > 0 && <DropdownMenuSeparator />}
@@ -97,13 +104,13 @@ export function LlmSelect({
 									{type.replace(/_credential$/, '')}
 								</DropdownMenuLabel>
 								{isSingle
-									? items[0].models.map((m) => (
+									? usable[0].models.map((m) => (
 											<DropdownMenuItem
 												key={m.name}
 												onSelect={() =>
 													handleSelect(
 														type,
-														items[0].credential.id,
+														usable[0].credential.id,
 														m.name,
 													)
 												}
@@ -111,15 +118,12 @@ export function LlmSelect({
 												{m.name}
 											</DropdownMenuItem>
 										))
-									: items.map(({ credential, models }) => {
-											const credName =
-												(credential.data.name as string) ||
-												credential.id.slice(0, 8);
-											return (
-												<DropdownMenuSub key={credential.id}>
-													<DropdownMenuSubTrigger>
-														{credName}
-													</DropdownMenuSubTrigger>
+									: usable.map(({ credential, models }) => (
+											<DropdownMenuSub key={credential.id}>
+												<DropdownMenuSubTrigger>
+													{credentialLabel(credential)}
+												</DropdownMenuSubTrigger>
+												<DropdownMenuPortal>
 													<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
 														{models.map((m) => (
 															<DropdownMenuItem
@@ -136,9 +140,9 @@ export function LlmSelect({
 															</DropdownMenuItem>
 														))}
 													</DropdownMenuSubContent>
-												</DropdownMenuSub>
-											);
-										})}
+												</DropdownMenuPortal>
+											</DropdownMenuSub>
+										))}
 							</DropdownMenuGroup>
 						);
 					})

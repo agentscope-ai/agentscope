@@ -1,6 +1,14 @@
+import type { ReactNode } from 'react';
+
 import type { JSONSchema, JSONSchemaProperty } from '@/api';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field.tsx';
+import {
+	Field,
+	FieldContent,
+	FieldDescription,
+	FieldGroup,
+	FieldLabel,
+} from '@/components/ui/field.tsx';
 import { Input } from '@/components/ui/input';
 import {
 	Select,
@@ -29,6 +37,10 @@ interface Props {
 	descriptionFor?: (key: string, prop: JSONSchemaProperty) => string | undefined;
 	/** Prefix for generated DOM IDs (so multiple SchemaForms on one page don't collide). */
 	idPrefix?: string;
+	/** Layout of non-boolean fields. `horizontal` puts the label left of the control. */
+	orientation?: 'vertical' | 'horizontal';
+	/** Extra classes for the wrapping FieldGroup. */
+	className?: string;
 }
 
 function effectiveType(prop: JSONSchemaProperty): string {
@@ -77,13 +89,15 @@ export function SchemaForm({
 	placeholderFor,
 	descriptionFor,
 	idPrefix = 'schema-form',
+	orientation = 'vertical',
+	className,
 }: Props) {
 	const entries = Object.entries(schema.properties ?? {}).filter(
 		([key, prop]) => !skipFields.has(key) && prop.const === undefined,
 	);
 
 	return (
-		<FieldGroup>
+		<FieldGroup className={className}>
 			{entries.map(([key, prop]) => {
 				const fieldId = `${idPrefix}-${key}`;
 				const isRequired = schema.required?.includes(key) ?? false;
@@ -98,6 +112,33 @@ export function SchemaForm({
 				const placeholder = placeholderFor?.(key, prop) ?? prop.description;
 				const description = descriptionFor?.(key, prop);
 				const current = values[key];
+
+				const labelNode = (
+					<FieldLabel htmlFor={fieldId}>
+						{label}
+						{isRequired && <span className="text-destructive ml-0.5">*</span>}
+					</FieldLabel>
+				);
+				const descriptionNode = description ? (
+					<FieldDescription>{description}</FieldDescription>
+				) : null;
+				/** Label (+ helper text) left of the control when horizontal. */
+				const wrap = (control: ReactNode) =>
+					orientation === 'horizontal' ? (
+						<Field key={key} orientation="horizontal">
+							<FieldContent>
+								{labelNode}
+								{descriptionNode}
+							</FieldContent>
+							{control}
+						</Field>
+					) : (
+						<Field key={key}>
+							{labelNode}
+							{control}
+							{descriptionNode}
+						</Field>
+					);
 
 				if (isBoolean) {
 					return (
@@ -118,101 +159,71 @@ export function SchemaForm({
 				if (enumOpts) {
 					const currentStr =
 						current === undefined || current === null ? '' : String(current);
-					return (
-						<Field key={key}>
-							<FieldLabel htmlFor={fieldId}>
-								{label}
-								{isRequired && <span className="text-destructive ml-0.5">*</span>}
-							</FieldLabel>
-							<Select value={currentStr} onValueChange={(v) => onChange(key, v)}>
-								<SelectTrigger id={fieldId} className="w-full">
-									<SelectValue placeholder={placeholder} />
-								</SelectTrigger>
-								<SelectContent>
-									{enumOpts.map((opt) => (
-										<SelectItem key={String(opt)} value={String(opt)}>
-											{String(opt)}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-							{description && <FieldDescription>{description}</FieldDescription>}
-						</Field>
+					return wrap(
+						<Select value={currentStr} onValueChange={(v) => onChange(key, v)}>
+							<SelectTrigger id={fieldId} className="w-full">
+								<SelectValue placeholder={placeholder} />
+							</SelectTrigger>
+							<SelectContent>
+								{enumOpts.map((opt) => (
+									<SelectItem key={String(opt)} value={String(opt)}>
+										{String(opt)}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>,
 					);
 				}
 
 				if (isTextarea) {
-					return (
-						<Field key={key}>
-							<FieldLabel htmlFor={fieldId}>
-								{label}
-								{isRequired && <span className="text-destructive ml-0.5">*</span>}
-							</FieldLabel>
-							<Textarea
-								id={fieldId}
-								rows={3}
-								value={(current as string | undefined) ?? ''}
-								onChange={(e) => onChange(key, e.target.value)}
-								placeholder={placeholder}
-							/>
-							{description && <FieldDescription>{description}</FieldDescription>}
-						</Field>
+					return wrap(
+						<Textarea
+							id={fieldId}
+							rows={3}
+							value={(current as string | undefined) ?? ''}
+							onChange={(e) => onChange(key, e.target.value)}
+							placeholder={placeholder}
+						/>,
 					);
 				}
 
 				if (isNumber) {
 					const min = prop.minimum ?? prop.exclusiveMinimum;
 					const max = prop.maximum ?? prop.exclusiveMaximum;
-					return (
-						<Field key={key}>
-							<FieldLabel htmlFor={fieldId}>
-								{label}
-								{isRequired && <span className="text-destructive ml-0.5">*</span>}
-							</FieldLabel>
-							<Input
-								id={fieldId}
-								type="number"
-								min={min}
-								max={max}
-								step={inferStep(type)}
-								value={
-									current === undefined || current === null ? '' : String(current)
+					return wrap(
+						<Input
+							id={fieldId}
+							type="number"
+							min={min}
+							max={max}
+							step={inferStep(type)}
+							value={current === undefined || current === null ? '' : String(current)}
+							onChange={(e) => {
+								const raw = e.target.value;
+								// Empty input → undefined so JSON.stringify drops the key
+								// and the backend applies its own default. Sending "" would
+								// fail Pydantic float/int coercion.
+								if (raw === '') {
+									onChange(key, undefined);
+									return;
 								}
-								onChange={(e) => {
-									const raw = e.target.value;
-									// Empty input → undefined so JSON.stringify drops the key
-									// and the backend applies its own default. Sending "" would
-									// fail Pydantic float/int coercion.
-									if (raw === '') {
-										onChange(key, undefined);
-										return;
-									}
-									const parsed =
-										type === 'integer' ? parseInt(raw, 10) : parseFloat(raw);
-									onChange(key, Number.isNaN(parsed) ? raw : parsed);
-								}}
-								placeholder={placeholder}
-							/>
-							{description && <FieldDescription>{description}</FieldDescription>}
-						</Field>
+								const parsed =
+									type === 'integer' ? parseInt(raw, 10) : parseFloat(raw);
+								onChange(key, Number.isNaN(parsed) ? raw : parsed);
+							}}
+							placeholder={placeholder}
+						/>,
 					);
 				}
 
-				return (
-					<Field key={key}>
-						<FieldLabel htmlFor={fieldId}>
-							{label}
-							{isRequired && <span className="text-destructive ml-0.5">*</span>}
-						</FieldLabel>
-						<Input
-							id={fieldId}
-							type={isPassword ? 'password' : 'text'}
-							value={(current as string | undefined) ?? ''}
-							onChange={(e) => onChange(key, e.target.value)}
-							placeholder={placeholder}
-						/>
-						{description && <FieldDescription>{description}</FieldDescription>}
-					</Field>
+				return wrap(
+					<Input
+						id={fieldId}
+						type={isPassword ? 'password' : 'text'}
+						value={(current as string | undefined) ?? ''}
+						onChange={(e) => onChange(key, e.target.value)}
+						placeholder={placeholder}
+					/>,
 				);
 			})}
 		</FieldGroup>

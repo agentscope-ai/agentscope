@@ -35,6 +35,7 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
 )
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
@@ -105,6 +106,26 @@ class _FakeVectorStore(VectorStoreBase):
     ) -> list[DocumentSummary]:
         return []
 
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list:
+        del metadata_filter  # single-tenant fake — nothing to scope
+        matched = sorted(
+            (
+                record.chunk
+                for record in self._collections.get(collection, [])
+                if record.document_id == document_id
+            ),
+            key=lambda chunk: chunk.chunk_index,
+        )
+        return matched[offset : offset + limit]
+
 
 class _FakeKnowledge:
     """Minimal stand-in for :class:`KnowledgeBase` used by the worker.
@@ -170,6 +191,34 @@ class _FakeKnowledge:
         """
         await self._vector_store.delete(self._collection_name, document_id)
 
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list:
+        """Delegate chunk listing to the bound fake vector store.
+
+        Args:
+            document_id (`str`):
+                The document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+
+        Returns:
+            `list`:
+                The requested page of chunks.
+        """
+        return await self._vector_store.list_chunks(
+            self._collection_name,
+            document_id,
+            offset=offset,
+            limit=limit,
+        )
+
     async def search(self, queries: list, top_k: int = 5) -> list:
         """Return an empty result list — search is out of scope here.
 
@@ -206,6 +255,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         name: str,
         description: str,
         embedding_model_config: EmbeddingModelConfig,
+        chunker_config: ChunkerConfig | None = None,
     ) -> KnowledgeBaseRecord:
         record = KnowledgeBaseRecord(
             user_id=user_id,

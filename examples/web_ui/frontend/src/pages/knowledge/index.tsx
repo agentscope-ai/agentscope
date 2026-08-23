@@ -1,5 +1,6 @@
+import { format } from 'date-fns';
 import { Ellipsis, Files, FlaskConical, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -92,9 +93,89 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 
 			<Separator className="shrink-0" />
 
-			{/* Documents */}
+			{/* Configuration + documents */}
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
-				<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+				<div className="flex flex-col gap-y-6">
+					<ConfigCard knowledgeBase={knowledgeBase} />
+					<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function ConfigItem({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="flex min-w-0 flex-col gap-y-0.5">
+			<span className="text-muted-foreground text-xs">{label}</span>
+			<span className="truncate text-sm text-foreground" title={value}>
+				{value}
+			</span>
+		</div>
+	);
+}
+
+/**
+ * Read-only card surfacing the full configuration pinned at creation
+ * time — embedding model, chunker, credential — plus the aggregated
+ * counts the list endpoint now serves (#2360).
+ */
+function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
+	const { t } = useTranslation();
+	const embedding = knowledgeBase.embedding_model_config;
+	const chunker = knowledgeBase.chunker_config;
+
+	// Only worth showing when something is not ready — a KB where every
+	// document indexed cleanly says nothing extra beyond the totals.
+	const counts = knowledgeBase.status_counts;
+	const unfinished = counts.pending + counts.parsing + counts.chunking + counts.indexing;
+	const statusValue =
+		counts.error > 0 || unfinished > 0
+			? t('knowledge.config.statusValue', {
+					ready: counts.ready,
+					indexing: unfinished,
+					failed: counts.error,
+				})
+			: null;
+
+	const chunkerValue = chunker
+		? Object.keys(chunker.parameters).length > 0
+			? `${chunker.type} · ${Object.entries(chunker.parameters)
+					.map(([k, v]) => `${k}=${String(v)}`)
+					.join(', ')}`
+			: chunker.type
+		: '—';
+
+	return (
+		<div className="flex flex-col gap-y-3">
+			<h3 className="text-[13.5px] font-medium text-foreground">
+				{t('knowledge.config.title')}
+			</h3>
+			<div className="border-border bg-card grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border p-3 sm:grid-cols-3">
+				<ConfigItem label={t('knowledge.config.embeddingModel')} value={embedding.model} />
+				<ConfigItem
+					label={t('knowledge.config.dimensions')}
+					value={String(embedding.dimensions)}
+				/>
+				<ConfigItem
+					label={t('knowledge.config.credential')}
+					value={knowledgeBase.credential_name ?? embedding.credential_id}
+				/>
+				<ConfigItem label={t('knowledge.config.chunker')} value={chunkerValue} />
+				<ConfigItem
+					label={t('knowledge.config.counts')}
+					value={t('knowledge.config.countsValue', {
+						documents: knowledgeBase.document_count,
+						chunks: knowledgeBase.chunk_count,
+					})}
+				/>
+				{statusValue && (
+					<ConfigItem label={t('knowledge.config.status')} value={statusValue} />
+				)}
+				<ConfigItem
+					label={t('knowledge.config.createdAt')}
+					value={format(new Date(knowledgeBase.created_at), 'yyyy-MM-dd HH:mm')}
+				/>
 			</div>
 		</div>
 	);
@@ -116,6 +197,16 @@ export const KnowledgePage = () => {
 	const [testOpen, setTestOpen] = useState(false);
 
 	const selectedKb = knowledgeBases.find((kb) => kb.id === selectedKbId);
+
+	// Default to the first knowledge base when none is selected (or the
+	// selected one no longer exists), mirroring the URL so refresh keeps it.
+	useEffect(() => {
+		if (knowledgeBases.length === 0) return;
+		if (knowledgeBases.some((kb) => kb.id === selectedKbId)) return;
+		const first = knowledgeBases[0].id;
+		setSelectedKbId(first);
+		navigate(`/knowledge/${first}`, { replace: true });
+	}, [knowledgeBases, selectedKbId, navigate]);
 
 	const handleCreated = async (knowledgeBaseId: string) => {
 		await refetch();

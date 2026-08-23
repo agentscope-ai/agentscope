@@ -4,7 +4,7 @@ from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
 from .channel import (
-    ChannelLifecycleDispatcher,
+    ChannelClients,
     ChannelTypeRegistry,
 )
 from ._manager import (
@@ -26,7 +26,7 @@ from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .storage import StorageBase
-from ..rag import ParserBase
+from ..rag import ChunkerBase, ParserBase
 
 
 async def get_current_user_id(
@@ -346,6 +346,37 @@ async def get_knowledge_parsers(
     return parsers
 
 
+async def get_knowledge_chunkers(
+    request: Request,
+) -> list[type[ChunkerBase]]:
+    """Return the chunker classes configured on the app.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `list[type[ChunkerBase]]`:
+            The chunker classes stored in ``app.state.knowledge_chunkers``
+            — the same value the index worker uses to rebuild chunkers.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when the KB feature is disabled (no chunkers
+            configured).
+    """
+    chunkers = getattr(request.app.state, "knowledge_chunkers", None)
+    if not chunkers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Knowledge base feature is disabled — pass a "
+                "knowledge_base_manager to create_app() to enable it."
+            ),
+        )
+    return chunkers
+
+
 async def get_mcp_hubs(request: Request) -> dict[str, MCPHubBase]:
     """Return the registered MCP hubs, keyed by hub id.
 
@@ -388,19 +419,21 @@ async def get_channel_service(request: Request) -> ChannelService:
     return request.app.state.channel_service
 
 
-async def get_channel_dispatcher(
+async def get_channel_clients(
     request: Request,
-) -> ChannelLifecycleDispatcher:
-    """Return this node's channel lifecycle dispatcher.
+) -> ChannelClients:
+    """Return the factory for unconnected channel instances.
+
+    Present in every process, whether or not this one holds the
+    channels' long connections.
 
     Args:
         request (`Request`): The incoming FastAPI request.
 
     Returns:
-        `ChannelLifecycleDispatcher`: The dispatcher stored in
-        ``app.state``, source of per-channel runtime status.
+        `ChannelClients`: The factory stored in ``app.state``.
     """
-    return request.app.state.channel_dispatcher
+    return request.app.state.channel_clients
 
 
 async def get_channel_type_registry(
