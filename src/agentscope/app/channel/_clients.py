@@ -43,6 +43,10 @@ from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
 from ._stream import open_reply_stream
 
+# Keep outbound delivery bounded while allowing Telegram flood-limit waits
+# longer than the old 30-second cutoff.
+RESPONSE_TIMEOUT_SECS = 300.0
+
 
 class ChannelClients:
     """Builds and caches unconnected channel instances by channel id."""
@@ -142,6 +146,7 @@ class ChannelClients:
                 credentials=record.credentials,
                 config=record.platform_config,
             )
+            channel.bind_message_bus(self._bus)
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "channel client '%s' could not be built",
@@ -213,7 +218,18 @@ class ChannelClients:
             """Feed the run's event stream to the channel."""
             try:
                 async with aclosing(events):
-                    await channel.send_response(target, events)
+                    await asyncio.wait_for(
+                        channel.send_response(target, events),
+                        timeout=RESPONSE_TIMEOUT_SECS,
+                    )
+            except (asyncio.TimeoutError, TimeoutError):
+                logger.warning(
+                    "channel '%s' response delivery timed out after %.0f "
+                    "seconds for session '%s'",
+                    channel_id,
+                    RESPONSE_TIMEOUT_SECS,
+                    session_id,
+                )
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
                     "channel '%s' failed to deliver the reply for "

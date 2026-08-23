@@ -35,6 +35,7 @@ from ...types import ReplyFinishedReason
 if TYPE_CHECKING:
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
+    from ..message_bus import MessageBus
 
 _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
@@ -388,6 +389,18 @@ class ChannelBase(ABC):
         ``finally`` to close it. Override to close those; the connection
         loop keeps releasing its own. Default: nothing to do.
         """
+
+    def bind_message_bus(self, message_bus: "MessageBus") -> None:
+        """Provide the process-shared bus to channels that need it.
+
+        Most channels only use REST for outbound work and do not need this
+        hook. Telegram uses it to keep approval callback state available to
+        both the connection worker and the process that sent the card.
+
+        Args:
+            message_bus (`MessageBus`): Shared application message bus.
+        """
+        del message_bus
 
     async def send_reaction(  # pylint: disable=unused-argument
         self,

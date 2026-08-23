@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 import io
+import json
+import re
 import secrets
 import time
 from typing import (
@@ -39,6 +41,7 @@ from ....message import (
     ToolCallBlock,
     ToolResultBlock,
 )
+from ...message_bus import MessageBusKeys
 from .._base import (
     ChannelBase,
     ChannelCapability,
@@ -53,6 +56,7 @@ if TYPE_CHECKING:
     from telegram import Message, Update
     from telegram.ext import Application, CallbackContext
 
+    from ...message_bus import MessageBus
     from ....tool import ToolBase
     from ....workspace import WorkspaceBase
     from ._markdown import _TelegramTextChunk
@@ -64,11 +68,12 @@ _ALBUM_SETTLE_SECS = 0.8
 _STREAM_MIN_INTERVAL_SECS = 1.0
 _MAX_CONNECT_ATTEMPTS = 2
 _MAX_API_ATTEMPTS = 3
-_MAX_RETRY_AFTER_SECS = 30.0
 _MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 _MAX_PHOTO_BYTES = 10 * 1024 * 1024
 _MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 _MAX_TEXT_LENGTH = 4096
+_APPROVAL_CALLBACK_PREFIX = "as:approval:"
+_APPROVAL_CALLBACK_TTL_SECS = 24 * 60 * 60
 
 _T = TypeVar("_T")
 
@@ -79,13 +84,51 @@ class _PermanentTelegramError(RuntimeError):
 
 @dataclass(frozen=True)
 class _ApprovalCallback:
-    """Data kept in PTB's callback-data cache for one approval button."""
+    """Approval data stored in the shared callback registry."""
 
     tool_call_id: str
     chat_id: str
     agent_id: str
     session_id: str
     approved: bool
+
+    def to_json(self) -> str:
+        """Serialize the callback payload for the shared message bus."""
+        return json.dumps(
+            {
+                "tool_call_id": self.tool_call_id,
+                "chat_id": self.chat_id,
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "approved": self.approved,
+            },
+            separators=(",", ":"),
+        )
+
+    @classmethod
+    def from_json(cls, value: str) -> "_ApprovalCallback | None":
+        """Return a validated callback payload, or ``None`` if malformed."""
+        try:
+            raw = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(raw, dict) or not isinstance(
+            raw.get("approved"),
+            bool,
+        ):
+            return None
+        fields = ("tool_call_id", "chat_id", "agent_id", "session_id")
+        if any(not isinstance(raw.get(field), str) for field in fields):
+            return None
+        if not raw["tool_call_id"] or not raw["chat_id"]:
+            return None
+        return cls(
+            tool_call_id=raw["tool_call_id"],
+            chat_id=raw["chat_id"],
+            agent_id=raw["agent_id"],
+            session_id=raw["session_id"],
+            approved=raw["approved"],
+        )
 
 
 @dataclass(frozen=True)
@@ -181,6 +224,38 @@ class TelegramChannel(ChannelBase):
             title="Show thinking",
             description="Show model reasoning inline in the reply",
         )
+        allow_public_private_chats: bool = Field(
+            default=False,
+            title="Allow public private chats",
+            description=(
+                "Allow any Telegram user to start a private chat with this "
+                "bot"
+            ),
+        )
+        allowed_private_user_ids: str = Field(
+            default="",
+            title="Allowed private user IDs",
+            description=(
+                "Comma-, whitespace-, or newline-separated Telegram user "
+                "IDs allowed to use private chats"
+            ),
+        )
+
+        @field_validator("allowed_private_user_ids")
+        @classmethod
+        def _validate_allowed_private_user_ids(cls, value: str) -> str:
+            tokens = [
+                token for token in re.split(r"[,\s]+", value.strip()) if token
+            ]
+            ids: set[int] = set()
+            for token in tokens:
+                if re.fullmatch(r"[0-9]+", token) is None or int(token) <= 0:
+                    raise ValueError(
+                        "allowed_private_user_ids must contain only "
+                        "positive numeric Telegram user IDs",
+                    )
+                ids.add(int(token))
+            return ",".join(str(user_id) for user_id in sorted(ids))
 
     capabilities = ChannelCapability(
         text=True,
@@ -202,8 +277,16 @@ class TelegramChannel(ChannelBase):
         self._bot_id = credentials.bot_id.strip()
         self._bot_token = credentials.bot_token
         self._config = config
+        self._allowed_private_user_ids = frozenset(
+            int(user_id)
+            for user_id in config.allowed_private_user_ids.split(",")
+            if user_id
+        )
         self.status = ChannelStatus()
         self._application: "Application | None" = None
+        self._rest_bot: Any = None
+        self._rest_bot_lock = asyncio.Lock()
+        self._message_bus: "MessageBus | None" = None
         self._bot_user: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._fatal_event: asyncio.Event | None = None
@@ -218,6 +301,17 @@ class TelegramChannel(ChannelBase):
     def channel_id(self) -> str:
         """The unique channel instance ID."""
         return self._channel_id
+
+    def bind_message_bus(self, message_bus: "MessageBus") -> None:
+        """Bind shared state used by approval callbacks across processes."""
+        self._message_bus = message_bus
+
+    async def aclose(self) -> None:
+        """Close the lazy REST bot owned by a connection-free client."""
+        async with self._rest_bot_lock:
+            bot, self._rest_bot = self._rest_bot, None
+        if bot is not None:
+            await bot.shutdown()
 
     # -- Lifecycle -----------------------------------------------------
 
@@ -372,7 +466,6 @@ class TelegramChannel(ChannelBase):
                 filters,
                 MessageHandler,
             )
-            from telegram.request import HTTPXRequest
         except ImportError as error:
             raise ImportError(
                 "TelegramChannel requires 'agentscope[channel]' or both "
@@ -381,14 +474,9 @@ class TelegramChannel(ChannelBase):
             ) from error
         del markdown_it
 
-        api_request = HTTPXRequest(
-            connection_pool_size=16,
-            connect_timeout=10.0,
-            read_timeout=30.0,
-            write_timeout=30.0,
-            pool_timeout=10.0,
-            media_write_timeout=60.0,
-        )
+        api_request = self._new_api_request()
+        from telegram.request import HTTPXRequest
+
         polling_request = HTTPXRequest(
             connection_pool_size=1,
             connect_timeout=10.0,
@@ -401,7 +489,6 @@ class TelegramChannel(ChannelBase):
             .token(self._bot_token)
             .request(api_request)
             .get_updates_request(polling_request)
-            .arbitrary_callback_data(1024)
             .build()
         )
         message_filter = (
@@ -423,6 +510,57 @@ class TelegramChannel(ChannelBase):
         )
         application.add_handler(CallbackQueryHandler(self._on_callback))
         return application
+
+    @staticmethod
+    def _new_api_request() -> Any:
+        """Build the shared request settings for outbound Bot API calls."""
+        from telegram.request import HTTPXRequest
+
+        return HTTPXRequest(
+            connection_pool_size=16,
+            connect_timeout=10.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=10.0,
+            media_write_timeout=60.0,
+        )
+
+    def _new_rest_bot(self) -> Any:
+        """Build an unconnected Bot API client for a ChannelClients node."""
+        from telegram import Bot
+
+        return Bot(token=self._bot_token, request=self._new_api_request())
+
+    async def _bot(self) -> Any:
+        """Return a Bot API client whether or not this instance listens.
+
+        A channel worker owns the polling ``Application``. A process running
+        an agent owns only a connection-free ``ChannelClients`` instance, so
+        it initializes a short-lived REST-capable bot lazily instead.
+        """
+        application = self._application
+        if application is not None:
+            return application.bot
+        if self._rest_bot is not None:
+            return self._rest_bot
+        async with self._rest_bot_lock:
+            if self._rest_bot is not None:
+                return self._rest_bot
+            bot = self._new_rest_bot()
+            try:
+                await bot.initialize()
+                actual_id = str(bot.bot.id)
+                if actual_id != self._bot_id:
+                    raise _PermanentTelegramError(
+                        f"Configured bot_id {self._bot_id!r} does not match "
+                        f"Telegram bot ID {actual_id!r}.",
+                    )
+            except Exception:
+                await bot.shutdown()
+                raise
+            self._rest_bot = bot
+            self._bot_user = bot.bot
+            return bot
 
     def _on_polling_error(self, error: BaseException) -> None:
         """Mark competing pollers as fatal; PTB retries transient errors."""
@@ -464,6 +602,9 @@ class TelegramChannel(ChannelBase):
         if message is None or user is None or user.is_bot:
             return
         try:
+            if not self._is_private_user_allowed(message, user):
+                await self._notify_unapproved_private_user(message, user)
+                return
             self._remember_chat(message.chat)
             if message.media_group_id and self._downloadable(message):
                 self._buffer_album(message)
@@ -479,6 +620,51 @@ class TelegramChannel(ChannelBase):
             logger.exception(
                 "Telegram channel '%s' failed to process a message",
                 self._channel_id,
+            )
+
+    def _is_private_user_allowed(self, message: "Message", user: Any) -> bool:
+        """Return whether a sender may enter a private chat with the bot."""
+        if str(message.chat.type) != "private":
+            return True
+        if user is None:
+            return False
+        return (
+            self._config.allow_public_private_chats
+            or int(user.id) in self._allowed_private_user_ids
+        )
+
+    @staticmethod
+    def _is_start_command(message: "Message") -> bool:
+        """Whether a private message is a plain Telegram ``/start`` command."""
+        parts = (message.text or "").split(maxsplit=1)
+        return bool(parts) and parts[0].casefold() == "/start"
+
+    async def _notify_unapproved_private_user(
+        self,
+        message: "Message",
+        user: Any,
+    ) -> None:
+        """Give only ``/start`` senders their id without invoking an agent."""
+        if not self._is_start_command(message):
+            return
+        try:
+            bot = await self._bot()
+            await self._retry_api(
+                lambda: bot.send_message(
+                    chat_id=self._target_chat_id(str(message.chat.id)),
+                    text=(
+                        f"Your Telegram user ID is {user.id}. Ask the "
+                        "channel owner to add it to the allowed private "
+                        "user IDs."
+                    ),
+                ),
+            )
+        except Exception as error:  # pylint: disable=broad-except
+            logger.debug(
+                "Telegram channel '%s' could not notify an unapproved "
+                "private user: %s",
+                self._channel_id,
+                self._safe_error(error),
             )
 
     def _buffer_album(self, message: "Message") -> None:
@@ -498,7 +684,12 @@ class TelegramChannel(ChannelBase):
         try:
             await asyncio.sleep(_ALBUM_SETTLE_SECS)
             messages = self._album_messages.pop(key, [])
-            if not messages or all(self._gated_out(msg) for msg in messages):
+            first = messages[0] if messages else None
+            if (
+                first is None
+                or not self._is_private_user_allowed(first, first.from_user)
+                or all(self._gated_out(msg) for msg in messages)
+            ):
                 return
             event = await self._normalise_messages(messages)
             if event is not None and self._emit is not None:
@@ -870,10 +1061,7 @@ class TelegramChannel(ChannelBase):
             ):
                 return
 
-            bot = self._bot()
-            if bot is None:
-                preview.disabled = True
-                return
+            bot = await self._bot()
             from telegram.error import BadRequest
 
             if preview.mode == "draft":
@@ -982,6 +1170,7 @@ class TelegramChannel(ChannelBase):
                     self._channel_id,
                     result.error,
                 )
+                break
 
     async def _send_formatted_chunk(
         self,
@@ -989,12 +1178,10 @@ class TelegramChannel(ChannelBase):
         chunk: "_TelegramTextChunk",
     ) -> _TelegramResult:
         """Send HTML and retry once as plain text on formatting errors."""
-        bot = self._bot()
-        if bot is None:
-            return _TelegramResult(False, "Telegram channel is not connected")
         from telegram.error import BadRequest
 
         try:
+            bot = await self._bot()
             try:
                 await self._retry_api(
                     lambda: bot.send_message(
@@ -1021,12 +1208,10 @@ class TelegramChannel(ChannelBase):
         chunk: "_TelegramTextChunk",
     ) -> _TelegramResult:
         """Finalise an editable preview with formatted/plain fallback."""
-        bot = self._bot()
-        if bot is None:
-            return _TelegramResult(False, "Telegram channel is not connected")
         from telegram.error import BadRequest
 
         try:
+            bot = await self._bot()
             try:
                 await self._retry_api(
                     lambda: bot.edit_message_text(
@@ -1147,8 +1332,15 @@ class TelegramChannel(ChannelBase):
         event: ChannelEvent,
         request: RequireUserConfirmEvent,
     ) -> None:
-        bot = self._bot()
-        if bot is None:
+        try:
+            bot = await self._bot()
+        except Exception as error:  # pylint: disable=broad-except
+            logger.warning(
+                "Telegram channel '%s' could not prepare approval "
+                "delivery: %s",
+                self._channel_id,
+                self._safe_error(error),
+            )
             return
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -1159,22 +1351,30 @@ class TelegramChannel(ChannelBase):
                 "agent_id": str(event.metadata.get("agent_id", "")),
                 "session_id": str(event.metadata.get("session_id", "")),
             }
+            try:
+                allow_callback = await self._store_approval_callback(
+                    _ApprovalCallback(**base, approved=True),
+                )
+                deny_callback = await self._store_approval_callback(
+                    _ApprovalCallback(**base, approved=False),
+                )
+            except Exception as error:  # pylint: disable=broad-except
+                logger.warning(
+                    "Telegram channel '%s' could not store approval state: %s",
+                    self._channel_id,
+                    self._safe_error(error),
+                )
+                continue
             keyboard = InlineKeyboardMarkup(
                 [
                     [
                         InlineKeyboardButton(
                             "✅ Allow",
-                            callback_data=_ApprovalCallback(
-                                **base,
-                                approved=True,
-                            ),
+                            callback_data=allow_callback,
                         ),
                         InlineKeyboardButton(
                             "❌ Deny",
-                            callback_data=_ApprovalCallback(
-                                **base,
-                                approved=False,
-                            ),
+                            callback_data=deny_callback,
                         ),
                     ],
                 ],
@@ -1200,6 +1400,67 @@ class TelegramChannel(ChannelBase):
                     self._safe_error(error),
                 )
 
+    async def _store_approval_callback(
+        self,
+        data: _ApprovalCallback,
+    ) -> str:
+        """Persist one compact callback token for a cross-process card."""
+        if self._message_bus is None:
+            raise RuntimeError(
+                "Telegram approval callback storage is unavailable",
+            )
+        token = secrets.token_urlsafe(18)
+        await self._message_bus.registry_set(
+            MessageBusKeys.channel_approval_callback(self._channel_id, token),
+            "payload",
+            data.to_json(),
+            ttl_secs=_APPROVAL_CALLBACK_TTL_SECS,
+        )
+        return f"{_APPROVAL_CALLBACK_PREFIX}{token}"
+
+    async def _load_approval_callback(
+        self,
+        raw_data: Any,
+    ) -> tuple[_ApprovalCallback | None, str | None]:
+        """Load a callback payload sent by a connection-free client."""
+        if not isinstance(raw_data, str) or not raw_data.startswith(
+            _APPROVAL_CALLBACK_PREFIX,
+        ):
+            return None, None
+        token = raw_data.removeprefix(_APPROVAL_CALLBACK_PREFIX)
+        if not token or self._message_bus is None:
+            return None, token or None
+        payload = await self._message_bus.registry_get(
+            MessageBusKeys.channel_approval_callback(self._channel_id, token),
+            "payload",
+        )
+        return (
+            _ApprovalCallback.from_json(payload)
+            if payload is not None
+            else None,
+            token,
+        )
+
+    async def _delete_approval_callback(self, token: str) -> None:
+        """Retire callback state after its decision reached the gateway."""
+        if self._message_bus is None:
+            return
+        await self._message_bus.registry_del(
+            MessageBusKeys.channel_approval_callback(self._channel_id, token),
+            "payload",
+        )
+
+    async def _expire_callback(self, query: Any) -> None:
+        """Best-effort UI cleanup for an expired or unknown callback."""
+        try:
+            await query.answer("This approval has expired.", show_alert=True)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Could not answer an expired Telegram approval")
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Could not freeze an expired Telegram approval")
+
     async def _on_callback(
         self,
         update: "Update",
@@ -1208,40 +1469,49 @@ class TelegramChannel(ChannelBase):
         query = update.callback_query
         if query is None:
             return
-        data = query.data
-        if not isinstance(data, _ApprovalCallback):
-            try:
-                await query.answer(
-                    "This approval has expired.",
-                    show_alert=True,
-                )
-                await query.edit_message_reply_markup(reply_markup=None)
-            except Exception:  # pylint: disable=broad-except
-                logger.debug("Could not freeze an expired Telegram approval")
+        try:
+            data, token = await self._load_approval_callback(query.data)
+        except Exception as error:  # pylint: disable=broad-except
+            logger.warning(
+                "Telegram channel '%s' could not load approval state: %s",
+                self._channel_id,
+                self._safe_error(error),
+            )
+            data, token = None, None
+        if data is None:
+            await self._expire_callback(query)
             return
 
-        await query.answer("Decision received.")
+        actor_id = str(query.from_user.id) if query.from_user else ""
+        if self._emit is not None:
+            await self._emit(
+                ChannelConfirmationResultEvent(
+                    channel_id=self._channel_id,
+                    chat_id=data.chat_id,
+                    channel_user_id=actor_id,
+                    agent_id=data.agent_id,
+                    session_id=data.session_id,
+                    tool_call_id=data.tool_call_id,
+                    approved=data.approved,
+                    actor=actor_id,
+                ),
+            )
+            try:
+                if token is not None:
+                    await self._delete_approval_callback(token)
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Could not retire a Telegram approval callback")
+
+        try:
+            await query.answer("Decision received.")
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Could not answer a Telegram approval callback")
         try:
             await query.edit_message_text(
                 "✅ Approved" if data.approved else "🚫 Denied",
             )
         except Exception:  # pylint: disable=broad-except
             logger.debug("Could not freeze a Telegram approval message")
-        if self._emit is None:
-            return
-        actor_id = str(query.from_user.id) if query.from_user else ""
-        await self._emit(
-            ChannelConfirmationResultEvent(
-                channel_id=self._channel_id,
-                chat_id=data.chat_id,
-                channel_user_id=actor_id,
-                agent_id=data.agent_id,
-                session_id=data.session_id,
-                tool_call_id=data.tool_call_id,
-                approved=data.approved,
-                actor=actor_id,
-            ),
-        )
 
     # -- Agent-callable delivery --------------------------------------
 
@@ -1264,12 +1534,10 @@ class TelegramChannel(ChannelBase):
         text: str,
     ) -> _TelegramResult:
         """Send plain text, splitting it at Telegram's hard limit."""
-        bot = self._bot()
-        if bot is None:
-            return _TelegramResult(False, "Telegram channel is not connected")
         if not text:
             return _TelegramResult(False, "message text is empty")
         try:
+            bot = await self._bot()
             for part in self._split_long_message(text):
                 await self._retry_api(
                     partial(
@@ -1294,10 +1562,8 @@ class TelegramChannel(ChannelBase):
                 False,
                 "file exceeds Telegram's 50 MiB limit",
             )
-        bot = self._bot()
-        if bot is None:
-            return _TelegramResult(False, "Telegram channel is not connected")
         try:
+            bot = await self._bot()
             await self._retry_api(
                 lambda: bot.send_document(
                     chat_id=self._target_chat_id(chat_id),
@@ -1321,10 +1587,8 @@ class TelegramChannel(ChannelBase):
                 False,
                 "image exceeds Telegram's 10 MiB photo limit; use SendFile",
             )
-        bot = self._bot()
-        if bot is None:
-            return _TelegramResult(False, "Telegram channel is not connected")
         try:
+            bot = await self._bot()
             await self._retry_api(
                 lambda: bot.send_photo(
                     chat_id=self._target_chat_id(chat_id),
@@ -1363,10 +1627,8 @@ class TelegramChannel(ChannelBase):
         return self._chat_name_cache.get(chat_id, "")
 
     async def _get_chat(self, chat_id: str) -> Any:
-        bot = self._bot()
-        if bot is None:
-            return None
         try:
+            bot = await self._bot()
             return await self._retry_api(
                 lambda: bot.get_chat(self._target_chat_id(chat_id)),
             )
@@ -1399,9 +1661,6 @@ class TelegramChannel(ChannelBase):
             or ""
         )
 
-    def _bot(self) -> Any:
-        return self._application.bot if self._application is not None else None
-
     @staticmethod
     def _target_chat_id(chat_id: str) -> int | str:
         stripped = str(chat_id).strip()
@@ -1426,7 +1685,7 @@ class TelegramChannel(ChannelBase):
                     else float(delay)
                 )
                 exhausted = attempt + 1 >= _MAX_API_ATTEMPTS
-                if exhausted or seconds > _MAX_RETRY_AFTER_SECS:
+                if exhausted:
                     raise
                 await asyncio.sleep(max(0.0, seconds))
             except NetworkError as error:

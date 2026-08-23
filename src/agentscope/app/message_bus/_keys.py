@@ -299,6 +299,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
+    _CHANNEL_APPROVAL_CALLBACK = "agentscope:channel:approval:{cid}:{token}"
 
     @classmethod
     def channel_lifecycle(cls) -> str:
@@ -329,3 +330,15 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def channel_seen_chats(cls, channel_id: str) -> str:
         """Registry namespace of chat_ids the bot has been messaged in."""
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
+
+    @classmethod
+    def channel_approval_callback(
+        cls,
+        channel_id: str,
+        callback_token: str,
+    ) -> str:
+        """Registry namespace for one cross-process approval callback."""
+        return cls._CHANNEL_APPROVAL_CALLBACK.format(
+            cid=channel_id,
+            token=callback_token,
+        )
