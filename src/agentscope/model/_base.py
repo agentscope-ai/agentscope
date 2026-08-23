@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import json
+import unicodedata
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
@@ -32,6 +33,7 @@ from ..tool import ToolChoice
 
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
+_STRUCTURED_TEXT_CHARS = frozenset("{}[]():,;=<>\"'")
 
 
 class ChatModelBase:
@@ -376,9 +378,10 @@ class ChatModelBase:
         Note a standard way to count the tokens is first formatting the input
         messages into the API required format, then use the tokenizer of the
         underlying API to count the tokens. The base implementation instead
-        applies a conservative estimate to the UTF-8 input size so that
-        context-length guardrails do not underestimate dense, structured, or
-        non-ASCII text.
+        applies a class-aware fallback: it preserves the ASCII bytes-per-token
+        baseline, adds local weight for dense numeric/structured text, and
+        uses East Asian width for non-ASCII characters so context-length
+        guardrails do not underestimate the input.
 
         Subclasses may override this method to provide a more accurate
         implementation tailored to their specific tokenizer.
@@ -457,10 +460,71 @@ class ChatModelBase:
         return cnt
 
     def _estimate_text_tokens(self, text: str) -> int:
-        """Estimate text tokens without a model-specific tokenizer."""
-        byte_count = len(text.encode("utf-8"))
-        # Dense structured input can approach 0.8 tokens per UTF-8 byte.
-        return (byte_count * 4 + 4) // 5
+        """Estimate text tokens without a model-specific tokenizer.
+
+        The fallback deliberately keeps ordinary ASCII prose at the existing
+        four-bytes-per-token estimate.  Numeric and structured ASCII is more
+        token-dense, so it uses a higher bound only when the text contains a
+        meaningful amount of digits or structural punctuation.  Non-ASCII
+        characters use East Asian width (two units for wide/full-width,
+        otherwise one) because UTF-8 byte length is not a useful proxy for
+        CJK, kana, or accented text.
+
+        This is a guardrail estimate, not a tokenizer replacement. Provider
+        models with an exact tokenizer should continue to override
+        :meth:`count_tokens`.
+        """
+        if not text:
+            return 0
+
+        ascii_bytes = 0
+        non_ascii_tokens = 0
+        structured_chars = 0
+        dense_numeric_chars = 0
+        numeric_run = 0
+        for char in text:
+            if ord(char) < 128:
+                ascii_bytes += 1
+                if char.isdigit():
+                    numeric_run += 1
+                else:
+                    if numeric_run >= 3:
+                        dense_numeric_chars += numeric_run
+                    numeric_run = 0
+                structured_chars += char in _STRUCTURED_TEXT_CHARS
+            else:
+                if numeric_run >= 3:
+                    dense_numeric_chars += numeric_run
+                numeric_run = 0
+                non_ascii_tokens += (
+                    2
+                    if unicodedata.east_asian_width(char) in {"W", "F"}
+                    else 1
+                )
+        if numeric_run >= 3:
+            dense_numeric_chars += numeric_run
+
+        # Preserve the previous behavior for natural ASCII prose. Wide/full-
+        # width characters receive two units, avoiding the UTF-8 undercount
+        # for CJK while narrow non-ASCII characters remain one unit.
+        ascii_tokens = (ascii_bytes + 2) // 4
+
+        # Add weight only to dense numeric runs. This keeps a date or a small
+        # number in otherwise natural prose local to that value.
+        weighted_units = ascii_bytes + dense_numeric_chars * 2
+
+        # JSON/SQL punctuation is often tokenized separately. Add weight to
+        # those punctuation characters only when they are genuinely common;
+        # ordinary English punctuation never changes the whole text's rate.
+        if structured_chars >= 8 and structured_chars * 20 >= max(
+            ascii_bytes,
+            1,
+        ):
+            weighted_units += structured_chars * 3
+
+        ascii_tokens = max(ascii_tokens, (weighted_units + 3) // 4)
+
+        return ascii_tokens + non_ascii_tokens
 
     async def generate_structured_output(
         self,
