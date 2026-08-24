@@ -1490,6 +1490,51 @@ The tool instructions are a collection of suggestions, rules and notifications a
             },
         )
 
+    async def test_meta_tool_schema_marks_active_groups(self) -> None:
+        """The reset schema should identify already active groups."""
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="group_1",
+                    description="Group 1",
+                ),
+                ToolGroup(
+                    name="group_2",
+                    description="Group 2",
+                    tools=[Tool1(), Tool2()],
+                ),
+            ],
+        )
+
+        state = AgentState()
+        state.tool_context.activated_groups = ["group_2"]
+        schemas = await toolkit.get_tool_schemas(
+            state.tool_context.activated_groups,
+        )
+
+        self.assertListEqual(
+            [schema["function"]["name"] for schema in schemas],
+            ["reset_tools", "tool_1", "tool_2"],
+        )
+        properties = schemas[0]["function"]["parameters"]["properties"]
+        self.assertEqual(properties["group_1"]["description"], "Group 1")
+        self.assertEqual(
+            properties["group_2"]["description"],
+            "Group 2\n\nAlready active. Its tools are currently available; "
+            "do not activate it again unless you need to change the active "
+            "group set.",
+        )
+        self.assertFalse(properties["group_1"]["default"])
+        self.assertFalse(properties["group_2"]["default"])
+
+        schemas = await toolkit.get_tool_schemas(["group_1"])
+        properties = schemas[0]["function"]["parameters"]["properties"]
+        self.assertIn(
+            "Already active.",
+            properties["group_1"]["description"],
+        )
+        self.assertEqual(properties["group_2"]["description"], "Group 2")
+
     async def test_broken_mcp_is_skipped_not_fatal(self) -> None:
         """One unreachable MCP must not take the whole reply down with
         it: an expired token or a server that is simply down would
