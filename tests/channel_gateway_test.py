@@ -216,7 +216,8 @@ class SendResponseTest(IsolatedAsyncioTestCase):
             ],
             show_thinking=True,
         )
-        self.assertIn("hmm", _text(channel))
+        # Markdown needs the blank line, or thinking runs into the answer.
+        self.assertEqual(_text(channel), "\U0001f4ad hmm\n\nanswer")
 
     async def test_data_block_reassembled_and_delivered(self) -> None:
         channel = await _run(
