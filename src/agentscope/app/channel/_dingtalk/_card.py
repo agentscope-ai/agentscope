@@ -100,8 +100,9 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     """
     if not isinstance(payload, dict):
         return None
-    if payload.get("type") not in (None, "", "actionCallback"):
-        return None
+    # Deliberately no check on ``type``: the official SDK never reads it,
+    # so its wire values are undocumented and gating on them drops every
+    # callback the moment DingTalk sends one we did not guess.
     content = _json_object(payload.get("content"))
     private_data = _json_object(content.get("cardPrivateData"))
     params = _json_object(private_data.get("params"))

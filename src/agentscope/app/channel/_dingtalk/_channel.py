@@ -846,7 +846,11 @@ class DingTalkChannel(ChannelBase):
         """
         decision = _parse_card_callback(payload)
         if decision is None:
-            logger.warning("DingTalk ignored an invalid card callback")
+            logger.warning(
+                "DingTalk '%s' ignored an unrecognised card callback: %s",
+                self._channel_id,
+                payload,
+            )
             return
         if decision.approver_id and decision.user_id != decision.approver_id:
             logger.warning(
