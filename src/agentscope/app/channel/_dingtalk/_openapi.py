@@ -276,6 +276,10 @@ class _DingTalkOpenAPI:
             {
                 "outTrackId": out_track_id,
                 "cardData": {"cardParamMap": card_data},
+                # Without this the map replaces the card's whole data, so
+                # every variable this update does not name comes back
+                # empty — the tool and its arguments included.
+                "cardUpdateOptions": {"updateCardDataByKey": True},
             },
             "card update",
         )

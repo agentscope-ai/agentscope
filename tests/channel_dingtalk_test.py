@@ -1483,9 +1483,15 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             create_request["json"]["cardData"]["cardParamMap"],
             {"flowStatus": "1"},
         )
+        settle = http.requests[2][2]["json"]
         self.assertDictEqual(
-            http.requests[2][2]["json"]["cardData"]["cardParamMap"],
+            settle["cardData"]["cardParamMap"],
             {"toolCallId": "tool-1", "flowStatus": "3"},
+        )
+        # By key, or the variables this update omits are wiped.
+        self.assertDictEqual(
+            settle["cardUpdateOptions"],
+            {"updateCardDataByKey": True},
         )
         deliver_method, deliver_url, deliver_request = http.requests[1]
         self.assertEqual(deliver_method, "POST")
