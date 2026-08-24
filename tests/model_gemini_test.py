@@ -6,6 +6,7 @@ Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
 import json
+from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -68,9 +69,14 @@ def _mock_completion(
     resp.candidates = [MagicMock()]
     resp.candidates[0].content = MagicMock()
     resp.candidates[0].content.parts = parts
-    resp.usage_metadata = MagicMock()
-    resp.usage_metadata.prompt_token_count = 10
-    resp.usage_metadata.candidates_token_count = 5
+    resp.usage_metadata = SimpleNamespace(
+        prompt_token_count=10,
+        candidates_token_count=5,
+        tool_use_prompt_token_count=0,
+        thoughts_token_count=0,
+        total_token_count=15,
+        cached_content_token_count=0,
+    )
     return resp
 
 
@@ -84,9 +90,14 @@ def _make_stream_chunk(
     chunk.candidates = [MagicMock()]
     chunk.candidates[0].content = MagicMock()
     chunk.candidates[0].content.parts = parts
-    chunk.usage_metadata = MagicMock()
-    chunk.usage_metadata.prompt_token_count = 10
-    chunk.usage_metadata.candidates_token_count = 5
+    chunk.usage_metadata = SimpleNamespace(
+        prompt_token_count=10,
+        candidates_token_count=5,
+        tool_use_prompt_token_count=0,
+        thoughts_token_count=0,
+        total_token_count=15,
+        cached_content_token_count=0,
+    )
     return chunk
 
 
@@ -243,6 +254,32 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_usage_excludes_tool_use_tokens(self) -> None:
+        """Usage counts only model-generated tokens, not tool-use tokens."""
+        parts = [_make_part(text="hello")]
+        resp = _mock_completion(parts)
+        # Mirror the SDK's documented invariant: total = prompt +
+        # candidates + tool_use_prompt + thoughts.
+        resp.usage_metadata = SimpleNamespace(
+            prompt_token_count=500,
+            candidates_token_count=120,
+            tool_use_prompt_token_count=300,
+            thoughts_token_count=0,
+            total_token_count=920,
+            cached_content_token_count=50,
+        )
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=resp,
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.usage.input_tokens, 500)
+        # Not total - prompt (420), which wrongly includes the 300
+        # tool-execution tokens.
+        self.assertEqual(result.usage.output_tokens, 120)
+        self.assertEqual(result.usage.cache_input_tokens, 50)
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests
@@ -308,6 +345,29 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_usage_excludes_tool_use_tokens(self) -> None:
+        """Streaming usage counts only model-generated tokens."""
+        chunk = _make_stream_chunk([_make_part(text="hello")])
+        chunk.usage_metadata = SimpleNamespace(
+            prompt_token_count=500,
+            candidates_token_count=120,
+            tool_use_prompt_token_count=300,
+            thoughts_token_count=0,
+            total_token_count=920,
+            cached_content_token_count=50,
+        )
+        self.mock_client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_MockAsyncStream([chunk]),
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        # The delta and the accumulated final response both carry the
+        # usage of the last chunk.
+        self.assertEqual(responses[0].usage.output_tokens, 120)
+        self.assertEqual(responses[-1].usage.output_tokens, 120)
 
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then accumulated final."""
