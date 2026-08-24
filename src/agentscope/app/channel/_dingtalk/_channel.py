@@ -411,17 +411,12 @@ class DingTalkChannel(ChannelBase):
         self,
         out_track_id: str,
         text: str,
-        *,
-        finalize: bool = False,
-        is_error: bool = False,
     ) -> bool:
         """Write the complete Markdown value to one AI streaming card."""
         return await self._api().stream_card(
             out_track_id,
             self._config.streaming_card_key,
             text,
-            finalize=finalize,
-            is_error=is_error,
         )
 
     async def _finish_streaming_card(
@@ -432,17 +427,18 @@ class DingTalkChannel(ChannelBase):
         """Finalize a live card, returning false for Markdown fallback."""
         if out_track_id is None or not text:
             return False
-        updated = await self._update_streaming_card(
+        key = self._config.streaming_card_key
+        updated = await self._api().finish_streaming_card(
             out_track_id,
+            key,
             text,
-            finalize=True,
         )
         if not updated:
-            await self._update_streaming_card(
+            await self._api().finish_streaming_card(
                 out_track_id,
+                key,
                 _STREAM_FALLBACK_NOTICE,
-                finalize=True,
-                is_error=True,
+                failed=True,
             )
         return updated
 
@@ -866,7 +862,7 @@ class DingTalkChannel(ChannelBase):
                 actor=decision.user_id,
             ),
         )
-        await self._api().update_approval_card(
+        await self._api().update_card(
             decision.out_track_id,
             _resolved_card_data(decision.approved),
         )

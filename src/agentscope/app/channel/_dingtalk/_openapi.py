@@ -15,6 +15,25 @@ _API = "https://api.dingtalk.com/v1.0"
 _OAPI = "https://oapi.dingtalk.com"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
 _SUPPORTED_FILE_TYPES = frozenset({"doc", "docx", "pdf", "rar", "xlsx", "zip"})
+# An AI card renders only the components its layout names, so a
+# card created without one arrives blank. Flow status drives the
+# typing indicator. Both mirror ``dingtalk_stream``.
+_AI_CARD_LAYOUT = json.dumps(
+    {
+        "order": [
+            "msgTitle",
+            "msgContent",
+            "staticMsgContent",
+            "msgTextList",
+            "msgImages",
+            "msgSlider",
+            "msgButtons",
+        ],
+    },
+)
+_AI_CARD_INPUTING = "2"
+_AI_CARD_FINISHED = "3"
+_AI_CARD_FAILED = "5"
 
 
 class _DingTalkOpenAPI:
@@ -190,7 +209,11 @@ class _DingTalkOpenAPI:
         return await self._create_and_deliver_card(
             chat_id,
             template_id,
-            {content_key: ""},
+            {
+                content_key: "",
+                "flowStatus": _AI_CARD_INPUTING,
+                "sys_full_json_obj": _AI_CARD_LAYOUT,
+            },
         )
 
     async def stream_card(
@@ -198,9 +221,6 @@ class _DingTalkOpenAPI:
         out_track_id: str,
         content_key: str,
         content: str,
-        *,
-        finalize: bool = False,
-        is_error: bool = False,
     ) -> bool:
         """Update an AI Card streaming component with full content.
 
@@ -208,8 +228,6 @@ class _DingTalkOpenAPI:
             out_track_id (`str`): Tracking id returned by card creation.
             content_key (`str`): Template streaming-component variable key.
             content (`str`): Complete Markdown content for this update.
-            finalize (`bool`): Whether this is the final update.
-            is_error (`bool`): Whether the card should enter error state.
 
         Returns:
             `bool`: Whether DingTalk accepted the streaming update.
@@ -227,22 +245,56 @@ class _DingTalkOpenAPI:
                 "key": content_key,
                 "content": content,
                 "isFull": True,
-                "isFinalize": finalize,
-                "isError": is_error,
+                "isFinalize": False,
+                "isError": False,
             },
             "card streaming update",
         )
 
-    async def update_approval_card(
+    async def finish_streaming_card(
+        self,
+        out_track_id: str,
+        content_key: str,
+        content: str,
+        *,
+        failed: bool = False,
+    ) -> bool:
+        """Settle an AI card, leaving its final Markdown in place.
+
+        The streaming endpoint only writes one variable; the card leaves
+        its typing state through a whole-card update, which is also where
+        the layout has to be repeated.
+
+        Args:
+            out_track_id (`str`): Tracking id returned by card creation.
+            content_key (`str`): Template streaming-component variable key.
+            content (`str`): Final Markdown to leave on the card.
+            failed (`bool`): Whether the card should settle as failed.
+
+        Returns:
+            `bool`: Whether DingTalk accepted the update.
+        """
+        return await self.update_card(
+            out_track_id,
+            {
+                content_key: content,
+                "flowStatus": (
+                    _AI_CARD_FAILED if failed else _AI_CARD_FINISHED
+                ),
+                "sys_full_json_obj": _AI_CARD_LAYOUT,
+            },
+        )
+
+    async def update_card(
         self,
         out_track_id: str,
         card_data: dict[str, str],
     ) -> bool:
-        """Replace approval-card template parameters after a decision.
+        """Replace a delivered card's template parameters.
 
         Args:
             out_track_id (`str`): Tracking id returned by card creation.
-            card_data (`dict[str, str]`): Resolved template parameter map.
+            card_data (`dict[str, str]`): Template parameter map.
 
         Returns:
             `bool`: Whether DingTalk accepted the update.
