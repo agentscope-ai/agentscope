@@ -373,6 +373,7 @@ class StorageBase(ABC):
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
@@ -393,6 +394,11 @@ class StorageBase(ABC):
             source_schedule_id (`str | None`, optional): The schedule that
                 created this session. When set, the session is indexed under
                 the schedule for execution history queries.
+            source_chat_id (`str | None`, optional): The platform chat this
+                session serves.
+            source_chat_name (`str | None`, optional): That chat's title, as
+                supplied by the inbound message.
+            source_channel_id (`str | None`, optional): The owning channel.
 
         Returns:
             `SessionRecord`: The created or updated record.

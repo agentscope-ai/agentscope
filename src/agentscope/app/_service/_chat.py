@@ -944,7 +944,10 @@ class ChatService:
                     tools = ", ".join(t.name for t in channel_tools)
                     chat_id = session_record.source_chat_id or ""
                     kind = await channel.chat_kind(chat_id)
-                    name = await channel.chat_name(chat_id)
+                    name = (
+                        session_record.source_chat_name
+                        or await channel.chat_name(chat_id)
+                    )
                     where = f' named "{name}"' if name else ""
                     attachment += (
                         f" This session is bound to a chat{where} (id "

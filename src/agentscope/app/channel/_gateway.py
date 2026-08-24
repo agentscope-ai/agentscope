@@ -269,6 +269,7 @@ class ChannelGateway:
             session_id=session_id,
             source=SessionSource.CHANNEL,
             source_chat_id=event.chat_id,
+            source_chat_name=event.chat_name or None,
             source_channel_id=record.id,
         )
 

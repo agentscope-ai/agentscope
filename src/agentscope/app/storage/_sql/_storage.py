@@ -1051,6 +1051,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
@@ -1073,6 +1074,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
             source=source,
             source_schedule_id=source_schedule_id,
             source_chat_id=source_chat_id,
+            source_chat_name=source_chat_name,
             source_channel_id=source_channel_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
