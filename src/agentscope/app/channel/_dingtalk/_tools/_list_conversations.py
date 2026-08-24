@@ -27,7 +27,8 @@ already received messages from.
 ## Important Limitation
 DingTalk application robots cannot enumerate every group they belong to. \
 This result contains only conversations observed since the channel process \
-started.
+started, so an empty array is normal rather than an error. When it is \
+empty, ask the user for the target instead of retrying.
 
 ## Output
 A JSON array of ``{target, name, chat_type}``. Copy ``target`` verbatim into \

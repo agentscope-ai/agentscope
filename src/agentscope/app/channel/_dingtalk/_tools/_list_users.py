@@ -32,10 +32,15 @@ class ListUsers(_DingTalkToolBase):
 ## When to Use
 - You need a stable DingTalk user target before sending a direct message.
 
+## Important Limitation
+Searching the directory needs contact permission, which the DingTalk \
+application may not have been granted. An empty array therefore means \
+either no match or no permission, never an error. When it is empty, ask \
+the user for the target instead of retrying.
+
 ## Output
 A JSON array of ``{target, name, title, department_ids}``. Copy ``target`` \
-verbatim into a DingTalk Send* tool. Results depend on the application's \
-directory permissions."""
+verbatim into a DingTalk Send* tool."""
     is_read_only: bool = True
     input_schema: dict = _ListUsersParams.model_json_schema()
 
