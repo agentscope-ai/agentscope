@@ -197,7 +197,15 @@ class E2BWorkspaceManager(
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The remote sandbox may already exist — initialize also
+            # bootstraps the gateway, and that half can fail on its
+            # own. Nothing else holds this workspace, so it would bill
+            # forever.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
 
     # ── pre-warming hooks ─────────────────────────────────────────
@@ -228,7 +236,7 @@ class E2BWorkspaceManager(
             )
 
     async def _dispose_prewarmed(self, workspace: E2BWorkspace) -> None:
-        """Kill a sandbox nobody claimed.
+        """Kill a sandbox nobody will come looking for.
 
         ``close`` only pauses, so that the next ``initialize`` can
         reattach by metadata. An unclaimed sandbox has no such future:
@@ -239,6 +247,8 @@ class E2BWorkspaceManager(
         if sandbox is not None:
             try:
                 await sandbox.kill()
+                # pylint: disable-next=protected-access
+                workspace._sandbox = None
             except Exception as e:
                 logger.warning(
                     "E2BWorkspaceManager: failed to kill unclaimed "

@@ -61,6 +61,11 @@ class WorkspaceManagerBase(ABC):
             tuple[str, str],
             asyncio.Lock,
         ] = defaultdict(asyncio.Lock)
+        # Ids handed out but not yet persisted by the session flow.
+        # The lock is released before that write lands, so without
+        # this the next request would read an empty session list and
+        # bind a second workspace to the same pair.
+        self._reserved: dict[tuple[str, str], str] = {}
 
     def bind_storage(self, storage: "StorageBase") -> None:
         """Hand the manager the backend holding workspace bindings.
@@ -94,10 +99,11 @@ class WorkspaceManagerBase(ABC):
           flow assigns on purpose. Without a storage backend the
           binding cannot be read, so a deterministic BLAKE2b of
           ``user::agent`` stands in for it.
-          Reading the binding and minting a replacement is serialised
-          per ``(user, agent)``, but only within this process: two app
-          workers racing the very first session of one pair can still
-          bind two workspaces to it.
+          A minted id is held until a session record carries it, since
+          that write lands after this returns. Both the serialisation
+          and the reservation are process-local: two app workers
+          racing the very first session of one pair can still bind two
+          workspaces to it.
         * ``PER_USER`` → deterministic BLAKE2b of ``user::``.
 
         Managers that pre-warm override this to draw the fresh ids from
@@ -137,8 +143,14 @@ class WorkspaceManagerBase(ABC):
                 agent_id,
             ):
                 if record.config.workspace_id:
+                    self._reserved.pop((user_id, agent_id), None)
                     return record.config.workspace_id
-            return await self._mint_workspace_id()
+            reserved = self._reserved.get((user_id, agent_id))
+            if reserved:
+                return reserved
+            workspace_id = await self._mint_workspace_id()
+            self._reserved[(user_id, agent_id)] = workspace_id
+            return workspace_id
 
     async def _mint_workspace_id(self) -> str:
         """Produce an id for a workspace nobody holds yet.

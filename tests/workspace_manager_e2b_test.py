@@ -34,16 +34,21 @@ class _FakeWorkspace:
     """Workspace double whose ``close`` pauses, as E2B's does."""
 
     created: list["_FakeWorkspace"] = []
+    fail_initialize = False
 
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
         self.workspace_id = str(kwargs.get("workspace_id") or "new-id")
         self._sandbox = _FakeSandbox()
+        # Stable handle: the manager clears ``_sandbox`` once killed.
+        self.sandbox = self._sandbox
         _FakeWorkspace.created.append(self)
 
     async def initialize(self) -> None:
         """Yield once so builds can interleave."""
         await asyncio.sleep(0)
+        if _FakeWorkspace.fail_initialize:
+            raise RuntimeError("gateway bootstrap failed")
 
     async def close(self) -> None:
         """Pause the sandbox — never kill it."""
@@ -57,6 +62,7 @@ class TestE2BWorkspaceManagerPrewarm(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Patch the workspace class used by the manager."""
         _FakeWorkspace.created.clear()
+        _FakeWorkspace.fail_initialize = False
         self.workspace_patch = patch(
             "agentscope.app.workspace_manager."
             "_e2b_workspace_manager.E2BWorkspace",
@@ -91,7 +97,7 @@ class TestE2BWorkspaceManagerPrewarm(IsolatedAsyncioTestCase):
 
         self.assertEqual(workspace_id, prewarmed.workspace_id)
         self.assertIs(ws, prewarmed)
-        self.assertFalse(prewarmed._sandbox.killed)
+        self.assertFalse(prewarmed.sandbox.killed)
         # One replacement build, nothing built for the request itself.
         self.assertEqual(len(_FakeWorkspace.created), 2)
 
@@ -106,7 +112,7 @@ class TestE2BWorkspaceManagerPrewarm(IsolatedAsyncioTestCase):
         await manager._stop_prewarm()
 
         self.assertListEqual(
-            [ws._sandbox.killed for ws in _FakeWorkspace.created],
+            [ws.sandbox.killed for ws in _FakeWorkspace.created],
             [True, True],
         )
 
@@ -127,5 +133,28 @@ class TestE2BWorkspaceManagerPrewarm(IsolatedAsyncioTestCase):
 
         await manager.close(workspace_id)
 
-        self.assertFalse(claimed._sandbox.killed)
-        self.assertTrue(claimed._sandbox.paused)
+        self.assertFalse(claimed.sandbox.killed)
+        self.assertTrue(claimed.sandbox.paused)
+
+    async def test_a_kill_is_not_followed_by_a_pause(self) -> None:
+        """Pausing a sandbox that was just killed is a wasted remote
+        call that logs a failure on every shutdown."""
+        manager = E2BWorkspaceManager(prewarm=PrewarmConfig(size=1))
+        manager._start_prewarm()
+        await asyncio.sleep(0.05)
+
+        await manager._stop_prewarm()
+
+        sandbox = _FakeWorkspace.created[0].sandbox
+        self.assertListEqual([sandbox.killed, sandbox.paused], [True, False])
+
+    async def test_a_half_built_sandbox_is_killed(self) -> None:
+        """``initialize`` can fail after the remote sandbox exists, and
+        nothing else holds it."""
+        _FakeWorkspace.fail_initialize = True
+        manager = E2BWorkspaceManager(prewarm=PrewarmConfig(size=1))
+        manager._start_prewarm()
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(len(_FakeWorkspace.created), 1)
+        self.assertTrue(_FakeWorkspace.created[0].sandbox.killed)

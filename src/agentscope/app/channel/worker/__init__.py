@@ -95,6 +95,7 @@ async def run_channel_worker(
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(storage)
         await stack.enter_async_context(message_bus)
+        workspace_manager.bind_storage(storage)
         await stack.enter_async_context(workspace_manager)
 
         dispatcher = ChannelLifecycleDispatcher(

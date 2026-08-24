@@ -244,6 +244,51 @@ class TestWorkspacePrewarm(IsolatedAsyncioTestCase):
         self.assertEqual(first_time, "ws-0")
         self.assertListEqual(manager.adopted, ["ws-0"])
 
+    async def test_caller_cancellation_is_not_swallowed(self) -> None:
+        """Cancelling a request that waits on a build must cancel it,
+        not hand back a workspace nobody is there to receive."""
+        manager = _Manager(prewarm=PrewarmConfig(size=1), build_delay=0.2)
+        manager._start_prewarm()
+        task = asyncio.create_task(
+            manager.assign_workspace_id(
+                user_id="u",
+                agent_id="a",
+                session_id="s",
+            ),
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    async def test_a_minted_id_is_held_until_storage_has_it(self) -> None:
+        """The session flow persists the binding after this returns, so
+        a second request in that window must not mint its own."""
+        manager = _Manager(
+            prewarm=PrewarmConfig(size=2),
+            isolation=IsolationPolicy.PER_AGENT,
+        )
+        manager._start_prewarm()
+        await asyncio.sleep(0.05)
+        manager.bind_storage(
+            SimpleNamespace(list_sessions=self._sessions_returning()),
+        )
+
+        first = await manager.assign_workspace_id(
+            user_id="u",
+            agent_id="a",
+            session_id="s1",
+        )
+        second = await manager.assign_workspace_id(
+            user_id="u",
+            agent_id="a",
+            session_id="s2",
+        )
+
+        self.assertListEqual([first, second], ["ws-0", "ws-0"])
+        self.assertListEqual(manager.adopted, ["ws-0"])
+
     async def test_concurrent_first_sessions_bind_one_workspace(
         self,
     ) -> None:

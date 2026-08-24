@@ -205,7 +205,11 @@ class WorkspacePrewarmMixin(WorkspaceManagerBase, Generic[T]):
             return await super()._mint_workspace_id()
         try:
             workspace = await future
-        except (asyncio.CancelledError, Exception):
+        except Exception:
+            # Only a failed build reaches the taker as an exception;
+            # ``_fill_slot`` cancels unclaimed slots instead. So a
+            # ``CancelledError`` here is the caller's own, and must
+            # not be turned into a workspace nobody asked for.
             return await super()._mint_workspace_id()
         try:
             await self._adopt_prewarmed(workspace)

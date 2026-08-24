@@ -28,6 +28,11 @@ class _TrackedContext:
     def __init__(self) -> None:
         self.entered = False
         self.exited = False
+        self.storage: object = None
+
+    def bind_storage(self, storage: object) -> None:
+        """Record the storage the worker handed over."""
+        self.storage = storage
 
     async def __aenter__(self) -> "_TrackedContext":
         """Record that the worker opened this backend."""
