@@ -44,6 +44,7 @@ class ResetTools(ToolBase):
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
     is_state_injected: bool = True
+    activated_groups: list[str]
 
     def __init__(
         self,
@@ -55,6 +56,7 @@ class ResetTools(ToolBase):
         super().__init__(middlewares=middlewares)
         self.groups = groups
         self.response_template = response_template
+        self.activated_groups = []
 
     @property
     def input_schema(self) -> dict[str, Any]:  # type: ignore[override]
@@ -64,11 +66,18 @@ class ResetTools(ToolBase):
         for group in self.groups:
             if group.name == "basic":
                 continue
+            description = group.description
+            if group.name in self.activated_groups:
+                description += (
+                    "\n\nThis tool group is already active. Its tools are "
+                    "currently available. Do not activate it again unless "
+                    "you need to change the active tool-group set."
+                )
             fields[group.name] = (
                 bool,
                 Field(
                     default=False,
-                    description=group.description,
+                    description=description,
                 ),
             )
 
