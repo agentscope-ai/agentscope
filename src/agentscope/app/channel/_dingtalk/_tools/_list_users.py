@@ -34,9 +34,11 @@ class ListUsers(_DingTalkToolBase):
 
 ## Important Limitation
 Searching the directory needs contact permission, which the DingTalk \
-application may not have been granted. An empty array therefore means \
-either no match or no permission, never an error. When it is empty, ask \
-the user for the target instead of retrying.
+application may not have been granted, and a failed lookup reads the same \
+as one that matched nobody. An empty array therefore proves nothing: it \
+may mean no match, no permission, or a request that did not go through. \
+Ask the user for the target rather than retrying, and say the search came \
+back empty rather than that the person does not exist.
 
 ## Output
 A JSON array of ``{target, name, title, department_ids}``. Copy ``target`` \

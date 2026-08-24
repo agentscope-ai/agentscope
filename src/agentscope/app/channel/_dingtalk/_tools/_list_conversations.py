@@ -25,10 +25,11 @@ class ListConversations(_DingTalkToolBase):
 already received messages from.
 
 ## Important Limitation
-DingTalk application robots cannot enumerate every group they belong to. \
-This result contains only conversations observed since the channel process \
-started, so an empty array is normal rather than an error. When it is \
-empty, ask the user for the target instead of retrying.
+DingTalk application robots cannot enumerate every group they belong to, \
+and the process answering this call is not the one holding the robot's \
+connection — so in a deployment that separates them this list is empty \
+and stays empty. Treat an empty array as the normal case and ask the user \
+for the target; waiting for it to fill will not help.
 
 ## Output
 A JSON array of ``{target, name, chat_type}``. Copy ``target`` verbatim into \

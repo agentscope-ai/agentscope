@@ -820,6 +820,12 @@ class DingTalkChannel(ChannelBase):
                 "DingTalk '%s' cannot deliver tool approval cards",
                 self._channel_id,
             )
+            # The run is parked on an approval nobody can give. Say so
+            # here, or the chat simply goes quiet.
+            await self._api().send_text(
+                event.chat_id,
+                "无法展示工具审批卡片：审批卡片模板为空，请管理员配置。",
+            )
             return
         approver_id = (
             event.chat_id.removeprefix("user:")
@@ -837,9 +843,7 @@ class DingTalkChannel(ChannelBase):
             if out_track_id is None:
                 await self._api().send_text(
                     event.chat_id,
-                    "DingTalk could not present the tool approval card. "
-                    "Please ask the administrator to verify the card "
-                    "template and application permissions.",
+                    "工具审批卡片投放失败，请管理员检查卡片模板与应用权限。",
                 )
 
     async def _on_card_callback(self, payload: dict[str, Any]) -> None:

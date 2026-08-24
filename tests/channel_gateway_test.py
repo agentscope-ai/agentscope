@@ -305,16 +305,18 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
 
 
 class _RecordingStorage:
-    """Storage stub capturing the workspace_id of upserted sessions."""
+    """Storage stub capturing what a session was upserted with."""
 
     def __init__(self) -> None:
         self.workspace_ids: list[str] = []
+        self.upserts: list[dict[str, Any]] = []
 
     async def get_session(self, **kwargs: Any) -> None:
         return None
 
     async def upsert_session(self, *, config: Any, **kwargs: Any) -> None:
         self.workspace_ids.append(config.workspace_id)
+        self.upserts.append(kwargs)
 
 
 def _channel_record(user_id: str) -> ChannelRecord:
@@ -481,6 +483,43 @@ class _AwaitingStorage:
     async def get_agent(self, **kwargs: Any) -> Any:
         del kwargs
         return SimpleNamespace(data=SimpleNamespace(name="Friday"))
+
+
+class ChatNameRecordingTest(IsolatedAsyncioTestCase):
+    """The title arrives with the message; a later node cannot look it up."""
+
+    async def _upsert(self, chat_name: str) -> dict[str, Any]:
+        storage = _RecordingStorage()
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=InMemoryMessageBus(),
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        await gw._ensure_session(
+            _channel_record("user-a"),
+            "agent-x",
+            "s-a",
+            ChannelEvent(
+                channel_id="c",
+                channel_user_id="u",
+                chat_id="group:cid-1",
+                chat_name=chat_name,
+            ),
+            SessionScope.PER_CHAT,
+        )
+        return storage.upserts[0]
+
+    async def test_chat_title_is_recorded_on_the_session(self) -> None:
+        upsert = await self._upsert("产品群")
+
+        self.assertEqual(upsert["source_chat_id"], "group:cid-1")
+        self.assertEqual(upsert["source_chat_name"], "产品群")
+
+    async def test_a_nameless_chat_records_no_title(self) -> None:
+        """A private chat has no title, and "" is not one."""
+        upsert = await self._upsert("")
+
+        self.assertIsNone(upsert["source_chat_name"])
 
 
 class DecisionRoutingTest(IsolatedAsyncioTestCase):
