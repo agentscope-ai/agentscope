@@ -45,8 +45,9 @@ _PENDING_LAYOUT = json.dumps(
 )
 _SETTLED_LAYOUT = json.dumps({"order": ["msgTitle", "staticMsgContent"]})
 _PENDING_TITLE = "工具审批"
-# DingTalk caps one cardParamMap value at 1KB; leave room for the
-# ellipsis and for the same text riding in a second variable.
+# DingTalk caps one cardParamMap value at 1KB, so this bounds what a
+# card is created and updated with. It says nothing about the streaming
+# endpoint, which documents no limit of its own.
 _PARAM_VALUE_BUDGET = 900
 
 
@@ -86,6 +87,7 @@ def _approval_card_data(
     """
     # A card parameter value is capped at 1KB, which a Chinese argument
     # reaches in a third of the characters a counted trim would allow.
+    # Nothing else here is caller-sized.
     encoded = tool.input.encode("utf-8")
     shown = encoded[:_PARAM_VALUE_BUDGET].decode("utf-8", "ignore")
     if len(encoded) > _PARAM_VALUE_BUDGET:

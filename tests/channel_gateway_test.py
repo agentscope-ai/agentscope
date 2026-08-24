@@ -448,6 +448,7 @@ class _AwaitingStorage:
                 id=self._session_id,
                 user_id=self._record.user_id,
                 agent_id="agent-x",
+                source_chat_id="group:cid-1",
                 config=SessionConfig(workspace_id="ws-1"),
             ),
         ]

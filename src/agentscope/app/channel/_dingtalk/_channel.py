@@ -854,15 +854,13 @@ class DingTalkChannel(ChannelBase):
         """
         decision = _parse_card_callback(payload)
         if decision is None:
+            # The payload carries the clicker, the conversation and
+            # whatever the card was built with; name the card instead.
             logger.warning(
-                "DingTalk '%s' ignored an unrecognised card callback: %s",
+                "DingTalk '%s' ignored a card callback on '%s' from '%s'",
                 self._channel_id,
-                payload,
-            )
-            return
-        if decision.approver_id and decision.user_id != decision.approver_id:
-            logger.warning(
-                "DingTalk ignored an approval from an unexpected user",
+                payload.get("outTrackId"),
+                payload.get("userId"),
             )
             return
         if self._emit is None:

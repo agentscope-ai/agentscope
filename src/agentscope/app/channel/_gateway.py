@@ -122,16 +122,17 @@ class ChannelGateway:
             return
 
         # A card that reports nothing but the click cannot name its run,
-        # and routing only guesses at one — a platform that identifies the
+        # and routing only guesses at one: a platform that identifies the
         # clicker differently than the sender lands on another session
-        # entirely. The tool call id is unique, so let the sessions this
-        # channel owns say which of them is waiting for it.
+        # entirely. Ask the sessions serving the chat the card was
+        # delivered into which of them is waiting; a click cannot answer
+        # for a chat it did not come from.
         for session in await self._storage.list_sessions_by_channel(
             record.user_id,
             event.channel_id,
         ):
             target = (session.agent_id, session.id)
-            if target == guess:
+            if target == guess or session.source_chat_id != event.chat_id:
                 continue
             if await self._resume(record.user_id, target, event):
                 return

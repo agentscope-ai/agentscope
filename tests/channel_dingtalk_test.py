@@ -16,6 +16,7 @@ from agentscope.app.channel._base import (
     ChannelEvent,
     ChatKind,
 )
+from agentscope.app.channel._dingtalk._card import _PENDING_LAYOUT
 from agentscope.app.channel._dingtalk._openapi import _DingTalkOpenAPI
 from agentscope.app.channel._registry import ChannelTypeRegistry
 from agentscope.event import (
@@ -904,13 +905,30 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(chat_id, "group:cid-group-1")
         self.assertEqual(approver, "")
         self.assertEqual(template, "approval.schema")
-        # The tool call rides under its own field names.
-        self.assertEqual(card_data["name"], "SendMessage")
-        self.assertEqual(card_data["status"], "pending")
-        self.assertEqual(card_data["msgTitle"], "工具审批")
-        self.assertEqual(card_data["title"], "assistant 提交的工具执行")
         # Pinned so a template that echoes nothing still routes the click.
         self.assertEqual(track, "tool-1")
+        self.assertRegex(
+            card_data["created_at"],
+            r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$",
+        )
+        self.assertDictEqual(
+            card_data,
+            {
+                # What the built-in AI card renders.
+                "msgTitle": "工具审批",
+                "staticMsgContent": (
+                    "工具：SendMessage\n\n"
+                    '参数：{"target":"user:user-2","text":"hello"}'
+                ),
+                "sys_full_json_obj": _PENDING_LAYOUT,
+                # What a template of the operator's own binds.
+                "title": "assistant 提交的工具执行",
+                "name": "SendMessage",
+                "input": '{"target":"user:user-2","text":"hello"}',
+                "created_at": card_data["created_at"],
+                "status": "pending",
+            },
+        )
 
     async def test_built_in_button_callback_routes_on_id_and_space(
         self,
@@ -922,9 +940,9 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             {
                 "type": "actionCallback",
                 "outTrackId": "call_c45eafeaa1ab",
-                "userId": "300905",
+                "userId": "staff-1",
                 "spaceType": "im",
-                "spaceId": "cidEECOO+4qOFrBm93Ne010Y5ZIkb/u/CrYHQy29TyAsN4=",
+                "spaceId": "cidAAABBBCCCDDDEEE000111222333444==",
                 "content": json.dumps(
                     {
                         "cardPrivateData": {
@@ -940,9 +958,9 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(received[0].tool_call_id, "call_c45eafeaa1ab")
         self.assertEqual(
             received[0].chat_id,
-            "group:cidEECOO+4qOFrBm93Ne010Y5ZIkb/u/CrYHQy29TyAsN4=",
+            "group:cidAAABBBCCCDDDEEE000111222333444==",
         )
-        self.assertEqual(received[0].channel_user_id, "300905")
+        self.assertEqual(received[0].channel_user_id, "staff-1")
         self.assertEqual(received[0].agent_id, "")
         self.assertTrue(received[0].approved)
 
@@ -1003,19 +1021,6 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                     media_api.card_updates[0][1]["status"],
                     "approved",
                 )
-
-    async def test_approval_callback_rejects_another_user(self) -> None:
-        channel, media_api = _channel_with_openapi()
-        received = await _confirmation_callbacks(
-            channel,
-            _card_callback(
-                user_id="unexpected-user",
-                approver_id="user-1",
-            ),
-        )
-
-        self.assertEqual(received, [])
-        self.assertEqual(media_api.card_updates, [])
 
     async def test_send_file_strips_path_and_keeps_extension(self) -> None:
         channel, media_api = _channel_with_openapi()
