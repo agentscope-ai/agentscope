@@ -1359,6 +1359,13 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 unique-key conflict — the write would silently overwrite
                 the holder instead of failing, and the same call would
                 behave differently per dialect.
+
+                The check is not atomic with the write, so two creates
+                racing for one bot can both pass it. The constraint then
+                decides: Postgres and SQLite raise, MySQL takes the last
+                writer. `ChannelService.create` rejects a taken bot
+                first, so reaching that window means calling storage
+                directly.
         """
         holder = await self.get_channel_id_by_platform_bot_id(
             platform_bot_id,
