@@ -322,6 +322,7 @@ async def _approval(timeout: float) -> bool:
                     name="SendMessage",
                     input='{"target":"user:e2e","text":"approval E2E"}',
                 ),
+                "e2e-agent",
             ),
             current_tool_call_id,
         )

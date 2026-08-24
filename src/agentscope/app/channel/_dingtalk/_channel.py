@@ -315,8 +315,10 @@ class DingTalkChannel(ChannelBase):
             reply_id = getattr(agent_event, "reply_id", None)
             if reply_id is not None:
                 if reply is None:
+                    # The reply opens with the agent's own name; keep it,
+                    # an approval card names who asked.
                     reply = Msg(
-                        name="assistant",
+                        name=getattr(agent_event, "name", "") or "assistant",
                         role="assistant",
                         content=[],
                     )
@@ -377,7 +379,11 @@ class DingTalkChannel(ChannelBase):
             elif isinstance(block, DataBlock):
                 await self._send_data(event.chat_id, block)
         if confirm is not None:
-            await self._present_confirm(event, confirm)
+            await self._present_confirm(
+                event,
+                confirm,
+                reply.name if reply else "",
+            )
 
     def _has_streaming_text(self, reply: Msg) -> bool:
         """Whether the partial reply contains text enabled for display."""
@@ -799,12 +805,14 @@ class DingTalkChannel(ChannelBase):
         self,
         event: ChannelEvent,
         request: RequireUserConfirmEvent,
+        agent_name: str,
     ) -> None:
         """Create one approval card for each pending tool call.
 
         Args:
             event (`ChannelEvent`): Chat receiving the cards.
             request (`RequireUserConfirmEvent`): Pending tool calls.
+            agent_name (`str`): The agent that asked for approval.
         """
         template_id = self._config.approval_card_template_id
         if not template_id:
@@ -823,7 +831,7 @@ class DingTalkChannel(ChannelBase):
                 event.chat_id,
                 approver_id,
                 template_id,
-                _approval_card_data(tool),
+                _approval_card_data(tool, agent_name),
                 tool.id,
             )
             if out_track_id is None:

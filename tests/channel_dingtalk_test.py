@@ -853,6 +853,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                 name="Bash",
                 input="中" * 800,
             ),
+            "Friday",
         )
 
         for key in ("input", "staticMsgContent", "sys_full_json_obj"):
@@ -882,6 +883,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(card_data["name"], "SendMessage")
         self.assertEqual(card_data["status"], "pending")
         self.assertEqual(card_data["msgTitle"], "工具审批")
+        self.assertEqual(card_data["title"], "assistant 提交的工具执行")
         # Pinned so a template that echoes nothing still routes the click.
         self.assertEqual(track, "tool-1")
 

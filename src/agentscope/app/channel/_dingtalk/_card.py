@@ -60,7 +60,10 @@ class _ApprovalDecision:
     approved: bool
 
 
-def _approval_card_data(tool: "ToolCallBlock") -> dict[str, str]:
+def _approval_card_data(
+    tool: "ToolCallBlock",
+    agent_name: str,
+) -> dict[str, str]:
     """Build the parameter map consumed by the configured card template.
 
     A template of the operator's own binds the tool call under the field
@@ -71,6 +74,8 @@ def _approval_card_data(tool: "ToolCallBlock") -> dict[str, str]:
 
     Args:
         tool (`ToolCallBlock`): The tool call awaiting a decision.
+        agent_name (`str`): The agent that asked, for the ready-made
+            ``title``; the built-in card does not show it.
 
     Returns:
         `dict[str, str]`: DingTalk card template parameter map.
@@ -89,6 +94,7 @@ def _approval_card_data(tool: "ToolCallBlock") -> dict[str, str]:
         "staticMsgContent": f"工具：{tool.name}\n\n参数：{shown}",
         "sys_full_json_obj": _PENDING_LAYOUT,
         # What a template of the operator's own binds.
+        "title": f"{agent_name} 提交的工具执行".strip(),
         "name": tool.name,
         "input": shown,
         "created_at": tool.created_at[:19].replace("T", " "),
