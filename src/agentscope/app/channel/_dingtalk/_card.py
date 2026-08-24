@@ -9,6 +9,7 @@ state remains authoritative; none of the tool input is trusted on callback.
 import json
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from ....message import ToolCallBlock
@@ -19,6 +20,14 @@ _APPROVE_ACTIONS = frozenset(
     {"allow", "approve", "approved", "accept", "agree"},
 )
 _DENY_ACTIONS = frozenset({"deny", "denied", "reject"})
+
+# A card's tracking id has to be unique and a tool call id is
+# not: the Ollama adapter names the first call of every response
+# ``0_<tool>``. Prefix a fresh one, so the tracking id is unique
+# and the call it answers is still readable off the end of it.
+# The prefix is fixed-width hex, so it needs no separator and
+# introduces no character the id did not already allow.
+_TRACK_PREFIX_LEN = 32
 
 # DingTalk's general AI card renders the components its layout names and
 # takes its buttons with them, so an approval card needs no template of
@@ -63,6 +72,30 @@ class _ApprovalDecision:
     agent_id: str
     session_id: str
     approved: bool
+
+
+def _tracking_id(tool_call_id: str) -> str:
+    """Build the card tracking id that answers ``tool_call_id``.
+
+    Args:
+        tool_call_id (`str`): The tool call the card asks about.
+
+    Returns:
+        `str`: A tracking id unique to this card.
+    """
+    return uuid4().hex + tool_call_id
+
+
+def _tool_call_id(track: str) -> str:
+    """Read back the tool call a tracking id was built for.
+
+    Args:
+        track (`str`): The ``outTrackId`` a callback reported.
+
+    Returns:
+        `str`: The tool call id, or ``""`` when the id is not one of ours.
+    """
+    return track[_TRACK_PREFIX_LEN:]
 
 
 def _approval_card_data(
@@ -170,15 +203,19 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     if not all((user_id, out_track_id)):
         return None
     # Routing rides on the template only when the template was built to
-    # carry it. Otherwise the tracking id is the tool call it was created
-    # for, and the callback says which chat it came from.
-    tool_call_id = _field(params, "toolCallId", "tool_call_id") or out_track_id
+    # carry it. Otherwise the tracking id names the tool call it was
+    # created for, and the callback says which chat it came from.
+    tool_call_id = _field(
+        params,
+        "toolCallId",
+        "tool_call_id",
+    ) or _tool_call_id(out_track_id)
     chat_id = _field(params, "chatId", "chat_id") or _chat_from_space(
         payload,
         user_id,
     )
     approver_id = _field(params, "approverId", "approver_id")
-    if not chat_id:
+    if not tool_call_id or not chat_id:
         return None
     return _ApprovalDecision(
         out_track_id=out_track_id,

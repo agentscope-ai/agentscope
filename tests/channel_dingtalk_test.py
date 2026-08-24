@@ -16,7 +16,11 @@ from agentscope.app.channel._base import (
     ChannelEvent,
     ChatKind,
 )
-from agentscope.app.channel._dingtalk._card import _PENDING_LAYOUT
+from agentscope.app.channel._dingtalk._card import (
+    _PENDING_LAYOUT,
+    _tool_call_id,
+    _tracking_id,
+)
 from agentscope.app.channel._dingtalk._openapi import _DingTalkOpenAPI
 from agentscope.app.channel._registry import ChannelTypeRegistry
 from agentscope.event import (
@@ -905,8 +909,9 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(chat_id, "group:cid-group-1")
         self.assertEqual(approver, "")
         self.assertEqual(template, "approval.schema")
-        # Pinned so a template that echoes nothing still routes the click.
-        self.assertEqual(track, "tool-1")
+        # Unique per card, and the tool call reads off the end of it.
+        self.assertNotEqual(track, "tool-1")
+        self.assertEqual(_tool_call_id(track), "tool-1")
         self.assertRegex(
             card_data["created_at"],
             r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$",
@@ -939,7 +944,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             channel,
             {
                 "type": "actionCallback",
-                "outTrackId": "call_c45eafeaa1ab",
+                "outTrackId": _tracking_id("call_c45eafeaa1ab"),
                 "userId": "staff-1",
                 "spaceType": "im",
                 "spaceId": "cidAAABBBCCCDDDEEE000111222333444==",
@@ -973,7 +978,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             channel,
             {
                 "type": "actionCallback",
-                "outTrackId": "call_deny",
+                "outTrackId": _tracking_id("call_deny"),
                 "userId": "user-7",
                 "spaceType": "im",
                 "spaceId": "user-7",

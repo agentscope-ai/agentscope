@@ -463,6 +463,7 @@ class _AwaitingStorage:
             agent_id="agent-x",
             config=SessionConfig(workspace_id="ws-1"),
             state=AgentState(
+                reply_id="reply-1",
                 context=[
                     Msg(
                         name="Friday",
@@ -552,9 +553,40 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
         queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
         self.assertEqual(len(queued), 1)
         payload = queued[0][1]
-        self.assertEqual(payload["session_id"], "the-parked-session")
-        self.assertEqual(payload["agent_id"], "agent-x")
-        self.assertEqual(payload["kind"], MessageBusKeys.WAKEUP_KIND_RESUME)
+        event = payload["input"]
+        tool_call = event["confirm_results"][0]["tool_call"]
+        self.assertDictEqual(
+            payload,
+            {
+                "user_id": "user-1",
+                "session_id": "the-parked-session",
+                "agent_id": "agent-x",
+                "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                "input": {
+                    "id": event["id"],
+                    "created_at": event["created_at"],
+                    "metadata": {},
+                    "type": "USER_CONFIRM_RESULT",
+                    "reply_id": "reply-1",
+                    "confirm_results": [
+                        {
+                            "confirmed": True,
+                            "rules": None,
+                            "tool_call": {
+                                "type": "tool_call",
+                                "id": "call_abc",
+                                "name": "Bash",
+                                "input": "{}",
+                                "state": "asking",
+                                "suggested_rules": [],
+                                "created_at": tool_call["created_at"],
+                                "finished_at": None,
+                            },
+                        },
+                    ],
+                },
+            },
+        )
         # The routing guess was tried first, then the parked session.
         self.assertNotEqual(storage.asked[0], "the-parked-session")
         self.assertIn("the-parked-session", storage.asked)

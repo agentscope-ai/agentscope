@@ -41,6 +41,7 @@ from ._card import (
     _approval_card_data,
     _parse_card_callback,
     _resolved_card_data,
+    _tracking_id,
 )
 from ._openapi import _DingTalkOpenAPI
 
@@ -838,7 +839,7 @@ class DingTalkChannel(ChannelBase):
                 approver_id,
                 template_id,
                 _approval_card_data(tool, agent_name),
-                tool.id,
+                _tracking_id(tool.id),
             )
             if out_track_id is None:
                 await self._api().send_text(
