@@ -104,9 +104,9 @@ class ChannelGateway:
         # Prefer the target pinned on the card at send time; re-resolving
         # via routing here would misroute clicks whose original message
         # matched on metadata, or in per-chat-user scope when a different
-        # member clicks. Fall back to routing only for older cards.
+        # member clicks.
         if event.agent_id and event.session_id:
-            agent_id, session_id = event.agent_id, event.session_id
+            guess = (event.agent_id, event.session_id)
         else:
             agent_id, session_id, _ = resolve(
                 ChannelEvent(
@@ -116,10 +116,57 @@ class ChannelGateway:
                 ),
                 record,
             )
-        await resume_after_decision(
+            guess = (agent_id, session_id)
+
+        if await self._resume(record.user_id, guess, event):
+            return
+
+        # A card that reports nothing but the click cannot name its run,
+        # and routing only guesses at one — a platform that identifies the
+        # clicker differently than the sender lands on another session
+        # entirely. The tool call id is unique, so let the sessions this
+        # channel owns say which of them is waiting for it.
+        for session in await self._storage.list_sessions_by_channel(
+            record.user_id,
+            event.channel_id,
+        ):
+            target = (session.agent_id, session.id)
+            if target == guess:
+                continue
+            if await self._resume(record.user_id, target, event):
+                return
+
+        logger.warning(
+            "channel '%s': no session is waiting on tool call '%s' "
+            "(clicked in chat '%s' by '%s')",
+            event.channel_id,
+            event.tool_call_id,
+            event.chat_id,
+            event.channel_user_id,
+        )
+
+    async def _resume(
+        self,
+        user_id: str,
+        target: tuple[str, str],
+        event: ChannelConfirmationResultEvent,
+    ) -> bool:
+        """Answer the decision in one session, if it is waiting for it.
+
+        Args:
+            user_id (`str`): Owner of the session.
+            target (`tuple[str, str]`): The ``(agent_id, session_id)`` to
+                try.
+            event (`ChannelConfirmationResultEvent`): The click decision.
+
+        Returns:
+            `bool`: Whether the run was resumed.
+        """
+        agent_id, session_id = target
+        return await resume_after_decision(
             self._bus,
             self._storage,
-            user_id=record.user_id,
+            user_id=user_id,
             agent_id=agent_id,
             session_id=session_id,
             tool_call_id=event.tool_call_id,

@@ -8,21 +8,27 @@ needs a running agent and is exercised end-to-end against a real bot.
 """
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
 # pylint: disable=attribute-defined-outside-init
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app.channel._base import (
     ChannelBase,
+    ChannelConfirmationResultEvent,
     ChannelEvent,
     _EVENT_ADAPTER,
 )
 from agentscope.app.channel._gateway import ChannelGateway
-from agentscope.message import Msg
+from agentscope.message import Msg, ToolCallBlock, ToolCallState
+from agentscope.state import AgentState
 from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import MessageBusKeys
 from agentscope.app.storage import (
     ChannelBinding,
     ChannelRecord,
     RoutingConfig,
+    SessionConfig,
+    SessionRecord,
     SessionScope,
     SessionSettings,
 )
@@ -415,3 +421,100 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
         self.assertTrue(
             any(isinstance(b, TextBlock) and "link" in b.text for b in blocks),
         )
+
+
+class _AwaitingStorage:
+    """Storage stub whose one session is parked on a tool call."""
+
+    def __init__(self, record: ChannelRecord, session_id: str) -> None:
+        self._record = record
+        self._session_id = session_id
+        self.asked: list[str] = []
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord:
+        del channel_id
+        return self._record
+
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[Any]:
+        del user_id, channel_id
+        return [
+            SessionRecord(
+                id=self._session_id,
+                user_id=self._record.user_id,
+                agent_id="agent-x",
+                config=SessionConfig(workspace_id="ws-1"),
+            ),
+        ]
+
+    async def get_session(self, *, session_id: str, **kwargs: Any) -> Any:
+        self.asked.append(session_id)
+        if session_id != self._session_id:
+            return None
+        return SessionRecord(
+            id=session_id,
+            user_id=self._record.user_id,
+            agent_id="agent-x",
+            config=SessionConfig(workspace_id="ws-1"),
+            state=AgentState(
+                context=[
+                    Msg(
+                        name="Friday",
+                        role="assistant",
+                        content=[
+                            ToolCallBlock(
+                                type="tool_call",
+                                id="call_abc",
+                                name="Bash",
+                                input="{}",
+                                state=ToolCallState.ASKING,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+    async def get_agent(self, **kwargs: Any) -> Any:
+        del kwargs
+        return SimpleNamespace(data=SimpleNamespace(name="Friday"))
+
+
+class DecisionRoutingTest(IsolatedAsyncioTestCase):
+    """A click resumes the run that is waiting, not the one routing picks."""
+
+    async def test_decision_finds_the_waiting_session(self) -> None:
+        record = _channel_record("user-1")
+        # Not what routing derives: the platform names the clicker
+        # differently than it named the sender.
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await gw.process(
+            ChannelConfirmationResultEvent(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                channel_user_id="300905",
+                tool_call_id="call_abc",
+                approved=True,
+                actor="300905",
+            ),
+        )
+
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(queued), 1)
+        payload = queued[0][1]
+        self.assertEqual(payload["session_id"], "the-parked-session")
+        self.assertEqual(payload["agent_id"], "agent-x")
+        self.assertEqual(payload["kind"], MessageBusKeys.WAKEUP_KIND_RESUME)
+        # The routing guess was tried first, then the parked session.
+        self.assertNotEqual(storage.asked[0], "the-parked-session")
+        self.assertIn("the-parked-session", storage.asked)

@@ -112,10 +112,13 @@ def _resolved_card_data(approved: bool) -> dict[str, str]:
         else "The tool was denied."
     )
     return {
-        # Settling drops the buttons: the decision is already made.
+        # Settling drops the buttons: the decision is already made. The
+        # flow status has to be repeated — an update that omits it leaves
+        # the AI card with nothing to render.
         "msgTitle": title,
         "staticMsgContent": markdown,
         "sys_full_json_obj": _SETTLED_LAYOUT,
+        "flowStatus": "3",
         "title": title,
         "markdown": markdown,
         "status": "approved" if approved else "denied",
