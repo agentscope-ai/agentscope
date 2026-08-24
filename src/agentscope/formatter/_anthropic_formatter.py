@@ -286,7 +286,8 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
 
         Returns:
             `dict[str, Any] | None`:
-                The formatted data block, or None if the media type is not
+                The formatted data block with extra fields placed beside
+                ``type`` and ``source``, or None if the media type is not
                 supported.
         """
         source = block.source
@@ -305,9 +306,17 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
 
         # Anthropic supports images and PDF documents
         if media_type.startswith("image/"):
-            return self._format_source(source, "image")
+            return self._format_source(
+                source,
+                "image",
+                block.model_extra,
+            )
         if media_type == "application/pdf":
-            return self._format_source(source, "document")
+            return self._format_source(
+                source,
+                "document",
+                block.model_extra,
+            )
 
         logger.warning(
             "Anthropic only supports image and PDF data, got %s, skipped.",
@@ -319,9 +328,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
     def _format_source(
         source: URLSource | Base64Source,
         block_type: str,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Format an image or document source into an Anthropic base64
         content block.
+
+        Extra fields are merged into the content block itself, at the same
+        level as ``type`` and ``source`` (for example provider-specific cache
+        controls).
 
         Args:
             source (`URLSource | Base64Source`):
@@ -329,6 +343,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 disk and remote URLs are downloaded.
             block_type (`str`):
                 The Anthropic block type, ``"image"`` or ``"document"``.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific parameters to merge into the content block,
+                at the same level as ``type`` and ``source``.
 
         Returns:
             `dict[str, Any]`:
@@ -348,7 +365,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")
 
-        return {
+        result = {
             "type": block_type,
             "source": {
                 "type": "base64",
@@ -356,6 +373,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 "data": data,
             },
         }
+        if extra:
+            result.update(extra)
+        return result
 
 
 class AnthropicChatFormatter(_AnthropicFormatterBase):
