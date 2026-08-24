@@ -775,17 +775,20 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertTrue(media_api.streaming_updates[-1][3])
         self.assertTrue(media_api.streaming_updates[-1][4])
 
-    async def test_oversized_streaming_reply_uses_markdown_only(self) -> None:
+    async def test_long_streaming_reply_is_not_capped(self) -> None:
+        """Only DingTalk decides a reply is too long, not a local guess."""
         channel, media_api = _channel_with_openapi(
             streaming_card_template_id="ai-card.schema",
         )
         event = _message_event()
-        text = "中" * 342
 
-        await channel.send_response(event, _event_stream(text))
+        await channel.send_response(event, _event_stream("中" * 342))
 
-        self.assertEqual(media_api.streaming_card_calls, [])
-        self.assertEqual(media_api.text_calls, [(event.chat_id, text)])
+        self.assertListEqual(
+            media_api.streaming_card_calls,
+            [("group:cid-group-1", "ai-card.schema", "content")],
+        )
+        self.assertListEqual(media_api.text_calls, [])
 
     async def test_send_response_uploads_image_data_block(self) -> None:
         channel, media_api = _channel_with_openapi()

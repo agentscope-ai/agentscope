@@ -54,7 +54,6 @@ _GROUP_CONVERSATION = "2"
 _MAX_LEN = 4000
 _STATUS_POLL_INTERVAL = 0.2
 _STREAM_MIN_INTERVAL = 0.3
-_STREAM_MAX_CONTENT_BYTES = 1024
 _STREAM_FALLBACK_NOTICE = (
     "Streaming stopped. The complete reply follows as a Markdown message."
 )
@@ -335,9 +334,6 @@ class DingTalkChannel(ChannelBase):
             )
             if not text:
                 continue
-            if not self._fits_streaming_card(text):
-                stream_failed = True
-                continue
             if stream_ref is None:
                 stream_ref = await self._open_streaming_card(event.chat_id)
                 if stream_ref is None:
@@ -372,11 +368,6 @@ class DingTalkChannel(ChannelBase):
                 await self._send_data(event.chat_id, block)
         if confirm is not None:
             await self._present_confirm(event, confirm)
-
-    @staticmethod
-    def _fits_streaming_card(text: str) -> bool:
-        """Whether a full Markdown update fits DingTalk's request limit."""
-        return len(text.encode("utf-8")) <= _STREAM_MAX_CONTENT_BYTES
 
     def _has_streaming_text(self, reply: Msg) -> bool:
         """Whether the partial reply contains text enabled for display."""
@@ -420,8 +411,6 @@ class DingTalkChannel(ChannelBase):
         is_error: bool = False,
     ) -> bool:
         """Write the complete Markdown value to one AI streaming card."""
-        if not self._fits_streaming_card(text):
-            return False
         return await self._api().stream_card(
             out_track_id,
             self._config.streaming_card_key,
