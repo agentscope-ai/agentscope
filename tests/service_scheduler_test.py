@@ -21,7 +21,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, FakeWorkspaceManager
 
 from agentscope.app._manager import SchedulerManager
 from agentscope.app.message_bus import RedisMessageBus
@@ -30,6 +30,9 @@ from agentscope.app.storage import (
     RedisStorage,
     ScheduleData,
     ScheduleRecord,
+    ScheduleSource,
+    SessionConfig,
+    SessionRecord,
     SessionSource,
 )
 from agentscope.permission import PermissionMode
@@ -76,6 +79,7 @@ def _make_record(
     enabled: bool = True,
     stateful: bool = False,
     description: str = "run nightly summary",
+    source_session_id: str = "",
 ) -> ScheduleRecord:
     """Build a minimal :class:`ScheduleRecord` for the trigger test."""
     return ScheduleRecord(
@@ -95,6 +99,12 @@ def _make_record(
             ),
             stateful=stateful,
             permission_mode=PermissionMode.DONT_ASK,
+            source=(
+                ScheduleSource.AGENT
+                if source_session_id
+                else ScheduleSource.USER
+            ),
+            source_session_id=source_session_id,
         ),
     )
 
@@ -115,6 +125,7 @@ class _SchedulerFireTestBase(IsolatedAsyncioTestCase):
         self.manager = SchedulerManager(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
         )
 
     async def asyncTearDown(self) -> None:
@@ -149,6 +160,7 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
                 "source_schedule_id": record.id,
             },
         )
+        self.assertTrue(session.config.workspace_id)
 
         # Inbox has the wrapped HintBlock.
         inbox = await self.bus.inbox_drain(session.id, max_count=10)
@@ -182,6 +194,110 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
                 "kind": "wake",
                 "input": None,
             },
+        )
+
+
+class TestSchedulerWorkspaceBinding(_SchedulerFireTestBase):
+    """Scheduled sessions always persist a stable workspace binding."""
+
+    async def _create_source_session(
+        self,
+        record: ScheduleRecord,
+        workspace_id: str,
+    ) -> None:
+        """Persist the session from which an agent created a schedule."""
+        await self.storage.upsert_session(
+            user_id=record.user_id,
+            agent_id=record.agent_id,
+            session_id=record.data.source_session_id,
+            config=SessionConfig(
+                workspace_id=workspace_id,
+                chat_model_config=record.data.chat_model_config,
+            ),
+        )
+
+    async def _scheduled_sessions(
+        self,
+        record: ScheduleRecord,
+    ) -> list[SessionRecord]:
+        """Return only the sessions created by the schedule."""
+        sessions = await self.storage.list_sessions(
+            record.user_id,
+            record.agent_id,
+        )
+        return [s for s in sessions if s.source == SessionSource.SCHEDULE]
+
+    async def test_inherits_source_session_workspace(self) -> None:
+        """An agent-created schedule keeps access to its source workspace."""
+        record = _make_record(source_session_id="source-session")
+        await self._create_source_session(record, "source-workspace")
+
+        await self.manager._build_trigger(record)()
+
+        sessions = await self._scheduled_sessions(record)
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(
+            sessions[0].config.workspace_id,
+            "source-workspace",
+        )
+
+    async def test_missing_source_uses_workspace_isolation_policy(
+        self,
+    ) -> None:
+        """A deleted source session falls back to a stable assigned id."""
+        record = _make_record(source_session_id="missing-session")
+
+        await self.manager._build_trigger(record)()
+
+        sessions = await self._scheduled_sessions(record)
+        self.assertEqual(len(sessions), 1)
+        session = sessions[0]
+        self.assertEqual(
+            session.config.workspace_id,
+            self.manager._workspace_manager.assign_workspace_id(
+                user_id=record.user_id,
+                agent_id=record.agent_id,
+                session_id=session.id,
+            ),
+        )
+        self.assertTrue(session.config.workspace_id)
+
+    async def test_without_workspace_manager_generates_workspace_id(
+        self,
+    ) -> None:
+        """The existing two-argument constructor remains supported."""
+        manager = SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+        )
+        record = _make_record(source_session_id="missing-session")
+
+        await manager._build_trigger(record)()
+
+        sessions = await self._scheduled_sessions(record)
+        self.assertEqual(len(sessions), 1)
+        self.assertTrue(sessions[0].config.workspace_id)
+
+    async def test_stateful_session_keeps_initial_workspace_binding(
+        self,
+    ) -> None:
+        """Later fires reuse the workspace persisted on the first fire."""
+        record = _make_record(
+            stateful=True,
+            source_session_id="source-session",
+        )
+        await self._create_source_session(record, "initial-workspace")
+        trigger = self.manager._build_trigger(record)
+        await trigger()
+
+        await self._create_source_session(record, "changed-workspace")
+        await trigger()
+
+        sessions = await self._scheduled_sessions(record)
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(
+            sessions[0].config.workspace_id,
+            "initial-workspace",
         )
 
 
