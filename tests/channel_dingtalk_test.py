@@ -1397,7 +1397,7 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         self.assertEqual(users[1]["name"], "")
 
     async def test_create_deliver_and_update_group_approval_card(self) -> None:
-        api, http = _openapi({}, {}, {})
+        api, http = _openapi({}, {}, {}, {})
 
         out_track_id = await api.create_approval_card(
             "group:cid-1",
@@ -1420,6 +1420,15 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             "approval.schema",
         )
         self.assertEqual(create_request["json"]["callbackType"], "STREAM")
+        # Creation opens the card; its content arrives in the update.
+        self.assertDictEqual(
+            create_request["json"]["cardData"]["cardParamMap"],
+            {"flowStatus": "1"},
+        )
+        self.assertDictEqual(
+            http.requests[2][2]["json"]["cardData"]["cardParamMap"],
+            {"toolCallId": "tool-1", "flowStatus": "3"},
+        )
         deliver_method, deliver_url, deliver_request = http.requests[1]
         self.assertEqual(deliver_method, "POST")
         self.assertTrue(deliver_url.endswith("/card/instances/deliver"))
@@ -1438,7 +1447,7 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         )
 
     async def test_deliver_private_approval_card_to_encoded_user(self) -> None:
-        api, http = _openapi({}, {})
+        api, http = _openapi({}, {}, {})
 
         out_track_id = await api.create_approval_card(
             "user:user-1",

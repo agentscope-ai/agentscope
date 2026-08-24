@@ -15,6 +15,11 @@ _API = "https://api.dingtalk.com/v1.0"
 _OAPI = "https://oapi.dingtalk.com"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
 _SUPPORTED_FILE_TYPES = frozenset({"doc", "docx", "pdf", "rar", "xlsx", "zip"})
+# An AI card's creation call carries no content: it opens the card in
+# a running state, and the update that follows settles it with what to
+# render. Both statuses go over the wire as strings.
+_AI_CARD_RUNNING = "1"
+_AI_CARD_SETTLED = "3"
 
 
 class _DingTalkOpenAPI:
@@ -167,13 +172,20 @@ class _DingTalkOpenAPI:
             `str | None`: The card's outbound tracking id, or ``None`` when
             creation or delivery fails.
         """
-        return await self._create_and_deliver_card(
+        track = await self._create_and_deliver_card(
             chat_id,
             template_id,
-            card_data,
+            {"flowStatus": _AI_CARD_RUNNING},
             approver_id,
             out_track_id,
         )
+        if track is None:
+            return None
+        settled = await self.update_approval_card(
+            track,
+            {**card_data, "flowStatus": _AI_CARD_SETTLED},
+        )
+        return track if settled else None
 
     async def create_streaming_card(
         self,
