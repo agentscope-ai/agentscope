@@ -144,22 +144,12 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     content = _json_object(payload.get("content"))
     private_data = _json_object(content.get("cardPrivateData"))
     params = _json_object(private_data.get("params"))
-    action_ids = private_data.get("actionIds")
 
-    # A template that declares nothing but its buttons reports the click
-    # as an action id, so accept either shape.
+    # A button built into the layout reports itself by ``id``; a template
+    # authored with an explicit action reports that instead. The sibling
+    # ``actionIds`` names the layout node, which identifies nothing.
     action = (
-        str(
-            params.get("action")
-            or (
-                action_ids[0]
-                if isinstance(action_ids, list) and action_ids
-                else ""
-            )
-            or "",
-        )
-        .strip()
-        .lower()
+        str(params.get("action") or params.get("id") or "").strip().lower()
     )
     if action in _APPROVE_ACTIONS:
         approved = True
@@ -207,11 +197,15 @@ def _chat_from_space(payload: dict[str, Any], user_id: str) -> str:
     """
     space_type = _field(payload, "spaceType", "space_type").upper()
     space_id = _field(payload, "spaceId", "space_id")
-    if space_type == "IM_GROUP" and space_id:
+    if "GROUP" in space_type and space_id:
         return f"group:{space_id}"
-    if space_type == "IM_ROBOT" and user_id:
+    if "ROBOT" in space_type and user_id:
         return f"user:{user_id}"
-    return ""
+    # A plain "im" space names the conversation the card sits in — which
+    # in a one-to-one chat is the person who clicked.
+    if space_id and space_id != user_id:
+        return f"group:{space_id}"
+    return f"user:{user_id}" if user_id else ""
 
 
 def _json_object(value: Any) -> dict[str, Any]:

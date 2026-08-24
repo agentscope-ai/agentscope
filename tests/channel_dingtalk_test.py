@@ -864,51 +864,61 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         # Pinned so a template that echoes nothing still routes the click.
         self.assertEqual(track, "tool-1")
 
-    async def test_stock_template_callback_routes_on_id_and_space(
+    async def test_built_in_button_callback_routes_on_id_and_space(
         self,
     ) -> None:
-        """A template that echoes only the click still resumes its run."""
+        """The shape a real click sends: button id, and a plain "im" space."""
         channel, _ = _channel_with_openapi()
         received = await _confirmation_callbacks(
             channel,
             {
                 "type": "actionCallback",
-                "outTrackId": "tool-1",
-                "userId": "user-1",
-                "spaceType": "IM_GROUP",
-                "spaceId": "cid-group-1",
+                "outTrackId": "call_c45eafeaa1ab",
+                "userId": "300905",
+                "spaceType": "im",
+                "spaceId": "cidEECOO+4qOFrBm93Ne010Y5ZIkb/u/CrYHQy29TyAsN4=",
                 "content": json.dumps(
-                    {"cardPrivateData": {"actionIds": ["agree"]}},
+                    {
+                        "cardPrivateData": {
+                            "actionIds": ["single_button_node_ocljy2j7wg2"],
+                            "params": {"id": "agree", "text": "Approve"},
+                        },
+                    },
                 ),
             },
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].tool_call_id, "tool-1")
-        self.assertEqual(received[0].chat_id, "group:cid-group-1")
+        self.assertEqual(received[0].tool_call_id, "call_c45eafeaa1ab")
+        self.assertEqual(
+            received[0].chat_id,
+            "group:cidEECOO+4qOFrBm93Ne010Y5ZIkb/u/CrYHQy29TyAsN4=",
+        )
+        self.assertEqual(received[0].channel_user_id, "300905")
         self.assertEqual(received[0].agent_id, "")
         self.assertTrue(received[0].approved)
 
-    async def test_stock_template_callback_routes_a_private_chat(
+    async def test_built_in_button_callback_routes_a_private_chat(
         self,
     ) -> None:
-        """A robot-space click names the chat by whoever clicked."""
+        """A one-to-one card sits in the space of whoever clicked."""
         channel, _ = _channel_with_openapi()
         received = await _confirmation_callbacks(
             channel,
             {
                 "type": "actionCallback",
-                "outTrackId": "tool-9",
+                "outTrackId": "call_deny",
                 "userId": "user-7",
-                "spaceType": "IM_ROBOT",
+                "spaceType": "im",
+                "spaceId": "user-7",
                 "content": json.dumps(
-                    {"cardPrivateData": {"params": {"action": "reject"}}},
+                    {"cardPrivateData": {"params": {"id": "reject"}}},
                 ),
             },
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].tool_call_id, "tool-9")
+        self.assertEqual(received[0].tool_call_id, "call_deny")
         self.assertEqual(received[0].chat_id, "user:user-7")
         self.assertFalse(received[0].approved)
 
