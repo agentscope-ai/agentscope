@@ -38,7 +38,7 @@ from agentscope.event import (
     TextBlockEndEvent,
     TextBlockStartEvent,
 )
-from agentscope.message import DataBlock
+from agentscope.message import DataBlock, ToolCallBlock
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
@@ -316,14 +316,14 @@ async def _approval(timeout: float) -> bool:
             inbound.channel_user_id,
             template_id,
             _approval_card_data(
-                current_tool_call_id,
-                inbound.chat_id,
-                "SendMessage",
-                '{"target":"user:e2e","text":"approval E2E"}',
-                inbound.channel_user_id,
-                f"e2e-agent-{run_id}",
-                f"e2e-session-{run_id}",
+                ToolCallBlock(
+                    type="tool_call",
+                    id=current_tool_call_id,
+                    name="SendMessage",
+                    input='{"target":"user:e2e","text":"approval E2E"}',
+                ),
             ),
+            current_tool_call_id,
         )
         if out_track_id:
             print(

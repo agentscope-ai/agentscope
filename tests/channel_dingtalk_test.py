@@ -847,16 +847,17 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         )
 
         card_data = _approval_card_data(
-            "tool-1",
-            "group:cid-group-1",
-            "Bash",
-            "中" * 800,
-            "",
+            ToolCallBlock(
+                type="tool_call",
+                id="tool-1",
+                name="Bash",
+                input="中" * 800,
+            ),
         )
 
-        for key in ("markdown", "staticMsgContent", "sys_full_json_obj"):
+        for key in ("input", "staticMsgContent", "sys_full_json_obj"):
             self.assertLessEqual(len(card_data[key].encode("utf-8")), 1024)
-        self.assertTrue(card_data["markdown"].endswith("…"))
+        self.assertTrue(card_data["input"].endswith("…"))
 
     async def test_send_response_presents_tool_approval_card(self) -> None:
         channel, media_api = _channel_with_openapi()
@@ -877,8 +878,10 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(chat_id, "group:cid-group-1")
         self.assertEqual(approver, "")
         self.assertEqual(template, "approval.schema")
-        self.assertEqual(card_data["toolCallId"], "tool-1")
-        self.assertEqual(card_data["agentId"], "agent-1")
+        # The tool call rides under its own field names.
+        self.assertEqual(card_data["name"], "SendMessage")
+        self.assertEqual(card_data["status"], "pending")
+        self.assertEqual(card_data["msgTitle"], "工具审批")
         # Pinned so a template that echoes nothing still routes the click.
         self.assertEqual(track, "tool-1")
 

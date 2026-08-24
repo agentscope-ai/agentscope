@@ -819,20 +819,11 @@ class DingTalkChannel(ChannelBase):
             else ""
         )
         for tool in request.tool_calls:
-            card_data = _approval_card_data(
-                tool.id,
-                event.chat_id,
-                tool.name,
-                tool.input,
-                approver_id,
-                str(event.metadata.get("agent_id") or ""),
-                str(event.metadata.get("session_id") or ""),
-            )
             out_track_id = await self._api().create_approval_card(
                 event.chat_id,
                 approver_id,
                 template_id,
-                card_data,
+                _approval_card_data(tool),
                 tool.id,
             )
             if out_track_id is None:

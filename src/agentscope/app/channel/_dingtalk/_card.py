@@ -8,7 +8,10 @@ state remains authoritative; none of the tool input is trusted on callback.
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ....message import ToolCallBlock
 
 _APPROVE_ACTIONS = frozenset({"allow", "approve", "accept", "agree"})
 _DENY_ACTIONS = frozenset({"deny", "reject"})
@@ -21,21 +24,23 @@ _PENDING_LAYOUT = json.dumps(
         "order": ["msgTitle", "staticMsgContent", "msgButtons"],
         "msgButtons": [
             {
-                "text": "Approve",
+                "text": "✅ 同意",
                 "color": "blue",
                 "id": "agree",
                 "request": True,
             },
             {
-                "text": "Deny",
-                "color": "red",
+                "text": "🚫 拒绝",
+                "color": "gray",
                 "id": "reject",
                 "request": True,
             },
         ],
     },
+    ensure_ascii=False,
 )
 _SETTLED_LAYOUT = json.dumps({"order": ["msgTitle", "staticMsgContent"]})
+_PENDING_TITLE = "工具审批"
 # DingTalk caps one cardParamMap value at 1KB; leave room for the
 # ellipsis and for the same text riding in a second variable.
 _PARAM_VALUE_BUDGET = 900
@@ -55,52 +60,39 @@ class _ApprovalDecision:
     approved: bool
 
 
-def _approval_card_data(
-    tool_call_id: str,
-    chat_id: str,
-    tool_name: str,
-    summary: str,
-    approver_id: str,
-    agent_id: str = "",
-    session_id: str = "",
-) -> dict[str, str]:
+def _approval_card_data(tool: "ToolCallBlock") -> dict[str, str]:
     """Build the parameter map consumed by the configured card template.
 
+    A template of the operator's own binds the tool call under the field
+    names it already has — ``name``, ``input`` and ``created_at`` — so
+    authoring one needs no vocabulary beyond the block being approved.
+    ``status`` is the card's own lifecycle, which the block does not
+    carry: its own state stays ``asking`` throughout.
+
     Args:
-        tool_call_id (`str`): Awaiting tool call answered by the card.
-        chat_id (`str`): Encoded DingTalk chat used for session routing.
-        tool_name (`str`): Tool name displayed to the user.
-        summary (`str`): Truncated tool arguments displayed to the user.
-        approver_id (`str`): Optional user permitted to decide the request.
-        agent_id (`str`): Resolved agent id, echoed through the callback.
-        session_id (`str`): Resolved session id, echoed through the callback.
+        tool (`ToolCallBlock`): The tool call awaiting a decision.
 
     Returns:
         `dict[str, str]`: DingTalk card template parameter map.
     """
-    title = "Tool execution needs approval"
-    markdown = f"**Tool:** `{tool_name}`\n\n**Arguments:** {summary}"
     # A card parameter value is capped at 1KB, which a Chinese argument
     # reaches in a third of the characters a counted trim would allow.
-    encoded = markdown.encode("utf-8")
+    encoded = tool.input.encode("utf-8")
+    shown = encoded[:_PARAM_VALUE_BUDGET].decode("utf-8", "ignore")
     if len(encoded) > _PARAM_VALUE_BUDGET:
-        markdown = encoded[:_PARAM_VALUE_BUDGET].decode("utf-8", "ignore")
-        markdown += "…"
+        shown += "…"
+    # Markdown reads a lone newline as a space, so the two lines need a
+    # blank one between them to stay two lines.
     return {
-        # What the default AI card reads.
-        "msgTitle": title,
-        "staticMsgContent": markdown,
+        # What the built-in AI card renders.
+        "msgTitle": _PENDING_TITLE,
+        "staticMsgContent": f"工具：{tool.name}\n\n参数：{shown}",
         "sys_full_json_obj": _PENDING_LAYOUT,
-        # What a template of the operator's own binds instead. Routing is
-        # recovered from the callback when a template carries none.
-        "title": title,
-        "markdown": markdown,
+        # What a template of the operator's own binds.
+        "name": tool.name,
+        "input": shown,
+        "created_at": tool.created_at[:19].replace("T", " "),
         "status": "pending",
-        "toolCallId": tool_call_id,
-        "chatId": chat_id,
-        "agentId": agent_id,
-        "sessionId": session_id,
-        "approverId": approver_id,
     }
 
 
@@ -113,22 +105,14 @@ def _resolved_card_data(approved: bool) -> dict[str, str]:
     Returns:
         `dict[str, str]`: Replacement values for the card template.
     """
-    title = "Tool execution approved" if approved else "Tool denied"
-    markdown = (
-        "The tool was approved and will continue."
-        if approved
-        else "The tool was denied."
-    )
     return {
         # Settling drops the buttons: the decision is already made. The
         # flow status has to be repeated — an update that omits it leaves
         # the AI card with nothing to render.
-        "msgTitle": title,
-        "staticMsgContent": markdown,
+        "msgTitle": _PENDING_TITLE,
+        "staticMsgContent": ("✅ 已同意，工具继续执行。" if approved else "🚫 已拒绝。"),
         "sys_full_json_obj": _SETTLED_LAYOUT,
         "flowStatus": "3",
-        "title": title,
-        "markdown": markdown,
         "status": "approved" if approved else "denied",
     }
 
