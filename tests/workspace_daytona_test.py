@@ -1684,6 +1684,9 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                 scheduler_manager=SchedulerManager(
                     storage=_NoOpStorage(),  # type: ignore[arg-type]
                     message_bus=_NullBus(),  # type: ignore[arg-type]
+                    workspace_manager=(
+                        _NoOpWorkspaceManager()  # type: ignore[arg-type]
+                    ),
                 ),
                 background_task_manager=BackgroundTaskManager(
                     message_bus=_NullBus(),  # type: ignore[arg-type]

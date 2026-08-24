@@ -264,7 +264,7 @@ class DockerWorkspaceManager(
                 ``sessions/<session_id>/``).
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — used both as the cache
-                key and the container name suffix. When ``None`` the
+                key and the container name suffix. When unset the
                 manager falls back to :meth:`assign_workspace_id`;
                 the session flow should pre-resolve this so container
                 names stay stable across restarts.
@@ -275,7 +275,7 @@ class DockerWorkspaceManager(
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
+        if not workspace_id:
             workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,

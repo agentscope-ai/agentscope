@@ -178,9 +178,9 @@ class WorkspaceManagerBase(ABC):
             session_id (`str`):
                 The session id.
             workspace_id (`str | None`, optional):
-                Explicit workspace binding. ``None`` triggers
-                :meth:`assign_workspace_id` fallback — expected only
-                for callers without a persisted binding.
+                Explicit workspace binding. An empty id or ``None``
+                triggers the :meth:`assign_workspace_id` fallback —
+                expected only for callers without a persisted binding.
         """
 
     @abstractmethod

@@ -87,7 +87,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         """
         del user_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
+        if not workspace_id:
             workspace_id = await self.assign_workspace_id(
                 user_id="",
                 agent_id=agent_id,

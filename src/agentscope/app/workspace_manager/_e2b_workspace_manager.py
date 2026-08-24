@@ -292,7 +292,7 @@ class E2BWorkspaceManager(
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key and the
                 value stored in the sandbox's
-                ``agentscope.workspace.id`` metadata. When ``None``
+                ``agentscope.workspace.id`` metadata. When unset
                 the manager falls back to
                 :meth:`assign_workspace_id`.
 
@@ -302,7 +302,7 @@ class E2BWorkspaceManager(
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
+        if not workspace_id:
             workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
