@@ -711,8 +711,8 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
         self.assertFalse(channel.capabilities.streaming)
 
-    async def test_default_config_streams_on_the_public_ai_card(self) -> None:
-        """Streaming ships on, using the card the official SDK uses."""
+    async def test_default_config_needs_no_card_platform_work(self) -> None:
+        """Both cards default to published templates, so neither is set up."""
         channel = DingTalkChannel(
             "ding-1",
             DingTalkChannel.Credentials(
@@ -729,7 +729,9 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                 "show_tool_process": False,
                 "show_thinking": False,
                 "max_media_bytes": 10 * 1024 * 1024,
-                "approval_card_template_id": "",
+                "approval_card_template_id": (
+                    "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+                ),
                 "streaming_card_template_id": (
                     "8aebdfb9-28f4-4a98-98f5-396c3dde41a0.schema"
                 ),

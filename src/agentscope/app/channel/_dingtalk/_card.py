@@ -13,6 +13,30 @@ from typing import Any
 _APPROVE_ACTIONS = frozenset({"allow", "approve", "accept", "agree"})
 _DENY_ACTIONS = frozenset({"deny", "reject"})
 
+# DingTalk's general AI card renders the components its layout names and
+# takes its buttons with them, so an approval card needs no template of
+# the operator's own. A button reports its ``id`` when clicked.
+_PENDING_LAYOUT = json.dumps(
+    {
+        "order": ["msgTitle", "staticMsgContent", "msgButtons"],
+        "msgButtons": [
+            {
+                "text": "Approve",
+                "color": "blue",
+                "id": "agree",
+                "request": True,
+            },
+            {
+                "text": "Deny",
+                "color": "red",
+                "id": "reject",
+                "request": True,
+            },
+        ],
+    },
+)
+_SETTLED_LAYOUT = json.dumps({"order": ["msgTitle", "staticMsgContent"]})
+
 
 @dataclass(frozen=True, slots=True)
 class _ApprovalDecision:
@@ -52,9 +76,17 @@ def _approval_card_data(
         `dict[str, str]`: DingTalk card template parameter map.
     """
     shown = summary if len(summary) <= 800 else summary[:799] + "…"
+    title = "Tool execution needs approval"
+    markdown = f"**Tool:** `{tool_name}`\n\n**Arguments:** {shown}"
     return {
-        "title": "Tool execution needs approval",
-        "markdown": f"**Tool:** `{tool_name}`\n**Arguments:** {shown}",
+        # What the default AI card reads.
+        "msgTitle": title,
+        "staticMsgContent": markdown,
+        "sys_full_json_obj": _PENDING_LAYOUT,
+        # What a template of the operator's own binds instead. Routing is
+        # recovered from the callback when a template carries none.
+        "title": title,
+        "markdown": markdown,
         "status": "pending",
         "toolCallId": tool_call_id,
         "chatId": chat_id,
@@ -73,13 +105,19 @@ def _resolved_card_data(approved: bool) -> dict[str, str]:
     Returns:
         `dict[str, str]`: Replacement values for the card template.
     """
+    title = "Tool execution approved" if approved else "Tool denied"
+    markdown = (
+        "The tool was approved and will continue."
+        if approved
+        else "The tool was denied."
+    )
     return {
-        "title": "Tool execution approved" if approved else "Tool denied",
-        "markdown": (
-            "The tool was approved and will continue."
-            if approved
-            else "The tool was denied."
-        ),
+        # Settling drops the buttons: the decision is already made.
+        "msgTitle": title,
+        "staticMsgContent": markdown,
+        "sys_full_json_obj": _SETTLED_LAYOUT,
+        "title": title,
+        "markdown": markdown,
         "status": "approved" if approved else "denied",
     }
 

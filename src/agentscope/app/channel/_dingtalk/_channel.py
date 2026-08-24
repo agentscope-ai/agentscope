@@ -56,6 +56,9 @@ _MAX_LEN = 4000
 # the template the official typewriter example streams into.
 _AI_CARD_TEMPLATE_ID = "8aebdfb9-28f4-4a98-98f5-396c3dde41a0.schema"
 _AI_CARD_CONTENT_KEY = "content"
+# The general-purpose AI card, the published template that takes its
+# layout and buttons at send time — see ``_card`` for what it is sent.
+_APPROVAL_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
 _STATUS_POLL_INTERVAL = 0.2
 _STREAM_MIN_INTERVAL = 0.3
 _STREAM_FALLBACK_NOTICE = (
@@ -117,10 +120,12 @@ class DingTalkChannel(ChannelBase):
             "outbound attachment",
         )
         approval_card_template_id: str = Field(
-            default="",
+            default=_APPROVAL_CARD_TEMPLATE_ID,
             title="Approval card template ID",
             description="DingTalk Card Platform template used for tool "
-            "approval. Tool calls needing approval stall without it.",
+            "approval. Defaults to the published card the channel builds "
+            "its own layout on; tool calls needing approval stall if it "
+            "is cleared.",
         )
         streaming_card_template_id: str = Field(
             default=_AI_CARD_TEMPLATE_ID,
