@@ -5,7 +5,6 @@
 import asyncio
 import base64
 import json
-import time
 from typing import Any, AsyncIterator, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -40,7 +39,6 @@ from agentscope.permission import PermissionBehavior, PermissionContext
 from agentscope.workspace import WorkspaceBase
 
 _REPLY_ID = "reply-1"
-_WEBHOOK = "https://oapi.dingtalk.com/robot/sendBySession?session=secret"
 
 
 class _FakeResponse:
@@ -57,7 +55,7 @@ class _FakeResponse:
 
 
 class _FakeHTTP:
-    """Record outbound webhook calls."""
+    """Record outbound HTTP calls."""
 
     def __init__(self) -> None:
         self.posts: list[tuple[str, dict[str, Any]]] = []
@@ -330,8 +328,6 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "msgtype": "text",
         "text": {"content": " hello "},
         "isInAtList": True,
-        "sessionWebhook": _WEBHOOK,
-        "sessionWebhookExpiredTime": int(time.time() * 1000) + 60_000,
     }
     payload.update(overrides)
     return payload
@@ -705,34 +701,6 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
         self.assertIn("Unable to download", received[0].message)
 
-    async def test_unsafe_session_webhook_is_not_cached(self) -> None:
-        channel = _channel()
-        received = await _message_callbacks(
-            channel,
-            _payload(sessionWebhook="https://example.com/steal"),
-        )
-
-        self.assertEqual(len(received), 1)
-        self.assertNotIn(received[0].chat_id, channel._session_webhooks)
-
-    async def test_send_response_uses_cached_session_webhook(self) -> None:
-        channel = _channel()
-        received = await _message_callbacks(channel, _payload())
-        http = _FakeHTTP()
-        channel._http = http
-
-        await channel.send_response(received[0], _event_stream())
-
-        self.assertEqual(len(http.posts), 1)
-        url, request = http.posts[0]
-        self.assertEqual(url, _WEBHOOK)
-        self.assertEqual(request["json"]["msgtype"], "markdown")
-        self.assertEqual(
-            request["json"]["markdown"]["text"],
-            "hello from agent",
-        )
-        self.assertEqual(request["json"]["markdown"]["title"], "AgentScope")
-
     async def test_streaming_is_disabled_without_ai_card_template(
         self,
     ) -> None:
@@ -1049,34 +1017,47 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
 
 
 class DingTalkChannelLifecycleTest(IsolatedAsyncioTestCase):
-    """DingTalk reply-webhook and connection lifecycle tests."""
+    """DingTalk delivery-without-connection and lifecycle tests."""
 
-    async def test_expired_session_webhook_is_not_used(self) -> None:
+    async def test_reply_works_without_start_listening(self) -> None:
+        """The node that delivers a reply never runs the connection loop."""
         channel = _channel()
-        received = await _message_callbacks(
-            channel,
-            _payload(
-                sessionWebhookExpiredTime=int(time.time() * 1000) - 1,
-            ),
+        http = _OpenAPIHTTP(
+            [
+                _FakeResponse({"accessToken": "token", "expireIn": 7200}),
+                _FakeResponse({}),
+            ],
         )
-        http = _FakeHTTP()
-        channel._http = http
 
-        sent = await channel._send_text(received[0].chat_id, "late reply")
+        with patch.object(channel, "_new_http_client", return_value=http):
+            await channel.send_response(_message_event(), _event_stream())
+            await channel.aclose()
 
-        self.assertFalse(sent)
-        self.assertEqual(http.posts, [])
-
-    async def test_missing_webhook_falls_back_to_openapi(self) -> None:
-        channel, media_api = _channel_with_openapi()
-
-        sent = await channel._send_text("group:cid-2", "fallback")
-
-        self.assertTrue(sent)
-        self.assertEqual(
-            media_api.text_calls,
-            [("group:cid-2", "fallback")],
+        self.assertListEqual(
+            [(url, request["json"]) for url, request in http.posts],
+            [
+                (
+                    "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                    {"appKey": "client-id", "appSecret": "client-secret"},
+                ),
+                (
+                    "https://api.dingtalk.com/v1.0/robot/groupMessages/send",
+                    {
+                        "robotCode": "client-id",
+                        "msgKey": "sampleMarkdown",
+                        "msgParam": json.dumps(
+                            {
+                                "title": "AgentScope",
+                                "text": "hello from agent",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "openConversationId": "cid-group-1",
+                    },
+                ),
+            ],
         )
+        self.assertTrue(http.closed)
 
     async def test_lifecycle_stops_stream_and_http_clients(self) -> None:
         channel = _channel()
