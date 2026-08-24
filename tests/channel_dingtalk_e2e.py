@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import base64
 from collections.abc import AsyncIterator, Awaitable, Callable
+import json
 import os
 from typing import Any, TypeAlias
 from uuid import uuid4
@@ -30,6 +31,7 @@ from agentscope.app.channel._base import (
     ChannelEvent,
 )
 from agentscope.app.channel._dingtalk._card import _approval_card_data
+from agentscope.app.channel._dingtalk._channel import _AI_CARD_TEMPLATE_ID
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -369,6 +371,87 @@ async def _approval(timeout: float) -> bool:
     return finished and results == [True, True]
 
 
+async def _probe_card(timeout: float) -> bool:
+    """Dump what the public AI card sends back when a button is clicked.
+
+    Approval currently needs a template the operator builds, because a
+    template is the only place routing data can ride. The SDK's public AI
+    card takes buttons at send time instead, which would remove that
+    requirement — if a click reports which button it was. Nothing states
+    whether it does, so ask a real application: this prints the whole
+    callback rather than asserting anything about it.
+    """
+    channel = _channel("dingtalk-probe-card-e2e")
+    completed = asyncio.Event()
+    seen: list[dict[str, Any]] = []
+
+    async def on_card(payload: dict[str, Any]) -> None:
+        seen.append(payload)
+        print(
+            f"\nCALLBACK {len(seen)}:\n"
+            + json.dumps(payload, ensure_ascii=False, indent=2),
+            flush=True,
+        )
+        if len(seen) >= 2:
+            completed.set()
+
+    # Replace the parser: it drops anything without routing fields, which
+    # is exactly what this probe needs to see.
+    channel._on_card_callback = on_card  # pylint: disable=protected-access
+
+    buttons = {
+        "order": ["msgTitle", "msgContent", "msgButtons"],
+        "msgButtons": [
+            {
+                "text": "Approve",
+                "color": "blue",
+                "id": "agree",
+                "request": True,
+            },
+            {
+                "text": "Deny",
+                "color": "red",
+                "id": "reject",
+                "request": True,
+            },
+        ],
+    }
+
+    async def emit(event: _Event) -> None:
+        if not isinstance(event, ChannelEvent) or seen:
+            return
+        api = channel._openapi  # pylint: disable=protected-access
+        if api is None:
+            completed.set()
+            return
+        # pylint: disable-next=protected-access
+        create = api._create_and_deliver_card
+        out_track_id = await create(
+            event.chat_id,
+            _AI_CARD_TEMPLATE_ID,
+            {
+                "msgTitle": "AgentScope approval probe",
+                "msgContent": "**Tool:** `SendMessage`",
+                "sys_full_json_obj": json.dumps(buttons),
+            },
+        )
+        print(f"CARD outTrackId={out_track_id!r}", flush=True)
+        if not out_track_id:
+            print("FAIL: the public AI card was not delivered", flush=True)
+            completed.set()
+            return
+        print("READY: click Approve, then click Deny", flush=True)
+
+    finished = await _run_until(
+        channel,
+        emit,
+        completed,
+        "send a direct message to receive the probe card",
+        timeout,
+    )
+    return finished and len(seen) >= 2
+
+
 async def _streaming_events() -> AsyncIterator[dict[str, Any]]:
     """Yield a small Agent event stream with visible update intervals."""
     reply_id = f"dingtalk-streaming-e2e-{uuid4().hex}"
@@ -519,6 +602,7 @@ _SCENARIOS: dict[str, Callable[[float], Awaitable[bool]]] = {
     "group": _group,
     "approval": _approval,
     "streaming": _streaming,
+    "probe-card": _probe_card,
     "shutdown": _shutdown,
 }
 
