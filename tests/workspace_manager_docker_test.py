@@ -47,7 +47,9 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
             _FakeWorkspace,
         )
         self.workspace_patch.start()
-        self.basedir = tempfile.mkdtemp()
+        # realpath: on macOS the temp dir is reached through a symlink,
+        # while the manager containment check resolves it.
+        self.basedir = os.path.realpath(tempfile.mkdtemp())
 
     async def asyncTearDown(self) -> None:
         """Undo patches."""
