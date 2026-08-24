@@ -244,6 +244,34 @@ class TestWorkspacePrewarm(IsolatedAsyncioTestCase):
         self.assertEqual(first_time, "ws-0")
         self.assertListEqual(manager.adopted, ["ws-0"])
 
+    async def test_a_team_session_does_not_bind_the_agent(self) -> None:
+        """A worker sharing the leader's workspace stays unbound, so its
+        own sessions get their own workspace."""
+        manager = _Manager(
+            prewarm=PrewarmConfig(size=1),
+            isolation=IsolationPolicy.PER_AGENT,
+        )
+        manager._start_prewarm()
+        await asyncio.sleep(0.05)
+
+        async def list_sessions(user_id: str, agent_id: str) -> list:
+            del user_id, agent_id
+            return [
+                SimpleNamespace(
+                    team_id="team-1",
+                    config=SimpleNamespace(workspace_id="leader-ws"),
+                ),
+            ]
+
+        manager.bind_storage(SimpleNamespace(list_sessions=list_sessions))
+        workspace_id = await manager.assign_workspace_id(
+            user_id="u",
+            agent_id="worker",
+            session_id="s1",
+        )
+
+        self.assertEqual(workspace_id, "ws-0")
+
     async def test_concurrent_first_sessions_bind_one_workspace(
         self,
     ) -> None:
@@ -286,6 +314,7 @@ class TestWorkspacePrewarm(IsolatedAsyncioTestCase):
             del user_id, agent_id
             return [
                 SimpleNamespace(
+                    team_id=None,
                     config=SimpleNamespace(workspace_id=workspace_id),
                 )
                 for workspace_id in bound
@@ -304,6 +333,7 @@ class TestWorkspacePrewarm(IsolatedAsyncioTestCase):
             del user_id, agent_id
             return [
                 SimpleNamespace(
+                    team_id=None,
                     config=SimpleNamespace(workspace_id=workspace_id),
                 )
                 for workspace_id in workspace_ids

@@ -85,6 +85,62 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 manager._workdir_for(workspace_id)
 
+    async def test_legacy_workdir_is_kept_mounted(self) -> None:
+        """A pre-existing <basedir>/<user>/<agent> keeps being used."""
+        legacy = os.path.join(self.basedir, "u1", "a1")
+        os.makedirs(legacy)
+        manager = DockerWorkspaceManager(self.basedir)
+
+        ws = await manager.get_workspace("u1", "a1", "s1", "fixed-id")
+
+        self.assertDictEqual(
+            ws.kwargs,
+            {
+                "workspace_id": "fixed-id",
+                "host_workdir": legacy,
+                "base_image": "python:3.11-slim",
+                "node_version": "20",
+                "extra_pip": [],
+                "gateway_port": 5600,
+                "env": {},
+                "default_mcps": [],
+                "skill_paths": [],
+            },
+        )
+
+    async def test_the_id_keyed_workdir_wins_once_it_exists(self) -> None:
+        """With both layouts on disk, the workspace id names the mount."""
+        os.makedirs(os.path.join(self.basedir, "u1", "a1"))
+        os.makedirs(os.path.join(self.basedir, "fixed-id"))
+        manager = DockerWorkspaceManager(self.basedir)
+
+        ws = await manager.get_workspace("u1", "a1", "s1", "fixed-id")
+
+        self.assertEqual(
+            ws.kwargs["host_workdir"],
+            os.path.join(self.basedir, "fixed-id"),
+        )
+
+    async def test_prewarmed_container_never_takes_a_legacy_workdir(
+        self,
+    ) -> None:
+        """A container built for nobody cannot adopt anyone's files."""
+        os.makedirs(os.path.join(self.basedir, "u1", "a1"))
+        manager = DockerWorkspaceManager(
+            self.basedir,
+            isolation=IsolationPolicy.PER_SESSION,
+            prewarm=PrewarmConfig(size=1),
+        )
+        manager._start_prewarm()
+        await asyncio.sleep(0.05)
+        prewarmed = _FakeWorkspace.created[0]
+
+        self.assertEqual(
+            prewarmed.kwargs["host_workdir"],
+            os.path.join(self.basedir, prewarmed.workspace_id),
+        )
+        await manager._stop_prewarm()
+
     async def test_prewarmed_container_is_handed_over_without_rebuild(
         self,
     ) -> None:

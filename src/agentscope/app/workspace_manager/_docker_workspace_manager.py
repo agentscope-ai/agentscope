@@ -82,12 +82,14 @@ class DockerWorkspaceManager(
 
         Args:
             basedir (`str`):
-                Host root under which per-user/per-agent workdir are
+                Host root under which per-workspace workdir are
                 created (``<basedir>/<workspace_id>``). Each workdir
                 is bind-mounted to ``/workspace`` inside its container.
                 Keying on the workspace id — rather than on
                 ``(user, agent)`` — is what lets a container be built
-                before anyone knows who will get it.
+                before anyone knows who will get it. Workspaces built
+                under the older ``<basedir>/<user_id>/<agent_id>``
+                layout keep mounting that directory.
             isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
                 Isolation grain for :meth:`assign_workspace_id`.
                 ``PER_SESSION`` → fresh UUID (one workspace per
@@ -146,18 +148,31 @@ class DockerWorkspaceManager(
 
     # ── isolation helpers ─────────────────────────────────────────
 
-    def _workdir_for(self, workspace_id: str) -> str:
+    def _workdir_for(
+        self,
+        workspace_id: str,
+        user_id: str = "",
+        agent_id: str = "",
+    ) -> str:
         """Resolve the host workdir bind-mounted into ``workspace_id``.
 
-        Keyed on the workspace id, which is unique per workspace, so
-        two users can never share a bind-mount — and so the directory
-        can be created alongside a pre-warmed container, long before
-        the ``(user, agent)`` that will own it is known.
+        Keyed on the workspace id, so the directory can be created
+        alongside a pre-warmed container, long before the
+        ``(user, agent)`` that will own it is known.
 
         A session may name its own ``workspace_id``, and this path is
         bind-mounted read-write into the container, so a value that
         escapes ``basedir`` would hand the container the host
         filesystem. Anything not landing strictly inside is rejected.
+
+        Args:
+            workspace_id (`str`):
+                The workspace whose bind mount is being resolved.
+            user_id (`str`, defaults to `""`):
+                Owner of the workspace, for the legacy layout below.
+                Empty for a workspace nobody owns yet.
+            agent_id (`str`, defaults to `""`):
+                Agent of the workspace, for the legacy layout below.
 
         Raises:
             `ValueError`:
@@ -170,6 +185,18 @@ class DockerWorkspaceManager(
                 f"workspace_id {workspace_id!r} escapes the workspace "
                 f"base directory",
             )
+        if os.path.isdir(workdir) or not (user_id and agent_id):
+            return workdir
+
+        # Workspaces built before the id-keyed layout live under
+        # ``<basedir>/<user_id>/<agent_id>``. Keep mounting such a
+        # directory where it stands: several workspace ids may share
+        # one, so no rename can move them all. Legacy paths escaping
+        # ``basedir`` are declined rather than rejected, leaving the
+        # caller with an ordinary empty workspace.
+        legacy = os.path.realpath(os.path.join(root, user_id, agent_id))
+        if legacy.startswith(root + os.sep) and os.path.isdir(legacy):
+            return legacy
         return workdir
 
     # ── workspace construction ────────────────────────────────────
@@ -178,16 +205,20 @@ class DockerWorkspaceManager(
         self,
         *,
         workspace_id: str | None = None,
+        user_id: str = "",
+        agent_id: str = "",
     ) -> DockerWorkspace:
         """Create a :class:`DockerWorkspace` and run its full
         ``initialize``.
 
         ``workspace_id`` names both the container and its host workdir,
         so the same id round-trips through the cache and re-attaches
-        after a restart. ``None`` mints one.
+        after a restart. ``None`` mints one. ``user_id``/``agent_id``
+        are forwarded only to find a legacy workdir — see
+        :meth:`_workdir_for`.
         """
         workspace_id = workspace_id or _generate_id()
-        workdir = self._workdir_for(workspace_id)
+        workdir = self._workdir_for(workspace_id, user_id, agent_id)
         os.makedirs(workdir, exist_ok=True)
         ws = DockerWorkspace(
             workspace_id=workspace_id,
@@ -268,7 +299,11 @@ class DockerWorkspaceManager(
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws
 
-            ws = await self._build_and_start(workspace_id=workspace_id)
+            ws = await self._build_and_start(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                agent_id=agent_id,
+            )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
