@@ -99,7 +99,9 @@ class _FakeMediaOpenAPI:
         self.send_calls: list[tuple[str, bytes, str, str]] = []
         self.text_calls: list[tuple[str, str]] = []
         self.search_result: list[dict[str, Any]] = []
-        self.approval_calls: list[tuple[str, str, str, dict[str, str]]] = []
+        self.approval_calls: list[
+            tuple[str, str, str, dict[str, str], str]
+        ] = []
         self.card_updates: list[tuple[str, dict[str, str]]] = []
         self.streaming_card_id: str | None = "stream-track-1"
         self.streaming_card_calls: list[tuple[str, str, str]] = []
@@ -142,11 +144,12 @@ class _FakeMediaOpenAPI:
         approver_id: str,
         template_id: str,
         card_data: dict[str, str],
+        out_track_id: str = "",
     ) -> str:
         self.approval_calls.append(
-            (chat_id, approver_id, template_id, card_data),
+            (chat_id, approver_id, template_id, card_data, out_track_id),
         )
-        return "track-1"
+        return out_track_id or "track-1"
 
     async def update_approval_card(
         self,
@@ -844,12 +847,68 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         await channel.send_response(event, _confirmation_event_stream())
 
         self.assertEqual(len(media_api.approval_calls), 1)
-        chat_id, approver, template, card_data = media_api.approval_calls[0]
+        (
+            chat_id,
+            approver,
+            template,
+            card_data,
+            track,
+        ) = media_api.approval_calls[0]
         self.assertEqual(chat_id, "group:cid-group-1")
         self.assertEqual(approver, "")
         self.assertEqual(template, "approval.schema")
         self.assertEqual(card_data["toolCallId"], "tool-1")
         self.assertEqual(card_data["agentId"], "agent-1")
+        # Pinned so a template that echoes nothing still routes the click.
+        self.assertEqual(track, "tool-1")
+
+    async def test_stock_template_callback_routes_on_id_and_space(
+        self,
+    ) -> None:
+        """A template that echoes only the click still resumes its run."""
+        channel, _ = _channel_with_openapi()
+        received = await _confirmation_callbacks(
+            channel,
+            {
+                "type": "actionCallback",
+                "outTrackId": "tool-1",
+                "userId": "user-1",
+                "spaceType": "IM_GROUP",
+                "spaceId": "cid-group-1",
+                "content": json.dumps(
+                    {"cardPrivateData": {"actionIds": ["agree"]}},
+                ),
+            },
+        )
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].tool_call_id, "tool-1")
+        self.assertEqual(received[0].chat_id, "group:cid-group-1")
+        self.assertEqual(received[0].agent_id, "")
+        self.assertTrue(received[0].approved)
+
+    async def test_stock_template_callback_routes_a_private_chat(
+        self,
+    ) -> None:
+        """A robot-space click names the chat by whoever clicked."""
+        channel, _ = _channel_with_openapi()
+        received = await _confirmation_callbacks(
+            channel,
+            {
+                "type": "actionCallback",
+                "outTrackId": "tool-9",
+                "userId": "user-7",
+                "spaceType": "IM_ROBOT",
+                "content": json.dumps(
+                    {"cardPrivateData": {"params": {"action": "reject"}}},
+                ),
+            },
+        )
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].tool_call_id, "tool-9")
+        self.assertEqual(received[0].chat_id, "user:user-7")
+        self.assertFalse(received[0].approved)
 
     async def test_approval_callback_emits_resume_event_and_updates_card(
         self,

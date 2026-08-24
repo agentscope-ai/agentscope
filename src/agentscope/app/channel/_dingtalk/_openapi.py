@@ -150,6 +150,7 @@ class _DingTalkOpenAPI:
         approver_id: str,
         template_id: str,
         card_data: dict[str, str],
+        out_track_id: str = "",
     ) -> str | None:
         """Create and deliver one Stream-callback approval card.
 
@@ -159,6 +160,8 @@ class _DingTalkOpenAPI:
                 the card. Empty means normal audience visibility.
             template_id (`str`): Card Platform template identifier.
             card_data (`dict[str, str]`): Template parameter map.
+            out_track_id (`str`): Tracking id to pin on the card; a random
+                one when empty.
 
         Returns:
             `str | None`: The card's outbound tracking id, or ``None`` when
@@ -169,6 +172,7 @@ class _DingTalkOpenAPI:
             template_id,
             card_data,
             approver_id,
+            out_track_id,
         )
 
     async def create_streaming_card(
@@ -267,6 +271,7 @@ class _DingTalkOpenAPI:
         template_id: str,
         card_data: dict[str, str],
         recipient_id: str = "",
+        out_track_id: str = "",
     ) -> str | None:
         """Create a Card Platform instance and deliver it to a target."""
         if chat_id.startswith("group:"):
@@ -293,7 +298,7 @@ class _DingTalkOpenAPI:
         token = await self._access_token()
         if token is None:
             return None
-        out_track_id = uuid4().hex
+        out_track_id = out_track_id or uuid4().hex
         created = await self._request(
             "POST",
             f"{_API}/card/instances",

@@ -105,8 +105,23 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     content = _json_object(payload.get("content"))
     private_data = _json_object(content.get("cardPrivateData"))
     params = _json_object(private_data.get("params"))
+    action_ids = private_data.get("actionIds")
 
-    action = str(params.get("action") or "").strip().lower()
+    # A template that declares nothing but its buttons reports the click
+    # as an action id, so accept either shape.
+    action = (
+        str(
+            params.get("action")
+            or (
+                action_ids[0]
+                if isinstance(action_ids, list) and action_ids
+                else ""
+            )
+            or "",
+        )
+        .strip()
+        .lower()
+    )
     if action in _APPROVE_ACTIONS:
         approved = True
     elif action in _DENY_ACTIONS:
@@ -114,12 +129,20 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     else:
         return None
 
-    tool_call_id = _field(params, "toolCallId", "tool_call_id")
-    chat_id = _field(params, "chatId", "chat_id")
-    approver_id = _field(params, "approverId", "approver_id")
     user_id = _field(payload, "userId", "user_id")
     out_track_id = _field(payload, "outTrackId", "out_track_id")
-    if not all((tool_call_id, chat_id, user_id, out_track_id)):
+    if not all((user_id, out_track_id)):
+        return None
+    # Routing rides on the template only when the template was built to
+    # carry it. Otherwise the tracking id is the tool call it was created
+    # for, and the callback says which chat it came from.
+    tool_call_id = _field(params, "toolCallId", "tool_call_id") or out_track_id
+    chat_id = _field(params, "chatId", "chat_id") or _chat_from_space(
+        payload,
+        user_id,
+    )
+    approver_id = _field(params, "approverId", "approver_id")
+    if not chat_id:
         return None
     return _ApprovalDecision(
         out_track_id=out_track_id,
@@ -131,6 +154,25 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
         session_id=_field(params, "sessionId", "session_id"),
         approved=approved,
     )
+
+
+def _chat_from_space(payload: dict[str, Any], user_id: str) -> str:
+    """Recover the chat a card was delivered into from its callback.
+
+    Args:
+        payload (`dict[str, Any]`): Callback data supplied by the SDK.
+        user_id (`str`): The staff id of whoever clicked.
+
+    Returns:
+        `str`: Encoded chat, or ``""`` when the space is unrecognised.
+    """
+    space_type = _field(payload, "spaceType", "space_type").upper()
+    space_id = _field(payload, "spaceId", "space_id")
+    if space_type == "IM_GROUP" and space_id:
+        return f"group:{space_id}"
+    if space_type == "IM_ROBOT" and user_id:
+        return f"user:{user_id}"
+    return ""
 
 
 def _json_object(value: Any) -> dict[str, Any]:

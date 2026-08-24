@@ -828,6 +828,7 @@ class DingTalkChannel(ChannelBase):
                 approver_id,
                 template_id,
                 card_data,
+                tool.id,
             )
             if out_track_id is None:
                 await self._api().send_text(
