@@ -1360,12 +1360,14 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 the holder instead of failing, and the same call would
                 behave differently per dialect.
 
-                The check is not atomic with the write, so two creates
-                racing for one bot can both pass it. The constraint then
-                decides: Postgres and SQLite raise, MySQL takes the last
-                writer. `ChannelService.create` rejects a taken bot
-                first, so reaching that window means calling storage
-                directly.
+                Neither this check nor `ChannelService.create`'s is
+                atomic with the write, so two creates racing for one bot
+                can both pass. The constraint then decides, and how it
+                surfaces depends on the dialect: Postgres and SQLite
+                raise `IntegrityError`, while on MySQL the duplicate-key
+                update lands on the holder's row and the read-back of
+                the new id then raises `NoResultFound`, rolling the
+                transaction back. Either way nothing is committed.
         """
         holder = await self.get_channel_id_by_platform_bot_id(
             platform_bot_id,

@@ -11,9 +11,12 @@ stay behavioural equivalents.
 """
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta
+from importlib import import_module
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from pydantic import SecretStr
+from sqlalchemy.dialects import mysql
 
 from utils import AnyString
 
@@ -41,6 +44,7 @@ from agentscope.app.storage import (
     TeamMember,
     TeamRecord,
 )
+from agentscope.app.storage._sql._tables import ChannelRow
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.credential import DashScopeCredential
 from agentscope.mcp import HttpMCPConfig, MCPClient
@@ -1095,6 +1099,34 @@ class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
                     await storage.get_channel_id_by_platform_bot_id("cli-1"),
                     "chan-1",
                 )
+
+
+class ChannelTimestampPrecisionTest(TestCase):
+    """``channels.updated_at`` is the channel's configuration version.
+
+    The client cache and the dispatcher compare it for equality, so a
+    MySQL ``DATETIME`` rounded to whole seconds would let two edits one
+    second apart share a version and leave the second one unapplied.
+    """
+
+    def test_mysql_keeps_microseconds(self) -> None:
+        """Both timestamps carry ``fsp=6`` on MySQL, and the migration
+        that creates the table agrees with the ORM metadata."""
+        migration = import_module(
+            "agentscope.app.storage._sql._alembic.versions.0003_channels",
+        )
+        dialect = mysql.dialect()
+        self.assertListEqual(
+            [
+                type_.compile(dialect)
+                for type_ in (
+                    ChannelRow.__table__.c.created_at.type,
+                    ChannelRow.__table__.c.updated_at.type,
+                    migration.VERSION_TIMESTAMP,
+                )
+            ],
+            ["DATETIME(6)", "DATETIME(6)", "DATETIME(6)"],
+        )
 
 
 class LegacyRecordShapeTest(IsolatedAsyncioTestCase):
