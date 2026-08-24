@@ -1002,17 +1002,24 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(read_decision.behavior, PermissionBehavior.ALLOW)
         self.assertEqual(send_decision.behavior, PermissionBehavior.ASK)
 
-    async def test_send_tools_require_approval_card_configuration(
+    async def test_send_tools_do_not_depend_on_card_configuration(
         self,
     ) -> None:
+        """Approval gates the call, not whether the tool is equipped."""
         channel = _channel(approval_card_template_id="")
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
         )
 
-        self.assertEqual(
+        self.assertListEqual(
             [tool.name for tool in tools],
-            ["ListConversations", "ListUsers"],
+            [
+                "ListConversations",
+                "ListUsers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+            ],
         )
 
 

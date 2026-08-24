@@ -117,7 +117,7 @@ class DingTalkChannel(ChannelBase):
             default="",
             title="Approval card template ID",
             description="DingTalk Card Platform template used for tool "
-            "approval. Send tools are available only when configured.",
+            "approval. Tool calls needing approval stall without it.",
         )
         streaming_card_template_id: str = Field(
             default="",
@@ -523,19 +523,13 @@ class DingTalkChannel(ChannelBase):
         )
 
         backend = workspace.get_backend()
-        tools: list["ToolBase"] = [
+        return [
             ListConversations(self, backend),
             ListUsers(self, backend),
+            SendMessage(self, backend),
+            SendFile(self, backend),
+            SendImage(self, backend),
         ]
-        if self._config.approval_card_template_id:
-            tools.extend(
-                [
-                    SendMessage(self, backend),
-                    SendFile(self, backend),
-                    SendImage(self, backend),
-                ],
-            )
-        return tools
 
     async def search_users(
         self,
