@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import json
-import unicodedata
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
@@ -33,7 +32,7 @@ from ..tool import ToolChoice
 
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
-_STRUCTURED_TEXT_CHARS = frozenset("{}[]():,;=<>\"'")
+_STRUCTURED_TEXT_CHARS = frozenset("{}[]():,;=<>\"'._+-*/%")
 
 
 class ChatModelBase:
@@ -380,8 +379,8 @@ class ChatModelBase:
         underlying API to count the tokens. The base implementation instead
         applies a class-aware fallback: it preserves the ASCII bytes-per-token
         baseline, adds local weight for dense numeric/structured text, and
-        uses East Asian width for non-ASCII characters so context-length
-        guardrails do not underestimate the input.
+        counts non-ASCII characters separately so context-length guardrails
+        do not underestimate the input.
 
         Subclasses may override this method to provide a more accurate
         implementation tailored to their specific tokenizer.
@@ -465,10 +464,9 @@ class ChatModelBase:
         The fallback deliberately keeps ordinary ASCII prose at the existing
         four-bytes-per-token estimate.  Numeric and structured ASCII is more
         token-dense, so it uses a higher bound only when the text contains a
-        meaningful amount of digits or structural punctuation.  Non-ASCII
-        characters use East Asian width (two units for wide/full-width,
-        otherwise one) because UTF-8 byte length is not a useful proxy for
-        CJK, kana, or accented text.
+        meaningful amount of digits or structural punctuation. Non-ASCII
+        characters count as one token each because UTF-8 byte length is not a
+        useful proxy for CJK, kana, or accented text.
 
         This is a guardrail estimate, not a tokenizer replacement. Provider
         models with an exact tokenizer should continue to override
@@ -496,17 +494,13 @@ class ChatModelBase:
                 if numeric_run >= 3:
                     dense_numeric_chars += numeric_run
                 numeric_run = 0
-                non_ascii_tokens += (
-                    2
-                    if unicodedata.east_asian_width(char) in {"W", "F"}
-                    else 1
-                )
+                non_ascii_tokens += 1
         if numeric_run >= 3:
             dense_numeric_chars += numeric_run
 
-        # Preserve the previous behavior for natural ASCII prose. Wide/full-
-        # width characters receive two units, avoiding the UTF-8 undercount
-        # for CJK while narrow non-ASCII characters remain one unit.
+        # Preserve the previous behavior for natural ASCII prose. Non-ASCII
+        # characters receive one unit each, avoiding the bytes/4 undercount
+        # for CJK without applying the dense-ASCII rate to ordinary prose.
         ascii_tokens = (ascii_bytes + 2) // 4
 
         # Add weight only to dense numeric runs. This keeps a date or a small

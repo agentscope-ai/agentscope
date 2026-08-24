@@ -146,17 +146,17 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
             (
                 "SELECT order_id, sum(amount * (1 - discount)) "
                 "FROM orders WHERE customer_id = 88392019482;",
-                28,
+                37,
             ),
-            ("上下文压缩不应因词数低估而跳过。", 32),
+            ("上下文压缩不应因词数低估而跳过。", 16),
             (
                 ("上下文压缩不应因词数低估而跳过。" * 3)[:44],
-                88,
+                44,
             ),
-            ('{"amount":10000.50,"customer_id":88392019482}', 26),
+            ('{"amount":10000.50,"customer_id":88392019482}', 28),
             (
                 'Review 中文 JSON: {"金额": 12345.67, "status": "ok"}',
-                31,
+                28,
             ),
         ]
 
@@ -187,6 +187,63 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
             ),
             (len(cjk.encode("utf-8")) + 2) // 4,
         )
+
+    async def test_reported_payloads_bound_tokenizer_counts(self) -> None:
+        """The issue's exact payloads stay above their pure-text counts."""
+        english = (
+            "Please analyze the quarterly revenue trends, cost breakdown, "
+            "and operating profit margin across all departments for Q3 "
+            "2026."
+        )
+        chinese = (
+            "请分析2026年第三季度集团财务营收趋势、成本结构明细"
+            "以及各事业部的营业利润率情况。"
+        )
+        sql = (
+            "SELECT order_id, sum(amount * (1 - discount)) as net_total, "
+            "count(item_id) as total_items FROM orders WHERE amount > "
+            "10000.50 AND customer_id IN (88392019482, 88392019483, "
+            "88392019484)   AND create_time >= '2026-01-01 00:00:00' "
+            "AND status IN ('PAID', 'SETTLED', 'DELIVERED') GROUP BY "
+            "order_id HAVING net_total > 500000.00 ORDER BY net_total "
+            "DESC LIMIT 100;"
+        )
+        json_result = (
+            '{"status": "success", "code": 200, "data": ['
+            '{"order_id": 1001, "amount": 15200.5, "customer_id": '
+            '88392019482, "status": "PAID"}, {"order_id": 1002, '
+            '"amount": 83400.0, "customer_id": 88392019483, '
+            '"status": "SETTLED"}], "summary": {"total_count": 2, '
+            '"sum_amount": 98600.5}}'
+        )
+        mixed = "".join(
+            [
+                "请帮我查询 2026 年 Q3 大额订单及结算状态。",
+                "好的，我将调用数据库执行 SQL 查询：SELECT * FROM orders "
+                "WHERE amount > 50000;",
+                '返回结果如下：{"orders": [{"id": 1, "amount": '
+                '62000.0, "status": "SETTLED"}], "total": 1}',
+                "已获取到 1 笔大额订单，金额为 62,000.00 元，状态为已结算。"
+                "请问还需要进一步汇总分析吗？",
+            ],
+        )
+        payloads = [
+            (english, 26, 33),
+            (chinese, 24, 41),
+            (sql, 149, 149),
+            (json_result, 134, 151),
+            (mixed, 136, 143),
+        ]
+
+        for text, tokenizer_tokens, expected in payloads:
+            with self.subTest(text=text[:40]):
+                estimate = await self.model.count_tokens(
+                    [UserMsg(name="user", content=text)],
+                    None,
+                )
+                self.assertEqual(estimate, expected)
+                self.assertGreaterEqual(estimate, tokenizer_tokens)
+                self.assertLessEqual(estimate, tokenizer_tokens * 2)
 
     async def _run_compression_flow(
         self,
@@ -253,7 +310,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
             (
                 "cjk",
                 ("上下文压缩不应因词数低估而跳过。" * 3)[:44],
-                70,
+                54,
             ),
             (
                 "json",
