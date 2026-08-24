@@ -52,6 +52,10 @@ _CHATBOT_TOPIC = "/v1.0/im/bot/messages/get"
 _CARD_CALLBACK_TOPIC = "/v1.0/card/instances/callback"
 _GROUP_CONVERSATION = "2"
 _MAX_LEN = 4000
+# The AI card the official SDK ships with, and its streaming Markdown
+# variable — see ``dingtalk_stream.card_instance.AIMarkdownCardInstance``.
+_AI_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+_AI_CARD_CONTENT_KEY = "msgContent"
 _STATUS_POLL_INTERVAL = 0.2
 _STREAM_MIN_INTERVAL = 0.3
 _STREAM_FALLBACK_NOTICE = (
@@ -119,13 +123,14 @@ class DingTalkChannel(ChannelBase):
             "approval. Tool calls needing approval stall without it.",
         )
         streaming_card_template_id: str = Field(
-            default="",
+            default=_AI_CARD_TEMPLATE_ID,
             title="Streaming card template ID",
-            description="Optional DingTalk AI Card template used for "
-            "streaming replies. Replies use normal Markdown when empty.",
+            description="DingTalk AI Card template used for streaming "
+            "replies. Defaults to the public template the official SDK "
+            "uses; clear it to reply in plain Markdown instead.",
         )
         streaming_card_key: str = Field(
-            default="content",
+            default=_AI_CARD_CONTENT_KEY,
             min_length=1,
             title="Streaming card content key",
             description="Template variable key of the AI Card streaming "

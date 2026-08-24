@@ -8,7 +8,7 @@ environment variables so they cannot be exposed in shell history::
     export DINGTALK_CLIENT_ID=ding...
     export DINGTALK_CLIENT_SECRET=...
     export DINGTALK_APPROVAL_CARD_TEMPLATE_ID=....schema
-    export DINGTALK_STREAMING_CARD_TEMPLATE_ID=....schema
+    export DINGTALK_STREAMING_CARD_TEMPLATE_ID=....schema  # optional
     uv run python tests/channel_dingtalk_e2e.py direct
 
 Available scenarios are ``direct``, ``group``, ``approval``, ``streaming``,
@@ -405,12 +405,15 @@ async def _streaming_events() -> AsyncIterator[dict[str, Any]]:
 
 async def _streaming(timeout: float) -> bool:
     """Check AI-card creation, incremental updates, and finalization."""
-    template_id = _template_id("DINGTALK_STREAMING_CARD_TEMPLATE_ID")
-    channel = _channel(
-        "dingtalk-streaming-e2e",
-        streaming_card_template_id=template_id,
-        streaming_card_key="content",
-    )
+    # Exercises the shipped default unless an override is configured.
+    override = os.environ.get("DINGTALK_STREAMING_CARD_TEMPLATE_ID", "")
+    config: dict[str, Any] = {}
+    if override:
+        config = {
+            "streaming_card_template_id": override,
+            "streaming_card_key": "content",
+        }
+    channel = _channel("dingtalk-streaming-e2e", **config)
     completed = asyncio.Event()
     succeeded = False
 
