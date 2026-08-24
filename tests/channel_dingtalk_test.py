@@ -44,8 +44,17 @@ _REPLY_ID = "reply-1"
 class _FakeResponse:
     """Minimal successful HTTP response."""
 
-    def __init__(self, result: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        result: dict[str, Any] | None = None,
+        status_code: int = 200,
+    ) -> None:
         self._result = result if result is not None else {"errcode": 0}
+        self.status_code = status_code
+
+    @property
+    def text(self) -> str:
+        return json.dumps(self._result, ensure_ascii=False)
 
     def raise_for_status(self) -> None:
         pass
@@ -839,6 +848,22 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                 ),
             ],
         )
+
+    async def test_rejected_send_reports_what_dingtalk_said(self) -> None:
+        """A refusal names the field; the status code alone never does."""
+        api, http = _openapi()
+        http._responses.append(
+            _FakeResponse(
+                {"code": "InvalidParameter", "message": "photoURL invalid"},
+                status_code=400,
+            ),
+        )
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            sent = await api.send_text("user:user-1", "hello")
+
+        self.assertFalse(sent)
+        self.assertIn("photoURL invalid", "\n".join(captured.output))
 
     async def test_approval_card_value_fits_the_platform_cap(self) -> None:
         """A Chinese argument must not push a card value past 1KB."""

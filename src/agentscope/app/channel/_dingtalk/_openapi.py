@@ -14,6 +14,9 @@ from ...._logging import logger
 _API = "https://api.dingtalk.com/v1.0"
 _OAPI = "https://oapi.dingtalk.com"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
+# Enough of a refusal to name the offending field, not so much that a
+# rejected payload is echoed back into the log.
+_ERROR_BODY_CHARS = 500
 _SUPPORTED_FILE_TYPES = frozenset({"doc", "docx", "pdf", "rar", "xlsx", "zip"})
 # An AI card's creation call carries no content: it opens the card in
 # a running state, and the update that follows settles it with what to
@@ -564,7 +567,16 @@ class _DingTalkOpenAPI:
                 headers=self._headers(token),
                 json=body,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # The status alone never says which field was wrong;
+                # DingTalk puts that in the body.
+                logger.warning(
+                    "DingTalk rejected %s with HTTP %s: %s",
+                    msg_key,
+                    response.status_code,
+                    response.text[:_ERROR_BODY_CHARS],
+                )
+                return False
             result = response.json()
             code = result.get("code")
             if code not in (None, "", 0, "0"):
@@ -594,7 +606,14 @@ class _DingTalkOpenAPI:
                 headers=self._headers(token),
                 json=body,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                logger.warning(
+                    "DingTalk rejected %s with HTTP %s: %s",
+                    operation,
+                    response.status_code,
+                    response.text[:_ERROR_BODY_CHARS],
+                )
+                return False
             result = response.json()
             code = result.get("code")
             if code not in (None, "", 0, "0"):
