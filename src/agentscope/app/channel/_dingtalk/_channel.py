@@ -52,10 +52,10 @@ _CHATBOT_TOPIC = "/v1.0/im/bot/messages/get"
 _CARD_CALLBACK_TOPIC = "/v1.0/card/instances/callback"
 _GROUP_CONVERSATION = "2"
 _MAX_LEN = 4000
-# The AI card the official SDK ships with, and its streaming Markdown
-# variable — see ``dingtalk_stream.card_instance.AIMarkdownCardInstance``.
-_AI_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
-_AI_CARD_CONTENT_KEY = "msgContent"
+# The streaming AI card DingTalk publishes, and its Markdown variable —
+# the template the official typewriter example streams into.
+_AI_CARD_TEMPLATE_ID = "8aebdfb9-28f4-4a98-98f5-396c3dde41a0.schema"
+_AI_CARD_CONTENT_KEY = "content"
 _STATUS_POLL_INTERVAL = 0.2
 _STREAM_MIN_INTERVAL = 0.3
 _STREAM_FALLBACK_NOTICE = (
@@ -411,12 +411,17 @@ class DingTalkChannel(ChannelBase):
         self,
         out_track_id: str,
         text: str,
+        *,
+        finalize: bool = False,
+        is_error: bool = False,
     ) -> bool:
         """Write the complete Markdown value to one AI streaming card."""
         return await self._api().stream_card(
             out_track_id,
             self._config.streaming_card_key,
             text,
+            finalize=finalize,
+            is_error=is_error,
         )
 
     async def _finish_streaming_card(
@@ -427,18 +432,17 @@ class DingTalkChannel(ChannelBase):
         """Finalize a live card, returning false for Markdown fallback."""
         if out_track_id is None or not text:
             return False
-        key = self._config.streaming_card_key
-        updated = await self._api().finish_streaming_card(
+        updated = await self._update_streaming_card(
             out_track_id,
-            key,
             text,
+            finalize=True,
         )
         if not updated:
-            await self._api().finish_streaming_card(
+            await self._update_streaming_card(
                 out_track_id,
-                key,
                 _STREAM_FALLBACK_NOTICE,
-                failed=True,
+                finalize=True,
+                is_error=True,
             )
         return updated
 
@@ -862,7 +866,7 @@ class DingTalkChannel(ChannelBase):
                 actor=decision.user_id,
             ),
         )
-        await self._api().update_card(
+        await self._api().update_approval_card(
             decision.out_track_id,
             _resolved_card_data(decision.approved),
         )

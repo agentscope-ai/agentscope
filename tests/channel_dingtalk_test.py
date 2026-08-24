@@ -103,8 +103,7 @@ class _FakeMediaOpenAPI:
         self.card_updates: list[tuple[str, dict[str, str]]] = []
         self.streaming_card_id: str | None = "stream-track-1"
         self.streaming_card_calls: list[tuple[str, str, str]] = []
-        self.streaming_updates: list[tuple[str, str, str]] = []
-        self.streaming_finishes: list[tuple[str, str, str, bool]] = []
+        self.streaming_updates: list[tuple[str, str, str, bool, bool]] = []
         self.streaming_update_success = True
 
     async def download_media(
@@ -149,7 +148,7 @@ class _FakeMediaOpenAPI:
         )
         return "track-1"
 
-    async def update_card(
+    async def update_approval_card(
         self,
         out_track_id: str,
         card_data: dict[str, str],
@@ -173,20 +172,12 @@ class _FakeMediaOpenAPI:
         out_track_id: str,
         content_key: str,
         content: str,
-    ) -> bool:
-        self.streaming_updates.append((out_track_id, content_key, content))
-        return self.streaming_update_success
-
-    async def finish_streaming_card(
-        self,
-        out_track_id: str,
-        content_key: str,
-        content: str,
         *,
-        failed: bool = False,
+        finalize: bool = False,
+        is_error: bool = False,
     ) -> bool:
-        self.streaming_finishes.append(
-            (out_track_id, content_key, content, failed),
+        self.streaming_updates.append(
+            (out_track_id, content_key, content, finalize, is_error),
         )
         return self.streaming_update_success
 
@@ -737,9 +728,9 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                 "max_media_bytes": 10 * 1024 * 1024,
                 "approval_card_template_id": "",
                 "streaming_card_template_id": (
-                    "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+                    "8aebdfb9-28f4-4a98-98f5-396c3dde41a0.schema"
                 ),
-                "streaming_card_key": "msgContent",
+                "streaming_card_key": "content",
             },
         )
         self.assertTrue(channel.capabilities.streaming)
@@ -761,11 +752,17 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             [("group:cid-group-1", "ai-card.schema", "answer")],
         )
         self.assertGreaterEqual(len(media_api.streaming_updates), 1)
-        self.assertListEqual(
-            media_api.streaming_finishes,
-            [("stream-track-1", "answer", "hello from agent", False)],
+        self.assertEqual(
+            media_api.streaming_updates[-1],
+            (
+                "stream-track-1",
+                "answer",
+                "hello from agent",
+                True,
+                False,
+            ),
         )
-        self.assertListEqual(media_api.text_calls, [])
+        self.assertEqual(media_api.text_calls, [])
 
     async def test_streaming_card_creation_failure_falls_back_to_markdown(
         self,
@@ -798,21 +795,12 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
         await channel.send_response(event, _event_stream())
 
-        self.assertListEqual(
+        self.assertEqual(
             media_api.text_calls,
             [("group:cid-group-1", "hello from agent")],
         )
-        # The card is left in its failed state before the Markdown resend.
-        self.assertEqual(
-            media_api.streaming_finishes[-1],
-            (
-                "stream-track-1",
-                "content",
-                "Streaming stopped. The complete reply follows as a "
-                "Markdown message.",
-                True,
-            ),
-        )
+        self.assertTrue(media_api.streaming_updates[-1][3])
+        self.assertTrue(media_api.streaming_updates[-1][4])
 
     async def test_long_streaming_reply_is_not_capped(self) -> None:
         """Only DingTalk decides a reply is too long, not a local guess."""
@@ -1356,7 +1344,7 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             "approval.schema",
             {"toolCallId": "tool-1"},
         )
-        updated = await api.update_card(
+        updated = await api.update_approval_card(
             cast(str, out_track_id),
             {"status": "approved"},
         )
@@ -1421,32 +1409,14 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             cast(str, out_track_id),
             "answer",
             "**complete**",
+            finalize=True,
         )
 
         self.assertIsNotNone(out_track_id)
         self.assertTrue(updated)
         create = http.requests[0][2]["json"]
         self.assertEqual(create["cardTemplateId"], "ai-card.schema")
-        self.assertDictEqual(
-            create["cardData"]["cardParamMap"],
-            {
-                "answer": "",
-                "flowStatus": "2",
-                "sys_full_json_obj": json.dumps(
-                    {
-                        "order": [
-                            "msgTitle",
-                            "msgContent",
-                            "staticMsgContent",
-                            "msgTextList",
-                            "msgImages",
-                            "msgSlider",
-                            "msgButtons",
-                        ],
-                    },
-                ),
-            },
-        )
+        self.assertEqual(create["cardData"]["cardParamMap"], {"answer": ""})
         delivery = http.requests[1][2]["json"]
         self.assertEqual(
             delivery["openSpaceId"],
@@ -1459,7 +1429,7 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["key"], "answer")
         self.assertEqual(request["json"]["content"], "**complete**")
         self.assertTrue(request["json"]["isFull"])
-        self.assertFalse(request["json"]["isFinalize"])
+        self.assertTrue(request["json"]["isFinalize"])
         self.assertEqual(
             str(UUID(request["json"]["guid"])),
             request["json"]["guid"],

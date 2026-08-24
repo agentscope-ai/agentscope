@@ -31,7 +31,6 @@ from agentscope.app.channel._base import (
     ChannelEvent,
 )
 from agentscope.app.channel._dingtalk._card import _approval_card_data
-from agentscope.app.channel._dingtalk._channel import _AI_CARD_TEMPLATE_ID
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -381,6 +380,9 @@ async def _probe_card(timeout: float) -> bool:
     whether it does, so ask a real application: this prints the whole
     callback rather than asserting anything about it.
     """
+    # The general-purpose AI card, the only published one that takes
+    # buttons at send time.
+    template_id = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
     channel = _channel("dingtalk-probe-card-e2e")
     completed = asyncio.Event()
     seen: list[dict[str, Any]] = []
@@ -428,7 +430,7 @@ async def _probe_card(timeout: float) -> bool:
         create = api._create_and_deliver_card
         out_track_id = await create(
             event.chat_id,
-            _AI_CARD_TEMPLATE_ID,
+            template_id,
             {
                 "msgTitle": "AgentScope approval probe",
                 "msgContent": "**Tool:** `SendMessage`",
