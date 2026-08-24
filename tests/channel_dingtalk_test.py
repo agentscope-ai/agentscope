@@ -990,7 +990,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(media_api.card_updates[0][1]["status"], "denied")
 
     async def test_approval_callback_accepts_approval_aliases(self) -> None:
-        for action in ("approve", "agree"):
+        for action in ("approve", "agree", "approved"):
             with self.subTest(action=action):
                 channel, media_api = _channel_with_openapi()
                 received = await _confirmation_callbacks(

@@ -13,8 +13,12 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from ....message import ToolCallBlock
 
-_APPROVE_ACTIONS = frozenset({"allow", "approve", "accept", "agree"})
-_DENY_ACTIONS = frozenset({"deny", "reject"})
+# A template author reaches for the same word the card's own status uses,
+# so the settled spellings are accepted alongside the imperative ones.
+_APPROVE_ACTIONS = frozenset(
+    {"allow", "approve", "approved", "accept", "agree"},
+)
+_DENY_ACTIONS = frozenset({"deny", "denied", "reject"})
 
 # DingTalk's general AI card renders the components its layout names and
 # takes its buttons with them, so an approval card needs no template of
