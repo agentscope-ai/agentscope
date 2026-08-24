@@ -778,10 +778,7 @@ class ChatService:
                     else None
                 )
                 channel_tools = (
-                    await channel.list_tools(
-                        workspace,
-                        session_record.source_chat_id or "",
-                    )
+                    await channel.list_tools(workspace)
                     if channel is not None
                     else []
                 )
@@ -970,9 +967,8 @@ class ChatService:
                     if tools:
                         attachment += (
                             f" You also have these {channel.display_name} "
-                            f"tools available: {tools}. They act on this "
-                            f"chat by default; name another chat's id only "
-                            f"to reach somewhere else."
+                            f"tools available: {tools}. Pass this chat's id "
+                            f"as their target to act on this chat."
                         )
 
                 attachment = (

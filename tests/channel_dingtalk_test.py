@@ -954,7 +954,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         backend = _FakeBackend({"/workspace/report.pdf": b"pdf"})
         workspace = cast(WorkspaceBase, _FakeWorkspace(backend))
 
-        tools = await channel.list_tools(workspace, "group:cid-group-1")
+        tools = await channel.list_tools(workspace)
 
         self.assertEqual(
             [tool.name for tool in tools],
@@ -974,58 +974,23 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(user_items[0]["target"], "user:user-2")
 
         message_result = await cast(SendMessage, tools[2])(
-            text="hello",
-            target="user:user-2",
+            "user:user-2",
+            "hello",
         )
         file_result = await cast(SendFile, tools[3])(
-            path="/workspace/report.pdf",
-            target="group:cid-2",
+            "/workspace/report.pdf",
+            "group:cid-2",
         )
 
         self.assertIn("Sent message", message_result.content[0].text)
         self.assertIn("Sent file", file_result.content[0].text)
         self.assertEqual(backend.reads, ["/workspace/report.pdf"])
 
-    async def test_send_tools_default_to_the_session_chat(self) -> None:
-        """An omitted target means this chat, not a missing argument."""
-        from agentscope.app.channel._dingtalk._tools import (
-            SendFile,
-            SendMessage,
-        )
-
-        media_api = _FakeMediaOpenAPI()
-        channel, _ = _channel_with_openapi(media_api)
-        backend = _FakeBackend({"/workspace/report.pdf": b"pdf"})
-        tools = await channel.list_tools(
-            cast(WorkspaceBase, _FakeWorkspace(backend)),
-            "group:cid-group-1",
-        )
-
-        await cast(SendMessage, tools[2])(text="hello")
-        await cast(SendFile, tools[3])(path="/workspace/report.pdf")
-
-        self.assertListEqual(
-            media_api.text_calls,
-            [("group:cid-group-1", "hello")],
-        )
-        self.assertListEqual(
-            media_api.send_calls,
-            [
-                (
-                    "group:cid-group-1",
-                    b"pdf",
-                    "report.pdf",
-                    "application/octet-stream",
-                ),
-            ],
-        )
-
     async def test_dingtalk_tool_permissions_match_feishu_policy(self) -> None:
         channel = _channel()
         backend = _FakeBackend()
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(backend)),
-            "group:cid-group-1",
         )
 
         read_decision = await tools[0].check_permissions(
@@ -1047,7 +1012,6 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         channel = _channel(approval_card_template_id="")
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
-            "group:cid-group-1",
         )
 
         self.assertListEqual(
