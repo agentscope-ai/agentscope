@@ -470,6 +470,15 @@ class GeminiChatModel(ChatModelBase):
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
         if prompt_tokens is not None and total_tokens is not None:
+            tool_use_tokens = (
+                getattr(
+                    usage_metadata,
+                    "tool_use_prompt_token_count",
+                    0,
+                )
+                or 0
+            )
+            input_tokens = prompt_tokens + tool_use_tokens
             candidates_tokens = getattr(
                 usage_metadata,
                 "candidates_token_count",
@@ -481,9 +490,9 @@ class GeminiChatModel(ChatModelBase):
                 )
             else:
                 # Fallback for SDK versions without the candidate count.
-                output_tokens = total_tokens - prompt_tokens
+                output_tokens = total_tokens - input_tokens
             return ChatUsage(
-                input_tokens=prompt_tokens,
+                input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
