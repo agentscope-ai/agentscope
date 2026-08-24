@@ -89,12 +89,11 @@ class WorkspaceManagerBase(ABC):
 
         * ``PER_SESSION`` → fresh UUID.
         * ``PER_AGENT`` → the id an earlier session of this
-          ``(user, agent)`` already bound, else a fresh one. Team
-          sessions are skipped: they are handed the leader's workspace
-          on purpose, and adopting one would bind the two agents
-          together for good. Without a storage backend the binding
-          cannot be read, so a deterministic BLAKE2b of ``user::agent``
-          stands in for it.
+          ``(user, agent)`` already bound, else a fresh one. A team
+          worker's binding is its leader's workspace, which the team
+          flow assigns on purpose. Without a storage backend the
+          binding cannot be read, so a deterministic BLAKE2b of
+          ``user::agent`` stands in for it.
           Reading the binding and minting a replacement is serialised
           per ``(user, agent)``, but only within this process: two app
           workers racing the very first session of one pair can still
@@ -137,9 +136,7 @@ class WorkspaceManagerBase(ABC):
                 user_id,
                 agent_id,
             ):
-                # A team session borrows the leader's workspace, so it
-                # says nothing about where this agent lives on its own.
-                if record.team_id is None and record.config.workspace_id:
+                if record.config.workspace_id:
                     return record.config.workspace_id
             return await self._mint_workspace_id()
 
