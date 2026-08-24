@@ -840,6 +840,24 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             ],
         )
 
+    async def test_approval_card_value_fits_the_platform_cap(self) -> None:
+        """A Chinese argument must not push a card value past 1KB."""
+        from agentscope.app.channel._dingtalk._card import (
+            _approval_card_data,
+        )
+
+        card_data = _approval_card_data(
+            "tool-1",
+            "group:cid-group-1",
+            "Bash",
+            "中" * 800,
+            "",
+        )
+
+        for key in ("markdown", "staticMsgContent", "sys_full_json_obj"):
+            self.assertLessEqual(len(card_data[key].encode("utf-8")), 1024)
+        self.assertTrue(card_data["markdown"].endswith("…"))
+
     async def test_send_response_presents_tool_approval_card(self) -> None:
         channel, media_api = _channel_with_openapi()
         event = _message_event(

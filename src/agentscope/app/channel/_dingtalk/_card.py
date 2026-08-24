@@ -36,6 +36,9 @@ _PENDING_LAYOUT = json.dumps(
     },
 )
 _SETTLED_LAYOUT = json.dumps({"order": ["msgTitle", "staticMsgContent"]})
+# DingTalk caps one cardParamMap value at 1KB; leave room for the
+# ellipsis and for the same text riding in a second variable.
+_PARAM_VALUE_BUDGET = 900
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,9 +78,14 @@ def _approval_card_data(
     Returns:
         `dict[str, str]`: DingTalk card template parameter map.
     """
-    shown = summary if len(summary) <= 800 else summary[:799] + "…"
     title = "Tool execution needs approval"
-    markdown = f"**Tool:** `{tool_name}`\n\n**Arguments:** {shown}"
+    markdown = f"**Tool:** `{tool_name}`\n\n**Arguments:** {summary}"
+    # A card parameter value is capped at 1KB, which a Chinese argument
+    # reaches in a third of the characters a counted trim would allow.
+    encoded = markdown.encode("utf-8")
+    if len(encoded) > _PARAM_VALUE_BUDGET:
+        markdown = encoded[:_PARAM_VALUE_BUDGET].decode("utf-8", "ignore")
+        markdown += "…"
     return {
         # What the default AI card reads.
         "msgTitle": title,
