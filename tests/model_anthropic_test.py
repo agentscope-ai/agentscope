@@ -10,7 +10,7 @@ import json
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -90,6 +90,13 @@ class _MockAsyncEventStream:
     def __init__(self, events: list) -> None:
         self._events = events
         self._index = 0
+        self.exited = False
+
+    async def __aenter__(self) -> "_MockAsyncEventStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        self.exited = True
 
     def __aiter__(self) -> "_MockAsyncEventStream":
         return self
@@ -112,28 +119,30 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        # Client is built eagerly in __init__; inject a mock onto the
+        # instance so messages.create() hits it instead of the network.
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         result = await self.model([])
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "msg-1")
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_tool_call_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         mock_create = AsyncMock(
             return_value=_mock_completion(
@@ -146,7 +155,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         result = await self.model([])
 
@@ -155,7 +164,8 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="toolu_1",
                         name="get_weather",
                         input=json.dumps({"city": "Beijing"}),
@@ -164,11 +174,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_thinking_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_thinking_response(self) -> None:
         """Non-stream response with reasoning creates ThinkingBlock."""
         mock_create = AsyncMock(
             return_value=_mock_completion(
@@ -176,7 +182,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 text="Answer",
             ),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         result = await self.model([])
 
@@ -187,13 +193,231 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Deep thought...",
                         signature="sig123",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
+
+    async def test_redacted_thinking_response(self) -> None:
+        """Non-stream redacted_thinking block is preserved."""
+        redacted = MagicMock()
+        redacted.type = "redacted_thinking"
+        redacted.data = "encrypted_data_abc"
+
+        thinking = MagicMock()
+        thinking.type = "thinking"
+        thinking.thinking = "visible thought"
+        thinking.signature = "sig_visible"
+
+        text = MagicMock()
+        text.type = "text"
+        text.text = "Answer"
+
+        resp = MagicMock()
+        resp.id = "msg-redacted"
+        resp.content = [thinking, redacted, text]
+        resp.usage = MagicMock()
+        resp.usage.input_tokens = 10
+        resp.usage.output_tokens = 5
+        resp.usage.cache_creation_input_tokens = 0
+        resp.usage.cache_read_input_tokens = 0
+
+        mock_create = AsyncMock(return_value=resp)
+        self.mock_client.messages.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking="visible thought",
+                        signature="sig_visible",
+                    ),
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking="",
+                        redacted_thinking_data="encrypted_data_abc",
+                    ),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
+                ],
+            ),
+        )
+
+
+class TestAnthropicEffort(IsolatedAsyncioTestCase):
+    """Tests for the ``reasoning_effort`` parameter."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+        self.mock_create = AsyncMock(return_value=_mock_completion(text="hi"))
+        self.mock_client.messages.create = self.mock_create
+
+    async def test_effort_omitted_by_default(self) -> None:
+        """No output_config is sent when reasoning_effort is unset."""
+        await self.model([])
+
+        self.assertNotIn("output_config", self.mock_create.call_args.kwargs)
+
+    async def test_effort_nested_in_output_config(self) -> None:
+        """Effort travels inside output_config, not as a top-level field."""
+        self.model.parameters.reasoning_effort = "medium"
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["output_config"], {"effort": "medium"})
+        self.assertNotIn("effort", kwargs)
+
+    async def test_effort_coexists_with_thinking(self) -> None:
+        """Effort and extended thinking are independent controls."""
+        self.model.parameters.reasoning_effort = "max"
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 1024
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["output_config"], {"effort": "max"})
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 1024},
+        )
+
+    async def test_caller_output_config_wins(self) -> None:
+        """An explicit output_config kwarg is not overwritten."""
+        self.model.parameters.reasoning_effort = "low"
+
+        await self.model([], output_config={"effort": "high"})
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs["output_config"],
+            {"effort": "high"},
+        )
+
+
+class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
+    """Tests for adaptive vs budget-based thinking configuration."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+        self.mock_create = AsyncMock(return_value=_mock_completion(text="hi"))
+        self.mock_client.messages.create = self.mock_create
+
+    def _thinking(self) -> Any:
+        return self.mock_create.call_args.kwargs.get("thinking")
+
+    async def test_no_thinking_by_default(self) -> None:
+        """Neither control set means no thinking config is sent."""
+        await self.model([])
+
+        self.assertIsNone(self._thinking())
+
+    async def test_adaptive_carries_no_budget(self) -> None:
+        """Adaptive mode must not send budget_tokens, which it rejects."""
+        self.model.parameters.thinking_mode = "adaptive"
+        self.model.parameters.thinking_budget = 4096
+
+        await self.model([])
+
+        self.assertEqual(self._thinking(), {"type": "adaptive"})
+
+    async def test_adaptive_with_display(self) -> None:
+        """Display is what makes thinking text visible on newer models."""
+        self.model.parameters.thinking_mode = "adaptive"
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self._thinking(),
+            {"type": "adaptive", "display": "summarized"},
+        )
+
+    async def test_disabled_drops_display(self) -> None:
+        """Display is invalid alongside type: disabled."""
+        self.model.parameters.thinking_mode = "disabled"
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(self._thinking(), {"type": "disabled"})
+
+    async def test_legacy_toggle_still_means_budget_mode(self) -> None:
+        """thinking_enable keeps its old meaning when mode is unset."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 2048
+
+        await self.model([])
+
+        self.assertEqual(
+            self._thinking(),
+            {"type": "enabled", "budget_tokens": 2048},
+        )
+
+    async def test_mode_overrides_legacy_toggle(self) -> None:
+        """An explicit mode wins over the legacy boolean."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_mode = "adaptive"
+
+        await self.model([])
+
+        self.assertEqual(self._thinking(), {"type": "adaptive"})
+
+    async def test_budget_mode_expands_max_tokens(self) -> None:
+        """max_tokens must stay strictly above budget_tokens."""
+        self.model.parameters.thinking_mode = "enabled"
+        self.model.parameters.thinking_budget = 8192
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["thinking"]["budget_tokens"], 8192)
+        self.assertGreater(kwargs["max_tokens"], 8192)
+
+    def test_resolved_mode_drives_tool_choice_downgrade(self) -> None:
+        """Only budget mode forbids forced tool use, so only it downgrades.
+
+        ``_call_api_with_structured_output`` keys the downgrade off this
+        resolution — adaptive must not trip it.
+        """
+        cases = [
+            ({}, None),
+            ({"thinking_enable": True}, "enabled"),
+            ({"thinking_mode": "enabled"}, "enabled"),
+            ({"thinking_mode": "adaptive"}, None),
+            ({"thinking_mode": "disabled"}, None),
+            ({"thinking_enable": True, "thinking_mode": "adaptive"}, None),
+        ]
+        for params, expected in cases:
+            with self.subTest(params=params):
+                model = _make_model()
+                for key, val in params.items():
+                    setattr(model.parameters, key, val)
+                resolved = model._thinking_mode()
+                downgrades = resolved == "enabled"
+                self.assertEqual(downgrades, expected == "enabled")
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +430,12 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        # Client is built eagerly in __init__; inject a mock onto the
+        # instance so messages.create() hits it instead of the network.
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+    async def test_stream_text(self) -> None:
         """Stream text yields n deltas + 1 final with full content."""
         msg_usage = MagicMock()
         msg_usage.input_tokens = 10
@@ -231,8 +458,16 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         msg_delta_usage = MagicMock()
         msg_delta_usage.output_tokens = 5
 
+        text_start = MagicMock()
+        text_start.type = "text"
+
         events = [
             _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
             _make_event("content_block_delta", index=0, delta=delta1),
             _make_event("content_block_delta", index=0, delta=delta2),
             _make_event(
@@ -243,7 +478,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -251,18 +486,41 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
         self.assertEqual(responses[-1].id, "msg-1")
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_thinking_and_text(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()
         msg_usage.input_tokens = 10
@@ -286,16 +544,140 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         text_delta.type = "text_delta"
         text_delta.text = "Result"
 
+        thinking_start = MagicMock()
+        thinking_start.type = "thinking"
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
         events = [
             _make_event("message_start", message=message),
-            _make_event("content_block_delta", index=0, delta=thinking_delta),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=thinking_start,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=0,
+                delta=thinking_delta,
+            ),
             _make_event("content_block_delta", index=0, delta=sig_delta),
+            _make_event(
+                "content_block_start",
+                index=1,
+                content_block=text_start,
+            ),
             _make_event("content_block_delta", index=1, delta=text_delta),
+        ]
+        stream = _MockAsyncEventStream(events)
+        mock_create = AsyncMock(return_value=stream)
+        self.mock_client.messages.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertTrue(stream.exited)
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Let me think",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="",
+                            signature="sig_abc",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Let me think",
+                            signature="sig_abc",
+                        ),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+    async def test_stream_redacted_thinking(self) -> None:
+        """Stream redacted_thinking block is emitted at
+        content_block_start."""
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 10
+        msg_usage.output_tokens = 0
+        msg_usage.cache_creation_input_tokens = 0
+        msg_usage.cache_read_input_tokens = 0
+
+        message = MagicMock()
+        message.id = "msg-r"
+        message.usage = msg_usage
+
+        redacted_block = MagicMock()
+        redacted_block.type = "redacted_thinking"
+        redacted_block.data = "encrypted_stream_data"
+
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "Result"
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=redacted_block,
+            ),
+            _make_event(
+                "content_block_start",
+                index=1,
+                content_block=text_start,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=1,
+                delta=text_delta,
+            ),
         ]
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -308,42 +690,42 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
-                            thinking="Let me think",
+                            created_at=A,
+                            thinking="",
+                            redacted_thinking_data="encrypted_stream_data",
                         ),
                     ],
                 ),
-                # ``signature_delta`` is emitted as its own delta chunk
-                # carrying the signature but no additional thinking text.
                 (
                     False,
                     [
-                        ThinkingBlock.model_construct(
+                        TextBlock.model_construct(
                             id=A,
-                            thinking="",
-                            signature="sig_abc",
+                            created_at=A,
+                            text="Result",
                         ),
                     ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Result")]),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
-                            thinking="Let me think",
-                            signature="sig_abc",
+                            created_at=A,
+                            thinking="",
+                            redacted_thinking_data="encrypted_stream_data",
                         ),
-                        TextBlock.model_construct(id=A, text="Result"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
                     ],
                 ),
             ],
         )
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_tool_call(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_stream_tool_call(self) -> None:
         """Stream tool call yields partial deltas then full accumulated
         input."""
         msg_usage = MagicMock()
@@ -382,7 +764,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -396,7 +778,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input="",
@@ -406,7 +789,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input='{"city":',
@@ -416,7 +800,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input='"BJ"}',
@@ -426,7 +811,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input='{"city":"BJ"}',

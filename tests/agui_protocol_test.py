@@ -40,7 +40,7 @@ from agentscope.event import (
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
-    ReplyEndReason,
+    ReplyFinishedReason,
 )
 from agentscope.message import ToolCallBlock, ToolResultBlock, ToolResultState
 from agentscope.model import FinishedReason
@@ -214,7 +214,7 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         event = ReplyEndEvent(
             session_id="sess_1",
             reply_id="reply_1",
-            finished_reason=ReplyEndReason.COMPLETED,
+            finished_reason=ReplyFinishedReason.COMPLETED,
         )
         result = self.mw._convert_to_protocol(event)
 
@@ -223,16 +223,27 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["runId"], "reply_1")
 
     async def test_exceed_max_iters_to_run_error(self) -> None:
-        """Test ExceedMaxItersEvent -> RUN_ERROR."""
+        """Test ReplyEndEvent with EXCEED_MAX_ITERS -> RUN_ERROR."""
+        event = ReplyEndEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "RUN_ERROR")
+        self.assertEqual(result["code"], "exceed_max_iters")
+
+    async def test_deprecated_exceed_max_iters_to_custom(self) -> None:
+        """Test the deprecated ExceedMaxItersEvent -> CUSTOM."""
         event = ExceedMaxItersEvent(
             reply_id="reply_1",
             name="my_agent",
         )
         result = self.mw._convert_to_protocol(event)
 
-        self.assertEqual(result["type"], "RUN_ERROR")
-        self.assertIn("my_agent", result["message"])
-        self.assertEqual(result["code"], "exceed_max_iters")
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "exceed_max_iters")
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
@@ -676,7 +687,7 @@ class AGUIProtocolCamelCaseTest(IsolatedAsyncioTestCase):
             ReplyEndEvent(
                 session_id="s",
                 reply_id="r",
-                finished_reason=ReplyEndReason.COMPLETED,
+                finished_reason=ReplyFinishedReason.COMPLETED,
             ),
             ModelCallStartEvent(reply_id="r", model_name="m"),
             ModelCallEndEvent(

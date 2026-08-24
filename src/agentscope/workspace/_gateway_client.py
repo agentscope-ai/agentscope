@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode
 
 import mcp.types
 from pydantic import PrivateAttr
@@ -69,6 +71,8 @@ class GatewayMCPTool(ToolBase):
         mcp_name: str,
         tool: mcp.types.Tool,
         gateway: "GatewayClient",
+        agent_id: str = "",
+        session_id: str = "",
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -87,8 +91,14 @@ class GatewayMCPTool(ToolBase):
             gateway (`GatewayClient`):
                 Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
+            agent_id (`str`, defaults to ``""``):
+                The agent whose gateway-side session to run against.
+            session_id (`str`, defaults to ``""``):
+                The session whose gateway-side session to run against.
         """
         self.mcp_name = mcp_name
+        self._agent_id = agent_id
+        self._session_id = session_id
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
@@ -137,6 +147,10 @@ class GatewayMCPTool(ToolBase):
         status, body = await self._gateway.exec_request(
             "POST",
             f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
             body={"arguments": kwargs},
         )
         if status >= 400:
@@ -172,6 +186,8 @@ class GatewayMCPClient(MCPClient):
     """
 
     _gateway: "GatewayClient | None" = PrivateAttr(default=None)
+    _agent_id: str = PrivateAttr(default="")
+    _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
         """No-op — the parent builds local stdio/HTTP transport, which
@@ -185,6 +201,8 @@ class GatewayMCPClient(MCPClient):
         self,
         gateway: "GatewayClient",
         *,
+        agent_id: str = "",
+        session_id: str = "",
         connected: bool = False,
     ) -> None:
         """Wire this client to a gateway facade.
@@ -198,12 +216,21 @@ class GatewayMCPClient(MCPClient):
             gateway (`GatewayClient`):
                 Facade dispatching calls through
                 :meth:`GatewayClient.exec_request`.
+            agent_id (`str`, defaults to ``""``):
+                The agent this MCP client belongs to.
+            session_id (`str`, defaults to ``""``):
+                The session this MCP client belongs to. Together with
+                ``agent_id`` it is sent on every ``connect`` /
+                ``close`` / tool-call request so the gateway keeps one
+                upstream session per agent and session.
             connected (`bool`, defaults to `False`):
                 When ``True``, mark this client as already connected
                 (used by :meth:`GatewayClient.list_mcps` for entries
                 the gateway is already serving).
         """
         self._gateway = gateway
+        self._agent_id = agent_id
+        self._session_id = session_id
         if connected:
             self._is_connected = True
 
@@ -228,6 +255,10 @@ class GatewayMCPClient(MCPClient):
         status, resp_body = await self._gateway.exec_request(
             "POST",
             "/mcps",
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
             body=body,
         )
         if status >= 400:
@@ -256,6 +287,10 @@ class GatewayMCPClient(MCPClient):
             status, resp_body = await self._gateway.exec_request(
                 "DELETE",
                 f"/mcps/{self.name}",
+                params={
+                    "agent_id": self._agent_id,
+                    "session_id": self._session_id,
+                },
             )
             if status >= 400 and not ignore_errors:
                 raise RuntimeError(
@@ -286,6 +321,10 @@ class GatewayMCPClient(MCPClient):
         status, body = await self._gateway.exec_request(
             "GET",
             f"/mcps/{self.name}/tools",
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
         )
         if status >= 400:
             raise RuntimeError(
@@ -342,6 +381,8 @@ class GatewayMCPClient(MCPClient):
             mcp_name=self.name,
             tool=tool,
             gateway=self._gateway,
+            agent_id=self._agent_id,
+            session_id=self._session_id,
         )
 
 
@@ -366,6 +407,8 @@ class GatewayClient:
         inline_limit: int = BODY_INLINE_LIMIT,
         tmp_dir: str = SANDBOX_TMP_DIR,
         gateway_log_path: str | None = None,
+        auth_token: str | None = None,
+        instance_nonce: str | None = None,
     ) -> None:
         """Build a workspace-side gateway facade.
 
@@ -392,6 +435,13 @@ class GatewayClient:
                 a ``/health`` probe and — if the gateway is
                 unreachable — a tail of this log is emitted at
                 ``ERROR`` level to help diagnose crashes.
+            auth_token (`str | None`, defaults to `None`):
+                Optional bearer token forwarded to the gateway by the
+                in-sandbox shim.
+            instance_nonce (`str | None`, defaults to `None`):
+                Optional nonce expected from ``/health``. Used by shared
+                network backends to make sure the probed port belongs to the
+                gateway process that was just launched before sending auth.
         """
         self.backend = backend
         self.gateway_port = gateway_port
@@ -399,6 +449,8 @@ class GatewayClient:
         self.inline_limit = inline_limit
         self.tmp_dir = tmp_dir
         self.gateway_log_path = gateway_log_path
+        self.auth_token = auth_token
+        self.instance_nonce = instance_nonce
         # Health-probe timeout is kept short so the diagnostic path adds
         # little latency to the failing request. It only runs on the
         # error path, never on the hot path.
@@ -408,9 +460,13 @@ class GatewayClient:
         self._log_tail_bytes: int = 4000
 
     async def health(self) -> bool:
-        """Probe ``/health``. ``True`` iff the gateway answered 200;
+        """Probe ``/health``.
         any other outcome (shim transport failure, non-200) → ``False``.
-        Callers retry until this flips.
+        With no expected ``instance_nonce``, HTTP 200 means healthy. When a
+        nonce is configured, the response must be a JSON object containing the
+        matching ``instance_nonce``. Transport failures, non-200 responses,
+        malformed JSON, non-object JSON, and nonce mismatches return
+        ``False``.
 
         The ``/health`` path is treated specially by
         :meth:`exec_request` — it never triggers the failure
@@ -418,34 +474,78 @@ class GatewayClient:
         itself.
         """
         try:
-            status, _ = await self.exec_request("GET", "/health")
+            status, body = await self.exec_request(
+                "GET",
+                "/health",
+                include_auth=False,
+            )
         except Exception:
             return False
-        return status == 200
+        if status != 200:
+            return False
+        if self.instance_nonce is None:
+            return True
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        nonce = payload.get("instance_nonce")
+        return (
+            isinstance(nonce, str)
+            and nonce.isascii()
+            and self.instance_nonce.isascii()
+            and secrets.compare_digest(nonce, self.instance_nonce)
+        )
 
-    async def list_mcps(self) -> list[GatewayMCPClient]:
-        """Fetch every MCP the gateway is currently serving.
+    async def list_mcps(
+        self,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> list[GatewayMCPClient]:
+        """Fetch MCPs the gateway is serving for one agent/session.
 
         Returned clients are marked already-connected (via
         :meth:`GatewayMCPClient.attach`) — the gateway is already
         maintaining their upstream sessions.
 
+        Args:
+            agent_id (`str`, defaults to ``""``):
+                The agent whose MCP clients to fetch.
+            session_id (`str`, defaults to ``""``):
+                The session whose MCP clients to fetch.
+
         Raises:
             `RuntimeError`:
                 Gateway returned non-2xx.
         """
-        status, body = await self.exec_request("GET", "/mcps")
+        status, body = await self.exec_request(
+            "GET",
+            "/mcps",
+            params={"agent_id": agent_id, "session_id": session_id},
+        )
         if status >= 400:
             raise RuntimeError(
                 f"gateway failed to list MCPs: {_safe_detail(status, body)}",
             )
         specs = json.loads(body)
-        return [self.make_client(spec, connected=True) for spec in specs]
+        return [
+            self.make_client(
+                spec,
+                agent_id=agent_id,
+                session_id=session_id,
+                connected=True,
+            )
+            for spec in specs
+        ]
 
     def make_client(
         self,
         spec: dict[str, Any],
         *,
+        agent_id: str = "",
+        session_id: str = "",
         connected: bool = False,
     ) -> GatewayMCPClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
@@ -454,13 +554,22 @@ class GatewayClient:
             spec (`dict[str, Any]`):
                 ``MCPClient.model_dump(mode="json")`` payload — either
                 from ``GET /mcps`` or from user input via ``add_mcp``.
+            agent_id (`str`, defaults to ``""``):
+                The agent this MCP client belongs to.
+            session_id (`str`, defaults to ``""``):
+                The session this MCP client belongs to.
             connected (`bool`, defaults to `False`):
                 Mark the client as already-connected. Set by
                 :meth:`list_mcps`; leave ``False`` when the caller will
                 ``await client.connect()`` itself.
         """
         client = GatewayMCPClient.model_validate(spec)
-        client.attach(self, connected=connected)
+        client.attach(
+            self,
+            agent_id=agent_id,
+            session_id=session_id,
+            connected=connected,
+        )
         return client
 
     async def aclose(self) -> None:
@@ -476,7 +585,9 @@ class GatewayClient:
         method: str,
         path: str,
         *,
+        params: dict[str, str] | None = None,
         body: Any = None,
+        include_auth: bool = True,
     ) -> tuple[int, bytes]:
         """Relay one HTTP request through the sandbox.
 
@@ -501,8 +612,16 @@ class GatewayClient:
                 HTTP verb (``GET`` / ``POST`` / ``DELETE``).
             path (`str`):
                 Path-only URL, e.g. ``/mcps/<name>/tools/<tool>``.
+            params (`dict[str, str] | None`, optional):
+                Query parameters, URL-encoded onto ``path``. Ids can
+                contain arbitrary characters, so callers must pass
+                them here rather than formatting them into ``path``.
             body (`Any`, optional):
                 JSON-serializable request body; ``None`` for no body.
+            include_auth (`bool`, defaults to `True`):
+                Whether to send the configured bearer token to the shim.
+                Health probes set this to ``False`` so a port-race cannot
+                leak the token to a process that is not the gateway.
 
         Returns:
             `tuple[int, bytes]`:
@@ -513,6 +632,7 @@ class GatewayClient:
                 Shim crash (non-zero exit / non-JSON stdout) or
                 transport failure (``status == -1``).
         """
+        path = f"{path}?{urlencode(params)}" if params else path
         body_file = ""
         wrote_body_file: str | None = None
         if body is not None:
@@ -535,6 +655,7 @@ class GatewayClient:
                         body_file,
                         str(self.inline_limit),
                         self.tmp_dir,
+                        (self.auth_token or "") if include_auth else "",
                     ],
                     timeout=self.timeout,
                 )

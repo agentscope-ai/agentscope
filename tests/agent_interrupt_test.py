@@ -17,9 +17,10 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
     ReplyEndEvent,
+    ToolResultStartEvent,
     UserInterruptEvent,
 )
 from agentscope.message import (
@@ -152,6 +153,9 @@ def _msg_base(name: str = "Friday") -> dict[str, Any]:
         "id": AnyString(),
         "created_at": AnyString(),
         "finished_at": None,
+        "finished_reason": None,
+        "structured_output": None,
+        "error": None,
         "metadata": {},
         "name": name,
         "role": "assistant",
@@ -164,11 +168,20 @@ def _user_msg_dict(content: str) -> dict[str, Any]:
         "id": AnyString(),
         "created_at": AnyString(),
         "finished_at": AnyString(),
+        "finished_reason": None,
+        "structured_output": None,
+        "error": None,
         "metadata": {},
         "name": "user",
         "role": "user",
         "content": [
-            {"type": "text", "id": AnyString(), "text": content},
+            {
+                "type": "text",
+                "id": AnyString(),
+                "text": content,
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ],
         "usage": None,
     }
@@ -182,6 +195,8 @@ def _tool_call_dict(
 ) -> dict[str, Any]:
     return {
         "type": "tool_call",
+        "created_at": AnyString(),
+        "finished_at": None,
         "id": tc_id,
         "name": name,
         "input": input,
@@ -209,12 +224,20 @@ def _interrupted_tool_result_dict(
     output: Any
     if output_is_blocks:
         output = [
-            {"type": "text", "id": AnyString(), "text": _INTERRUPT_MSG},
+            {
+                "type": "text",
+                "id": AnyString(),
+                "text": _INTERRUPT_MSG,
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
     else:
         output = _INTERRUPT_MSG
     return {
         "type": "tool_result",
+        "created_at": AnyString(),
+        "finished_at": None,
         "id": tc_id,
         "name": name,
         "output": output,
@@ -262,6 +285,7 @@ def _assert_interrupted_end(
             "created_at": AnyString(),
             "metadata": {},
             "type": "REPLY_END",
+            "error": None,
             "session_id": session_id,
             "reply_id": reply_id,
             "finished_reason": "interrupted",
@@ -279,6 +303,10 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test agent.",
             model=model,
             toolkit=Toolkit(tools=tools),
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         return agent, model
 
@@ -331,6 +359,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Calling.",
                         },
@@ -401,6 +431,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Calling both.",
                         },
@@ -491,6 +523,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Mixed batch.",
                         },
@@ -574,6 +608,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Mixed batch.",
                         },
@@ -665,6 +701,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Mixed batch.",
                         },
@@ -719,6 +757,10 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test agent.",
             model=model,
             toolkit=Toolkit(tools=tools),
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         return agent, model
 
@@ -727,7 +769,7 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         agent: Agent,
         model: MockModel,
         pending_tool_calls: list[ToolCallBlock],
-    ) -> None:
+    ) -> list[Any]:
         """Drive one reply that yields the given tool calls so the reply
         parks in either ASKING or SUBMITTED state."""
         model.set_responses(
@@ -743,10 +785,12 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                 ],
             ],
         )
-        async for _ in agent.reply_stream(
+        events = []
+        async for event in agent.reply_stream(
             UserMsg(name="user", content="Hi"),
         ):
-            pass
+            events.append(event)
+        return events
 
     async def test_interrupt_event_on_idle_agent_is_noop(self) -> None:
         """No parked HITL → ``UserInterruptEvent`` yields nothing and
@@ -801,6 +845,8 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Need HITL.",
                         },
@@ -824,7 +870,7 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         """Parked in SUBMITTED: ``UserInterruptEvent`` patches the same
         way (``str`` output)."""
         agent, model = self._make_agent([_ExternalConcurrentTool()])
-        await self._park_with(
+        parked_events = await self._park_with(
             agent,
             model,
             [
@@ -844,6 +890,13 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         ):
             events.append(evt)
 
+        self.assertEqual(
+            sum(
+                isinstance(evt, ToolResultStartEvent)
+                for evt in [*parked_events, *events]
+            ),
+            1,
+        )
         _assert_interrupted_end(self, events, reply_id, session_id)
 
         context_dicts = [
@@ -858,6 +911,8 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Need HITL.",
                         },
@@ -923,6 +978,8 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Need HITL.",
                         },

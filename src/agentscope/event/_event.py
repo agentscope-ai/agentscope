@@ -2,9 +2,10 @@
 """Event types for agent execution."""
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Dict, Literal, List, TypeAlias
+from typing import Any, Dict, Literal, List, Self, TypeAlias
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing_extensions import deprecated
 
 from .._utils._common import _generate_id
 from ..message import (
@@ -13,6 +14,10 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
+)
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
 )
 from ..model import FinishedReason
 from ..permission import PermissionRule
@@ -90,8 +95,14 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
 class ReplyEndReason(StrEnum):
-    """The reason for reply ended."""
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
 
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
@@ -107,8 +118,11 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
-    finished_reason: ReplyEndReason = ReplyEndReason.COMPLETED
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
     """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):
@@ -133,6 +147,10 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    cache_input_tokens: int = 0
+    """Number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """Number of input tokens used to create the prompt cache."""
     finished_reason: FinishedReason = Field(
         default=FinishedReason.COMPLETED,
     )
@@ -362,6 +380,15 @@ class ToolResultDataDeltaEvent(EventBase):
     url: str | None = None
     """URL pointing to the binary content, mutually exclusive with `data`."""
 
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
+
 
 class ToolResultEndEvent(EventBase):
     """Tool result end event."""
@@ -380,8 +407,14 @@ class ToolResultEndEvent(EventBase):
     """Optional metadata attached to the tool result event."""
 
 
+@deprecated(
+    "ExceedMaxItersEvent is deprecated and will be removed; check the "
+    "'finished_reason' field of ReplyEndEvent against "
+    "ReplyFinishedReason.EXCEED_MAX_ITERS instead.",
+)
 class ExceedMaxItersEvent(EventBase):
-    """Exceeded max iteration event."""
+    """Deprecated exceeded max iteration event, still emitted for backward
+    compatibility without semantics; use ``ReplyEndEvent.finished_reason``."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""

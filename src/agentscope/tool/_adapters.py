@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import inspect
-import ipaddress
 import json
 import re
-import socket
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
-from urllib.parse import urlparse
 
 from mcp import ClientSession
 import mcp
+from pydantic import BaseModel
 
 from ._types import Function
 from ._base import ToolBase, ToolMiddlewareBase
@@ -20,7 +18,11 @@ from ..permission import (
     PermissionDecision,
 )
 from ._response import ToolChunk
-from ._utils import _extract_func_description, _extract_input_schema
+from ._utils import (
+    _extract_func_description,
+    _extract_input_schema,
+    _remove_title_field,
+)
 from .._logging import logger
 from ..message import (
     TextBlock,
@@ -29,110 +31,6 @@ from ..message import (
     URLSource,
     ToolResultState,
 )
-
-
-# Security: Tool name patterns that indicate destructive operations.
-# These should never be treated as read-only, even if the MCP server
-# reports readOnlyHint=True.
-_DESTRUCTIVE_TOOL_PATTERNS = re.compile(
-    r"(delete|remove|destroy|drop|truncate|wipe|erase|exec|eval|"
-    r"run|shell|bash|cmd|write|create|update|insert|modify|"
-    r"rename|move|copy|upload|deploy|install|uninstall|"
-    r"send|post|put|patch|kill|stop|restart|format|"
-    r"mkdir|rmdir|chmod|chown|unlink|append|set|add|"
-    r"reset|clear|purge|flush|revoke|ban|block)",
-    re.IGNORECASE,
-)
-
-# Security: Maximum length for text content from MCP servers
-# to prevent memory exhaustion (1M characters).
-_MAX_TEXT_CONTENT_LENGTH = 1_000_000
-
-# Security: Maximum size for base64-encoded content from MCP servers
-# to prevent memory exhaustion (10 MB).
-_MAX_BASE64_CONTENT_SIZE = 10 * 1024 * 1024
-
-# Security: Cloud metadata endpoints that must be blocked in URLs.
-_CLOUD_METADATA_HOSTS = frozenset({
-    "169.254.169.254",       # AWS / GCP / Azure / Oracle metadata
-    "fd00:ec2::254",         # AWS IPv6 metadata
-    "metadata.google.internal",
-    "metadata.goog",
-})
-
-
-def _validate_content_url(url: str) -> str:
-    """Validate a URL found in MCP response content.
-
-    Checks that the URL does not target private IP ranges, loopback
-    addresses, link-local addresses, or cloud metadata endpoints.
-
-    Args:
-        url: The URL to validate.
-
-    Returns:
-        The validated URL string.
-
-    Raises:
-        ValueError: If the URL targets a disallowed network resource.
-    """
-    try:
-        parsed = urlparse(str(url))
-    except Exception as e:
-        raise ValueError(f"Invalid URL in MCP content: {e}") from e
-
-    # Only allow http and https schemes
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"URL scheme '{parsed.scheme}' in MCP content is not allowed. "
-            "Only 'http' and 'https' are permitted.",
-        )
-
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("URL in MCP content does not contain a hostname.")
-
-    # Block cloud metadata endpoints
-    if hostname.lower() in _CLOUD_METADATA_HOSTS:
-        raise ValueError(
-            "URL in MCP content targets a cloud metadata endpoint, "
-            "which is blocked for security reasons.",
-        )
-
-    # Resolve hostname and check for private/reserved ranges
-    try:
-        addr_infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
-        # If DNS resolution fails, allow the URL — it won't resolve
-        # at connection time either.
-        return str(url)
-
-    for family, _, _, _, sockaddr in addr_infos:
-        ip_str = sockaddr[0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            raise ValueError(
-                f"URL in MCP content resolves to {ip}, which is in a "
-                "private or reserved IP range. Blocked for SSRF protection.",
-            )
-
-    return str(url)
-
-
-def _is_tool_likely_destructive(tool_name: str) -> bool:
-    """Heuristic check whether a tool name suggests destructive operations.
-
-    Args:
-        tool_name: The name of the MCP tool.
-
-    Returns:
-        True if the tool name matches known destructive patterns.
-    """
-    return bool(_DESTRUCTIVE_TOOL_PATTERNS.search(tool_name))
 
 
 class FunctionTool(ToolBase):
@@ -158,6 +56,7 @@ class FunctionTool(ToolBase):
         func: Function,
         name: str | None = None,
         description: str | None = None,
+        input_schema: dict | type[BaseModel] | None = None,
         is_concurrency_safe: bool = True,
         is_read_only: bool = False,
         is_state_injected: bool = False,
@@ -171,7 +70,15 @@ class FunctionTool(ToolBase):
             name (`str | None`, optional):
                 Custom tool name. If None, uses the function name.
             description (`str | None`, optional):
-                Custom description. If None, extracts from docstring.
+                Custom tool description. If None, extracts from docstring.
+            input_schema (`dict | type[BaseModel] | None`, optional):
+                Custom input schema for the tool, either a JSON schema
+                dict or a pydantic ``BaseModel`` subclass (converted via
+                its ``model_json_schema()``). If None, generates the
+                schema from the function's type annotations and
+                docstring, where constraints (e.g. enums, value ranges)
+                can be expressed with ``typing.Literal`` and
+                ``typing.Annotated`` with ``pydantic.Field``.
             is_concurrency_safe (`bool`, optional):
                 Whether this tool is safe to call concurrently.
             is_read_only (`bool`, optional):
@@ -186,7 +93,14 @@ class FunctionTool(ToolBase):
         self.description = description or _extract_func_description(
             func.__doc__ or "",
         )
-        self.input_schema = _extract_input_schema(func)
+        if isinstance(input_schema, type) and issubclass(
+            input_schema,
+            BaseModel,
+        ):
+            input_schema = _remove_title_field(
+                input_schema.model_json_schema(),
+            )
+        self.input_schema = input_schema or _extract_input_schema(func)
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
         self.is_state_injected = is_state_injected
@@ -321,6 +235,7 @@ class MCPTool(ToolBase):
         # tool.name comes from the MCP server and may contain dots,
         # colons, etc. — replace illegal chars with "x" (not "_")
         # to avoid collisions with the "__" separator.
+        # self._tool.name retains the original for server-side calls.
         sanitized_tool = re.sub(r"[^a-zA-Z0-9_-]", "x", tool.name)
         self.name = f"mcp__{mcp_name}__{sanitized_tool}"
         if sanitized_tool != tool.name:
@@ -346,22 +261,10 @@ class MCPTool(ToolBase):
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
-        # Security: Extract is_read_only from MCP tool annotations, but
-        # apply a heuristic check to prevent trust boundary bypass.
-        # A malicious MCP server could mark destructive tools as read-only.
+        # Extract is_read_only from MCP tool annotations
         self.is_read_only = False
         if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
-            server_read_only = tool.annotations.readOnlyHint or False
-            if server_read_only and _is_tool_likely_destructive(tool.name):
-                logger.warning(
-                    "MCP tool '%s' claims readOnlyHint=True but its name "
-                    "suggests destructive operations. Overriding to "
-                    "read_only=False for security.",
-                    tool.name,
-                )
-                self.is_read_only = False
-            else:
-                self.is_read_only = server_read_only
+            self.is_read_only = tool.annotations.readOnlyHint or False
 
         # Store MCP tool and connection info
         self._tool = tool
@@ -451,9 +354,6 @@ class MCPTool(ToolBase):
     ) -> list[TextBlock | DataBlock]:
         """Convert MCP content to AgentScope blocks.
 
-        Security: Text content is length-limited and URLs in resource
-        content are validated against SSRF attacks.
-
         Args:
             mcp_content_blocks (`list`):
                 The MCP content blocks to convert.
@@ -465,42 +365,17 @@ class MCPTool(ToolBase):
         as_content = []
         for content in mcp_content_blocks:
             if isinstance(content, mcp.types.TextContent):
-                # Security: Enforce text content length limit to prevent
-                # memory exhaustion attacks
-                text = content.text
-                if len(text) > _MAX_TEXT_CONTENT_LENGTH:
-                    logger.warning(
-                        "MCP text content truncated from %d to %d "
-                        "characters for security.",
-                        len(text),
-                        _MAX_TEXT_CONTENT_LENGTH,
-                    )
-                    text = text[:_MAX_TEXT_CONTENT_LENGTH]
-                as_content.append(TextBlock(text=text))
+                as_content.append(TextBlock(text=content.text))
             elif isinstance(
                 content,
                 (mcp.types.ImageContent, mcp.types.AudioContent),
             ):
-                # Security: Enforce base64 content size limit to prevent
-                # memory exhaustion attacks
-                data = content.data
-                if len(data) > _MAX_BASE64_CONTENT_SIZE:
-                    logger.warning(
-                        "MCP %s content (%d bytes) exceeds maximum "
-                        "allowed size (%d bytes). Skipping for security.",
-                        "image" if isinstance(
-                            content, mcp.types.ImageContent,
-                        ) else "audio",
-                        len(data),
-                        _MAX_BASE64_CONTENT_SIZE,
-                    )
-                    continue
                 as_content.append(
                     DataBlock(
                         source=Base64Source(
                             type="base64",
                             media_type=content.mimeType,
-                            data=data,
+                            data=content.data,
                         ),
                     ),
                 )
@@ -510,18 +385,10 @@ class MCPTool(ToolBase):
                     content.resource,
                     mcp.types.TextResourceContents,
                 ):
-                    resource_text = content.resource.model_dump_json(indent=2)
-                    # Security: Enforce text content length limit
-                    if len(resource_text) > _MAX_TEXT_CONTENT_LENGTH:
-                        logger.warning(
-                            "MCP embedded resource text truncated from "
-                            "%d to %d characters for security.",
-                            len(resource_text),
-                            _MAX_TEXT_CONTENT_LENGTH,
-                        )
-                        resource_text = resource_text[:_MAX_TEXT_CONTENT_LENGTH]
                     as_content.append(
-                        TextBlock(text=resource_text),
+                        TextBlock(
+                            text=content.resource.model_dump_json(indent=2),
+                        ),
                     )
                 else:
                     logger.error(
@@ -531,23 +398,14 @@ class MCPTool(ToolBase):
                     )
 
             elif isinstance(content, mcp.types.ResourceContents):
-                # Security: Validate URL in resource content against SSRF
-                try:
-                    validated_url = _validate_content_url(content.uri)
-                    as_content.append(
-                        DataBlock(
-                            source=URLSource(
-                                media_type=content.mimeType,
-                                url=validated_url,
-                            ),
+                as_content.append(
+                    DataBlock(
+                        source=URLSource(
+                            media_type=content.mimeType,
+                            url=content.uri,
                         ),
-                    )
-                except ValueError as e:
-                    logger.warning(
-                        "Blocked URL in MCP resource content for "
-                        "security: %s",
-                        str(e),
-                    )
+                    ),
+                )
 
             else:
                 logger.warning(

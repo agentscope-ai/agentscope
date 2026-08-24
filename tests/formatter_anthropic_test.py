@@ -337,6 +337,45 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is formatted as an Anthropic document block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                        name="report.pdf",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize this."},
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock with a signature is passed back as a thinking
         content block."""
@@ -363,6 +402,50 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                             "type": "thinking",
                             "thinking": "inner thoughts",
                             "signature": "sig_abc",
+                        },
+                        {"type": "text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_redacted_thinking_preserved(
+        self,
+    ) -> None:
+        """ThinkingBlock with redacted_thinking_data is formatted
+        as a redacted_thinking block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(
+                        thinking="visible",
+                        signature="sig_1",
+                    ),
+                    ThinkingBlock(
+                        thinking="",
+                        redacted_thinking_data="encrypted_abc",
+                    ),
+                    TextBlock(text="reply"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "visible",
+                            "signature": "sig_1",
+                        },
+                        {
+                            "type": "redacted_thinking",
+                            "data": "encrypted_abc",
                         },
                         {"type": "text", "text": "reply"},
                     ],

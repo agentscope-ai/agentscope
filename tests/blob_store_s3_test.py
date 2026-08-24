@@ -142,6 +142,17 @@ class S3BlobStoreTest(IsolatedAsyncioTestCase):
             # Second delete is a no-op.
             await store.delete(uri)
 
+    async def test_size_measures_the_stored_object(self) -> None:
+        """``size`` returns the object's byte length, ``None`` if gone."""
+        async with self._store() as store:
+            uri = await store.write_stream(
+                "kb/abc/doc-4",
+                io.BytesIO(b"twelve bytes"),
+            )
+            self.assertEqual(await store.size(uri), 12)
+            await store.delete(uri)
+            self.assertIsNone(await store.size(uri))
+
     async def test_bad_uri_scheme_rejected(self) -> None:
         """Non-``s3://`` URIs are refused before any network call."""
         async with self._store() as store:

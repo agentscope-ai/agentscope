@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..model import ChatModelBase
 
@@ -54,7 +54,7 @@ class ContextConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     """Allow arbitrary types in the pydantic model."""
 
-    trigger_ratio: float = Field(default=0.8, gt=0, lt=0.9)
+    trigger_ratio: float = Field(default=0.8, gt=0, le=0.9)
     """When the token exceeds this ratio of the maximum context length, the
     context will be compressed. To reserve the context for context compression,
     the maximum ratio is 0.9."""
@@ -138,17 +138,184 @@ class ContextConfig(BaseModel):
     )
     """The tool result limit to avoid tool result bursting."""
 
+    max_image_num: int = Field(
+        title="Max Image Number",
+        default=5,
+        ge=0,
+        description=(
+            "The maximum number of images kept in the context. The oldest "
+            "images exceeding the limit will be removed."
+        ),
+    )
+    """The maximum number of images kept in the context. When the number of
+    images exceeds this limit, the oldest images will be offloaded to the
+    workspace (if an offloader is provided) and replaced by a hint that
+    records the offloaded path; otherwise they are dropped and replaced by a
+    hint without path information."""
+
+
+class InjectionConfig(BaseModel):
+    """The state injection related configuration in AgentScope."""
+
+    inject_runtime_state: bool = Field(
+        title="Inject Runtime State",
+        description=(
+            "Inject the runtime state to context, including current time,"
+            "tasks state, context length, etc."
+        ),
+        default=True,
+    )
+    """Whether to inject the runtime state to context, including current time,
+    tasks state, context length, etc."""
+
+    timezone: str = Field(
+        title="Timezone",
+        default="UTC",
+        description=(
+            "The injected timezone. e.g. 'America/New_York' or "
+            "'Asia/Shanghai'."
+        ),
+    )
+    """The timezone to inject into the context, follow the standard timezone
+    database format, e.g. 'America/New_York' or 'Asia/Shanghai'."""
+
+    time_format: str = Field(
+        title="Time Format",
+        default="%Y-%m-%dT%H:%M:%S",
+        description=(
+            "The format to inject and parse the time information, which must "
+            "round-trip a full timestamp, i.e. carry the date part. A "
+            "time-only format such as '%H:%M:%S' makes the parsed time fall "
+            "back to year 1900, so that the time is injected in every "
+            "iteration."
+        ),
+    )
+    """The format to inject and parse the time information, which must carry
+    the date part to round-trip a full timestamp."""
+
+    time_interval: float = Field(
+        title="Time Interval",
+        default=0.5,
+        ge=0,
+        description=(
+            "The minimum time interval in hours from the last injection to "
+            "trigger new time injection"
+        ),
+    )
+    """The minimum elapsed time in **hours** from the recorded time to trigger
+    a new time injection."""
+
+    context_buffer_ratio: float = Field(
+        title="Context Buffer",
+        default=0.2,
+        ge=0,
+        le=1,
+        description=(
+            "The buffer that will activate context length injection before "
+            "context compression, which should be smaller than the "
+            "'trigger_ratio' of the context config."
+        ),
+    )
+    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
+    of 0.8 and a buffer of 0.2, the context length is injected once the input
+    tokens exceed 60% of the model context size."""
+
+    template: str = Field(
+        title="Template",
+        default="""<system-reminder>Treat the following as the ground truth \
+at this point of the conversation. Anything stated earlier is outdated, and a \
+later reminder, if any, supersedes this one:
+{runtime_state}
+</system-reminder>""",
+        description=(
+            "The template to wrap the injected runtime state, where the "
+            "'{runtime_state}' placeholder will be replaced by the injected "
+            "fields."
+        ),
+    )
+    """The template to wrap the injected runtime state, which must contain the
+    ``{runtime_state}`` placeholder."""
+
+    @field_validator("template")
+    @classmethod
+    def _check_template(cls, value: str) -> str:
+        """Ensure the template won't silently drop the injected fields."""
+        if "{runtime_state}" not in value:
+            raise ValueError(
+                "The injection template must contain the '{runtime_state}' "
+                f"placeholder, got {value!r}.",
+            )
+        return value
+
+    injection_source: str = Field(
+        title="Injection Source",
+        default='{"label": "System", "sublabel": "Runtime State"}',
+        description=(
+            "The source of the injected hint block, which is also used to "
+            "identify the previous injections within the context."
+        ),
+    )
+    """The source of the injected hint block, used to identify the agent's own
+    injections when scanning the context."""
+
+    task_tool_names: list[str] = Field(
+        title="Task Tool Names",
+        default_factory=lambda: [
+            "TaskCreate",
+            "TaskGet",
+            "TaskList",
+            "TaskUpdate",
+        ],
+        description=(
+            "The names of the task related tools. Their presence in the "
+            "context suppresses the tasks injection."
+        ),
+    )
+    """The names of the task related tools, whose tool calls in the context
+    indicate the agent is already aware of the tasks."""
+
+    extra_fields: dict[str, str] = Field(
+        title="Extra Fields",
+        default_factory=dict,
+        description=(
+            "The extra fields to inject, which will be wrapped into the "
+            "'<{key}>{value}</{key}>' format."
+        ),
+    )
+    """The user defined fields to inject, which are attached to the injection
+    without triggering one by themselves."""
+
+    emit_hint_event: bool = Field(
+        title="Emit Hint Event",
+        default=True,
+        description=(
+            "If emit the HintBlockEvent when runtime state injection happens."
+        ),
+    )
+
 
 class ReActConfig(BaseModel):
     """The reasoning related configuration"""
 
     max_iters: int = Field(
         title="Max Iterations",
-        default=20,
+        default=50,
         description="The maximum number of reasoning-acting iterations in "
         "one reply",
     )
     """The maximum number of iterations for the reasoning-acting loop."""
+
+    structured_output_grace_iters: int = Field(
+        title="Grace Iters for Structured Output",
+        description=(
+            "The grace iterations for structured output when exceeding the "
+            "max iterations"
+        ),
+        default=5,
+        gt=0,
+    )
+    """The extra iterations allowed beyond ``max_iters`` to generate the
+    required structured output."""
 
     stop_on_reject: bool = Field(
         title="Rejection Handling",

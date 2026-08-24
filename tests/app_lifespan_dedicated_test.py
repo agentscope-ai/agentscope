@@ -46,7 +46,9 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
 )
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
+    KnowledgeBaseData,
     KnowledgeBaseRecord,
     RedisStorage,
 )
@@ -128,6 +130,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         name: str,
         description: str,
         embedding_model_config: EmbeddingModelConfig,
+        chunker_config: ChunkerConfig | None = None,
     ) -> KnowledgeBaseRecord:
         raise NotImplementedError
 
@@ -262,19 +265,21 @@ class DedicatedModeUploadFlowTest(IsolatedAsyncioTestCase):
         # manager's create flow over HTTP.
         kb_record = KnowledgeBaseRecord(
             user_id="user-1",
-            name="kb",
-            description="",
-            embedding_model_config=EmbeddingModelConfig(
-                type="openai_credential",
-                credential_id="cred-1",
-                model="text-embedding-3-small",
-                dimensions=1,
+            data=KnowledgeBaseData(
+                name="kb",
+                description="",
+                embedding_model_config=EmbeddingModelConfig(
+                    type="openai_credential",
+                    credential_id="cred-1",
+                    model="text-embedding-3-small",
+                    dimensions=1,
+                ),
+                collection_name="",
             ),
-            collection_name="",
         )
-        kb_record.collection_name = f"kb_{kb_record.id}"
+        kb_record.data.collection_name = f"kb_{kb_record.id}"
         await self._vector_store.create_collection(
-            kb_record.collection_name,
+            kb_record.data.collection_name,
             1,
         )
         storage._client = self._fr

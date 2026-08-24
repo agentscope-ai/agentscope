@@ -25,8 +25,9 @@ export function useKnowledgeBases() {
 		setLoading(true);
 		setError(null);
 		try {
-			const { knowledge_bases } = await knowledgeBaseApi.list();
-			setKnowledgeBases(knowledge_bases);
+			// The sidebar shows every knowledge base as one flat list,
+			// so drain all pages of the paginated endpoint.
+			setKnowledgeBases(await knowledgeBaseApi.listAll());
 		} catch (e) {
 			setError(e as Error);
 		} finally {
