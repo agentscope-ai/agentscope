@@ -493,12 +493,15 @@ class DingTalkChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
+        chat_id: str,
     ) -> list["ToolBase"]:
         """Expose DingTalk discovery and target-send tools to the agent.
 
         Args:
             workspace (`WorkspaceBase`): Calling session workspace whose
                 backend is used for file reads.
+            chat_id (`str`): The chat this session serves; the send tools
+                default to it when the agent names no target.
 
         Returns:
             `list[ToolBase]`: DingTalk agent tools.
@@ -513,11 +516,11 @@ class DingTalkChannel(ChannelBase):
 
         backend = workspace.get_backend()
         return [
-            ListConversations(self, backend),
-            ListUsers(self, backend),
-            SendMessage(self, backend),
-            SendFile(self, backend),
-            SendImage(self, backend),
+            ListConversations(self, backend, chat_id),
+            ListUsers(self, backend, chat_id),
+            SendMessage(self, backend, chat_id),
+            SendFile(self, backend, chat_id),
+            SendImage(self, backend, chat_id),
         ]
 
     async def search_users(

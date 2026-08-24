@@ -778,7 +778,10 @@ class ChatService:
                     else None
                 )
                 channel_tools = (
-                    await channel.list_tools(workspace)
+                    await channel.list_tools(
+                        workspace,
+                        session_record.source_chat_id or "",
+                    )
                     if channel is not None
                     else []
                 )
@@ -944,11 +947,11 @@ class ChatService:
                     name = await channel.chat_name(chat_id)
                     where = f' named "{name}"' if name else ""
                     attachment += (
-                        f" This session is bound to a chat{where} on the "
-                        f"{channel.display_name} platform: the messages, "
-                        f"images and files people send there are relayed "
-                        f"to you here, and your replies are delivered "
-                        f"back to that same chat."
+                        f" This session is bound to a chat{where} (id "
+                        f"{chat_id!r}) on the {channel.display_name} "
+                        f"platform: the messages, images and files people "
+                        f"send there are relayed to you here, and your "
+                        f"replies are delivered back to that same chat."
                     )
                     if kind is ChatKind.GROUP:
                         attachment += (
@@ -964,7 +967,9 @@ class ChatService:
                     if tools:
                         attachment += (
                             f" You also have these {channel.display_name} "
-                            f"tools available: {tools}."
+                            f"tools available: {tools}. They act on this "
+                            f"chat by default; name another chat's id only "
+                            f"to reach somewhere else."
                         )
 
                 attachment = (

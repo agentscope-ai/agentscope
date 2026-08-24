@@ -50,16 +50,20 @@ class _DingTalkToolBase(ToolBase):
         self,
         channel: "DingTalkChannel",
         backend: BackendBase,
+        chat_id: str = "",
     ) -> None:
-        """Bind the live channel and session workspace backend.
+        """Bind the live channel, workspace backend, and current chat.
 
         Args:
             channel (`DingTalkChannel`): Live DingTalk channel.
             backend (`BackendBase`): Workspace backend for file reads.
+            chat_id (`str`): The chat this session serves, used when a
+                send tool is called without a target.
         """
         super().__init__()
         self._channel = channel
         self._backend = backend
+        self._chat_id = chat_id
 
     async def check_permissions(
         self,

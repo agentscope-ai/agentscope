@@ -939,6 +939,7 @@ class FeishuChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
+        chat_id: str,
     ) -> list["ToolBase"]:
         """Expose the Feishu send/discovery tools to the agent.
 
@@ -946,6 +947,9 @@ class FeishuChannel(ChannelBase):
             workspace (`WorkspaceBase`):
                 The calling session's workspace; the send-file tools read
                 their payload from its backend by absolute path.
+            chat_id (`str`):
+                The chat this session serves; unused, the Feishu tools
+                still take an explicit target.
 
         Returns:
             `list[ToolBase]`: The Feishu agent tools.

@@ -14,10 +14,11 @@ class _SendImageParams(ParamsBase):
     path: str = Field(
         description="Absolute path to an image in the calling workspace.",
     )
-    target: str = Field(
+    target: str | None = Field(
+        default=None,
         pattern=r"^(user|group):.+$",
-        description="Encoded target returned by ListConversations or "
-        "ListUsers.",
+        description="Encoded target from ListConversations or ListUsers. "
+        "Omit to send to the current conversation.",
     )
 
 
@@ -28,21 +29,28 @@ class SendImage(_DingTalkToolBase):
     description: str = """Send a workspace image to a specified DingTalk user \
 or group so it renders inline.
 
-Obtain ``target`` from ``ListConversations`` or ``ListUsers``. The operation \
-requires confirmation."""
+Omit ``target`` to send to the current conversation, or take another \
+conversation's ``target`` from ``ListConversations`` or ``ListUsers``. The \
+operation requires confirmation."""
     is_read_only: bool = False
     input_schema: dict = _SendImageParams.model_json_schema()
 
-    async def __call__(self, path: str, target: str) -> ToolChunk:
-        """Read a workspace image and send it to a target.
+    async def __call__(
+        self,
+        path: str,
+        target: str | None = None,
+    ) -> ToolChunk:
+        """Read a workspace image and send it, defaulting to this chat.
 
         Args:
             path (`str`): Workspace image path.
-            target (`str`): Encoded DingTalk target.
+            target (`str | None`): Encoded DingTalk target; the current
+                conversation when omitted.
 
         Returns:
             `ToolChunk`: DingTalk acceptance or workspace error.
         """
+        target = target or self._chat_id
         try:
             raw = await self._backend.read_file(path)
         except Exception as error:  # pylint: disable=broad-except
