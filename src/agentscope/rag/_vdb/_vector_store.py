@@ -289,3 +289,66 @@ class VectorStoreBase(ABC):
                 One summary per distinct ``document_id``, in
                 unspecified order.
         """
+
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List the chunks of one source document in ``chunk_index`` order.
+
+        Returns the slice ``[offset, offset + limit)`` of the document's
+        chunks, ordered by :attr:`Chunk.chunk_index` ascending.  Because
+        ``chunk_index`` is a dense, immutable ``0..N-1`` sequence within
+        a document, the slice is equivalent to the payload filter
+        ``offset <= chunk_index < offset + limit`` — backends should
+        prefer that filter over sort-and-skip so a page never requires
+        scanning the whole document.
+
+        Deliberately **not** an ``@abstractmethod``: it was added after
+        third-party subclasses of :class:`VectorStoreBase` already
+        existed, and making it abstract would break them on upgrade.
+        Backends that do not override it raise
+        :class:`NotImplementedError`, which the application layer maps
+        to HTTP 501 so clients can hide the chunk-browsing UI.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed —
+                the same value carried by
+                :attr:`VectorRecord.document_id` at insertion time.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip; equals the first
+                returned chunk's ``chunk_index``.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                If provided, restrict listing to records whose
+                ``chunk.metadata`` matches every ``key == value`` pair
+                in this dict.  Used for defense-in-depth cross-tenant
+                scoping when an isolation strategy co-locates multiple
+                knowledge bases inside the same collection.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks ordered by ``chunk_index``
+                ascending; empty when the document has no records or
+                ``offset`` is past the end.
+
+        Raises:
+            `NotImplementedError`:
+                If the backend does not support chunk listing.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement list_chunks().",
+        )

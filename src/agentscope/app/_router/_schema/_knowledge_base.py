@@ -5,13 +5,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from ...storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
 )
 from ..._service import CredentialView, KnowledgeBaseView
 from ....embedding import EmbeddingModelCard
-from ....rag import VectorSearchResult
+from ....rag import Chunk, VectorSearchResult
 from ...rag.knowledge_base_manager._dimension_policy import DimensionPolicy
 
 
@@ -28,6 +29,15 @@ class CreateKnowledgeBaseRequest(BaseModel):
             "Embedding model used both at indexing and at query time. "
             "Cannot be changed after creation — switching would "
             "invalidate every previously inserted vector."
+        ),
+    )
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "Chunker configuration determining how uploaded documents "
+            "are split into chunks.  Pinned at creation time and "
+            "cannot be changed afterwards.  Defaults to the first "
+            "configured chunker with its default parameters."
         ),
     )
 
@@ -62,9 +72,16 @@ class ListKnowledgeBasesResponse(BaseModel):
     """Response body for listing the caller's knowledge bases."""
 
     knowledge_bases: list[KnowledgeBaseView] = Field(
-        description="All knowledge bases owned by the caller.",
+        description="The requested page of visible knowledge bases.",
     )
-    total: int = Field(description="Total number of returned items.")
+    total: int = Field(
+        description=(
+            "Total number of knowledge bases matching the filters — "
+            "across all pages, for computing page counts."
+        ),
+    )
+    page: int = Field(default=1, description="The 1-based page served.")
+    page_size: int = Field(default=30, description="The page size used.")
 
 
 class KnowledgeDocumentView(BaseModel):
@@ -130,9 +147,16 @@ class ListKnowledgeDocumentsResponse(BaseModel):
     """Response body for listing documents inside a knowledge base."""
 
     documents: list[KnowledgeDocumentView] = Field(
-        description="One view per registered document.",
+        description="The requested page of document views.",
     )
-    total: int = Field(description="Total number of returned items.")
+    total: int = Field(
+        description=(
+            "Total number of documents matching the filters — across "
+            "all pages, for computing page counts."
+        ),
+    )
+    page: int = Field(default=1, description="The 1-based page served.")
+    page_size: int = Field(default=30, description="The page size used.")
 
 
 class ListKnowledgeDocumentStatusResponse(BaseModel):
@@ -271,4 +295,60 @@ class ListSupportedContentTypesResponse(BaseModel):
             "sorted.  Derived from `mimetypes` by the base parser; "
             "subclasses may override the default."
         ),
+    )
+
+
+class ChunkerInfo(BaseModel):
+    """One available chunker type and its parameter schema."""
+
+    type: str = Field(description="The chunker type identifier.")
+    parameter_schema: dict = Field(
+        description=(
+            "JSON Schema produced by `ChunkerBase.Parameters."
+            "model_json_schema()`, used to render the parameter form."
+        ),
+    )
+
+
+class ListChunkersResponse(BaseModel):
+    """Response body listing the available chunker types."""
+
+    chunkers: list[ChunkerInfo] = Field(
+        description="The available chunker types, in configured order.",
+    )
+
+
+class ListDocumentChunksResponse(BaseModel):
+    """Response body for browsing one document's chunks page by page."""
+
+    chunks: list[Chunk] = Field(
+        description=(
+            "The requested page of chunks, ordered by ``chunk_index`` "
+            "ascending."
+        ),
+    )
+    total: int = Field(
+        description=(
+            "Total number of chunks indexed for this document, taken "
+            "from the document record. ``0`` while the document is "
+            "still being indexed."
+        ),
+    )
+    page: int = Field(description="The 1-based page number served.")
+    page_size: int = Field(description="The page size used.")
+
+
+class DocumentDownloadTokenResponse(BaseModel):
+    """A capability authorizing one fetch of one document's raw file."""
+
+    token: str = Field(
+        description=(
+            "Pass as the ``token`` query parameter of "
+            "``GET /knowledge_bases/{kb_id}/documents/{document_id}``, "
+            "in place of the ``X-User-ID`` header. Valid for this "
+            "document only."
+        ),
+    )
+    expires_at: float = Field(
+        description="Unix timestamp after which the token is refused.",
     )

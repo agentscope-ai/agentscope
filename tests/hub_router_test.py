@@ -6,6 +6,7 @@ import json
 import tempfile
 import zipfile
 from typing import Any, AsyncIterator
+from urllib.parse import quote
 from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
@@ -161,6 +162,12 @@ class FakeSkillHub(SkillHubBase):
             url="https://hub.invalid/skills/gifgrep",
             markdown=SKILL_MD,
         )
+        self.owner_scoped_card = SkillCard(
+            hub_id="fakeskills",
+            id="runware/music",
+            name="music",
+            markdown=SKILL_MD,
+        )
         self.download_users: list[str] = []
 
     async def list_skills(
@@ -175,6 +182,8 @@ class FakeSkillHub(SkillHubBase):
 
     async def get_skill(self, user_id: str, card_id: str) -> SkillCard:
         """Return the fixture card, or raise for anything else."""
+        if card_id == self.owner_scoped_card.id:
+            return self.owner_scoped_card
         if card_id != "gifgrep":
             raise KeyError(card_id)
         return self.card
@@ -307,6 +316,18 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+    def test_gets_owner_scoped_skill_card(self) -> None:
+        """A slash in an opaque card id stays inside the path parameter."""
+        card_id = quote("runware/music", safe="")
+
+        response = self._client.get(
+            f"/hub/skill/fakeskills/cards/{card_id}",
+            headers=HEADERS,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "runware/music")
 
     # ── install: MCP ──────────────────────────────────────────────
 
@@ -697,6 +718,15 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["hub_id"], "fakeskills")
         self.assertEqual(listed[0]["card_id"], "gifgrep")
+
+    def test_installs_owner_scoped_skill_card(self) -> None:
+        """An owner-scoped card id is accepted by the install route."""
+        card_id = quote("runware/music", safe="")
+
+        response = self._install_skill(card_id)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["card_id"], "runware/music")
 
     def test_install_snapshots_the_display_identity(self) -> None:
         """Author, icon and link survive the install, so the library

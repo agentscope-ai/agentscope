@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The tool module utils."""
 import inspect
+import typing
 from typing import Any, Dict, Callable
 
 from docstring_parser import parse
@@ -65,6 +66,15 @@ def _extract_func_description(docstring: str) -> str:
     return "\n".join(descriptions)
 
 
+def _build_param_field(description: str | None, default: Any) -> Any:
+    """Build the pydantic ``Field`` for a parameter, omitting an absent
+    description so it doesn't override metadata carried by
+    ``Annotated[..., Field(...)]`` annotations."""
+    if description is None:
+        return Field(default=default)
+    return Field(description=description, default=default)
+
+
 def _extract_input_schema(
     tool_func: Callable,
     include_var_positional: bool = False,
@@ -88,12 +98,24 @@ def _extract_input_schema(
     docstring = parse(tool_func.__doc__ or "")
     params_docstring = {_.arg_name: _.description for _ in docstring.params}
 
+    # Under PEP 563 (`from __future__ import annotations`) the annotations
+    # in the signature are raw strings, which pydantic cannot resolve
+    # outside the function's own module. Resolve them here instead.
+    try:
+        type_hints = typing.get_type_hints(tool_func, include_extras=True)
+    except Exception:
+        # e.g. `functools.partial` objects, or annotations referencing
+        # TYPE_CHECKING-only names; fall back to the raw annotations
+        type_hints = {}
+
     # Create a dynamic model with the function signature
     fields = {}
     for name, param in inspect.signature(tool_func).parameters.items():
         # Skip the `self` and `cls` parameters
         if name in ["self", "cls"]:
             continue
+
+        annotation = type_hints.get(name, param.annotation)
 
         # Handle `**kwargs`
         if param.kind == inspect.Parameter.VAR_KEYWORD:
@@ -102,9 +124,9 @@ def _extract_input_schema(
 
             fields[name] = (
                 Dict[str, Any]
-                if param.annotation == inspect.Parameter.empty
-                else Dict[str, param.annotation],  # type: ignore
-                Field(
+                if annotation == inspect.Parameter.empty
+                else Dict[str, annotation],  # type: ignore
+                _build_param_field(
                     description=params_docstring.get(
                         f"**{name}",
                         params_docstring.get(name, None),
@@ -121,9 +143,9 @@ def _extract_input_schema(
 
             fields[name] = (
                 list[Any]
-                if param.annotation == inspect.Parameter.empty
-                else list[param.annotation],  # type: ignore
-                Field(
+                if annotation == inspect.Parameter.empty
+                else list[annotation],  # type: ignore
+                _build_param_field(
                     description=params_docstring.get(
                         f"*{name}",
                         params_docstring.get(name, None),
@@ -136,10 +158,8 @@ def _extract_input_schema(
 
         else:
             fields[name] = (
-                Any
-                if param.annotation == inspect.Parameter.empty
-                else param.annotation,
-                Field(
+                Any if annotation == inspect.Parameter.empty else annotation,
+                _build_param_field(
                     description=params_docstring.get(name, None),
                     default=...
                     if param.default is param.empty

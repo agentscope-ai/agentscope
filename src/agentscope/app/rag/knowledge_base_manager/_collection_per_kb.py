@@ -25,7 +25,7 @@ from ..._service._embedding import build_embedding_model
 from ...storage import KnowledgeBaseRecord, KnowledgeBaseData
 
 if TYPE_CHECKING:
-    from ...storage import EmbeddingModelConfig
+    from ...storage import ChunkerConfig, EmbeddingModelConfig
 
 
 class CollectionPerKbManager(KnowledgeBaseManagerBase):
@@ -55,6 +55,7 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         name: str,
         description: str,
         embedding_model_config: "EmbeddingModelConfig",
+        chunker_config: "ChunkerConfig | None" = None,
     ) -> KnowledgeBaseRecord:
         """Allocate a new collection and persist the knowledge base record.
 
@@ -67,6 +68,9 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
                 Free-form description.
             embedding_model_config (`EmbeddingModelConfig`):
                 Embedding model configuration; pinned to the record.
+            chunker_config (`ChunkerConfig | None`, optional):
+                Chunker configuration; pinned to the record.  ``None``
+                leaves the record without a pinned chunker (legacy).
 
         Returns:
             `KnowledgeBaseRecord`:
@@ -78,6 +82,7 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
                 name=name,
                 description=description,
                 embedding_model_config=embedding_model_config,
+                chunker_config=chunker_config,
                 collection_name="",
             ),
         )

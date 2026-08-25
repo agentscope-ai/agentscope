@@ -187,12 +187,12 @@ class TestAppleContainerWorkspaceManager(IsolatedAsyncioTestCase):
         manager = AppleContainerWorkspaceManager(
             isolation=IsolationPolicy.PER_AGENT,
         )
-        id1 = manager.assign_workspace_id(
+        id1 = await manager.assign_workspace_id(
             user_id="u1",
             agent_id="a1",
             session_id="s1",
         )
-        id2 = manager.assign_workspace_id(
+        id2 = await manager.assign_workspace_id(
             user_id="u1",
             agent_id="a1",
             session_id="s2",
@@ -200,7 +200,7 @@ class TestAppleContainerWorkspaceManager(IsolatedAsyncioTestCase):
         # Same user+agent, different session → same id.
         self.assertEqual(id1, id2)
 
-        id3 = manager.assign_workspace_id(
+        id3 = await manager.assign_workspace_id(
             user_id="u1",
             agent_id="a2",
             session_id="s1",
@@ -213,12 +213,12 @@ class TestAppleContainerWorkspaceManager(IsolatedAsyncioTestCase):
         manager = AppleContainerWorkspaceManager(
             isolation=IsolationPolicy.PER_SESSION,
         )
-        id1 = manager.assign_workspace_id(
+        id1 = await manager.assign_workspace_id(
             user_id="u1",
             agent_id="a1",
             session_id="s1",
         )
-        id2 = manager.assign_workspace_id(
+        id2 = await manager.assign_workspace_id(
             user_id="u1",
             agent_id="a1",
             session_id="s2",

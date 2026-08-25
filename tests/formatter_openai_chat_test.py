@@ -349,6 +349,46 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF becomes a ``file`` content part."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                        name="report.pdf",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize this."},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "report.pdf",
+                                "file_data": "data:application/pdf;"
+                                "base64,JVBERi0xLjQgZmFrZQ==",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_dropped(self) -> None:
         """ThinkingBlock is silently dropped by OpenAI formatter."""
         fmt = OpenAIChatFormatter()

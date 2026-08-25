@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 
 from utils import MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -360,6 +360,54 @@ class TracingTest(IsolatedAsyncioTestCase):
             span_attrs.get("gen_ai.operation.name"),
             "chat",
             "chat span gen_ai.operation.name should equal chat",
+        )
+
+    async def test_chat_span_has_input_messages(self) -> None:
+        """Chat spans carry messages observed at the tracing middleware
+        boundary."""
+        self.agent.injection_config = InjectionConfig(
+            inject_runtime_state=False,
+        )
+        self.model.set_responses(
+            [_make_text_response("Input captured.")],
+        )
+        user_text = "Which messages reached the tracing boundary?"
+        await self.agent.reply(UserMsg(name="user", content=user_text))
+
+        chat_spans = self._spans_by_name("chat")
+        self.assertEqual(len(chat_spans), 1, "Expected exactly one chat span")
+        span_attrs = dict(chat_spans[0].attributes or {})
+        input_raw = span_attrs.get("gen_ai.input.messages")
+        assert isinstance(
+            input_raw,
+            str,
+        ), "chat span gen_ai.input.messages should be a string"
+        self.assertEqual(
+            json.loads(input_raw),
+            [
+                {
+                    "role": "system",
+                    "parts": [
+                        {
+                            "type": "text",
+                            "content": "You are a test assistant.",
+                        },
+                    ],
+                    "name": "system",
+                    "finish_reason": "stop",
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "type": "text",
+                            "content": user_text,
+                        },
+                    ],
+                    "name": "user",
+                    "finish_reason": "stop",
+                },
+            ],
         )
 
     async def test_chat_span_has_output_messages(self) -> None:

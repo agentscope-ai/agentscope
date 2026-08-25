@@ -9,6 +9,7 @@ from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
 import mcp
+from pydantic import BaseModel
 
 from ._types import Function
 from ._base import ToolBase, ToolMiddlewareBase
@@ -17,7 +18,11 @@ from ..permission import (
     PermissionDecision,
 )
 from ._response import ToolChunk
-from ._utils import _extract_func_description, _extract_input_schema
+from ._utils import (
+    _extract_func_description,
+    _extract_input_schema,
+    _remove_title_field,
+)
 from .._logging import logger
 from ..message import (
     TextBlock,
@@ -51,6 +56,7 @@ class FunctionTool(ToolBase):
         func: Function,
         name: str | None = None,
         description: str | None = None,
+        input_schema: dict | type[BaseModel] | None = None,
         is_concurrency_safe: bool = True,
         is_read_only: bool = False,
         is_state_injected: bool = False,
@@ -65,6 +71,14 @@ class FunctionTool(ToolBase):
                 Custom tool name. If None, uses the function name.
             description (`str | None`, optional):
                 Custom tool description. If None, extracts from docstring.
+            input_schema (`dict | type[BaseModel] | None`, optional):
+                Custom input schema for the tool, either a JSON schema
+                dict or a pydantic ``BaseModel`` subclass (converted via
+                its ``model_json_schema()``). If None, generates the
+                schema from the function's type annotations and
+                docstring, where constraints (e.g. enums, value ranges)
+                can be expressed with ``typing.Literal`` and
+                ``typing.Annotated`` with ``pydantic.Field``.
             is_concurrency_safe (`bool`, optional):
                 Whether this tool is safe to call concurrently.
             is_read_only (`bool`, optional):
@@ -79,7 +93,14 @@ class FunctionTool(ToolBase):
         self.description = description or _extract_func_description(
             func.__doc__ or "",
         )
-        self.input_schema = _extract_input_schema(func)
+        if isinstance(input_schema, type) and issubclass(
+            input_schema,
+            BaseModel,
+        ):
+            input_schema = _remove_title_field(
+                input_schema.model_json_schema(),
+            )
+        self.input_schema = input_schema or _extract_input_schema(func)
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
         self.is_state_injected = is_state_injected

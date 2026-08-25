@@ -175,30 +175,32 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         """Convert an audio source to DashScope ``input_audio`` format.
 
         DashScope's compatible API accepts URLs directly in the ``data``
-        field (unlike standard OpenAI which requires base64). Local files
-        are still read and base64-encoded.
+        field. Base64-encoded audio must be wrapped in a data URL. Local
+        files are read, base64-encoded, and wrapped in the same form.
         """
+        fmt = source.media_type.split("/")[-1]
+        if fmt == "mpeg":
+            fmt = "mp3"
+
         if isinstance(source, Base64Source):
-            fmt = source.media_type.split("/")[-1]
             return {
                 "type": "input_audio",
                 "input_audio": {
-                    "data": source.data,
+                    "data": f"data:;base64,{source.data}",
                     "format": fmt,
                 },
             }
 
         if isinstance(source, URLSource):
             url_str = str(source.url)
-            fmt = source.media_type.split("/")[-1]
             if url_str.startswith("file://"):
                 local_path = url_str.removeprefix("file://")
                 with open(local_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
                 return {
                     "type": "input_audio",
                     "input_audio": {
-                        "data": data,
+                        "data": f"data:;base64,{encoded}",
                         "format": fmt,
                     },
                 }

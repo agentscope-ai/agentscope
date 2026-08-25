@@ -177,16 +177,18 @@ def _get_llm_request_attributes(
         instance (`ChatModelBase`):
             The chat model instance making the request.
         kwargs (`Dict[str, Any]`):
-            Keyword arguments including generation parameters such as
-            temperature, top_p, top_k, max_tokens, presence_penalty,
-            frequency_penalty, stop_sequences, seed, tools, and tool_choice.
+            Keyword arguments including input messages, tools, tool choice,
+            and generation parameters such as temperature, top_p, top_k,
+            max_tokens, presence_penalty, frequency_penalty, stop sequences,
+            and seed.
 
     Returns:
         `Dict[str, Any]`:
             OpenTelemetry GenAI attributes with mixed-type values (``str``,
             ``int``, ``float``, or ``list``), including operation name,
-            provider name, model name, generation parameters (e.g.
-            temperature, max_tokens, stop_sequences), and tool definitions.
+            provider name, model name, input messages, generation parameters
+            (e.g. temperature, max_tokens, stop sequences), and tool
+            definitions.
     """
 
     attributes = {
@@ -220,6 +222,14 @@ def _get_llm_request_attributes(
     )
     if tool_definitions:
         attributes[SpanAttributes.GEN_AI_TOOL_DEFINITIONS] = tool_definitions
+
+    messages = kwargs.get("messages")
+    if isinstance(messages, (Msg, list)):
+        input_messages = _get_agent_messages(messages)
+        if input_messages:
+            attributes[
+                SpanAttributes.GEN_AI_INPUT_MESSAGES
+            ] = _serialize_to_str(input_messages)
 
     return {k: v for k, v in attributes.items() if v is not None}
 

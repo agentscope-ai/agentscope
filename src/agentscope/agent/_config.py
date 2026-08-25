@@ -54,7 +54,7 @@ class ContextConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     """Allow arbitrary types in the pydantic model."""
 
-    trigger_ratio: float = Field(default=0.8, gt=0, lt=0.9)
+    trigger_ratio: float = Field(default=0.8, gt=0, le=0.9)
     """When the token exceeds this ratio of the maximum context length, the
     context will be compressed. To reserve the context for context compression,
     the maximum ratio is 0.9."""
@@ -137,6 +137,21 @@ class ContextConfig(BaseModel):
         ),
     )
     """The tool result limit to avoid tool result bursting."""
+
+    max_image_num: int = Field(
+        title="Max Image Number",
+        default=5,
+        ge=0,
+        description=(
+            "The maximum number of images kept in the context. The oldest "
+            "images exceeding the limit will be removed."
+        ),
+    )
+    """The maximum number of images kept in the context. When the number of
+    images exceeds this limit, the oldest images will be offloaded to the
+    workspace (if an offloader is provided) and replaced by a hint that
+    records the offloaded path; otherwise they are dropped and replaced by a
+    hint without path information."""
 
 
 class InjectionConfig(BaseModel):
@@ -284,7 +299,7 @@ class ReActConfig(BaseModel):
 
     max_iters: int = Field(
         title="Max Iterations",
-        default=20,
+        default=50,
         description="The maximum number of reasoning-acting iterations in "
         "one reply",
     )

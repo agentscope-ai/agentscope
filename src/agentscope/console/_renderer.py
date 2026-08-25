@@ -10,7 +10,6 @@ from rich.text import Text
 from ..event import (
     AgentEvent,
     DataBlockEndEvent,
-    ExceedMaxItersEvent,
     HintBlockEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
@@ -177,13 +176,6 @@ class ConsoleRenderer:
                 event.tool_calls,
                 "Tool calls awaiting external execution:",
             )
-        elif isinstance(event, ExceedMaxItersEvent):
-            if self._show(1):
-                self._break_line()
-                self.console.print(
-                    "⚠ Exceeded the maximum reasoning-acting iterations.",
-                    style="yellow",
-                )
         elif isinstance(event, ReplyEndEvent):
             self._render_reply_end(event)
         else:
@@ -421,5 +413,15 @@ class ConsoleRenderer:
         ):
             self.console.print(
                 Text("⚠ Reply interrupted by the user.", style="yellow"),
+            )
+        elif (
+            event.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS
+            and self._show(1)
+        ):
+            self.console.print(
+                Text(
+                    "⚠ Exceeded the maximum reasoning-acting iterations.",
+                    style="yellow",
+                ),
             )
         self._debug_line(f"reply end · {event.finished_reason}")

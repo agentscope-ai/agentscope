@@ -140,6 +140,11 @@
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
+		"maxItersExceeded": {
+			"title": "已达到最大迭代次数",
+			"description": "输入新消息可继续对话，或点击继续以完成当前任务。",
+			"continue": "继续"
+		},
 		"agent": {
 			"selectPlaceholder": "选择智能体",
 			"emptyTitle": "暂无智能体",
@@ -262,6 +267,9 @@
 		"dimension": {
 			"label": "维度"
 		},
+		"chunker": {
+			"label": "分块策略"
+		},
 		"policy": {
 			"lockedTitle": "维度已锁定为 {{dimension}}d",
 			"lockedDescription": "当前实例已要求所有知识库使用 {{dimension}} 维 embedding，下面仅展示兼容的模型。",
@@ -272,7 +280,8 @@
 		"errors": {
 			"nameRequired": "请填写知识库名称。",
 			"embeddingRequired": "请选择 Embedding 模型。",
-			"dimensionRequired": "请选择 Embedding 维度。"
+			"dimensionRequired": "请选择 Embedding 维度。",
+			"chunkerRequired": "请选择分块策略。"
 		}
 	},
 	"dialog-knowledge-base-edit": {
@@ -288,6 +297,9 @@
 		},
 		"embeddingModel": {
 			"label": "Embedding 模型"
+		},
+		"chunker": {
+			"label": "分块策略"
 		},
 		"errors": {
 			"nameRequired": "请填写知识库名称。"
@@ -373,6 +385,35 @@
 			"chunkPosition": "第 {{index}} / {{total}} 段",
 			"emptyTitle": "无匹配",
 			"emptyDescription": "本次查询没有返回任何分块。"
+		},
+		"config": {
+			"title": "配置信息",
+			"embeddingModel": "嵌入模型",
+			"dimensions": "向量维度",
+			"credential": "凭证",
+			"chunker": "分块器",
+			"counts": "内容",
+			"countsValue": "{{documents}} 个文档 · {{chunks}} 个分块",
+			"status": "索引状态",
+			"statusValue": "{{ready}} 就绪 · {{indexing}} 处理中 · {{failed}} 失败",
+			"createdAt": "创建时间"
+		},
+		"documentDetail": {
+			"description": "已索引 {{count}} 个分块",
+			"chunksTab": "分块",
+			"previewTab": "预览",
+			"chunksEmptyTitle": "暂无分块",
+			"chunksEmptyDescription": "该文档尚未产生已索引的分块。",
+			"chunksUnsupportedTitle": "无法浏览分块",
+			"chunksUnsupportedDescription": "当前配置的向量数据库不支持分块列表。",
+			"previousPage": "上一页",
+			"nextPage": "下一页",
+			"pageIndicator": "第 {{page}} / {{pageCount}} 页",
+			"previewUnavailableTitle": "无法在线预览",
+			"previewUnavailableDescription": "该文件类型无法在浏览器中预览。",
+			"previewTooLargeTitle": "文件过大,无法预览",
+			"previewTooLargeDescription": "该文件超出在线预览大小限制,请下载后查看源文件。",
+			"downloadButton": "下载源文件"
 		}
 	},
 	"llm-select": {
@@ -394,6 +435,26 @@
 			"description": "请先添加支持 Embedding 的凭证。"
 		},
 		"addCredential": "添加凭证"
+	},
+	"chunker-select": {
+		"placeholder": "选择分块策略",
+		"loading": "加载中…",
+		"empty": "暂无可用分块策略"
+	},
+	"chunker-types": {
+		"approx_token": {
+			"label": "近似 Token 数",
+			"params": {
+				"chunk_size": {
+					"label": "块大小",
+					"description": "每个分块的最大近似 Token 数量。"
+				},
+				"overlap": {
+					"label": "重叠大小",
+					"description": "相邻分块之间共享的近似 Token 数量。"
+				}
+			}
+		}
 	},
 	"dimension-select": {
 		"placeholder": "选择维度",

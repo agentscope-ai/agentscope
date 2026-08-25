@@ -360,3 +360,161 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual([r.document_id for r in results], ["doc-1"])
+
+    async def test_list_chunks_pagination_and_isolation(self) -> None:
+        """list_chunks pages by chunk_index and isolates documents."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"doc1-chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            # Insert out of order to prove ordering is restored.
+            for i in (3, 0, 4, 1, 2)
+        ] + [
+            _make_record(
+                f"doc2-chunk{i}",
+                [0.0, 1.0, 0.0],
+                document_id="doc-2",
+                chunk_index=i,
+                total_chunks=2,
+            )
+            for i in (1, 0)
+        ]
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2])
+        self.assertEqual(
+            [c.content.text for c in page],
+            ["doc1-chunk0", "doc1-chunk1", "doc1-chunk2"],
+        )
+
+        tail = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=3,
+            limit=30,
+        )
+        self.assertEqual([c.chunk_index for c in tail], [3, 4])
+
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", offset=5, limit=3),
+            [],
+        )
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", limit=0),
+            [],
+        )
+
+        other = await self.store.list_chunks("kb-1", "doc-2", limit=30)
+        self.assertEqual([c.chunk_index for c in other], [0, 1])
+        self.assertTrue(
+            all(c.content.text.startswith("doc2") for c in other),
+        )
+
+    async def test_list_chunks_metadata_filter(self) -> None:
+        """list_chunks applies the metadata_filter tenant scoping."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        record = _make_record(
+            "scoped",
+            [1.0, 0.0, 0.0],
+            document_id="doc-1",
+        )
+        record.chunk.metadata["kb_scope"] = "kb-a"
+        await self.store.insert("kb-1", [record])
+
+        hit = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-a"},
+        )
+        self.assertEqual(len(hit), 1)
+
+        miss = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-b"},
+        )
+        self.assertEqual(miss, [])
+
+    async def test_list_chunks_deduplicates_reindex_duplicates(self) -> None:
+        """Re-indexing the same document never duplicates or drops chunks.
+
+        Stable record IDs make the second insert an in-place upsert; and
+        even against legacy duplicate rows the listing deduplicates by
+        ``chunk_index``, so a page is never ``[1, 2, 3, 3, 4]``.
+        """
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            for i in range(5)
+        ]
+        # Simulate the index worker crashing after the vector insert
+        # and retrying the whole pipeline.
+        await self.store.insert("kb-1", records)
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=5,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2, 3, 4])
+
+        window = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=1,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in window], [1, 2, 3])
+
+    async def test_list_chunks_after_reindexing_into_fewer_chunks(
+        self,
+    ) -> None:
+        """A shorter re-index leaves no tail from the previous run.
+
+        The worker deletes a document's vectors before re-inserting, so
+        even though upserts alone would keep the old high indices, the
+        listing reflects only the latest run.
+        """
+        await self.store.create_collection("kb-1", dimensions=3)
+
+        def _records(count: int) -> list:
+            return [
+                _make_record(
+                    f"v{count}-chunk{i}",
+                    [1.0, 0.0, 0.0],
+                    document_id="doc-1",
+                    chunk_index=i,
+                    total_chunks=count,
+                )
+                for i in range(count)
+            ]
+
+        await self.store.insert("kb-1", _records(5))
+        await self.store.delete("kb-1", "doc-1")
+        await self.store.insert("kb-1", _records(2))
+
+        chunks = await self.store.list_chunks("kb-1", "doc-1", limit=30)
+        self.assertEqual([c.chunk_index for c in chunks], [0, 1])
+        self.assertEqual(
+            [c.content.text for c in chunks],
+            ["v2-chunk0", "v2-chunk1"],
+        )

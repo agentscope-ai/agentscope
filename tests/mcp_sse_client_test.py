@@ -279,6 +279,36 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         await stateful_client.close()
         self.assertFalse(stateful_client.is_connected)
 
+    async def test_stateless_client_with_query_string_in_url(self) -> None:
+        """An SSE URL carrying a query string must still be detected as SSE.
+
+        Regression test: ``_create_http_client`` used to detect the transport
+        with ``url.endswith('/sse')``, which fails for URLs that carry a query
+        string such as ``http://host:port/sse?key=API_KEY`` (a very common
+        shape for key-based SSE MCP servers, e.g. the Amap MCP at
+        https://mcp.amap.com/sse?key=API_KEY). Such URLs were misdetected as
+        streamable HTTP, and the client then failed to handshake against the
+        SSE server with ``McpError: Session terminated``.
+
+        After the fix, only the URL path is inspected, so the query string no
+        longer affects transport detection.
+        """
+        client = MCPClient(
+            name="test_sse_query_client",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse?key=API_KEY",
+            ),
+        )
+
+        mcp_tool_1 = await client.get_tool("tool_1")
+        res: ToolChunk = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
+        self.assertEqual(
+            res.content[0].text,
+            "arg1: 123, arg2: [1, 2, 3]",
+        )
+
 
 class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
     """End-to-end tests for $defs preservation in MCP tool schemas.

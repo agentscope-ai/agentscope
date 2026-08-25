@@ -336,6 +336,42 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF becomes an ``input_file`` item."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Summarize this."},
+                        {
+                            "type": "input_file",
+                            "filename": "document.pdf",
+                            "file_data": "data:application/pdf;"
+                            "base64,JVBERi0xLjQgZmFrZQ==",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_dropped_without_reasoning_item_id(
         self,
     ) -> None:

@@ -571,18 +571,26 @@ class Toolkit:
         """
         tools = await self._get_available_tools(activated_groups)
         if tool_name not in tools:
+            # The dict above is already filtered to the basic + activated
+            # groups, so a tool from an inactive group is missing from it.
+            # Look the name up across all registered groups to distinguish
+            # "inactive" from "doesn't exist" - the same fallback call_tool
+            # performs - so the agent gets the activation hint instead of a
+            # misleading not-found error.
+            all_tools = await self._get_available_tools(
+                [_.name for _ in self.tool_groups],
+            )
+            if tool_name in all_tools:
+                raise ToolGroupInactiveError(
+                    f"ToolGroupInactiveError: The tool '{tool_name}' in "
+                    f"group '{all_tools[tool_name].group}' is currently "
+                    f"inactive. You should first activate the group by "
+                    f"calling the "
+                    f"'{self.builtin_meta_tool.tool.name}' tool.",
+                )
             raise ToolNotFoundError(
                 f"ToolNotFoundError: The tool named '{tool_name}' doesn't "
                 f"exist.",
-            )
-
-        group_name = tools[tool_name].group
-        if group_name != "basic" and group_name not in activated_groups:
-            raise ToolGroupInactiveError(
-                f"ToolGroupInactiveError: The tool '{tool_name}' in group "
-                f"'{group_name}' is currently inactive. "
-                f"You should first activate the group by calling the "
-                f"'{self.builtin_meta_tool.tool.name}' tool.",
             )
 
         return tools[tool_name].tool

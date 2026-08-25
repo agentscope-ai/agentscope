@@ -4,6 +4,7 @@ import asyncio
 import collections
 import inspect
 import re
+import warnings
 
 from asyncio import Queue
 from copy import deepcopy
@@ -210,6 +211,10 @@ class Agent:
         self._compress_context_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_compress_context")
         ]
+
+        # Set when a `ReplyEndEvent` escapes the reply middleware chain; the
+        # reply loop only exits after the event is delivered (not swallowed)
+        self._receive_reply_end: bool = False
 
     def _validate_configs(self) -> None:
         """Validate the config combinations that a single config class cannot
@@ -421,6 +426,10 @@ class Agent:
         """
         cfg: ContextConfig = context_config or self.context_config
 
+        # Limit the number of images in the context first, so that the token
+        # counting below reflects the images that actually remain
+        await self._limit_context_images(cfg)
+
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
@@ -539,13 +548,14 @@ class Agent:
             context_overflow = True
 
         # Compress the messages
+        res = None
         try:
             res = await self.model.generate_structured_output(
                 messages=messages,
                 structured_model=cfg.summary_schema,
             )
 
-        except Exception as e:
+        except Exception as error:
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -578,15 +588,25 @@ class Agent:
                     ):
                         break
 
-                res = await self.model.generate_structured_output(
-                    messages=messages,
-                    structured_model=cfg.summary_schema,
+                try:
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+                except Exception as retry_error:
+                    error = retry_error
+
+            if res is None:
+                logger.warning(
+                    "[AGENT %s]: Summary generation failed: %s. "
+                    "Falling back to context truncation.",
+                    self.name,
+                    error,
                 )
 
-            else:
-                raise e from None
-
-        if res.finished_reason == FinishedReason.INTERRUPTED:
+        if res is not None and (
+            res.finished_reason == FinishedReason.INTERRUPTED
+        ):
             logger.warning(
                 "The context compression was interrupted and skipped. ",
             )
@@ -595,22 +615,45 @@ class Agent:
         # Update the summary
         async def _apply_change() -> None:
             """Apply the context change with interruption protection."""
-            new_summary = cfg.summary_template.format(**res.content)
+            if res is not None:
+                new_summary = cfg.summary_template.format(**res.content)
+            else:
+                # Keep the previous summary if the compression failed
+                new_summary = self.state.summary or (
+                    "<system-info>Some earlier messages were truncated for "
+                    "limited context.</system-info>"
+                )
+
+            # Offload the compressed context if offloader is provided
             if self.offloader:
                 path = await self.offloader.offload_context(
                     self.state.session_id,
                     msgs=msgs_to_compress,
                 )
-                new_summary += (
-                    f"\n<system-reminder>The compressed context is offloaded "
-                    f"to '{path}', you can refer to it when needed."
-                    f"</system-reminder>"
+                offload_reminder = (
+                    f"<system-reminder>The compressed context"
+                    f" is offloaded to '{path}', you can refer"
+                    f" to it when needed.</system-reminder>"
                 )
+                # Avoid duplicating the reminder when the previous summary
+                # is reused after a failed compression
+                if isinstance(new_summary, list):
+                    if not any(
+                        isinstance(block, TextBlock)
+                        and block.text == offload_reminder
+                        for block in new_summary
+                    ):
+                        new_summary = [
+                            *new_summary,
+                            TextBlock(text=offload_reminder),
+                        ]
+                elif offload_reminder not in new_summary:
+                    new_summary += f"\n{offload_reminder}"
 
-            # Protected from interruption
+            # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
-            # Update the context
+            # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
 
@@ -626,6 +669,110 @@ class Agent:
             await apply_task
             raise
 
+    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+        """Limit the number of images in the context according to
+        ``cfg.max_image_num``. The oldest images exceeding the limit are
+        offloaded to the workspace (if an offloader is provided) and replaced
+        by a hint recording the offloaded path; otherwise they are dropped and
+        replaced by a hint without path information.
+
+        Image data blocks at the top level of a non-user message are
+        replaced by :class:`HintBlock`, while those in user messages or
+        nested inside a :class:`ToolResultBlock` / :class:`HintBlock` are
+        replaced by :class:`TextBlock` (as required by their type
+        constraints).
+
+        Args:
+            cfg (`ContextConfig`):
+                The context config that provides ``max_image_num``.
+        """
+        max_image_num = cfg.max_image_num
+
+        def _is_image(block: Any) -> bool:
+            """Check whether the given block is an image data block."""
+            return isinstance(
+                block,
+                DataBlock,
+            ) and block.source.media_type.startswith("image/")
+
+        # Collect all the image data blocks in chronological order, recorded
+        # as (container list, index, block, is_top_level, role)
+        images: list[tuple[list, int, DataBlock, bool, str]] = []
+        for msg in self.state.context:
+            for i, block in enumerate(msg.content):
+                if _is_image(block):
+                    images.append((msg.content, i, block, True, msg.role))
+                elif isinstance(block, ToolResultBlock) and isinstance(
+                    block.output,
+                    list,
+                ):
+                    for j, sub in enumerate(block.output):
+                        if _is_image(sub):
+                            images.append(
+                                (block.output, j, sub, False, msg.role),
+                            )
+                elif isinstance(block, HintBlock) and isinstance(
+                    block.hint,
+                    list,
+                ):
+                    for j, sub in enumerate(block.hint):
+                        if _is_image(sub):
+                            images.append(
+                                (block.hint, j, sub, False, msg.role),
+                            )
+
+        n_exceed = len(images) - max_image_num
+        if n_exceed <= 0:
+            return
+
+        logger.info(
+            "[AGENT %s]: The number of images in context (%d) exceeds the "
+            "limit (%d), removing the oldest %d image(s).",
+            self.name,
+            len(images),
+            max_image_num,
+            n_exceed,
+        )
+
+        # Offload the images first (which may involve I/O), and then apply
+        # the replacements together to avoid partial modification on
+        # interruption
+        replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
+        for container, idx, block, is_top_level, role in images[:n_exceed]:
+            url = ""
+            if isinstance(block.source, URLSource):
+                url = str(block.source.url)
+            elif self.offloader is not None:
+                saved = await self.offloader.offload_data_block(block)
+                if isinstance(saved.source, URLSource):
+                    url = str(saved.source.url)
+
+            name = f"named '{block.name}' " if block.name else ""
+            if url:
+                text = (
+                    f"<system-reminder>The image {name}is offloaded into "
+                    f"{url}, you can refer to it when needed."
+                    f"</system-reminder>"
+                )
+            else:
+                text = (
+                    f"<system-reminder>The image {name}is removed to free "
+                    f"up context space.</system-reminder>"
+                )
+
+            new_block: HintBlock | TextBlock
+            if is_top_level and role != "user":
+                new_block = HintBlock(hint=text)
+            else:
+                # User messages only accept text/data blocks (see the
+                # validator in Msg), and a hint block is equivalent to a user
+                # text block for the model anyway.
+                new_block = TextBlock(type="text", text=text)
+            replacements.append((container, idx, new_block))
+
+        for container, idx, new_block in replacements:
+            container[idx] = new_block
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -640,13 +787,15 @@ class Agent:
         | None = None,
         structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply entry point (maybe wrapped by middleware)."""
+        """Reply entry point (maybe wrapped by middleware). The reply loop
+        exits only after its ``ReplyEndEvent`` escapes the middleware chain,
+        so an ``on_reply`` middleware can swallow the event (receive it
+        without yielding) to force another reasoning-acting round."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(
+            agen = self._reply_impl(
                 inputs=inputs,
                 structured_schema=structured_schema,
-            ):
-                yield item
+            )
         else:
 
             async def execute_chain(
@@ -688,8 +837,15 @@ class Agent:
                     ):
                         yield item
 
-            async for item in execute_chain():
-                yield item
+            agen = execute_chain()
+
+        self._receive_reply_end = False
+        async for item in agen:
+            # Set before the yield: the suspended `_reply_impl` checks the
+            # flag once resumed by the next pull
+            if isinstance(item, ReplyEndEvent):
+                self._receive_reply_end = True
+            yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -756,7 +912,7 @@ class Agent:
                 ),
             )
 
-    async def _reply_impl(
+    async def _reply_impl(  # pylint: disable=too-many-branches
         self,
         inputs: Msg
         | list[Msg]
@@ -860,6 +1016,9 @@ class Agent:
             #  or no more tool calls to execute
             # =================================================================
             final_msg: Msg | None = None
+            # Detects middlewares swallowing the ReplyEndEvent repeatedly
+            # without any reasoning/acting in between (a busy loop)
+            made_progress = True
             while True:
                 # =============================================================
                 # Step 3.1: Decide the next action based on the current state
@@ -868,13 +1027,36 @@ class Agent:
 
                 match next_action:
                     case Exit(exit_msg=exit_msg, exit_events=exit_events):
-                        for exit_event in exit_events or []:
-                            yield exit_event
-                        if exit_msg:
+                        if not exit_events:
+                            # Parked on HITL: the reply is not finished, so
+                            # the continuation protocol doesn't apply
                             yield exit_msg
-                        return
+                            return
+
+                        for exit_event in exit_events:
+                            yield exit_event
+
+                        # Exit unless a middleware swallowed the ReplyEndEvent
+                        # to force another reasoning-acting round
+                        if self._receive_reply_end:
+                            yield exit_msg
+                            return
+
+                        if not made_progress:
+                            raise RuntimeError(
+                                "A middleware swallowed the ReplyEndEvent "
+                                "twice without any reasoning/acting in "
+                                "between. Unblock the next round (e.g. "
+                                "adjust 'cur_iter', 'max_iters' or the "
+                                "structured output state) before swallowing "
+                                "the event again.",
+                            )
+                        made_progress = False
+                        final_msg = None
+                        continue
 
                     case Reasoning(hint=hint, tool_choice=tool_choice):
+                        made_progress = True
                         final_msg = None
                         if hint:
                             self.state.append_context(self.name, [hint])
@@ -916,6 +1098,7 @@ class Agent:
                             return
 
                     case Acting(tool_calls=tool_calls):
+                        made_progress = True
                         for batch in await self._batch_tool_calls(tool_calls):
                             if batch.type == "sequential":
                                 evt_generator = (
@@ -1412,14 +1595,15 @@ class Agent:
             )
 
         # Send the model call ended event with usage if available
+        usage = completed_response.usage
         yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
-            input_tokens=completed_response.usage.input_tokens
-            if completed_response.usage
-            else 0,
-            output_tokens=completed_response.usage.output_tokens
-            if completed_response.usage
-            else 0,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            cache_input_tokens=(usage.cache_input_tokens or 0) if usage else 0,
+            cache_creation_input_tokens=(
+                (usage.cache_creation_input_tokens or 0) if usage else 0
+            ),
             finished_reason=completed_response.finished_reason,
         )
 
@@ -1450,6 +1634,12 @@ class Agent:
                 Usage(
                     input_tokens=last_ctx.usage.input_tokens,
                     output_tokens=last_ctx.usage.output_tokens,
+                    cache_input_tokens=(
+                        last_ctx.usage.cache_input_tokens or 0
+                    ),
+                    cache_creation_input_tokens=(
+                        last_ctx.usage.cache_creation_input_tokens or 0
+                    ),
                 )
                 if last_ctx is not None and last_ctx.usage is not None
                 else None
@@ -3006,6 +3196,10 @@ class Agent:
             Usage(
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
+                cache_input_tokens=usage.cache_input_tokens or 0,
+                cache_creation_input_tokens=(
+                    usage.cache_creation_input_tokens or 0
+                ),
             )
             if usage is not None
             else None
@@ -3037,6 +3231,10 @@ class Agent:
             else:
                 tail.usage.input_tokens += msg_usage.input_tokens
                 tail.usage.output_tokens += msg_usage.output_tokens
+                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
+                tail.usage.cache_creation_input_tokens += (
+                    msg_usage.cache_creation_input_tokens
+                )
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
@@ -3141,12 +3339,17 @@ class Agent:
                 >= self.react_config.max_iters
                 + self.react_config.structured_output_grace_iters
             ):
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exceed_event = ExceedMaxItersEvent(
+                        reply_id=self.state.reply_id,
+                        name=self.name,
+                    )
                 return Exit(
                     exit_events=[
-                        ExceedMaxItersEvent(
-                            reply_id=self.state.reply_id,
-                            name=self.name,
-                        ),
+                        exceed_event,
                         ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
@@ -3220,12 +3423,17 @@ class Agent:
                 self.react_config.max_iters,
             )
 
+            # Deprecated but still emitted for backward compatibility;
+            # suppressed since the warning targets consumers
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                exceed_event = ExceedMaxItersEvent(
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
             return Exit(
                 exit_events=[
-                    ExceedMaxItersEvent(
-                        reply_id=self.state.reply_id,
-                        name=self.name,
-                    ),
+                    exceed_event,
                     ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,

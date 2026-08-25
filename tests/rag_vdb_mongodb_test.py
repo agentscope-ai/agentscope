@@ -100,6 +100,45 @@ class _FakeAsyncIterator:
         return item
 
 
+def _read_dotted(doc: dict[str, Any], path: str) -> Any:
+    """Read a dotted path (e.g. ``chunk.chunk_index``) from a dict."""
+    value: Any = doc
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+class _FakeFindCursor:
+    """Chainable find cursor supporting sort / skip / limit."""
+
+    def __init__(self, documents: list[dict[str, Any]]) -> None:
+        self._documents = documents
+
+    def sort(self, key: str, direction: int) -> "_FakeFindCursor":
+        """Sort documents by a dotted key path."""
+        self._documents = sorted(
+            self._documents,
+            key=lambda doc: _read_dotted(doc, key),
+            reverse=direction < 0,
+        )
+        return self
+
+    def skip(self, count: int) -> "_FakeFindCursor":
+        """Skip the first ``count`` documents."""
+        self._documents = self._documents[count:]
+        return self
+
+    def limit(self, count: int) -> "_FakeFindCursor":
+        """Keep at most ``count`` documents."""
+        self._documents = self._documents[:count]
+        return self
+
+    def __aiter__(self) -> _FakeAsyncIterator:
+        return _FakeAsyncIterator(list(self._documents))
+
+
 class _FakeMongoCollection:
     """In-memory collection that implements the async API MongoDBStore uses."""
 
@@ -108,6 +147,23 @@ class _FakeMongoCollection:
         self._name = name
         self._docs: dict[str, dict[str, Any]] = {}
         self._index_queryable = False
+
+    def find(
+        self,
+        filter_doc: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+    ) -> "_FakeFindCursor":
+        """Return a chainable cursor over matching documents."""
+        del projection  # the fake returns whole documents regardless
+        matched = [
+            doc
+            for doc in self._docs.values()
+            if all(
+                _read_dotted(doc, key) == value
+                for key, value in filter_doc.items()
+            )
+        ]
+        return _FakeFindCursor(matched)
 
     async def bulk_write(
         self,
@@ -657,3 +713,88 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_list_chunks_pagination_and_isolation(self) -> None:
+        """list_chunks pages by chunk_index and isolates documents."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"doc1-chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            # Insert out of order to prove ordering is restored.
+            for i in (3, 0, 4, 1, 2)
+        ] + [
+            _make_record(
+                f"doc2-chunk{i}",
+                [0.0, 1.0, 0.0],
+                document_id="doc-2",
+                chunk_index=i,
+                total_chunks=2,
+            )
+            for i in (1, 0)
+        ]
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2])
+        self.assertEqual(
+            [c.content.text for c in page],
+            ["doc1-chunk0", "doc1-chunk1", "doc1-chunk2"],
+        )
+
+        tail = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=3,
+            limit=30,
+        )
+        self.assertEqual([c.chunk_index for c in tail], [3, 4])
+
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", offset=5, limit=3),
+            [],
+        )
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", limit=0),
+            [],
+        )
+
+        other = await self.store.list_chunks("kb-1", "doc-2", limit=30)
+        self.assertEqual([c.chunk_index for c in other], [0, 1])
+        self.assertTrue(
+            all(c.content.text.startswith("doc2") for c in other),
+        )
+
+    async def test_list_chunks_metadata_filter(self) -> None:
+        """list_chunks applies the metadata_filter tenant scoping."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        record = _make_record(
+            "scoped",
+            [1.0, 0.0, 0.0],
+            document_id="doc-1",
+        )
+        record.chunk.metadata["kb_scope"] = "kb-a"
+        await self.store.insert("kb-1", [record])
+
+        hit = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-a"},
+        )
+        self.assertEqual(len(hit), 1)
+
+        miss = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-b"},
+        )
+        self.assertEqual(miss, [])

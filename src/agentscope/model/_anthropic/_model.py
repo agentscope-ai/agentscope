@@ -8,7 +8,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
@@ -165,6 +165,14 @@ class AnthropicChatModel(ChatModelBase):
             anthropic.RateLimitError,
             anthropic.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import anthropic
+
+        return (anthropic.BadRequestError,)
 
     def _thinking_mode(self) -> str | None:
         """Resolve the effective thinking mode.
@@ -409,102 +417,110 @@ class AnthropicChatModel(ChatModelBase):
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
 
-        async for event in response:
-            delta_res = ChatResponse(content=[], is_last=False, id=response_id)
+        async with response as stream:
+            async for event in stream:
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
 
-            if event.type == "message_start":
-                message = event.message
+                if event.type == "message_start":
+                    message = event.message
 
-                # Update the response ID if exists
-                response_id = getattr(message, "id", None) or response_id
-                delta_res.id = response_id
+                    # Update the response ID if exists
+                    response_id = getattr(message, "id", None) or response_id
+                    delta_res.id = response_id
 
-                if message.usage:
-                    u = message.usage
-                    usage = ChatUsage(
-                        input_tokens=u.input_tokens,
-                        output_tokens=getattr(u, "output_tokens", 0),
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_creation_input_tokens=getattr(
-                            u,
-                            "cache_creation_input_tokens",
-                            0,
-                        ),
-                        cache_input_tokens=getattr(
-                            u,
-                            "cache_read_input_tokens",
-                            0,
-                        ),
-                    )
+                    if message.usage:
+                        u = message.usage
+                        usage = ChatUsage(
+                            input_tokens=u.input_tokens,
+                            output_tokens=getattr(u, "output_tokens", 0),
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_creation_input_tokens=getattr(
+                                u,
+                                "cache_creation_input_tokens",
+                                0,
+                            ),
+                            cache_input_tokens=getattr(
+                                u,
+                                "cache_read_input_tokens",
+                                0,
+                            ),
+                        )
 
-            elif event.type == "content_block_start":
-                if event.content_block.type == "tool_use":
-                    tool_block = event.content_block
-                    # Record the id and name
-                    tool_call_mapping[event.index] = (
-                        tool_block.id,
-                        tool_block.name,
-                    )
-                    # New tool call block with empty input
-                    delta_res.append_tool_call(
-                        block_id=tool_block.id,
-                        name=tool_block.name,
-                        input="",
-                    )
+                elif event.type == "content_block_start":
+                    if event.content_block.type == "tool_use":
+                        tool_block = event.content_block
+                        # Record the id and name
+                        tool_call_mapping[event.index] = (
+                            tool_block.id,
+                            tool_block.name,
+                        )
+                        # New tool call block with empty input
+                        delta_res.append_tool_call(
+                            block_id=tool_block.id,
+                            name=tool_block.name,
+                            input="",
+                        )
 
-                elif event.content_block.type == "redacted_thinking":
-                    delta_res.append_thinking(
-                        "",
-                        block_id=_generate_id(),
-                        redacted_thinking_data=getattr(
-                            event.content_block,
-                            "data",
+                    elif event.content_block.type == "redacted_thinking":
+                        delta_res.append_thinking(
                             "",
-                        ),
-                    )
+                            block_id=_generate_id(),
+                            redacted_thinking_data=getattr(
+                                event.content_block,
+                                "data",
+                                "",
+                            ),
+                        )
 
-            elif event.type == "content_block_delta":
-                block_index = event.index
-                delta = event.delta
+                elif event.type == "content_block_delta":
+                    block_index = event.index
+                    delta = event.delta
 
-                # Text block
-                if delta.type == "text_delta":
-                    delta_res.append_text(delta.text, block_id=text_id)
+                    # Text block
+                    if delta.type == "text_delta":
+                        delta_res.append_text(delta.text, block_id=text_id)
 
-                # Thinking block
-                elif delta.type == "thinking_delta":
-                    delta_res.append_thinking(
-                        delta.thinking,
-                        block_id=thinking_id,
-                    )
+                    # Thinking block
+                    elif delta.type == "thinking_delta":
+                        delta_res.append_thinking(
+                            delta.thinking,
+                            block_id=thinking_id,
+                        )
 
-                # Special handling for Anthropic API that requires signature
-                elif delta.type == "signature_delta":
-                    delta_res.append_thinking(
-                        "",
-                        block_id=thinking_id,
-                        signature=delta.signature,
-                    )
+                    # Special handling for Anthropic API that requires
+                    # signature
+                    elif delta.type == "signature_delta":
+                        delta_res.append_thinking(
+                            "",
+                            block_id=thinking_id,
+                            signature=delta.signature,
+                        )
 
-                # Tool call block
-                elif (
-                    delta.type == "input_json_delta"
-                    and block_index in tool_call_mapping
-                ):
-                    block_id, name = tool_call_mapping[block_index]
-                    delta_res.append_tool_call(
-                        block_id=block_id,
-                        name=name,
-                        input=delta.partial_json or "",
-                    )
+                    # Tool call block
+                    elif (
+                        delta.type == "input_json_delta"
+                        and block_index in tool_call_mapping
+                    ):
+                        block_id, name = tool_call_mapping[block_index]
+                        delta_res.append_tool_call(
+                            block_id=block_id,
+                            name=name,
+                            input=delta.partial_json or "",
+                        )
 
-            elif event.type == "message_delta":
-                if event.usage and usage:
-                    usage.output_tokens = event.usage.output_tokens
+                elif event.type == "message_delta":
+                    if event.usage and usage:
+                        usage.output_tokens = event.usage.output_tokens
 
-            if delta_res.content:
-                delta_res.usage = usage
-                yield delta_res
+                if delta_res.content:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _format_tools(
         self,
@@ -577,55 +593,6 @@ class AnthropicChatModel(ChatModelBase):
         }
         return fmt_tools, type_mapping[mode]
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """Anthropic-specific override for structured output.
-
-        Anthropic's budget-based thinking mode only supports
-        ``tool_choice={"type": "auto"}`` or ``{"type": "none"}``; any
-        forcing form (``"any"`` or a specific tool) raises an API error.
-        In that mode we default ``tool_choice`` to ``"auto"`` and rely on
-        the base class's injected system-reminder prompt to guide the
-        model. Adaptive thinking accepts forced tool use, so it falls
-        through to the base implementation (force the structured-output
-        tool) just like thinking being off entirely.
-
-        See:
-         https://platform.claude.com/docs/en/build-with-claude/extended-thinking#extended-thinking-with-tool-use
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self._thinking_mode() == "enabled":
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Anthropic uses ``thinking.type=disabled`` as a top-level kwarg."""
+        return {"thinking": {"type": "disabled"}}

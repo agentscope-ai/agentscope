@@ -27,10 +27,10 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``. '
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``. '
             "Audio is not supported by the Responses API."
         ),
     )
@@ -45,6 +45,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         Completions API:
 
         * ``image_url`` → ``input_image``
+        * ``file`` → ``input_file``
         * ``input_audio`` → skipped (the Responses API does not support
           audio input yet; use Chat Completions API instead). See
           https://developers.openai.com/api/docs/guides/audio
@@ -81,6 +82,9 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 "type": "input_image",
                 "image_url": base_result["image_url"]["url"],
             }
+
+        if base_result.get("type") == "file":
+            return {"type": "input_file", **base_result["file"]}
 
         return base_result
 

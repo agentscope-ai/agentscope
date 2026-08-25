@@ -269,6 +269,105 @@ class ElasticsearchStore(VectorStoreBase):
 
         return summaries
 
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        The index mapping stores ``chunk`` with ``enabled: false`` (it
+        is a verbatim payload, neither indexed nor sortable), so unlike
+        the other backends this implementation cannot push the
+        ``chunk_index`` range down to the server.  Instead it retrieves
+        **all** chunks of the one document (a ``term`` query on the
+        indexed ``document_id`` field, paged through a point-in-time
+        with ``_shard_doc`` / ``search_after`` — which needs
+        Elasticsearch >= 7.12 and is unsupported on OpenSearch — so
+        documents beyond the 10000-hit window still work), sorts them
+        in Python, and slices the requested page — O(chunks of one
+        document) per page, which is bounded and acceptable for an
+        interactive detail view.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        if limit <= 0:
+            return []
+        filters: list[dict[str, Any]] = [
+            {"term": {"document_id": document_id}},
+        ]
+        filters.extend(self._metadata_filters(metadata_filter))
+
+        client = self.get_client()
+        pit = await client.open_point_in_time(
+            index=collection,
+            keep_alive="1m",
+        )
+        pit_id = pit["id"]
+        # Only the requested window is materialised: the scan still has
+        # to visit every hit of the document (``chunk`` is not
+        # filterable server-side), but chunks outside
+        # ``[offset, offset + limit)`` are discarded on sight, keeping
+        # memory O(page_size) regardless of the document's total size.
+        by_index: dict[int, Chunk] = {}
+        try:
+            search_after: list[Any] | None = None
+            while True:
+                body: dict[str, Any] = {
+                    "query": {"bool": {"filter": filters}},
+                    "size": 1000,
+                    "pit": {"id": pit_id, "keep_alive": "1m"},
+                    "sort": [{"_shard_doc": "asc"}],
+                    "_source": ["chunk"],
+                }
+                if search_after is not None:
+                    body["search_after"] = search_after
+                response = await client.search(**body)
+                hits = response["hits"]["hits"]
+                if not hits:
+                    break
+                for hit in hits:
+                    payload = hit["_source"]["chunk"]
+                    index = payload.get("chunk_index")
+                    if (
+                        not isinstance(index, int)
+                        or index < offset
+                        or index >= offset + limit
+                    ):
+                        continue
+                    by_index.setdefault(
+                        index,
+                        Chunk.model_validate(payload),
+                    )
+                pit_id = response.get("pit_id", pit_id)
+                search_after = hits[-1]["sort"]
+        finally:
+            await client.close_point_in_time(id=pit_id)
+
+        return [by_index[index] for index in sorted(by_index)]
+
     @staticmethod
     def _record_id(record: VectorRecord) -> str:
         """Build a stable ID so re-indexing replaces the same chunk."""

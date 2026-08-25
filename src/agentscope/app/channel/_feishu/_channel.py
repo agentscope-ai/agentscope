@@ -191,12 +191,9 @@ class FeishuChannel(ChannelBase):
         Args:
             emit (`Callable`): Gateway callback for inbound events.
         """
-        import httpx
-
         self._emit = emit
         self.status.state = "connecting"
         self._loop = asyncio.get_running_loop()
-        self._http = httpx.AsyncClient(timeout=30.0)
         backoff = 1.0
         attempts = 0
         ever_connected = False
@@ -1127,7 +1124,7 @@ class FeishuChannel(ChannelBase):
         Returns:
             `str | None`: The resource key, or ``None`` on error.
         """
-        if not self._http or not self._token:
+        if not await self._ensure_ready():
             return None
         try:
             resp = await self._http.post(
@@ -1154,8 +1151,49 @@ class FeishuChannel(ChannelBase):
             logger.debug("Feishu upload request failed")
             return None
 
+    async def aclose(self) -> None:
+        """Close the HTTP client this instance opened lazily.
+
+        The connection loop closes its own in ``start_listening``; this
+        covers the client-only instances, which never run it.
+        """
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+        self._token = None
+
+    async def _ensure_ready(self) -> bool:
+        """Make the instance able to call the platform, connected or not.
+
+        Outbound is plain REST, so an instance built by
+        :class:`~agentscope.app.channel.ChannelClients` — one that never
+        ran ``start_listening`` — must reach the platform too. Both the
+        HTTP client and the tenant token are therefore created on first
+        use rather than during connection setup.
+
+        Returns:
+            `bool`: Whether an authenticated client is available.
+        """
+        if self._token is None:
+            # Callers treat this as a readiness check and promise their
+            # own ``None`` on failure, so a network or auth blip must
+            # not escape and turn a read endpoint into a 500.
+            try:
+                await self._refresh_token()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "Feishu '%s' could not obtain a token",
+                    self._channel_id,
+                )
+                return False
+        return self._token is not None
+
     async def _refresh_token(self) -> None:
         """Fetch a fresh tenant access token and cache it."""
+        if self._http is None:
+            import httpx
+
+            self._http = httpx.AsyncClient(timeout=30.0)
         resp = await self._http.post(
             f"{_API}/auth/v3/tenant_access_token/internal",
             json={"app_id": self._app_id, "app_secret": self._app_secret},
@@ -1185,7 +1223,7 @@ class FeishuChannel(ChannelBase):
         Returns:
             `dict | None`: The parsed response, or ``None`` on error.
         """
-        if not self._http or not self._token:
+        if not await self._ensure_ready():
             return None
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -1299,6 +1337,8 @@ class FeishuChannel(ChannelBase):
         Returns:
             `DataBlock | None`: The block, or ``None`` on error.
         """
+        if not await self._ensure_ready():
+            return None
         url = (
             f"{_API}/im/v1/messages/{message_id}"
             f"/resources/{key}?type={resource_type}"

@@ -90,6 +90,13 @@ class _MockAsyncEventStream:
     def __init__(self, events: list) -> None:
         self._events = events
         self._index = 0
+        self.exited = False
+
+    async def __aenter__(self) -> "_MockAsyncEventStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        self.exited = True
 
     def __aiter__(self) -> "_MockAsyncEventStream":
         return self
@@ -563,13 +570,14 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             ),
             _make_event("content_block_delta", index=1, delta=text_delta),
         ]
-        mock_create = AsyncMock(
-            return_value=_MockAsyncEventStream(events),
-        )
+        stream = _MockAsyncEventStream(events)
+        mock_create = AsyncMock(return_value=stream)
         self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
+
+        self.assertTrue(stream.exited)
 
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],

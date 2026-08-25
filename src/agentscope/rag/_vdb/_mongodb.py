@@ -462,3 +462,53 @@ class MongoDBStore(VectorStoreBase):
                 ),
             )
         return summaries
+
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Uses a native ``find + sort + skip + limit`` query on the
+        ``chunk.chunk_index`` field — MongoDB is the only backend that
+        supports server-side ordering directly.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        if limit <= 0:
+            return []
+        query: dict[str, Any] = {"document_id": document_id}
+        for key, value in (metadata_filter or {}).items():
+            query[f"chunk.metadata.{key}"] = value
+
+        cursor = (
+            self._col(collection)
+            .find(query, projection={"chunk": True})
+            .sort("chunk.chunk_index", 1)
+            .skip(offset)
+            .limit(limit)
+        )
+        return [Chunk.model_validate(row["chunk"]) async for row in cursor]

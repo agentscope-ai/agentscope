@@ -281,6 +281,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is passed through as ``inline_data``."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this."},
+                        {
+                            "inline_data": {
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock becomes a part with thought=True in Gemini format."""
         fmt = GeminiChatFormatter()

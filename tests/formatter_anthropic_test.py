@@ -337,6 +337,45 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is formatted as an Anthropic document block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                        name="report.pdf",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize this."},
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock with a signature is passed back as a thinking
         content block."""

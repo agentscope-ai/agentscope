@@ -6,6 +6,11 @@ toolkit built on AgentScope. This middleware **embeds the ReMe
 application in-process** (no separate service to run); a chat model for
 ReMe's LLM-backed jobs is configured once at construction.
 
+The embedded app uses an AgentScope-owned minimal configuration rather than
+ReMe's standalone ``default.yaml``. It keeps the complete conversation-memory
+lifecycle (write-back, dream consolidation and search) plus only the
+indexing/file jobs required by those paths.
+
 ReMe records memory by **listening to the conversation through the
 ``on_reply`` hook** — after every reply the new exchange is written back
 via ReMe's ``auto_memory`` job, in *all* modes. The agent never writes
@@ -43,6 +48,7 @@ from ...._logging import logger
 from ....embedding import EmbeddingModelBase
 from ....message import AssistantMsg, HintBlock, Msg
 from ....model import ChatModelBase
+from ._config import _build_reme_app_config
 from ._tools import _build_memory_tools
 from ._utils import _extract_memory_texts, _extract_query_text
 
@@ -55,11 +61,8 @@ if TYPE_CHECKING:
 _SEARCH_JOB = "search"
 _AUTO_MEMORY_JOB = "auto_memory"
 
-# ReMe component coordinates for the default chat-model / embedding
-# backends. ReMe starts both eagerly at ``start()`` (the embedding
-# component is wired in even when the default file store searches
-# keyword-only), so an injected model bypasses ReMe building its own
-# from credentials — the same escape hatch for both components.
+# ReMe component coordinates for the AgentScope-owned chat-model / embedding
+# backends. An injected model bypasses ReMe building its own from credentials.
 _AS_LLM_COMPONENT = "as_llm"
 _AS_EMBEDDING_COMPONENT = "as_embedding"
 _AS_DEFAULT = "default"
@@ -89,11 +92,11 @@ class ReMeMiddleware(MiddlewareBase):
     ReMe is embedded **in-process** (no separate service): the middleware
     instantiates a :class:`reme.ReMe` application whose LLM-backed jobs use
     the ``chat_model`` configured at construction. The app is built and
-    owned by the middleware — pass ``workspace_dir`` / ``config`` (and
-    optionally a ``Parameters`` with ``chat_model`` / ``embedding_model``)
-    and it is created lazily on first use. When ``chat_model`` is omitted,
-    ReMe uses the LLM from its own config/credentials. Providing an
-    ``embedding_model`` enables ReMe's vector store; otherwise search stays
+    owned by the middleware — pass ``workspace_dir`` and optionally a
+    ``Parameters`` with ``chat_model`` / ``embedding_model``; it is created
+    lazily on first use. When ``chat_model`` is omitted, the AgentScope config
+    supplies the LLM from ReMe's ``LLM_*`` environment variables. Providing
+    an ``embedding_model`` enables the vector store; otherwise search stays
     keyword-only.
 
     The model is fixed at construction (never taken from an agent), so the
@@ -129,8 +132,7 @@ class ReMeMiddleware(MiddlewareBase):
         """User-tunable ReMe memory parameters.
 
         The agent service parses this schema to render a configuration
-        form. Structural wiring (``workspace_dir`` / ``config``) stays on
-        the constructor.
+        form. Structural wiring (``workspace_dir``) stays on the constructor.
         """
 
         model_config = {"arbitrary_types_allowed": True}
@@ -139,10 +141,10 @@ class ReMeMiddleware(MiddlewareBase):
             default=None,
             title="Chat Model",
             description=(
-                "AgentScope chat model injected into ReMe's default LLM "
-                "component, fixed for the lifetime of the embedded app. "
-                "When `None`, ReMe uses the LLM from its own "
-                "config/credentials. Needed for `auto_memory` write-back."
+                "AgentScope chat model injected into the embedded app's "
+                "default-named LLM component, fixed for the lifetime of "
+                "the app. When `None`, the AgentScope ReMe config supplies "
+                "the LLM. Needed for `auto_memory` write-back."
             ),
         )
 
@@ -150,13 +152,11 @@ class ReMeMiddleware(MiddlewareBase):
             default=None,
             title="Embedding Model",
             description=(
-                "AgentScope embedding model injected into ReMe's default "
-                "embedding component, fixed for the lifetime of the embedded "
-                "app. ReMe starts this component eagerly (it is wired into "
-                "the file store even when search is keyword-only), so "
-                "injecting a model bypasses ReMe building its own from "
-                "credentials. When `None`, ReMe uses the embedding backend "
-                "from its own config/credentials."
+                "AgentScope embedding model injected into the embedded "
+                "app's default-named embedding component, fixed for the "
+                "lifetime of the app. In the AgentScope minimal config, "
+                "`None` keeps search keyword-only; providing a model enables "
+                "vector search."
             ),
         )
 
@@ -185,7 +185,6 @@ class ReMeMiddleware(MiddlewareBase):
         self,
         *,
         workspace_dir: str = ".reme",
-        config: str = "default",
         parameters: Parameters | None = None,
     ) -> None:
         """Initialize the ReMe middleware.
@@ -200,9 +199,6 @@ class ReMeMiddleware(MiddlewareBase):
             workspace_dir (`str`, optional):
                 ReMe workspace (vault) directory for memory cards and
                 indexes. Defaults to ``".reme"``.
-            config (`str`, optional):
-                ReMe config name or path. Defaults to ``"default"``
-                (ReMe's bundled ``default.yaml``).
             parameters (`ReMeMiddleware.Parameters | None`, optional):
                 User-tunable parameters (``chat_model`` / ``embedding_model``
                 / ``mode`` / ``top_k``) whose schema the agent service
@@ -217,7 +213,6 @@ class ReMeMiddleware(MiddlewareBase):
         self._app: Any | None = None
         self._started = False
         self._workspace_dir = workspace_dir
-        self._config = config
         self._parameters = parameters or self.Parameters()
         # In-flight background retrieval per session (started in ``on_reply``,
         # consumed/injected in ``on_reasoning``, cleaned up in ``on_reply``'s
@@ -238,7 +233,6 @@ class ReMeMiddleware(MiddlewareBase):
         """
         try:
             from reme import ReMe
-            from reme.config import resolve_app_config
         except ImportError as e:  # pragma: no cover - import guard
             raise ImportError(
                 "ReMeMiddleware requires the `reme-ai` package. Install "
@@ -246,36 +240,30 @@ class ReMeMiddleware(MiddlewareBase):
                 "`pip install reme-ai`).",
             ) from e
 
-        app_kwargs: dict[str, Any] = {
-            "config": self._config,
-            "workspace_dir": self._workspace_dir,
-            "enable_logo": False,
-            "log_to_console": False,
-        }
-        # An embedding model turns on ReMe's vector store: the bundled
-        # ``default`` config ships it off (BM25 keyword search only), so we
-        # wire the file store to the default embedding store when — and
-        # only when — a model is available to build the vectors.
+        embedding_dimensions = None
         if self._parameters.embedding_model is not None:
-            app_kwargs["components"] = {
-                "file_store": {"default": {"embedding_store": "default"}},
-            }
-        app_config = resolve_app_config(**app_kwargs)
+            embedding_dimensions = self._parameters.embedding_model.dimensions
+        app_config = _build_reme_app_config(
+            workspace_dir=self._workspace_dir,
+            embedding_dimensions=embedding_dimensions,
+        )
         return ReMe(**app_config)
 
     async def _ensure_started(self) -> None:
         """Build (if needed) and start the embedded app (idempotent).
 
         The configured ``chat_model`` / ``embedding_model`` are injected
-        into ReMe's default LLM and embedding components **before** the
+        into the embedded app's default-named components **before** the
         one-time ``start()`` (ReMe's ``BaseAsLLM._start`` /
         ``BaseAsEmbedding._start`` skip building a model from credentials
         when ``model`` is already set). Both are fixed at construction —
         never taken from an agent — so the embedded app (which has a
         single LLM and a single embedding component) has one well-defined
         model each regardless of how many agents share this middleware.
-        When either is ``None``, ReMe falls back to the backend configured
-        in its own config/credentials.
+        When ``chat_model`` is ``None``, the AgentScope config supplies its
+        LLM.
+        The AgentScope minimal config only creates an embedding component when
+        ``embedding_model`` is provided.
         """
         if self._app is None:
             self._app = self._build_app()

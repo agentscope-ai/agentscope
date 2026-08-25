@@ -4,7 +4,7 @@ DashScopeMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 from agentscope.formatter import (
     DashScopeChatFormatter,
@@ -173,7 +173,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "type": "input_audio",
                         "input_audio": {
                             "data": self.audio_url,
-                            "format": "mpeg",
+                            "format": "mp3",
                         },
                     },
                 ],
@@ -295,7 +295,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "type": "input_audio",
                         "input_audio": {
                             "data": self.audio_url,
-                            "format": "mpeg",
+                            "format": "mp3",
                         },
                     },
                 ],
@@ -372,6 +372,122 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_base64_audio(self) -> None:
+        """Base64-encoded audio is inlined as a DashScope data URL."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="UklGRg==",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,UklGRg==",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_mpeg_audio_uses_mp3_format(self) -> None:
+        """The standard audio/mpeg MIME type maps to DashScope's mp3."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="SUQz",
+                            media_type="audio/mpeg",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,SUQz",
+                                "format": "mp3",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=b"RIFF")
+    async def test_chat_formatter_local_audio(
+        self,
+        mocked_open: object,
+    ) -> None:
+        """Local audio is read and inlined as a DashScope data URL."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url="file:///tmp/audio.wav",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,UklGRg==",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+        mocked_open.assert_called_once_with("/tmp/audio.wav", "rb")
 
     @patch(
         "agentscope.formatter._formatter_base.shortuuid.uuid",

@@ -3,6 +3,7 @@
 import re
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
 from typing import Any, TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx
 import mcp.types
@@ -184,8 +185,14 @@ class MCPClient(BaseModel):
         """Create an HTTP MCP client (SSE or streamable HTTP)."""
         config = self.mcp_config
 
-        # Determine transport from URL
-        if config.url.endswith("/sse") or config.url.endswith("/messages/"):
+        # Determine transport from the URL *path* only. Inspecting the full
+        # URL with endswith would misdetect SSE endpoints whose URL carries
+        # a query string (e.g. https://mcp.amap.com/sse?key=API_KEY): such
+        # URLs no longer end with '/sse' and would fall through to the
+        # streamable HTTP transport, which then fails to handshake against
+        # an SSE server with 'Session terminated'.
+        path = urlsplit(config.url).path
+        if path.endswith("/sse") or path.endswith("/messages/"):
             return sse_client(
                 url=config.url,
                 headers=config.headers,
