@@ -36,6 +36,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.39.0",
     "opentelemetry-semantic-conventions>=0.60b0",
     "python-socketio",
+    "rich",
     "shortuuid",
     "python-frontmatter",
     "jinja2",
@@ -43,6 +44,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
 ]
@@ -79,6 +81,7 @@ storage-s3 = ["aioboto3"]
 channel = [
     "lark-oapi>=1.4.0",
     "discord.py>=2.3",
+    "dingtalk-stream>=0.24.3",
 ]
 # ------------ Workspace (sandbox backends) ------------
 workspace-docker = ["aiodocker"]

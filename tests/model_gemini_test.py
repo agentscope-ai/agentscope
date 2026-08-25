@@ -578,6 +578,30 @@ class TestGeminiFormatTools(unittest.TestCase):
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertIsNone(fmt_choice)
 
+    def test_schema_keyword_removed_from_parameters(self) -> None:
+        """The unsupported `$schema` keyword is removed before the call."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search for text",
+                    "parameters": {
+                        "$schema": "https://example.com/schema.json",
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        ]
+
+        fmt_tools, _ = self.model._format_tools(tools, None)
+        parameters = fmt_tools[0]["function_declarations"][0]["parameters"]
+
+        self.assertNotIn("$schema", parameters)
+
 
 # ---------------------------------------------------------------------------
 # Tests for _sanitize_schema_for_gemini and _flatten_json_schema
@@ -586,6 +610,31 @@ class TestGeminiFormatTools(unittest.TestCase):
 
 class TestGeminiSchemaUtils(unittest.TestCase):
     """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
+
+    def test_sanitize_removes_schema_keyword_recursively(self) -> None:
+        """The unsupported `$schema` keyword is removed recursively."""
+        result = _sanitize_schema_for_gemini(
+            {
+                "$schema": "https://example.com/schema.json",
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "$schema": "https://example.com/schema.json",
+                        "type": "string",
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                },
+            },
+        )
 
     def test_sanitize_removes_additional_properties_and_inlines_optional(
         self,

@@ -1,26 +1,23 @@
 # -*- coding: utf-8 -*-
 """Workspace service — resolution, download tokens, uploads, git."""
 import asyncio
-import base64
-import hashlib
-import hmac
 import re
 import tarfile
-import time
 from typing import AsyncIterator, Literal
 
 from fastapi import HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
+from ._download_token import (
+    DEFAULT_DOWNLOAD_TOKEN_TTL,
+    sign_download_token,
+    verify_download_token,
+)
 from ..storage import SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
 from ...tool import BackendBase
 from ...workspace import WorkspaceBase
-
-# Long enough to survive a slow round trip and the user's click, short
-# enough that a token leaked through a log or history is already dead.
-DEFAULT_DOWNLOAD_TOKEN_TTL = 60
 
 #: Ceilings on one upload. Peak memory is a chunk per concurrent
 #: install; these bound the sandbox's disk and how long a slot is held.
@@ -317,14 +314,12 @@ class WorkspaceService:
             `tuple[str, int]`: The token and its expiry as a Unix
             timestamp.
         """
-        expires_at = int(time.time()) + ttl
-        signature = self._signature(expires_at, user_id, path)
-        token = (
-            f"{expires_at}"
-            f".{self._b64(user_id.encode('utf-8'))}"
-            f".{self._b64(signature)}"
+        return sign_download_token(
+            self._download_secret,
+            user_id,
+            path,
+            ttl=ttl,
         )
-        return token, expires_at
 
     def verify_download_token(self, token: str, path: str) -> str:
         """Return the user a token was granted to, for this path.
@@ -344,51 +339,7 @@ class WorkspaceService:
             `ValueError`: The token is malformed, expired, or does not
                 match.
         """
-        try:
-            raw_expiry, raw_user, raw_signature = token.split(".")
-            expires_at = int(raw_expiry)
-            user_id = self._unb64(raw_user).decode("utf-8")
-            signature = self._unb64(raw_signature)
-        except (ValueError, UnicodeDecodeError) as e:
-            raise ValueError("Malformed download token.") from e
-
-        expected = self._signature(expires_at, user_id, path)
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("Invalid download token.")
-        if expires_at < time.time():
-            raise ValueError("Expired download token.")
-        return user_id
-
-    def _signature(self, expires_at: int, user_id: str, path: str) -> bytes:
-        """Compute the MAC binding an expiry, a user and a path.
-
-        ``\\0`` separates the fields because it cannot occur in any of
-        them, so no combination can be re-cut into a different triple.
-
-        Args:
-            expires_at (`int`): Unix timestamp after which to refuse.
-            user_id (`str`): The user the capability was granted to.
-            path (`str`): The one path the capability covers.
-
-        Returns:
-            `bytes`: The raw HMAC-SHA256 digest.
-        """
-        message = f"{expires_at}\0{user_id}\0{path}".encode("utf-8")
-        return hmac.new(
-            self._download_secret.encode("utf-8"),
-            message,
-            hashlib.sha256,
-        ).digest()
-
-    @staticmethod
-    def _b64(raw: bytes) -> str:
-        """Encode without padding, which is not URL-safe to round-trip."""
-        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-    @staticmethod
-    def _unb64(text: str) -> bytes:
-        """Reverse :meth:`_b64`, restoring the stripped padding."""
-        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        return verify_download_token(self._download_secret, token, path)
 
     # ── Skill upload ───────────────────────────────────────────────────
     #
@@ -464,6 +415,8 @@ class WorkspaceService:
         stream: AsyncIterator[bytes],
         archive_format: Literal["zip", "tar", "tar.gz"],
         name: str,
+        *,
+        agent_id: str | None = None,
     ) -> None:
         """Pipe a skill archive into a workspace, one install at a time.
 
@@ -476,9 +429,16 @@ class WorkspaceService:
             archive_format (`Literal["zip", "tar", "tar.gz"]`): How the
                 stream is packed.
             name (`str`): The skill's name, for the backend's logging.
+            agent_id (`str | None`, optional): The agent taking
+                ownership. ``None`` installs into the shared partition.
         """
         async with self._install_slots:
-            await workspace.add_skill_archive(stream, archive_format, name)
+            await workspace.add_skill_archive(
+                stream,
+                archive_format,
+                name,
+                agent_id=agent_id,
+            )
 
     @staticmethod
     async def tar_stream(

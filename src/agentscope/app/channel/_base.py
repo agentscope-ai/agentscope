@@ -145,6 +145,35 @@ class ChannelStatus(BaseModel):
     last_error: str = ""
 
 
+# How long a node's status report stays trustworthy.
+LIVENESS_TTL_SECS = 30
+
+
+class ChannelHeartbeat(BaseModel):
+    """One node's report of a channel's status, stamped with the time it
+    was written.
+
+    The bus expires a registry namespace as a whole rather than per
+    field, so a node that stops reporting — a worker that restarted
+    under a fresh id, say — leaves its last entry behind while its
+    successor keeps the namespace alive. Readers therefore drop reports
+    older than :data:`LIVENESS_TTL_SECS` instead of trusting expiry.
+    """
+
+    status: ChannelStatus
+    reported_at: float
+    """Wall-clock seconds since the epoch. Compared across nodes, so a
+    little clock skew is expected and harmless at this TTL."""
+
+    def is_fresh(self, now: float) -> bool:
+        """Whether this report is recent enough to believe.
+
+        Args:
+            now (`float`): The reader's current epoch time.
+        """
+        return now - self.reported_at <= LIVENESS_TTL_SECS
+
+
 class ChatKind(str, Enum):
     """A chat's audience shape, used to tailor the agent's context.
 
@@ -332,14 +361,16 @@ class ChannelBase(ABC):
                 data.append(block)
             elif isinstance(block, ThinkingBlock):
                 if show_thinking:
-                    parts.append(f"\n💭 {block.thinking}\n")
+                    parts.append(f"💭 {block.thinking}")
             elif isinstance(block, ToolCallBlock):
                 if show_tool_process:
-                    parts.append(f"\n🔧 Calling tool: {block.name}\n")
+                    parts.append(f"🔧 Calling tool: {block.name}")
             elif isinstance(block, ToolResultBlock):
                 if show_tool_process and isinstance(block.output, str):
                     parts.append(block.output)
-        text = "".join(parts).strip()
+        # Every block is already folded whole, and Markdown needs a blank
+        # line between them or thinking runs into the text that follows.
+        text = "\n\n".join(part for part in parts if part.strip()).strip()
         if reply.finished_reason == ReplyFinishedReason.ERROR:
             text = text or _AGENT_ERROR_REPLY
         elif not text and not data:
@@ -349,6 +380,16 @@ class ChannelBase(ABC):
         )
         blocks.extend(data)
         return blocks
+
+    async def aclose(self) -> None:
+        """Release resources acquired outside :meth:`start_listening`.
+
+        An instance built by
+        :class:`~agentscope.app.channel.ChannelClients` never runs the
+        connection loop, so whatever its REST calls opened lazily has no
+        ``finally`` to close it. Override to close those; the connection
+        loop keeps releasing its own. Default: nothing to do.
+        """
 
     async def send_reaction(  # pylint: disable=unused-argument
         self,

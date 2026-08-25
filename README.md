@@ -73,6 +73,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-08] `FEAT`:** Console supported — test and debug agents in the terminal. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/console)
 - **[2026-08] `INTE`:** Feishu (Lark) and Discord channels supported. [Feishu](https://docs.agentscope.io/latest/en/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/en/deploy/channel/discord)
 - **[2026-08] `FEAT`:** Channels supported — connect agents to IM platforms in agent service. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/channel/overview)
 - **[2026-08] `INTE`:** GitHub MCP Registry and ClawHub supported as built-in hubs. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
@@ -82,7 +83,6 @@ rather than constraining them with strict prompts and opinionated orchestrations
 - **[2026-07] `INTE`:** ReMe long-term memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
 - **[2026-06] `FEAT`:** Agentic Memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
 - **[2026-06] `FEAT`:** Distributed & Multi-Tenancy & Multi-Session RAG service supported. [Docs](https://docs.agentscope.io/latest/en/deploy/agent-team)
-- **[2026-06] `FEAT`:** RAG supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/rag) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/rag)
 <!-- END NEWS -->
 
 [More news →](./docs/NEWS.md)
@@ -135,15 +135,14 @@ The SDK layer — compose an agent from a rich set of building blocks:
 | [**Memory**](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory) | Agentic memory with switchable backends (ReMe, Mem0) |
 | [**Workspace / Sandbox**](https://docs.agentscope.io/latest/en/building-blocks/workspace/overview) | Isolated tool & code execution — local, Docker, Apple Container, Bubblewrap, E2B, OpenSandbox, Daytona, K8s |
 
-Start your first agent with AgentScope 2.0:
+Start your first agent with AgentScope 2.0 in console:
 
 ```python
 from agentscope.agent import Agent
+from agentscope.console import launch_console
 from agentscope.tool import Toolkit, Bash, Grep, Glob, Read, Write, Edit
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.message import UserMsg
-from agentscope.event import EventType
 
 import os, asyncio
 
@@ -170,21 +169,9 @@ async def main() -> None:
         ),
     )
 
-    async for evt in agent.reply_stream(UserMsg("Tony", "Hi, Friday!")):
-        # Handle the event stream, e.g., print the message, update UI, etc.
-        match evt.type:
-            case EventType.REPLY_START:
-                ...
-            case EventType.MODEL_CALL_START:
-                ...
-            case EventType.TEXT_BLOCK_START:
-                ...
-            case EventType.TEXT_BLOCK_DELTA:
-                ...
-            case EventType.TEXT_BLOCK_END:
-                ...
-
-            # Handle other event types
+    # Chat with the agent in the terminal — streamed output, tool-call
+    # confirmation and Ctrl+C interruption are all handled for you
+    await launch_console(agent)
 
 asyncio.run(main())
 ```

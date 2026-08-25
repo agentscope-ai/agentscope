@@ -62,7 +62,10 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         await workspace.initialize()
 
-        mcps = await workspace.list_mcps()
+        mcps = await workspace.list_mcps(
+            agent_id="test-agent",
+            session_id="test-session",
+        )
         self.assertGreater(len(mcps), 0)
 
         for mcp in mcps:

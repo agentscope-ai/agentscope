@@ -615,7 +615,7 @@ description: {description}
         await workspace.initialize()
 
         # Verify skills were copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify skill directories exist
@@ -639,7 +639,7 @@ description: {description}
         )
 
         # Verify .skills file was created with correct new structure
-        skills_hash_file = os.path.join(skills_dir, ".skills")
+        skills_hash_file = os.path.join(skills_dir, ".index")
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -700,6 +700,7 @@ This skill is seeded through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            ".seed",
             "tilde_skill",
         )
         self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
@@ -738,6 +739,7 @@ This skill is added through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            "default",
             "tilde_skill",
         )
         self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
@@ -767,7 +769,8 @@ This skill is added through a tilde path.
         skills_hash_file = os.path.join(
             self.temp_dir.name,
             "skills",
-            ".skills",
+            ".seed",
+            ".index",
         )
         async with aiofiles.open(skills_hash_file, "r") as f:
             hash_data_first = await f.read()
@@ -776,6 +779,7 @@ This skill is added through a tilde path.
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            ".seed",
             "test_skill_dup",
         )
         mtime_first = os.path.getmtime(skill_target)
@@ -816,12 +820,12 @@ This skill is added through a tilde path.
         await workspace.initialize()
 
         # Verify only one skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         skill_target = os.path.join(skills_dir, "test_skill_dedup")
         self.assertTrue(os.path.exists(skill_target))
 
         # Verify .skills file contains only one entry
-        skills_hash_file = os.path.join(skills_dir, ".skills")
+        skills_hash_file = os.path.join(skills_dir, ".index")
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -892,7 +896,7 @@ This skill is added through a tilde path.
         await workspace.initialize()
 
         # Verify only the valid skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify valid skill exists
@@ -1507,6 +1511,7 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         ws = LocalWorkspace(workdir=self.temp_dir.name)
         await ws.initialize()
 
+        # A v1 flat-list .mcp is migrated into the legacy scope
         mcps = await ws.list_mcps()
         names = [m.name for m in mcps]
         self.assertIn("good_one", names)
@@ -1533,5 +1538,462 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         )
         await ws.initialize()
         self.assertTrue(ws.is_alive)
-        names = [m.name for m in await ws.list_mcps()]
+        # Instantiated lazily on first list_mcps for this scope
+        names = [
+            m.name
+            for m in await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            )
+        ]
         self.assertNotIn("will_fail_connect", names)
+
+
+class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
+    """Per-``(agent_id, session_id)`` MCP scoping in LocalWorkspace.
+
+    Covers:
+    - each scope is seeded from ``default_mcps`` and gets its own
+      instances, built lazily on first ``list_mcps``
+    - ``add_mcp`` / ``remove_mcp`` only touch the calling scope
+    - a scope absent from ``.mcp`` is not the same as one persisted
+      with an empty list
+    - ``purge_session`` drops declarations, instances and offload files
+    - the live-stateful cap never evicts the requesting scope
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def _make_mcp(name: str) -> MCPClient:
+        """Return a stateless HTTP MCP that needs no live server."""
+        return MCPClient(
+            name=name,
+            is_stateful=False,
+            mcp_config={
+                "type": "http_mcp",
+                "url": f"http://127.0.0.1:1/{name}",
+            },
+        )
+
+    def _read_mcp_file(self) -> dict:
+        """Return the parsed ``.mcp`` payload."""
+        with open(self.mcp_file, encoding="utf-8") as f:
+            return json.load(f)
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_scopes_get_independent_instances(self) -> None:
+        """Each scope is seeded from defaults with its own instances."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        # Nothing is instantiated before the first list_mcps.
+        self.assertEqual(ws._mcp_instances, {})
+
+        a1 = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
+        a2 = await ws.list_mcps(agent_id="agent-A", session_id="sess-2")
+        b1 = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
+
+        self.assertEqual([m.name for m in a1], ["seed"])
+        self.assertEqual([m.name for m in a2], ["seed"])
+        self.assertIsNot(a1[0], a2[0])
+        self.assertIsNot(a1[0], b1[0])
+
+        # Repeat access reuses the same instances.
+        self.assertIs(
+            (await ws.list_mcps(agent_id="agent-A", session_id="sess-1"))[0],
+            a1[0],
+        )
+
+        # A scope that only read defaults leaves no trace on disk.
+        self.assertFalse(os.path.exists(self.mcp_file))
+
+    async def test_add_and_remove_are_scoped(self) -> None:
+        """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
+        )
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-2",
+                )
+            ],
+            ["seed"],
+        )
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-B",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+        saved = self._read_mcp_file()
+        self.assertEqual(saved["version"], 2)
+        self.assertEqual(list(saved["mcps"]), ["agent-A"])
+
+        await ws.remove_mcp("extra", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_duplicate_name_in_one_scope_raises(self) -> None:
+        """A duplicate name is rejected per scope, not globally."""
+        ws = await self._workspace()
+
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with self.assertRaises(ValueError):
+            await ws.add_mcp(
+                self._make_mcp("dup"),
+                agent_id="agent-A",
+                session_id="sess-1",
+            )
+
+        # The same name in another scope is fine.
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
+
+    async def test_emptied_scope_is_not_reseeded(self) -> None:
+        """An empty declaration differs from an absent one."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
+        self.assertEqual(
+            self._read_mcp_file()["mcps"]["agent-A"]["sess-1"],
+            [],
+        )
+
+        # It survives a restart rather than falling back to defaults.
+        await ws.close()
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            await ws2.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
+        # An untouched scope still gets the defaults.
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-9",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_reset_returns_to_factory_defaults(self) -> None:
+        """``reset`` drops ``.mcp``, so defaults are seeded again."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertTrue(os.path.exists(self.mcp_file))
+
+        await ws.reset()
+
+        self.assertFalse(os.path.exists(self.mcp_file))
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_purge_session_drops_scope_and_offload(self) -> None:
+        """``purge_session`` forgets declarations and offload files."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.offload_context(
+            "sess-1",
+            [UserMsg(name="user", content="hi")],
+        )
+        session_dir = os.path.join(self.temp_dir.name, "sessions", "sess-1")
+        self.assertTrue(os.path.isdir(session_dir))
+
+        await ws.purge_session(agent_id="agent-A", session_id="sess-1")
+
+        self.assertFalse(os.path.exists(session_dir))
+        self.assertNotIn("agent-A", self._read_mcp_file()["mcps"])
+        # The scope is back to "never seen" — defaults apply again.
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_capacity_never_evicts_the_caller(self) -> None:
+        """The live-stateful cap only evicts other agents/sessions."""
+        connected: list[str] = []
+
+        async def _fake_connect(client: MCPClient) -> None:
+            """Mark connected without opening a transport."""
+            connected.append(client.name)
+            client._is_connected = True
+
+        async def _fake_close(client: MCPClient, *_a: Any, **_kw: Any) -> None:
+            """Mark disconnected without touching a transport."""
+            client._is_connected = False
+
+        def _stateful(name: str) -> MCPClient:
+            """A stateful spec whose transport is never opened."""
+            return MCPClient(
+                name=name,
+                is_stateful=True,
+                mcp_config={
+                    "type": "http_mcp",
+                    "url": f"http://127.0.0.1:1/{name}",
+                },
+            )
+
+        with patch.object(MCPClient, "connect", _fake_connect), patch.object(
+            MCPClient,
+            "close",
+            _fake_close,
+        ):
+            ws = await self._workspace(
+                default_mcps=[_stateful("a"), _stateful("b")],
+                max_live_stateful_mcps=2,
+            )
+
+            first = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual(len(first), 2)
+
+            # The cap is 2, so serving another session evicts the
+            # first — but the newcomer still gets its full set.
+            second = await ws.list_mcps(agent_id="agent-B", session_id="s1")
+            self.assertEqual(len(second), 2)
+            self.assertEqual(ws._mcp_instances[("agent-A", "s1")], {})
+
+            # Coming back rebuilds the evicted session's declaration.
+            again = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual([m.name for m in again], ["a", "b"])
+            self.assertEqual(len(connected), 6)
+
+
+class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
+    """Per-agent skill partitions under ``skills/``.
+
+    Covers:
+    - an agent's installs stay out of every other agent's listing
+    - ``skill_paths`` equip each agent with its own copy, once
+    - a caller that names no agent gets the default partition
+    - a pre-partition ``skills/`` becomes the seed template
+    - an agent id that would escape ``skills/`` is refused
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.src_dir = tempfile.TemporaryDirectory()
+        self.skills_dir = os.path.join(self.temp_dir.name, "skills")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+        self.src_dir.cleanup()
+
+    def _make_skill(self, dir_name: str, skill_name: str) -> str:
+        """Write a minimal skill directory outside the workspace."""
+        path = os.path.join(self.src_dir.name, dir_name)
+        os.makedirs(path, exist_ok=True)
+        with open(
+            os.path.join(path, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                f"---\nname: {skill_name}\ndescription: d\n---\n\nbody\n",
+            )
+        return path
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_agent_installs_are_isolated(self) -> None:
+        """What one agent installs, no other agent can see."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["a-skill"],
+        )
+        self.assertEqual(await ws.list_skills(agent_id="B"), [])
+        self.assertEqual(await ws.list_skills(), [])
+        self.assertTrue(
+            os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
+        )
+
+    async def test_seeds_equip_each_agent_with_its_own_copy(self) -> None:
+        """``skill_paths`` reach every agent, but as separate copies."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+
+        for agent_id in ("A", "B"):
+            self.assertEqual(
+                [s.name for s in await ws.list_skills(agent_id=agent_id)],
+                ["seed-skill"],
+            )
+
+        # A drops its copy: B keeps its own, and A does not get it back.
+        await ws.remove_skill("seed-skill", agent_id="A")
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="B")],
+            ["seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, ".seed", "seed-skill"),
+            ),
+        )
+
+    async def test_unnamed_caller_gets_the_default_partition(self) -> None:
+        """The SDK path, which never names an agent, is just a partition."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+        await ws.add_skill(self._make_skill("plain", "plain-skill"))
+
+        self.assertEqual(
+            sorted(s.name for s in await ws.list_skills()),
+            ["plain-skill", "seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, "default", "plain-skill"),
+            ),
+        )
+        # An agent is equipped from the template, not from that partition.
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["seed-skill"],
+        )
+
+    async def test_pre_partition_layout_becomes_the_template(self) -> None:
+        """Skills sitting directly under ``skills/`` equip every agent."""
+        legacy = os.path.join(self.skills_dir, "legacy")
+        os.makedirs(legacy)
+        with open(
+            os.path.join(legacy, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("---\nname: old\ndescription: d\n---\n\nbody\n")
+        with open(
+            os.path.join(self.skills_dir, ".skills"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "skills_dir_mtime": 0.0,
+                    "skills": {"legacy": {"hash": "h", "skill_name": "old"}},
+                },
+                f,
+            )
+
+        ws = await self._workspace()
+
+        self.assertEqual(os.listdir(self.skills_dir), [".seed"])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["old"],
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.skills_dir, ".seed", ".index")),
+        )
+
+    async def test_traversing_agent_id_is_refused(self) -> None:
+        """An agent id is a directory name, so it may not escape."""
+        ws = await self._workspace()
+        for agent_id in ("../escape", "..", ".seed"):
+            with self.assertRaises(ValueError):
+                await ws.list_skills(agent_id=agent_id)
+
+    async def test_purge_agent_drops_its_partition(self) -> None:
+        """Deleting an agent takes its skills with it."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        await ws.purge_agent(agent_id="A")
+
+        self.assertFalse(os.path.exists(os.path.join(self.skills_dir, "A")))
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])

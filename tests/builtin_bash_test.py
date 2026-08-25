@@ -15,6 +15,9 @@ from agentscope.permission import (
 )
 from agentscope.tool import Bash, ToolChunk
 from agentscope.tool._builtin._backend import (
+    BackendBase,
+    ExecResult,
+    LocalBackend,
     _subprocess_creation_kwargs,
 )
 
@@ -72,6 +75,49 @@ class BashCwdTest(IsolatedAsyncioTestCase):
             expected_argv,
         )
         self.assertEqual(chunks[0].state, "running")
+
+
+class _PosixSandboxBackend(BackendBase):
+    """A minimal non-local backend whose environment is POSIX."""
+
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+
+    async def exec_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        timeout: float | None = None,
+    ) -> ExecResult:
+        self.commands.append(command)
+        return ExecResult(0, b"ok\n", b"")
+
+    async def read_file(self, path: str) -> bytes:
+        raise NotImplementedError
+
+    async def write_file(self, path: str, data: bytes) -> None:
+        raise NotImplementedError
+
+
+class BashShellSelectionTest(IsolatedAsyncioTestCase):
+    """The shell wrapper must follow the backend OS, not the host OS."""
+
+    async def test_posix_backend_on_windows_host_uses_sh(self) -> None:
+        """A Linux sandbox driven from a Windows host still gets /bin/sh."""
+        backend = _PosixSandboxBackend()
+        with patch("agentscope.tool._builtin._backend.os.name", "nt"):
+            chunks = []
+            async for chunk in await Bash(backend=backend)(command="pwd"):
+                chunks.append(chunk)
+
+        self.assertEqual(backend.commands, [["/bin/sh", "-c", "pwd"]])
+        self.assertEqual(chunks[-1].content[0].text, "ok\n")
+
+    def test_local_backend_os_name_follows_host(self) -> None:
+        """LocalBackend reports the host OS; the base default is posix."""
+        self.assertEqual(LocalBackend().os_name, os.name)
+        self.assertEqual(_PosixSandboxBackend().os_name, "posix")
 
 
 @unittest.skipIf(

@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     knowledge_base_manager = app.state.knowledge_base_manager
     blob_store = app.state.blob_store
     enable_index_worker = app.state.enable_index_worker
+    enable_channel_worker = app.state.enable_channel_worker
     resource_access_policy = app.state.resource_access_policy
 
     async with AsyncExitStack() as stack:
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             SchedulerManager(
                 storage=storage,
                 message_bus=message_bus,
+                workspace_manager=workspace_manager,
             ),
         )
         app.state.scheduler_manager = scheduler
@@ -104,12 +106,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.resource_access_service = resource_access_service
 
         # Channel wiring is built here (before ChatService) so the chat
-        # service can hand the dispatcher to get_toolkit: a session that
-        # came from a channel gets that channel's platform tools. The
-        # type registry has no lifecycle and was built in create_app; the
-        # reconcile/heartbeat loops start later via the dispatcher's
-        # lifespan context.
+        # service can hand the client factory to get_toolkit: a session
+        # that came from a channel gets that channel's platform tools.
+        # The clients hold no connection, so they exist in every process
+        # regardless of who runs the dispatcher.
         from .channel import (
+            ChannelClients,
             ChannelGateway,
             ChannelLifecycleDispatcher,
         )
@@ -118,16 +120,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # registered — otherwise the dispatcher's reconcile would hit
         # storage backends that don't implement channel methods.
         channel_type_registry = app.state.channel_type_registry
+        channel_clients = None
         channel_dispatcher = None
         if channel_type_registry:
-            channel_dispatcher = ChannelLifecycleDispatcher(
-                storage=storage,
-                message_bus=message_bus,
-                type_registry=channel_type_registry,
-                gateway=ChannelGateway(
+            channel_clients = await stack.enter_async_context(
+                ChannelClients(
                     storage=storage,
                     message_bus=message_bus,
-                    workspace_manager=workspace_manager,
+                    type_registry=channel_type_registry,
                 ),
             )
             app.state.channel_service = ChannelService(
@@ -135,6 +135,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 message_bus=message_bus,
                 type_registry=channel_type_registry,
             )
+            # The dispatcher is what holds the long connections, so a
+            # deployment that runs dedicated channel workers turns it
+            # off here and every replica stays connection-free.
+            if enable_channel_worker:
+                channel_dispatcher = ChannelLifecycleDispatcher(
+                    storage=storage,
+                    message_bus=message_bus,
+                    type_registry=channel_type_registry,
+                    gateway=ChannelGateway(
+                        storage=storage,
+                        message_bus=message_bus,
+                        workspace_manager=workspace_manager,
+                    ),
+                )
+        app.state.channel_clients = channel_clients
         app.state.channel_dispatcher = channel_dispatcher
 
         chat_service = ChatService(
@@ -149,13 +164,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
-            channel_dispatcher=channel_dispatcher,
+            channel_clients=channel_clients,
         )
         app.state.chat_service = chat_service
 
         app.state.session_service = SessionService(
             storage=storage,
             message_bus=message_bus,
+            workspace_manager=workspace_manager,
         )
 
         app.state.workspace_service = WorkspaceService(
@@ -196,7 +212,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     blob_store=blob_store,
                     knowledge_base_manager=knowledge_base_manager,
                     parsers=app.state.knowledge_parsers,
-                    chunker=app.state.knowledge_chunker,
+                    chunkers=app.state.knowledge_chunkers,
                     node_id=node_id,
                 )
                 await stack.enter_async_context(
@@ -219,6 +235,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 blob_store=blob_store,
                 message_bus=message_bus,
                 resource_access_service=resource_access_service,
+                chunkers=app.state.knowledge_chunkers,
             )
 
         app.state.knowledge_base_service = knowledge_base_service

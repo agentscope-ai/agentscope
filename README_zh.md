@@ -72,6 +72,7 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-08] `功能`:** 支持 Console —— 在终端中测试与调试智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
 - **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
 - **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
 - **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
@@ -81,7 +82,6 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 - **[2026-07] `集成`:** 集成 ReMe 长期记忆。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 - **[2026-06] `功能`:** 支持 Agentic Memory。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 - **[2026-06] `功能`:** 支持分布式 & 多租户 & 多会话 RAG 服务。 [文档](https://docs.agentscope.io/latest/en/deploy/agent-team)
-- **[2026-06] `功能`:** 支持多模态 RAG。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/rag) | [文档](https://docs.agentscope.io/latest/en/building-blocks/rag)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
@@ -135,15 +135,14 @@ SDK 层 —— 用一整套丰富的构建模块组合出你的智能体：
 | [**记忆**](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory) | Agentic Memory，可切换后端（ReMe、Mem0） |
 | [**工作空间 / 沙箱**](https://docs.agentscope.io/latest/zh/building-blocks/workspace/overview) | 隔离工具与代码执行 —— local、Docker、Apple Container、Bubblewrap、E2B、OpenSandbox、Daytona、K8s |
 
-使用 AgentScope 2.0，启动你的第一个智能体：
+使用 AgentScope 2.0，在终端中启动你的第一个智能体：
 
 ```python
 from agentscope.agent import Agent
+from agentscope.console import launch_console
 from agentscope.tool import Toolkit, Bash, Grep, Glob, Read, Write, Edit
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.message import UserMsg
-from agentscope.event import EventType
 
 import os, asyncio
 
@@ -170,21 +169,9 @@ async def main() -> None:
         ),
     )
 
-    async for evt in agent.reply_stream(UserMsg("Tony", "Hi, Friday!")):
-        # 处理事件流，例如打印消息、更新 UI 等
-        match evt.type:
-            case EventType.REPLY_START:
-                ...
-            case EventType.MODEL_CALL_START:
-                ...
-            case EventType.TEXT_BLOCK_START:
-                ...
-            case EventType.TEXT_BLOCK_DELTA:
-                ...
-            case EventType.TEXT_BLOCK_END:
-                ...
-
-            # 处理其他事件类型
+    # 在终端中与智能体对话 —— 流式输出、工具调用确认、
+    # Ctrl+C 中断均已内置处理
+    await launch_console(agent)
 
 asyncio.run(main())
 ```
