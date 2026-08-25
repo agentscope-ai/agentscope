@@ -26,6 +26,11 @@ import os
 from agentscope.agent import Agent
 from agentscope.console import ConsoleRenderer
 from agentscope.credential import DashScopeCredential
+from agentscope.event import (
+    ConfirmResult,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+)
 from agentscope.message import TextBlock
 from agentscope.model import DashScopeChatModel
 from agentscope.permission import PermissionMode
@@ -209,24 +214,62 @@ def show(event: object, renderer: ConsoleRenderer) -> None:
         renderer.render(event)
 
 
-def ask_the_human(engine: SOPEngine) -> VerificationRecord:
-    """Show what is waiting and read a verdict from the terminal."""
-    waiting = next(
-        step
-        for step in engine.sop.steps
-        if engine.run.steps[step.id].state is SOPStepState.VERIFYING
+async def ask_permission(
+    pending: RequireUserConfirmEvent,
+) -> UserConfirmResultEvent:
+    """Answer a tool-call confirmation an agent stopped on.
+
+    The reply an answer belongs to names itself, and the engine hands it
+    to whichever step's agent is waiting on that reply — so a caller never
+    has to work out which of them asked.
+    """
+    results = []
+    for tool_call in pending.tool_calls:
+        answer = await asyncio.to_thread(
+            input,
+            f"Allow '{tool_call.name}'? [y]es / [N]o ",
+        )
+        results.append(
+            ConfirmResult(
+                confirmed=answer.strip().lower() in ("y", "yes"),
+                tool_call=tool_call,
+            ),
+        )
+    return UserConfirmResultEvent(
+        reply_id=pending.reply_id,
+        confirm_results=results,
     )
-    print(f"\n{'─' * 60}")
+
+
+async def ask_for_signoff(engine: SOPEngine) -> VerificationRecord | None:
+    """Show what is waiting on a person and read a verdict.
+
+    Answers ``None`` when nothing is actually waiting to be judged, which
+    is not an error — an agent may simply have stopped for permission.
+    """
+    waiting = next(
+        (
+            step
+            for step in engine.sop.steps
+            if engine.run.steps[step.id].state is SOPStepState.VERIFYING
+        ),
+        None,
+    )
+    if waiting is None:
+        return None
+
+    print(f"\n{'-' * 60}")
     print(f"{waiting.subject} is waiting for you:\n")
     print(engine.run.steps[waiting.id].submission)
-    print("─" * 60)
+    print("-" * 60)
 
-    verdict = input("Accept it? [y/N] ").strip().lower()
-    if verdict in ("y", "yes"):
+    verdict = await asyncio.to_thread(input, "Accept it? [y/N] ")
+    if verdict.strip().lower() in ("y", "yes"):
         return VerificationRecord(passed=True, verified_by="you")
+    reason = await asyncio.to_thread(input, "What should change? ")
     return VerificationRecord(
         passed=False,
-        message=input("What should change? ").strip() or "Try again.",
+        message=reason.strip() or "Try again.",
         verified_by="you",
     )
 
@@ -261,18 +304,32 @@ async def main() -> None:
         renderer = ConsoleRenderer()
         approval: HumanApproval = sop.steps[-1].verifier
 
-        inputs: list | None = [TextBlock(text=args.topic)]
+        inputs: list | UserConfirmResultEvent | None = [
+            TextBlock(text=args.topic),
+        ]
         while True:
+            # A run stops for two different reasons, told apart by what
+            # came out of the stream rather than by asking around.
+            asked_permission: RequireUserConfirmEvent | None = None
             async for event in engine.run_stream(inputs):
+                if isinstance(event, RequireUserConfirmEvent):
+                    asked_permission = event
                 show(event, renderer)
             inputs = None
 
             if engine.status is not SOPRunStatus.RUNNING:
                 break
 
-            # The stream ended without settling, so something is waiting.
-            # Nothing is suspended while we sit on this prompt.
-            approval.answer = ask_the_human(engine)
+            # Nothing is suspended behind either of these prompts.
+            if asked_permission is not None:
+                inputs = await ask_permission(asked_permission)
+                continue
+
+            verdict = await ask_for_signoff(engine)
+            if verdict is None:
+                print("\nNothing left to answer; stopping.")
+                break
+            approval.answer = verdict
 
         print(f"\nWorkspace: {workspace.workdir}")
 

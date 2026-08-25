@@ -9,7 +9,18 @@ import json
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.agent import Agent
+from agentscope.event import (
+    ConfirmResult,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+)
 from agentscope.message import TextBlock, ToolCallBlock
+from agentscope.permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionDecision,
+)
+from agentscope.tool import ToolBase, ToolChunk, Toolkit
 from agentscope.model import ChatResponse
 from agentscope.sop import (
     SOP,
@@ -46,9 +57,51 @@ def _says(text: str) -> ChatResponse:
     return ChatResponse(content=[TextBlock(text=text)], is_last=True)
 
 
-def _agent(model: MockModel, name: str = "worker") -> Agent:
+def _agent(
+    model: MockModel,
+    name: str = "worker",
+    toolkit: Toolkit | None = None,
+) -> Agent:
     """An agent wired to a scripted model."""
-    return Agent(name=name, system_prompt="", model=model)
+    return Agent(
+        name=name,
+        system_prompt="",
+        model=model,
+        toolkit=toolkit or Toolkit(),
+    )
+
+
+class NeedsConfirming(ToolBase):
+    """A tool that always stops to ask, so a step parks mid-flight."""
+
+    name: str = "Risky"
+    description: str = "Does something that needs a nod first."
+    input_schema: dict = {"type": "object", "properties": {}}
+    is_concurrency_safe: bool = False
+    is_read_only: bool = False
+
+    async def call(self) -> ToolChunk:
+        """Report that it ran."""
+        return ToolChunk(content=[TextBlock(text="did the risky thing")])
+
+    async def check_permissions(
+        self,
+        tool_input: dict,
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always ask."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="Risky wants a nod.",
+        )
+
+
+def _calls_risky() -> ChatResponse:
+    """A reply that calls the tool needing confirmation."""
+    return ChatResponse(
+        content=[ToolCallBlock(id="c0", name="Risky", input="{}")],
+        is_last=True,
+    )
 
 
 class SOPEngineTest(IsolatedAsyncioTestCase):
@@ -255,6 +308,56 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
             ],
             labels,
         )
+
+    async def test_an_agent_stopping_for_permission_parks_the_run(
+        self,
+    ) -> None:
+        """The stream ends, nothing is suspended, and the answer finds
+        its own way back to the agent that asked."""
+        model = MockModel()
+        model.set_responses(
+            [_calls_risky(), _submits("did it"), _says("ok")],
+        )
+        toolkit = Toolkit(tools=[NeedsConfirming()])
+
+        sop = SOP(
+            name="risky",
+            steps=[
+                SOPStep(
+                    id="a",
+                    subject="Do the risky thing",
+                    agent=_agent(model, toolkit=toolkit),
+                ),
+            ],
+        )
+        engine = SOPEngine(sop)
+
+        events = [_ async for _ in engine.run_stream([TextBlock(text="go")])]
+        asked = [
+            e for e in events if isinstance(e, RequireUserConfirmEvent)
+        ]
+
+        self.assertEqual(1, len(asked))
+        self.assertFalse(any(isinstance(e, RunSettledEvent) for e in events))
+        self.assertEqual(SOPStepState.RUNNING, engine.run.steps["a"].state)
+
+        # The answer names the reply, not the agent — the engine works out
+        # who was waiting.
+        answer = UserConfirmResultEvent(
+            reply_id=asked[0].reply_id,
+            confirm_results=[
+                ConfirmResult(confirmed=True, tool_call=tc)
+                for tc in asked[0].tool_calls
+            ],
+        )
+        settled = [
+            e
+            async for e in engine.run_stream(answer)
+            if isinstance(e, RunSettledEvent)
+        ]
+
+        self.assertEqual(SOPRunStatus.COMPLETED, settled[0].status)
+        self.assertEqual("did it", engine.run.steps["a"].submission)
 
     async def test_preset_tasks_seed_the_agents_own_list(self) -> None:
         """A step may narrow how its agent decomposes the work."""

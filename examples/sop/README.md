@@ -122,9 +122,19 @@ while True:
     approval.answer = ask_the_human(engine)
 ```
 
-The stream ends when the run settles **or** when a whole pass moved
-nothing. Both look the same from out here: `engine.run` says where it
-stopped, and calling again carries on.
+A run stops for two different reasons, and the demo tells them apart by
+what came out of the stream rather than by asking around:
+
+- an **agent stopped for permission** — a `RequireUserConfirmEvent` came
+  past, so answer it with a `UserConfirmResultEvent`. The answer names the
+  *reply*, not the agent; the engine hands it to whichever step's agent
+  was waiting on it, so with several steps in flight you still never have
+  to work out who asked.
+- a **verifier is waiting** — nothing came past, and a step sits in
+  `verifying`.
+
+Either way `engine.run` says where it stopped, and calling again carries
+on.
 
 `engine.run` is plain data. Dump it and the progress outlives the process;
 hand it back with `SOPEngine(sop, run=stored)` and the run resumes.
