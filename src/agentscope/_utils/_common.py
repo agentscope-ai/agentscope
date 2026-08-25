@@ -9,7 +9,7 @@ import json
 import os
 import types
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .._logging import logger
@@ -17,7 +17,14 @@ from ..exception import ToolJSONDecodeError
 
 
 _id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
-_timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
+
+
+def _default_timestamp() -> str:
+    """Return the current UTC time as ISO 8601 with a ``Z`` suffix."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+_timestamp_factory: Callable[[], str] = _default_timestamp
 
 
 def set_id_factory(factory: Callable[[], str]) -> None:
@@ -52,9 +59,11 @@ def set_id_factory(factory: Callable[[], str]) -> None:
 def set_timestamp_factory(factory: Callable[[], str]) -> None:
     """Override the global timestamp factory used by all AgentScope entities.
 
+    The default factory emits UTC ISO 8601 strings suffixed with ``Z``.
+
     Args:
         factory (`Callable[[], str]`):
-            A no-arg callable returning a string ID.
+            A no-arg callable returning a timestamp string.
 
     Raises:
         TypeError: If ``factory`` is not callable.

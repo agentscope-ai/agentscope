@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
-from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict, Literal, List, Self, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import deprecated
 
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from ..message import (
     DataBlock,
     TextBlock,
@@ -74,8 +73,8 @@ class EventBase(BaseModel):
 
     id: str = Field(default_factory=_generate_id)
     """Unique event identifier."""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
-    """ISO 8601 timestamp of when the event was created."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """UTC ISO 8601 timestamp (``Z`` suffix) of when the event was created."""
     metadata: Dict[str, Any] = Field(default_factory=dict)
     """Optional metadata attached to the event."""
 
