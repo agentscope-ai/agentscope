@@ -23,8 +23,8 @@ from agentscope.permission import (
 from agentscope.tool import ToolBase, ToolChunk, Toolkit
 from agentscope.model import ChatResponse
 from agentscope.sop import (
+    VerifierBase,
     SOP,
-    CallbackVerifier,
     RunSettledEvent,
     SOPEngine,
     SOPRunStatus,
@@ -36,6 +36,21 @@ from agentscope.sop import (
 )
 
 from tests.utils import MockModel
+
+
+class _Decides(VerifierBase):
+    """A verifier that defers to a plain function, for tests only."""
+
+    def __init__(self, decide) -> None:
+        """Remember what to call."""
+        self._decide = decide
+
+    async def verify(self, sop, run, step, step_run):
+        """Ask the function."""
+        result = self._decide(sop, run, step, step_run)
+        if result is not None and not result.verified_by:
+            result.verified_by = "test"
+        return result
 
 
 def _submits(text: str) -> ChatResponse:
@@ -177,7 +192,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                     id="a",
                     subject="Try",
                     agent=_agent(model),
-                    verifier=CallbackVerifier(decide),
+                    verifier=_Decides(decide),
                 ),
             ],
         )
@@ -215,7 +230,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                     id="a",
                     subject="Review me",
                     agent=_agent(model),
-                    verifier=CallbackVerifier(decide),
+                    verifier=_Decides(decide),
                 ),
             ],
         )
@@ -254,7 +269,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                     id="a",
                     subject="Fail",
                     agent=_agent(first, "one"),
-                    verifier=CallbackVerifier(
+                    verifier=_Decides(
                         lambda *_: VerificationRecord(
                             passed=False,
                             message="not acceptable",

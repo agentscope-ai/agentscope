@@ -1,10 +1,36 @@
 # -*- coding: utf-8 -*-
-"""Standard operating procedures — fixed, reusable, step-by-step
-procedures with a verifier on every step.
+"""Standard operating procedures — a fixed skeleton with free flesh.
 
-A SOP fixes the skeleton and leaves the flesh to the agents: the order of
-the steps and what each must prove are authored by a person, while how any
-one step gets done is left entirely to the agent that runs it.
+The **skeleton** — which milestones there are, in what order, and what
+each must prove — is written by a person and can be read without running
+anything. The **flesh** — how any of it actually gets done — belongs to
+the agents, and the SOP neither sees it nor prescribes it.
+
+In one line: *a fixed sequence of milestones, each of which must be
+verified before the next can start; how a milestone is reached is nobody
+else's business.*
+
+Three things follow, and between them they explain every decision here.
+
+- **A step is a checkpoint somebody cares about, not a unit of work.**
+  "Establish what happened" is one step even if it means reading four
+  systems.
+- **Verification is the whole point, not a feature.** An agent's output
+  is uncertain, so "claims to be done" and "is done" have to be different
+  things — which a workflow engine never needs, its nodes being code.
+- **Being fixed is where the value comes from.** Auditability, reuse and
+  predictability all follow from it.
+
+Two tests draw the boundary. *Is this a SOP?* — if you cannot say how many
+steps it has and who does each without running it, no. *Should this be a
+step?* — if nobody checks anything at that point, no. The first rules out
+runtime fan-out, computed branching and steps that appear as you go; the
+second rules out lifting an agent's own breakdown into the procedure.
+
+One consequence is worth knowing before designing one: **a review is a
+verifier, not a step.** A failed review sends work back to whoever
+produced it, but a failed *step* retries *itself* — make "fact-check" a
+step and a failure just re-runs the fact-checker to the same conclusion.
 
 Three pieces, deliberately separate:
 
@@ -49,7 +75,7 @@ from ._engine import (
     overall_status,
     upstream_submissions,
 )
-from ._run import (
+from ._state import (
     SOPRunState,
     SOPRunStatus,
     SOPStepState,
@@ -57,7 +83,7 @@ from ._run import (
     VerificationRecord,
 )
 from ._sop import SOP, SOPStep
-from ._verifier import CallbackVerifier, VerifierBase
+from ._verifier import VerifierBase
 
 __all__ = [
     # definition
@@ -65,7 +91,6 @@ __all__ = [
     "SOPStep",
     # verification
     "VerifierBase",
-    "CallbackVerifier",
     "VerificationRecord",
     # runtime
     "SOPRunState",

@@ -1,0 +1,52 @@
+{
+  "orders": [
+    {
+      "id": "A-1043",
+      "customer": "刘婷",
+      "placed_at": "2026-08-08",
+      "amount_cny": 328.0,
+      "shipping_fee_cny": 12.0,
+      "promised_delivery_days": 3,
+      "status": "in_transit",
+      "items": [
+        {
+          "sku": "KT-220",
+          "name": "陶瓷烤盘",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "id": "A-1044",
+      "customer": "张伟",
+      "placed_at": "2026-08-19",
+      "amount_cny": 89.0,
+      "shipping_fee_cny": 0.0,
+      "promised_delivery_days": 3,
+      "status": "delivered",
+      "items": [
+        {
+          "sku": "MG-011",
+          "name": "马克杯",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "id": "A-1051",
+      "customer": "刘婷",
+      "placed_at": "2026-08-21",
+      "amount_cny": 156.0,
+      "shipping_fee_cny": 0.0,
+      "promised_delivery_days": 5,
+      "status": "in_transit",
+      "items": [
+        {
+          "sku": "TW-004",
+          "name": "棉麻餐巾",
+          "qty": 4
+        }
+      ]
+    }
+  ]
+}

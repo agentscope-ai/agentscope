@@ -10,7 +10,7 @@ materialise, because at this layer you are holding the objects already::
         subject="Write the code",
         description="Implement the plan. TDD is up to you.",
         agent=Agent(..., offloader=workspace),
-        verifier=CallbackVerifier(tests_pass),
+        verifier=TestsPass(workspace),
     )
 
 That makes a definition **not serialisable**, and deliberately so. A
@@ -90,6 +90,7 @@ class SOPStep(BaseModel):
 
     max_attempts: int = 3
     """How many refusals before the step is given up on."""
+
 
 
 class SOP(BaseModel):

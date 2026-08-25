@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Smoke check for the SOP example — no API key, no network.
+"""Smoke check for the SOP example - no API key, no network.
 
-Swaps the real model for a scripted one and drives the demo's own SOP,
+Swaps the real models for scripted ones and drives the demo's own SOP,
 verifiers and all, so the example cannot rot without a test noticing.
 """
 import asyncio
@@ -54,69 +54,72 @@ def _says(text: str) -> ChatResponse:
 class SOPExampleTest(IsolatedAsyncioTestCase):
     """The example's own SOP, driven end to end."""
 
-    async def test_the_demo_sop_runs_and_waits_for_a_person(self) -> None:
-        """Two agents, a file check, and a sign-off that parks the run."""
-        with tempfile.TemporaryDirectory() as workdir:
-            async with LocalWorkspace(workdir=workdir) as workspace:
-                sop = await demo.build_sop(workspace, "unused", "unused")
-                note = os.path.join(workspace.workdir, demo.NOTE)
+    async def test_the_demo_sop_runs_and_waits_for_a_supervisor(self) -> None:
+        """Three agents, a records audit, and a sign-off that parks it."""
+        here = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "examples",
+            "sop",
+        )
+        async with LocalWorkspace(workdir=here) as workspace:
+            sop = await demo.build_sop(workspace, "unused", "unused")
 
-                # A roomy context so the demo's real prompts do not
-                # trip compression, which the mock cannot script.
-                writer = MockModel(context_size=200_000)
-                editor = MockModel(context_size=200_000)
-                writer.set_responses(
-                    [
-                        _submits("- audience\n- three points"),
-                        _says("ok"),
-                        _submits(f"Wrote {demo.NOTE}."),
-                        _says("ok"),
-                    ],
-                )
-                # Stand in for the writer actually creating it, so the
-                # demo's FileWritten verifier has something real to find.
-                with open(note, "w", encoding="utf-8") as fh:
-                    fh.write("# Note\n")
-                editor.set_responses([_submits("We shipped it."), _says("ok")])
-                sop.steps[0].agent.model = writer
-                sop.steps[2].agent.model = editor
+            support = MockModel(context_size=200_000)
+            policy = MockModel(context_size=200_000)
+            writer = MockModel(context_size=200_000)
+            judge = MockModel(context_size=200_000)
+            support.set_responses(
+                [_submits("A-1043 is 17 days late."), _says("ok")],
+            )
+            policy.set_responses(
+                [_submits("Full refund plus a 50 coupon."), _says("ok")],
+            )
+            writer.set_responses(
+                [_submits("很抱歉，我们将全额退款。"), _says("ok")],
+            )
+            # The two model-backed gates both consult this one.
+            judge.set_responses([_says("PASS"), _says("PASS")])
 
-                engine = SOPEngine(sop)
-                async for _ in engine.run_stream([TextBlock(text="topic")]):
-                    pass
+            sop.steps[0].agent.model = support
+            sop.steps[1].agent.model = policy
+            sop.steps[2].agent.model = writer
+            sop.steps[0].verifier._model = judge
+            sop.steps[2].verifier._model = judge
 
-                # The first two steps are through; the third waits on a
-                # person, so the run is parked rather than settled.
-                self.assertEqual(
-                    SOPStepState.COMPLETED,
-                    engine.run.steps["draft"].state,
-                )
-                self.assertEqual(
-                    SOPStepState.VERIFYING,
-                    engine.run.steps["announce"].state,
-                )
-                self.assertTrue(os.path.exists(note))
+            engine = SOPEngine(sop)
+            async for _ in engine.run_stream([TextBlock(text="订单 A-1043")]):
+                pass
 
-                # The editor has no tools, so all it saw was the text.
-                self.assertIn(
-                    demo.NOTE,
-                    " ".join(
-                        m.get_text_content() or ""
-                        for m in sop.steps[2].agent.state.context
-                    ),
-                )
+            # The audit read the real records and passed; the proposal now
+            # waits on a person, so the run is parked rather than settled.
+            self.assertEqual(
+                SOPStepState.COMPLETED,
+                engine.run.steps["establish"].state,
+            )
+            self.assertEqual(
+                SOPStepState.VERIFYING,
+                engine.run.steps["propose"].state,
+            )
 
-                # A verdict arrives and the run finishes.
-                sop.steps[2].verifier.answer = VerificationRecord(
-                    passed=True,
-                    verified_by="you",
-                )
-                async for _ in engine.run_stream():
-                    pass
+            # A supervisor approves, and the run finishes.
+            sop.steps[1].verifier.answer = VerificationRecord(
+                passed=True,
+                verified_by="supervisor",
+            )
+            async for _ in engine.run_stream():
+                pass
 
-                self.assertIs(SOPRunStatus.COMPLETED, engine.status)
+            self.assertIs(SOPRunStatus.COMPLETED, engine.status)
+            self.assertIn("退款", engine.run.steps["reply"].submission)
+
+            context = " ".join(
+                m.get_text_content() or ""
+                for m in sop.steps[2].agent.state.context
+            )
+            self.assertIn("Full refund", context)
 
 
 if __name__ == "__main__":
     case = SOPExampleTest()
-    asyncio.run(case.test_the_demo_sop_runs_and_waits_for_a_person())
+    asyncio.run(case.test_the_demo_sop_runs_and_waits_for_a_supervisor())

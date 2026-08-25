@@ -41,9 +41,9 @@ The engine never learns what a workspace is, which is what keeps it
 runnable without a service underneath.
 """
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from ._run import SOPRunState, StepRun, VerificationRecord
+from ._state import SOPRunState, StepRun, VerificationRecord
 
 if TYPE_CHECKING:
     from ._sop import SOP, SOPStep
@@ -91,56 +91,3 @@ class VerifierBase(ABC):
                 the engine should ask again later.
         """
 
-
-class CallbackVerifier(VerifierBase):
-    """Hands the decision to a callable.
-
-    Enough for a script that wants to judge in Python, or to prompt on the
-    console and answer on the spot::
-
-        CallbackVerifier(lambda sop, run, step, rec: VerificationRecord(
-            passed="DONE" in rec.submission,
-            message="say DONE once the report is written",
-        ))
-
-    Returning ``None`` from the callable parks the step, exactly as it
-    would from any other verifier.
-    """
-
-    def __init__(
-        self,
-        decide: Callable[
-            ["SOP", SOPRunState, "SOPStep", StepRun],
-            VerificationRecord | None | Awaitable[VerificationRecord | None],
-        ],
-        name: str = "callback",
-    ) -> None:
-        """Initialise the verifier.
-
-        Args:
-            decide (`Callable`):
-                Called with the same four arguments as
-                :meth:`VerifierBase.verify`. May be sync or async, and may
-                return ``None`` to be asked again later.
-            name (`str`, defaults to ``"callback"``):
-                Recorded as
-                :attr:`~._run.VerificationRecord.verified_by` when the
-                callable leaves it empty.
-        """
-        self._decide = decide
-        self._name = name
-
-    async def verify(
-        self,
-        sop: "SOP",
-        run: SOPRunState,
-        step: "SOPStep",
-        step_run: StepRun,
-    ) -> VerificationRecord | None:
-        """Ask the callable, awaiting it if it is a coroutine."""
-        result = self._decide(sop, run, step, step_run)
-        if isinstance(result, Awaitable):
-            result = await result
-        if result is not None and not result.verified_by:
-            result.verified_by = self._name
-        return result

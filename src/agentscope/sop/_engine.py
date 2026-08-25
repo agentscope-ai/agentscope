@@ -16,7 +16,7 @@ from the run, because the run is where everything is.
 from dataclasses import dataclass
 from typing import AsyncGenerator, Literal, Union
 
-from ._run import (
+from ._state import (
     SOPRunState,
     SOPRunStatus,
     SOPStepState,

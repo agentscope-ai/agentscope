@@ -1,23 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Run a three-step SOP: outline a note, write it, announce it.
+"""Handle a customer complaint by the book: establish, propose, reply.
 
-Two things this demo is really about.
+The procedure is three milestones, and each one is a checkpoint somebody
+actually cares about — is the story straight, is the offer within policy,
+is the letter safe to send. How any of them gets done is the agent's
+business.
 
-**The handover is text.** The first two steps share one agent, so they
-share its context and its files. The third is a different agent with no
-tools at all — it can only see what step two *submitted*, which is the
-point: a SOP hands prose between steps, never a workspace.
+Two properties are worth watching for.
 
-**Waiting costs nothing.** The last step is signed off by a person, and
-its verifier says so by answering nothing at all. The engine ends the
-stream rather than holding a coroutine open — this program then blocks on
-``input()`` with no agent suspended anywhere behind it — and picks the run
-back up when an answer arrives.
+**A gate can check against the same records the agent used.** Step one is
+judged by a model that is handed ``orders.json`` and ``shipments.json``
+itself, so "the facts check out" means they were checked, not that the
+write-up read plausibly.
+
+**Waiting costs nothing.** A supervisor signs off step two, and its
+verifier says so by answering nothing at all. The stream ends, this
+program blocks on ``input()`` with no agent suspended behind it, and the
+run picks up when the answer arrives.
+
+``data/`` stands in for the systems a support agent would really query —
+an order service, a courier's API, the policy wiki. The SOP does not know
+or care where the facts come from; it only says that step one must hand
+over an account that survives checking.
 
 Run with::
 
     export DASHSCOPE_API_KEY=sk-...
-    python main.py [--topic "..."] [--model qwen3.7-max]
+    python main.py
+    python main.py --complaint "订单 A-1051 到现在还没动静"
 """
 import argparse
 import asyncio
@@ -31,9 +41,8 @@ from agentscope.event import (
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import TextBlock
-from agentscope.model import DashScopeChatModel
-from agentscope.permission import PermissionMode
+from agentscope.message import TextBlock, UserMsg
+from agentscope.model import ChatModelBase, DashScopeChatModel
 from agentscope.sop import (
     SOP,
     RunSettledEvent,
@@ -45,48 +54,95 @@ from agentscope.sop import (
     VerificationRecord,
     VerifierBase,
 )
-from agentscope.state import Task
 from agentscope.tool import Toolkit
 from agentscope.workspace import LocalWorkspace
 
-NOTE = "note.md"
+DEFAULT_COMPLAINT = (
+    "订单 A-1043，你们说好三天到，我等了两个多星期还没收到货，"
+    "物流一直不动。我要求全额退款。"
+)
 
 
-class FileWritten(VerifierBase):
-    """Accepts a step once a file has appeared in the workspace.
+async def judge(model: ChatModelBase, prompt: str) -> tuple[bool, str]:
+    """Ask a model for a verdict, and read it back as pass plus reason.
 
-    It takes the workspace at construction rather than being handed one,
-    which is the rule everything at this layer follows: the engine never
-    learns what a workspace is, so it stays runnable without a service
-    underneath.
+    The verdict is the first word so it survives a model that cannot
+    resist adding a paragraph.
+    """
+    reply = await model([UserMsg("judge", prompt)])
+    text = "".join(
+        block.text for block in reply.content if block.type == "text"
+    ).strip()
+    passed = text.upper().startswith("PASS")
+    reason = text.split("\n", 1)[0][5:].lstrip(" :：-") or text
+    return passed, ("" if passed else reason)
+
+
+class FactsMatchRecords(VerifierBase):
+    """Checks an account of what happened against the records themselves.
+
+    The point of handing the judge the raw files is that it can catch a
+    claim nobody could have made from them — a date that is not in the
+    tracking, an amount that is not on the order. A judge without the
+    records can only tell you the write-up reads well.
+
+    Like every verifier here, it takes what it needs at construction: the
+    engine never learns what a workspace is.
     """
 
-    def __init__(self, workspace: LocalWorkspace, path: str) -> None:
-        """Remember what to look for, and where.
+    def __init__(
+        self,
+        model: ChatModelBase,
+        workspace: LocalWorkspace,
+        files: list[str],
+    ) -> None:
+        """Remember the judge, and which records are the truth.
 
-        Resolved against the workspace root rather than the backend's
-        working directory, which is wherever the process happens to be.
+        Paths are resolved against the workspace root. The backend's own
+        working directory is wherever the process happens to be, which is
+        not the same thing and is a reliable way to read nothing.
         """
+        self._model = model
         self._backend = workspace.get_backend()
-        self._path = self._backend.join_path(workspace.workdir, path)
+        self._files = [
+            self._backend.join_path(workspace.workdir, "data", name)
+            for name in files
+        ]
 
     async def verify(self, sop, run, step, step_run) -> VerificationRecord:
-        """Look for the file, and say what is missing if it is."""
-        found = await self._backend.file_exists(self._path)
+        """Compare every claim in the submission with the records."""
+        records = []
+        for path in self._files:
+            body = (await self._backend.read_file(path)).decode()
+            records.append(f"### {os.path.basename(path)}\n{body}")
+
+        passed, reason = await judge(
+            self._model,
+            "You are auditing a support agent's account of what happened.\n\n"
+            "## The records (the only source of truth)\n"
+            + "\n\n".join(records)
+            + "\n\n## The account\n"
+            + step_run.submission
+            + "\n\n## Your job\n"
+            "Reply PASS if every factual claim above is supported by the "
+            "records. Otherwise reply FAIL followed by the specific claims "
+            "that are wrong or unsupported, so the agent can go and fix "
+            "them. Judge only the facts, not the writing.",
+        )
         return VerificationRecord(
-            passed=found,
-            message="" if found else f"{self._path} is not there yet.",
-            verified_by="file-check",
+            passed=passed,
+            message=reason,
+            verified_by="records-audit",
         )
 
 
-class HumanApproval(VerifierBase):
-    """Waits for a person, without waiting.
+class SupervisorApproval(VerifierBase):
+    """Waits for a supervisor, without waiting.
 
-    Answering ``None`` is how a verifier says "not yet". The step stays in
-    ``VERIFYING``, the engine lets go of the stream, and the run is asked
-    again once :attr:`answer` has been filled in — which may be a second
-    later or a week.
+    Answering ``None`` is how a verifier says "not yet". The step stays
+    in ``VERIFYING``, the engine lets go of the stream, and the run is
+    asked again once :attr:`answer` has been filled in — a second later
+    or a week.
     """
 
     def __init__(self) -> None:
@@ -97,6 +153,46 @@ class HumanApproval(VerifierBase):
         """Hand over an answer if one has arrived, otherwise nothing."""
         answer, self.answer = self.answer, None
         return answer
+
+
+class ReplyIsSafeToSend(VerifierBase):
+    """Checks a draft reply against the offer that was approved.
+
+    The failure this exists to catch is a warm, helpful letter that
+    quietly promises more than the supervisor signed off on.
+    """
+
+    def __init__(self, model: ChatModelBase) -> None:
+        """Remember the judge."""
+        self._model = model
+
+    async def verify(self, sop, run, step, step_run) -> VerificationRecord:
+        """Compare the draft with the approved offer."""
+        approved = next(
+            (
+                run.steps[s.id].submission
+                for s in sop.steps
+                if s.id == "propose"
+            ),
+            "",
+        )
+        passed, reason = await judge(
+            self._model,
+            "You are the last check before a reply goes to a customer.\n\n"
+            "## What the supervisor approved\n" + approved
+            + "\n\n## The draft reply\n" + step_run.submission
+            + "\n\n## Your job\n"
+            "Reply PASS if the draft offers exactly what was approved, "
+            "promises nothing beyond it (no extra refunds, no delivery "
+            "dates, no goodwill nobody agreed to), and is written as an "
+            "apology with concrete next steps. Otherwise reply FAIL "
+            "followed by what to change.",
+        )
+        return VerificationRecord(
+            passed=passed,
+            message=reason,
+            verified_by="reply-check",
+        )
 
 
 async def build_sop(
@@ -111,91 +207,97 @@ async def build_sop(
     resolve and no spec to materialise.
     """
 
-    def chat_model() -> DashScopeChatModel:
+    def model() -> DashScopeChatModel:
         return DashScopeChatModel(
             credential=DashScopeCredential(api_key=api_key),
             model=model_name,
             stream=True,
         )
 
+    tools = await workspace.list_tools()
+    data = os.path.join(workspace.workdir, "data")
+
+    support = Agent(
+        name="support",
+        system_prompt=(
+            "You work in customer support. You establish what actually "
+            f"happened by reading the records in {data}, and you never "
+            "state anything they do not show."
+        ),
+        model=model(),
+        toolkit=Toolkit(tools=tools),
+        offloader=workspace,
+    )
+    policy = Agent(
+        name="policy",
+        system_prompt=(
+            f"You apply the compensation policy in {data}/policy.md "
+            "literally. You do not invent goodwill, and you say which "
+            "clause each part of your proposal comes from."
+        ),
+        model=model(),
+        toolkit=Toolkit(tools=tools),
+        offloader=workspace,
+    )
+    # No tools at all: whoever writes to the customer works from the
+    # approved offer, not from the order system.
     writer = Agent(
         name="writer",
         system_prompt=(
-            "You write short, concrete technical notes. Keep them under "
-            "300 words and skip the throat-clearing."
+            "You write to customers in Chinese: apologetic, concrete, "
+            "short. You have no access to any system — everything you "
+            "know comes from what you were handed."
         ),
-        model=chat_model(),
-        toolkit=Toolkit(tools=await workspace.list_tools()),
-        offloader=workspace,
-    )
-    # Let the writer edit inside the workspace without a prompt per file;
-    # this demo is about acceptance, not about tool permissions.
-    writer.state.permission_context.mode = PermissionMode.ACCEPT_EDITS
-    writer.state.permission_context.working_directories["demo"] = (
-        workspace.workdir
+        model=model(),
     )
 
-    editor = Agent(
-        name="editor",
-        system_prompt=(
-            "You turn a technical note into a two-sentence announcement "
-            "for a team chat. You have no tools and no files — work only "
-            "from what you were handed."
-        ),
-        model=chat_model(),
-    )
-
-    note_path = os.path.join(workspace.workdir, NOTE)
+    judge_model = model()
 
     return SOP(
-        name="Write and announce a note",
-        description="Outline a note, write it to disk, announce it.",
+        name="客户投诉处理",
+        description="Establish the facts, propose redress, reply.",
         steps=[
             SOPStep(
-                id="outline",
-                subject="Outline the note",
+                id="establish",
+                subject="核实事实",
                 description=(
-                    "Decide what the note should cover. Submit the "
-                    "outline as a short bulleted list."
+                    f"Read {data}/orders.json and {data}/shipments.json "
+                    "and work out what happened to this customer's order. "
+                    "Submit an account: the order id, what was promised, "
+                    "what the tracking actually shows, and how many days "
+                    "late it now is. Every claim must be traceable to the "
+                    "records."
                 ),
-                agent=writer,
-                # Seeding the agent's own task list narrows how it
-                # decomposes the step without taking the decision away.
-                tasks=[
-                    Task(
-                        subject="Decide the audience",
-                        description="Who is this note for?",
-                        metadata={},
-                    ),
-                    Task(
-                        subject="Pick three points",
-                        description="No more than three.",
-                        metadata={},
-                    ),
-                ],
+                agent=support,
+                verifier=FactsMatchRecords(
+                    judge_model,
+                    workspace,
+                    ["orders.json", "shipments.json"],
+                ),
             ),
             SOPStep(
-                id="draft",
-                subject="Write the note",
+                id="propose",
+                subject="拟补偿方案",
                 description=(
-                    f"Write the note to {note_path}, following the "
-                    "outline you were handed."
+                    f"Read {data}/policy.md and propose what this customer "
+                    "should be offered, given the facts you were handed. "
+                    "Submit the offer with the clause it comes from, and "
+                    "say plainly if it needs a supervisor."
                 ),
-                agent=writer,
-                blocked_by=["outline"],
-                verifier=FileWritten(workspace, NOTE),
+                agent=policy,
+                blocked_by=["establish"],
+                verifier=SupervisorApproval(),
             ),
             SOPStep(
-                id="announce",
-                subject="Announce it",
+                id="reply",
+                subject="写回复客户",
                 description=(
-                    "Write a two-sentence announcement for a team chat."
+                    "Draft the reply to the customer in Chinese. Offer "
+                    "exactly what was approved and nothing more."
                 ),
-                # A different agent, with no tools: all it can see is what
-                # the previous step submitted.
-                agent=editor,
-                blocked_by=["draft"],
-                verifier=HumanApproval(),
+                agent=writer,
+                blocked_by=["propose"],
+                verifier=ReplyIsSafeToSend(judge_model),
             ),
         ],
     )
@@ -204,12 +306,12 @@ async def build_sop(
 def show(event: object, renderer: ConsoleRenderer) -> None:
     """Print SOP events plainly and let the renderer handle the rest."""
     if isinstance(event, StepStateEvent):
-        line = f"\n── {event.subject} · {event.state}"
+        line = f"\n== {event.subject} - {event.state.value}"
         if event.message:
-            line += f" — {event.message}"
+            line += f" - {event.message}"
         print(line)
     elif isinstance(event, RunSettledEvent):
-        print(f"\n══ run {event.status.value} {event.reason}".rstrip())
+        print(f"\n== run {event.status.value} {event.reason}".rstrip())
     else:
         renderer.render(event)
 
@@ -241,8 +343,8 @@ async def ask_permission(
     )
 
 
-async def ask_for_signoff(engine: SOPEngine) -> VerificationRecord | None:
-    """Show what is waiting on a person and read a verdict.
+async def ask_supervisor(engine: SOPEngine) -> VerificationRecord | None:
+    """Show the proposal and read a supervisor's decision.
 
     Answers ``None`` when nothing is actually waiting to be judged, which
     is not an error — an agent may simply have stopped for permission.
@@ -258,37 +360,27 @@ async def ask_for_signoff(engine: SOPEngine) -> VerificationRecord | None:
     if waiting is None:
         return None
 
-    print(f"\n{'-' * 60}")
-    print(f"{waiting.subject} is waiting for you:\n")
+    print("\n" + "-" * 60)
+    print(f"{waiting.subject} needs your approval:\n")
     print(engine.run.steps[waiting.id].submission)
     print("-" * 60)
 
-    verdict = await asyncio.to_thread(input, "Accept it? [y/N] ")
+    verdict = await asyncio.to_thread(input, "Approve? [y/N] ")
     if verdict.strip().lower() in ("y", "yes"):
-        return VerificationRecord(passed=True, verified_by="you")
+        return VerificationRecord(passed=True, verified_by="supervisor")
     reason = await asyncio.to_thread(input, "What should change? ")
     return VerificationRecord(
         passed=False,
-        message=reason.strip() or "Try again.",
-        verified_by="you",
+        message=reason.strip() or "Not approved as it stands.",
+        verified_by="supervisor",
     )
 
 
 async def main() -> None:
-    """Run the SOP, pausing whenever a person is needed."""
+    """Run the procedure, pausing whenever a person is needed."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="qwen3.7-max")
-    parser.add_argument(
-        "--topic",
-        default="Why our SOP steps hand over text instead of files",
-    )
-    parser.add_argument(
-        "--workdir",
-        default=os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "workspace",
-        ),
-    )
+    parser.add_argument("--complaint", default=DEFAULT_COMPLAINT)
     args = parser.parse_args()
 
     api_key = os.environ.get("DASHSCOPE_API_KEY")
@@ -298,14 +390,15 @@ async def main() -> None:
             "running this demo.",
         )
 
-    async with LocalWorkspace(workdir=args.workdir) as workspace:
+    here = os.path.dirname(os.path.abspath(__file__))
+    async with LocalWorkspace(workdir=here) as workspace:
         sop = await build_sop(workspace, args.model, api_key)
         engine = SOPEngine(sop)
         renderer = ConsoleRenderer()
-        approval: HumanApproval = sop.steps[-1].verifier
+        approval: SupervisorApproval = sop.steps[1].verifier
 
         inputs: list | UserConfirmResultEvent | None = [
-            TextBlock(text=args.topic),
+            TextBlock(text=args.complaint),
         ]
         while True:
             # A run stops for two different reasons, told apart by what
@@ -325,18 +418,19 @@ async def main() -> None:
                 inputs = await ask_permission(asked_permission)
                 continue
 
-            verdict = await ask_for_signoff(engine)
+            verdict = await ask_supervisor(engine)
             if verdict is None:
                 print("\nNothing left to answer; stopping.")
                 break
             approval.answer = verdict
 
-        print(f"\nWorkspace: {workspace.workdir}")
+        reply = engine.run.steps["reply"].submission
+        if reply:
+            print("\n" + "=" * 60)
+            print("给客户的回复：\n")
+            print(reply)
 
         # Close the models' HTTP clients before the loop tears down.
-        # Nothing else does, and asyncio finalising an open connection
-        # pool on the way out makes httpcore raise — a confusing way to
-        # end a run that actually succeeded.
         for step in sop.steps:
             client = getattr(step.agent.model, "client", None)
             if client is not None:

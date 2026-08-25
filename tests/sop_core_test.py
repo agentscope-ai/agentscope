@@ -9,8 +9,8 @@ from unittest import TestCase
 
 from agentscope.agent import Agent
 from agentscope.sop import (
+    VerifierBase,
     SOP,
-    CallbackVerifier,
     Dispatch,
     Judge,
     Settle,
@@ -25,6 +25,21 @@ from agentscope.sop import _engine as core
 from agentscope.state import Task
 
 from tests.utils import MockModel
+
+
+class _Decides(VerifierBase):
+    """A verifier that defers to a plain function, for tests only."""
+
+    def __init__(self, decide) -> None:
+        """Remember what to call."""
+        self._decide = decide
+
+    async def verify(self, sop, run, step, step_run):
+        """Ask the function."""
+        result = self._decide(sop, run, step, step_run)
+        if result is not None and not result.verified_by:
+            result.verified_by = "test"
+        return result
 
 
 def _agent(name: str = "worker") -> Agent:
@@ -230,7 +245,7 @@ class SOPCoreTest(TestCase):
 
         sop = SOP(
             name="one",
-            steps=[_step("a", verifier=CallbackVerifier(decide))],
+            steps=[_step("a", verifier=_Decides(decide))],
         )
         run = new_run(sop)
         core.mark_dispatched(run, "a")
@@ -242,7 +257,7 @@ class SOPCoreTest(TestCase):
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual("callback", result.verified_by)
+        self.assertEqual("test", result.verified_by)
         self.assertEqual(
             {
                 "sop": "one",
