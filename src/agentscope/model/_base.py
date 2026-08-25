@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """The base class for the chat models."""
 import asyncio
+from collections import OrderedDict
 import inspect
 import json
 from abc import abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
-from typing import Type, Any, AsyncGenerator
+from typing import Type, Any, AsyncGenerator, Iterator
 
 import jsonschema
 from pydantic import BaseModel, ValidationError as PydanticValidationError
@@ -33,6 +36,11 @@ from ..tool import ToolChoice
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 _STRUCTURED_TEXT_CHARS = frozenset("{}[]():,;=<>\"'._+-*/%")
+_MAX_TOKEN_CALIBRATION_SESSIONS = 128
+_TOKEN_CALIBRATION_SESSION: ContextVar[str | None] = ContextVar(
+    "agentscope_token_calibration_session",
+    default=None,
+)
 
 
 class ChatModelBase:
@@ -97,6 +105,66 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self._usage_anchors: OrderedDict[str, tuple[int, int]] = OrderedDict()
+
+    @contextmanager
+    def _token_calibration_scope(
+        self,
+        session_id: str | None,
+    ) -> Iterator[None]:
+        """Scope usage calibration to one agent session.
+
+        A context variable keeps concurrent agents from sharing the active
+        session, while the per-model anchor table keeps the latest provider
+        usage isolated between sessions.
+        """
+        token = _TOKEN_CALIBRATION_SESSION.set(session_id)
+        try:
+            yield
+        finally:
+            _TOKEN_CALIBRATION_SESSION.reset(token)
+
+    def _record_usage_anchor(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+        usage: Any,
+        session_id: str | None = None,
+    ) -> None:
+        """Remember successful provider input usage for this session.
+
+        Provider-specific ``count_tokens`` overrides remain authoritative and
+        therefore do not receive the fallback estimator's calibration.
+        """
+        session_id = (
+            session_id
+            if session_id is not None
+            else _TOKEN_CALIBRATION_SESSION.get()
+        )
+        if (
+            session_id is None
+            or usage is None
+            or type(self).count_tokens is not ChatModelBase.count_tokens
+        ):
+            return
+
+        self._usage_anchors.pop(session_id, None)
+        self._usage_anchors[session_id] = (
+            self._estimate_input_tokens(messages, tools),
+            int(usage.input_tokens),
+        )
+        while len(self._usage_anchors) > _MAX_TOKEN_CALIBRATION_SESSIONS:
+            self._usage_anchors.popitem(last=False)
+
+    def _clear_usage_anchor(self, session_id: str | None = None) -> None:
+        """Forget calibration after an agent context is compacted."""
+        key = (
+            session_id
+            if session_id is not None
+            else _TOKEN_CALIBRATION_SESSION.get()
+        )
+        if key is not None:
+            self._usage_anchors.pop(key, None)
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -256,13 +324,17 @@ class ChatModelBase:
         # Consume the model calling result
         # =====================================================================
         if isinstance(res, ChatResponse):
+            self._record_usage_anchor(messages, tools, res.usage)
             return res
+
+        calibration_session = _TOKEN_CALIBRATION_SESSION.get()
 
         async def _stream() -> AsyncGenerator[ChatResponse, None]:
             """The wrapper around model calling."""
             # For backward compatibility
             yield_acc_res = True
             acc_res = _StreamAccumulator()
+            final_usage: Any = None
             try:
                 async for chunk in res:
                     if not chunk.is_last:
@@ -280,13 +352,28 @@ class ChatModelBase:
                             continue
                     else:
                         yield_acc_res = False
+                        final_usage = chunk.usage or acc_res.usage
                     yield chunk
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
 
-            if yield_acc_res:
-                yield acc_res.build()
+            completed_response = acc_res.build() if yield_acc_res else None
+            if completed_response is not None:
+                self._record_usage_anchor(
+                    messages,
+                    tools,
+                    completed_response.usage,
+                    session_id=calibration_session,
+                )
+                yield completed_response
+            elif not yield_acc_res:
+                self._record_usage_anchor(
+                    messages,
+                    tools,
+                    final_usage,
+                    session_id=calibration_session,
+                )
 
         return _stream()
 
@@ -395,6 +482,26 @@ class ChatModelBase:
             `int`:
                 The number of tokens in the model.
         """
+        estimated_tokens = self._estimate_input_tokens(messages, tools)
+        session_id = _TOKEN_CALIBRATION_SESSION.get()
+        anchor = (
+            self._usage_anchors.get(session_id)
+            if session_id is not None
+            else None
+        )
+        if anchor is None:
+            return estimated_tokens
+
+        anchor_estimate, usage_tokens = anchor
+        conservative_delta = max(0, estimated_tokens - anchor_estimate)
+        return max(estimated_tokens, usage_tokens + conservative_delta)
+
+    def _estimate_input_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """Estimate the input surface without applying usage calibration."""
         cnt = 0
 
         acc_texts = []
@@ -707,7 +814,9 @@ class ChatModelBase:
             # Insert a user message to the last
             copied_messages[-1].content = copied_messages[
                 -1
-            ].get_content_blocks() + [TextBlock(text=instruction)]
+            ].get_content_blocks() + [
+                TextBlock(text=instruction),
+            ]
         else:
             copied_messages.append(
                 UserMsg(name="user", content=[TextBlock(text=instruction)]),

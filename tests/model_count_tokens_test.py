@@ -10,11 +10,12 @@ from agentscope.message import (
     Base64Source,
     DataBlock,
     Msg,
+    SystemMsg,
     TextBlock,
     URLSource,
     UserMsg,
 )
-from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.model import ChatResponse, ChatUsage, StructuredResponse
 from agentscope.state import AgentState
 from agentscope.tool import Toolkit
 
@@ -64,6 +65,19 @@ class LegacyCompressionAwareMockModel(CompressionAwareMockModel):
         return int(len(text.encode("utf-8")) / 4 + 0.5)
 
 
+class ProviderCountMockModel(MockModel):
+    """Mock provider with an authoritative token counter."""
+
+    async def count_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """Return the provider's exact count independent of calibration."""
+        del messages, tools
+        return 7
+
+
 class DropOldestMockModel(CompressionAwareMockModel):
     """Fail the first oversized summary request containing the oldest item."""
 
@@ -104,6 +118,14 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up a mock model that uses ChatModelBase.count_tokens."""
         self.model = MockModel(use_fallback_token_estimate=True)
+
+    @staticmethod
+    def _calibration_scope(model: MockModel, session_id: str) -> Any:
+        """Enter the model's private session scope for direct tests."""
+        # pylint: disable=protected-access
+        return model._token_calibration_scope(
+            session_id,
+        )
 
     async def test_data_blocks_use_flat_multimodal_estimate(self) -> None:
         """Large base64 payloads are not counted as prompt text."""
@@ -195,10 +217,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
             "and operating profit margin across all departments for Q3 "
             "2026."
         )
-        chinese = (
-            "请分析2026年第三季度集团财务营收趋势、成本结构明细"
-            "以及各事业部的营业利润率情况。"
-        )
+        chinese = "请分析2026年第三季度集团财务营收趋势、成本结构明细以及各事业部的营业利润率情况。"
         sql = (
             "SELECT order_id, sum(amount * (1 - discount)) as net_total, "
             "count(item_id) as total_items FROM orders WHERE amount > "
@@ -223,8 +242,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
                 "WHERE amount > 50000;",
                 '返回结果如下：{"orders": [{"id": 1, "amount": '
                 '62000.0, "status": "SETTLED"}], "total": 1}',
-                "已获取到 1 笔大额订单，金额为 62,000.00 元，状态为已结算。"
-                "请问还需要进一步汇总分析吗？",
+                "已获取到 1 笔大额订单，金额为 62,000.00 元，状态为已结算。请问还需要进一步汇总分析吗？",
             ],
         )
         payloads = [
@@ -244,6 +262,202 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
                 self.assertEqual(estimate, expected)
                 self.assertGreaterEqual(estimate, tokenizer_tokens)
                 self.assertLessEqual(estimate, tokenizer_tokens * 2)
+
+    async def test_provider_usage_anchors_are_session_local(self) -> None:
+        """Provider overhead calibrates later turns without cross-talk."""
+        messages = [UserMsg(name="user", content="short prompt")]
+        raw_estimate = await self.model.count_tokens(messages, None)
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="ok")],
+                    is_last=True,
+                    usage=ChatUsage(input_tokens=52, output_tokens=1, time=0),
+                ),
+            ],
+        )
+
+        with self._calibration_scope(self.model, "session-a"):
+            await self.model(messages=messages)
+            self.assertEqual(
+                await self.model.count_tokens(messages, None),
+                52,
+            )
+            expanded = [
+                UserMsg(name="user", content="short prompt plus new text"),
+            ]
+            expanded_estimate = await self.model.count_tokens(expanded, None)
+            with self._calibration_scope(self.model, "session-b"):
+                expanded_raw_estimate = await self.model.count_tokens(
+                    expanded,
+                    None,
+                )
+            self.assertGreaterEqual(
+                expanded_estimate,
+                52
+                + max(
+                    0,
+                    expanded_raw_estimate - raw_estimate,
+                ),
+            )
+
+        with self._calibration_scope(self.model, "session-b"):
+            self.assertEqual(
+                await self.model.count_tokens(messages, None),
+                raw_estimate,
+            )
+
+    async def test_streaming_final_usage_anchors_the_next_estimate(
+        self,
+    ) -> None:
+        """A usage-bearing final stream chunk calibrates later turns."""
+        model = MockModel(stream=True, use_fallback_token_estimate=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="part")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[],
+                        is_last=True,
+                        usage=ChatUsage(
+                            input_tokens=52,
+                            output_tokens=1,
+                            time=0,
+                        ),
+                    ),
+                ],
+            ],
+        )
+        messages = [UserMsg(name="user", content="streamed prompt")]
+
+        with self._calibration_scope(model, "stream-session"):
+            response = await model(messages=messages)
+            chunks = [chunk async for chunk in response]
+            self.assertTrue(chunks[-1].is_last)
+            self.assertEqual(
+                await model.count_tokens(messages, None),
+                52,
+            )
+
+    async def test_provider_count_tokens_override_stays_authoritative(
+        self,
+    ) -> None:
+        """Provider counters are not replaced by fallback calibration."""
+        model = ProviderCountMockModel(stream=False)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="ok")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=1000,
+                        output_tokens=1,
+                        time=0,
+                    ),
+                ),
+            ],
+        )
+        messages = [UserMsg(name="user", content="exact prompt")]
+
+        with self._calibration_scope(model, "exact-session"):
+            await model(messages=messages)
+            self.assertEqual(await model.count_tokens(messages, None), 7)
+
+    async def test_usage_anchor_table_is_bounded(
+        self,
+    ) -> None:
+        """Short-lived sessions cannot grow the anchor table forever."""
+        for index in range(129):
+            # pylint: disable=protected-access
+            self.model._record_usage_anchor(
+                [UserMsg(name="user", content="prompt")],
+                None,
+                ChatUsage(input_tokens=index, output_tokens=1, time=0),
+                session_id=f"short-session-{index}",
+            )
+
+        self.assertLessEqual(
+            len(self.model._usage_anchors),  # pylint: disable=protected-access
+            128,
+        )
+
+    async def test_agent_reply_sets_the_calibration_session(self) -> None:
+        """The public reply path records usage under its Agent session."""
+        model = MockModel(stream=False, use_fallback_token_estimate=True)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="ok")],
+                    is_last=True,
+                    usage=ChatUsage(input_tokens=52, output_tokens=1, time=0),
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Be concise.",
+            model=model,
+            state=AgentState(session_id="reply-session"),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        await agent.reply(UserMsg(name="user", content="hello"))
+
+        with self._calibration_scope(model, "reply-session"):
+            self.assertEqual(
+                await model.count_tokens(
+                    [UserMsg(name="user", content="hello")],
+                    None,
+                ),
+                52,
+            )
+
+    async def test_usage_anchor_is_cleared_after_context_replacement(
+        self,
+    ) -> None:
+        """A compacted context must not retain the old large baseline."""
+        messages = [UserMsg(name="user", content="old context")]
+        raw_estimate = await self.model.count_tokens(messages, None)
+        self.model.context_size = 100
+        self.model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "Keep the active task.",
+                    "current_state": "The old context was summarized.",
+                    "important_discoveries": "The context is token dense.",
+                    "next_steps": "Continue with the latest user input.",
+                    "context_to_preserve": "Preserve the user requirements.",
+                },
+            ),
+        )
+        anchor_messages = [
+            SystemMsg(name="system", content="Be concise."),
+            *messages,
+        ]
+        self.model._record_usage_anchor(  # pylint: disable=protected-access
+            anchor_messages,
+            [],
+            ChatUsage(input_tokens=1000, output_tokens=1, time=0),
+            session_id="compression-session",
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Be concise.",
+            model=self.model,
+            state=AgentState(session_id="compression-session"),
+            toolkit=Toolkit(),
+        )
+        agent.state.context = messages
+        await agent.compress_context()
+        with self._calibration_scope(self.model, "compression-session"):
+            self.assertEqual(
+                await self.model.count_tokens(messages, None),
+                raw_estimate,
+            )
 
     async def _run_compression_flow(
         self,
@@ -362,7 +576,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
         provider_text = await self._run_compression_flow(
             model,
             oldest,
-            context_size=1200,
+            context_size=1300,
             context=[
                 UserMsg(name="user", content=oldest),
                 UserMsg(name="user", content=second),
