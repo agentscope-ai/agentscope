@@ -274,13 +274,18 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
 
         result = await self.model([])
 
-        self.assertEqual(result.usage.input_tokens, 800)
-        self.assertEqual(result.usage.output_tokens, 130)
         self.assertEqual(
-            result.usage.input_tokens + result.usage.output_tokens,
-            930,
+            dict(result.usage),
+            {
+                "input_tokens": 800,
+                "output_tokens": 130,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 50,
+                "type": "chat",
+                "metadata": None,
+            },
         )
-        self.assertEqual(result.usage.cache_input_tokens, 50)
 
     async def test_usage_fallback_excludes_tool_use_tokens(self) -> None:
         """Usage fallback excludes tool-use tokens from output."""
@@ -298,8 +303,18 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
 
         result = await self.model([])
 
-        self.assertEqual(result.usage.input_tokens, 800)
-        self.assertEqual(result.usage.output_tokens, 10)
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 800,
+                "output_tokens": 10,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -387,10 +402,19 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
 
         # The delta and the accumulated final response both carry the
         # usage of the last chunk.
-        self.assertEqual(responses[0].usage.input_tokens, 800)
-        self.assertEqual(responses[0].usage.output_tokens, 130)
-        self.assertEqual(responses[-1].usage.input_tokens, 800)
-        self.assertEqual(responses[-1].usage.output_tokens, 130)
+        self.assertEqual(
+            dict(responses[0].usage),
+            {
+                "input_tokens": 800,
+                "output_tokens": 130,
+                "time": responses[0].usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 50,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+        self.assertEqual(responses[-1].usage, responses[0].usage)
 
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then accumulated final."""
