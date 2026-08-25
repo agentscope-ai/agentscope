@@ -126,12 +126,51 @@ class DiscordChannel(ChannelBase):
         self._config = config
         self.status = ChannelStatus()
         self._client: "discord.Client | None" = None
+        self._client_lock = asyncio.Lock()
         self._stopped = False
 
     @property
     def channel_id(self) -> str:
         """The unique channel instance identifier."""
         return self._channel_id
+
+    async def aclose(self) -> None:
+        """Close the client this instance logged in lazily.
+
+        The connection loop closes its own in ``start_listening``; this
+        covers the client-only instances, which never run it.
+        """
+        if self._client is not None and not self._stopped:
+            await self._client.close()
+            self._client = None
+
+    async def _ensure_client(self) -> "discord.Client":
+        """Return a client able to call the REST API, connected or not.
+
+        :class:`~agentscope.app.channel.ChannelClients` builds instances
+        that never run :meth:`start_listening`; ``login`` alone gives
+        those a working REST client. Its gateway cache stays empty, so
+        every read below goes through ``fetch_*`` rather than ``get_*``.
+        """
+        if self._client is not None:
+            return self._client
+        # Publish only after login succeeds: a half-built client handed
+        # to a concurrent caller would make unauthenticated requests,
+        # and a failed one would be cached forever, skipping login.
+        async with self._client_lock:
+            if self._client is None:
+                import discord
+
+                intents = discord.Intents.default()
+                intents.message_content = True
+                client = discord.Client(intents=intents)
+                try:
+                    await client.login(self._bot_token)
+                except Exception:
+                    await client.close()
+                    raise
+                self._client = client
+        return self._client
 
     # -- Lifecycle --
 
@@ -361,19 +400,26 @@ class DiscordChannel(ChannelBase):
             )
 
     async def list_bot_chats(self) -> list[dict]:
-        """List every text channel the bot can see as ``{chat_id, name}``."""
-        if self._client is None:
-            return []
+        """List every text channel the bot can see as ``{chat_id, name}``.
+
+        Paginates over REST rather than reading ``client.guilds`` /
+        ``guild.text_channels``: those are the gateway cache, which is
+        empty on an instance that only logged in.
+        """
+        import discord
+
+        client = await self._ensure_client()
         results: list[dict] = []
         try:
-            for guild in self._client.guilds:
-                for channel in guild.text_channels:
-                    results.append(
-                        {
-                            "chat_id": str(channel.id),
-                            "name": f"{guild.name}#{channel.name}",
-                        },
-                    )
+            async for guild in client.fetch_guilds():
+                for channel in await guild.fetch_channels():
+                    if isinstance(channel, discord.TextChannel):
+                        results.append(
+                            {
+                                "chat_id": str(channel.id),
+                                "name": f"{guild.name}#{channel.name}",
+                            },
+                        )
         except Exception as exc:  # pylint: disable=broad-except
             if not _is_expected_discord_lookup_error(exc):
                 raise
@@ -421,19 +467,18 @@ class DiscordChannel(ChannelBase):
 
         Returns:
             `discord.abc.Messageable | None`:
-                The channel, or ``None`` if the id is malformed, the client is
-                not ready, or the platform lookup fails.
+                The channel, or ``None`` if the id is malformed or the
+                platform lookup fails.
         """
         try:
             cid = int(chat_id)
         except (TypeError, ValueError):
             return None
-        if self._client is None:
-            return None
+        client = await self._ensure_client()
         try:
-            return self._client.get_channel(
+            return client.get_channel(
                 cid,
-            ) or await self._client.fetch_channel(
+            ) or await client.fetch_channel(
                 cid,
             )
         except Exception as exc:  # pylint: disable=broad-except

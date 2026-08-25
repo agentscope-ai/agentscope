@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Regression tests for Discord channel best-effort helpers."""
+from collections.abc import AsyncIterator
 import sys
 from types import SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -25,6 +27,30 @@ class _ExpectedDiscordError(Exception):
     """Fake discord.py base exception for expected lookup failures."""
 
 
+class _EmptyAsyncIterator:
+    """Async iterator that yields no items."""
+
+    def __aiter__(self) -> "_EmptyAsyncIterator":
+        """Return this iterator."""
+        return self
+
+    async def __anext__(self) -> Any:
+        """Stop immediately."""
+        raise StopAsyncIteration
+
+
+class _FailingAsyncIterator:
+    """Async iterator that raises while fetching the first item."""
+
+    def __aiter__(self) -> "_FailingAsyncIterator":
+        """Return this iterator."""
+        return self
+
+    async def __anext__(self) -> Any:
+        """Raise the simulated Discord client failure."""
+        raise AssertionError("broken guild cache")
+
+
 class _ExpectedLookupFailureClient:
     """Client double that behaves like an unresolved Discord channel lookup."""
 
@@ -35,6 +61,22 @@ class _ExpectedLookupFailureClient:
     async def fetch_channel(self, _channel_id: int) -> None:
         """Simulate a Discord API lookup failure."""
         raise _ExpectedDiscordError("lookup failed")
+
+
+class _EmptyLookupClient:
+    """Client double with no cached or remotely fetched channels."""
+
+    def fetch_guilds(self) -> AsyncIterator[Any]:
+        """Return no guilds."""
+        return _EmptyAsyncIterator()
+
+    def get_channel(self, _channel_id: int) -> None:
+        """Return no cached channel."""
+        return None
+
+    async def fetch_channel(self, _channel_id: int) -> None:
+        """Return no remotely fetched channel."""
+        return None
 
 
 class _UnexpectedLookupFailureClient:
@@ -50,12 +92,11 @@ class _UnexpectedLookupFailureClient:
 
 
 class _UnexpectedGuildFailureClient:
-    """Client double that fails while reading the guild cache."""
+    """Client double that fails while fetching guilds."""
 
-    @property
-    def guilds(self) -> list:
+    def fetch_guilds(self) -> AsyncIterator[Any]:
         """Raise an unexpected failure."""
-        raise AssertionError("broken guild cache")
+        return _FailingAsyncIterator()
 
 
 def _discord_module() -> SimpleNamespace:
@@ -65,21 +106,29 @@ def _discord_module() -> SimpleNamespace:
         Forbidden=_ExpectedDiscordError,
         HTTPException=_ExpectedDiscordError,
         NotFound=_ExpectedDiscordError,
+        TextChannel=object,
     )
 
 
 class DiscordChannelHelperTest(IsolatedAsyncioTestCase):
     """Discord management helpers should fail open when unavailable."""
 
-    async def test_helpers_return_empty_values_before_client_ready(
+    async def test_helpers_return_empty_values_with_empty_lazy_client(
         self,
     ) -> None:
-        """Cold channels should not crash management or context helpers."""
+        """Empty Discord REST lookups should not crash helper callers."""
         channel = _channel()
+        client = _EmptyLookupClient()
 
-        self.assertEqual(await channel.list_bot_chats(), [])
-        self.assertEqual(await channel.chat_name("123"), "")
-        self.assertIsNone(await channel.chat_kind("123"))
+        async def ensure_client() -> _EmptyLookupClient:
+            """Return the fake lazy REST client."""
+            return client
+
+        with patch.dict(sys.modules, {"discord": _discord_module()}):
+            channel._ensure_client = ensure_client
+            self.assertEqual(await channel.list_bot_chats(), [])
+            self.assertEqual(await channel.chat_name("123"), "")
+            self.assertIsNone(await channel.chat_kind("123"))
 
     async def test_helpers_return_empty_values_when_discord_lookup_fails(
         self,
@@ -125,5 +174,8 @@ class DiscordChannelHelperTest(IsolatedAsyncioTestCase):
         channel = _channel()
         channel._client = _UnexpectedGuildFailureClient()
 
-        with self.assertRaises(AssertionError):
+        with (
+            patch.dict(sys.modules, {"discord": _discord_module()}),
+            self.assertRaises(AssertionError),
+        ):
             await channel.list_bot_chats()
