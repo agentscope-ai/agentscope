@@ -668,6 +668,34 @@ class SOPEngine:
         if sink:
             mark_submitted(self.run, step.id, sink[-1])
             yield self._state_event(step)
+            return
+
+        if step.agent.state.has_awaiting_tool_calls(step.agent.name):
+            # Stopped for permission. Something outside will move it, so
+            # leave it running and let the stream end.
+            return
+
+        # The agent simply finished without handing anything on, and
+        # nothing is coming to rescue it. Treat that as a refusal rather
+        # than a wait: it goes back with the reason, and it counts against
+        # max_attempts so a model that will not submit cannot loop for
+        # ever.
+        reason = (
+            f"You ended your turn without calling {SubmitStepResult.name}, "
+            "so nothing was handed on. Whatever you wrote in the reply is "
+            "not the result — call the tool with it."
+        )
+        record_verification(
+            self.sop,
+            self.run,
+            step.id,
+            VerificationRecord(
+                passed=False,
+                message=reason,
+                verified_by="engine",
+            ),
+        )
+        yield self._state_event(step, reason)
 
     async def _judge(
         self,
@@ -761,8 +789,10 @@ class SOPEngine:
         content.append(
             TextBlock(
                 text=(
-                    f"\nWhen you are done, call {SubmitStepResult.name} — "
-                    "it is the only thing the following steps will see."
+                    f"\n## How to finish\nCall {SubmitStepResult.name} "
+                    "with your result. Do not write the result as a reply: "
+                    "a reply is not handed on, and the step is not done "
+                    "until the tool has been called."
                 ),
             ),
         )

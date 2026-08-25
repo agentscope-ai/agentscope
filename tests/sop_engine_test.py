@@ -359,6 +359,48 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertEqual(SOPRunStatus.COMPLETED, settled[0].status)
         self.assertEqual("did it", engine.run.steps["a"].submission)
 
+    async def test_an_agent_that_never_submits_is_sent_back_not_stranded(
+        self,
+    ) -> None:
+        """Finishing without handing anything on is a refusal, not a wait.
+
+        Nothing outside is coming to move such a step, so treating it as
+        parked would strand the run for good. It goes back with the reason
+        instead, and the attempt limit still ends it.
+        """
+        model = MockModel()
+        model.set_responses([_says("here is the outline"), _says("and more")])
+
+        sop = SOP(
+            name="forgetful",
+            steps=[
+                SOPStep(
+                    id="a",
+                    subject="Outline it",
+                    agent=_agent(model),
+                    max_attempts=2,
+                ),
+            ],
+        )
+        engine = SOPEngine(sop)
+
+        settled = [
+            e
+            async for e in engine.run_stream([TextBlock(text="go")])
+            if isinstance(e, RunSettledEvent)
+        ]
+
+        # Two attempts, both refused for the same reason, then the run
+        # ends — rather than sitting in RUNNING for ever.
+        record = engine.run.steps["a"]
+        self.assertEqual(SOPStepState.FAILED, record.state)
+        self.assertEqual(2, len(record.verifications))
+        self.assertIn(
+            SubmitStepResult.name,
+            record.verifications[0].message,
+        )
+        self.assertEqual(SOPRunStatus.FAILED, settled[0].status)
+
     async def test_preset_tasks_seed_the_agents_own_list(self) -> None:
         """A step may narrow how its agent decomposes the work."""
         from agentscope.state import Task

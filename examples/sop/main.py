@@ -204,7 +204,7 @@ async def build_sop(
 def show(event: object, renderer: ConsoleRenderer) -> None:
     """Print SOP events plainly and let the renderer handle the rest."""
     if isinstance(event, StepStateEvent):
-        line = f"\n── {event.subject} · {event.state.value}"
+        line = f"\n── {event.subject} · {event.state}"
         if event.message:
             line += f" — {event.message}"
         print(line)
@@ -332,6 +332,15 @@ async def main() -> None:
             approval.answer = verdict
 
         print(f"\nWorkspace: {workspace.workdir}")
+
+        # Close the models' HTTP clients before the loop tears down.
+        # Nothing else does, and asyncio finalising an open connection
+        # pool on the way out makes httpcore raise — a confusing way to
+        # end a run that actually succeeded.
+        for step in sop.steps:
+            client = getattr(step.agent.model, "client", None)
+            if client is not None:
+                await client.close()
 
 
 if __name__ == "__main__":
