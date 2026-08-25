@@ -78,8 +78,11 @@ class SOPExampleTest(IsolatedAsyncioTestCase):
             writer.set_responses(
                 [_submits("很抱歉，我们将全额退款。"), _says("ok")],
             )
-            # The two model-backed gates both consult this one.
-            judge.set_responses([_says("PASS"), _says("PASS")])
+            # The two model-backed gates both consult this one, and it
+            # answers as a *stream* — which is what a model built the
+            # ordinary way does, and what the judge helper has to cope
+            # with even though a verdict never needs streaming.
+            judge.set_responses([[_says("PASS")], [_says("PASS")]])
 
             sop.steps[0].agent.model = support
             sop.steps[1].agent.model = policy

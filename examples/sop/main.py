@@ -32,6 +32,7 @@ Run with::
 import argparse
 import asyncio
 import os
+from typing import AsyncGenerator
 
 from agentscope.agent import Agent
 from agentscope.console import ConsoleRenderer
@@ -68,10 +69,22 @@ async def judge(model: ChatModelBase, prompt: str) -> tuple[bool, str]:
 
     The verdict is the first word so it survives a model that cannot
     resist adding a paragraph.
+
+    A model built with ``stream=True`` answers with an async generator
+    rather than one reply, so both shapes are handled — a judge has no
+    use for streaming, but nothing stops you handing one in.
     """
     reply = await model([UserMsg("judge", prompt)])
+    if isinstance(reply, AsyncGenerator):
+        chunk = None
+        async for chunk in reply:
+            pass
+        reply = chunk
+
     text = "".join(
-        block.text for block in reply.content if block.type == "text"
+        block.text
+        for block in (reply.content if reply else [])
+        if block.type == "text"
     ).strip()
     passed = text.upper().startswith("PASS")
     reason = text.split("\n", 1)[0][5:].lstrip(" :：-") or text
@@ -207,11 +220,11 @@ async def build_sop(
     resolve and no spec to materialise.
     """
 
-    def model() -> DashScopeChatModel:
+    def model(stream: bool = True) -> DashScopeChatModel:
         return DashScopeChatModel(
             credential=DashScopeCredential(api_key=api_key),
             model=model_name,
-            stream=True,
+            stream=stream,
         )
 
     tools = await workspace.list_tools()
@@ -251,7 +264,8 @@ async def build_sop(
         model=model(),
     )
 
-    judge_model = model()
+    # A verdict is one short answer; there is nothing to stream.
+    judge_model = model(stream=False)
 
     return SOP(
         name="客户投诉处理",
@@ -306,7 +320,7 @@ async def build_sop(
 def show(event: object, renderer: ConsoleRenderer) -> None:
     """Print SOP events plainly and let the renderer handle the rest."""
     if isinstance(event, StepStateEvent):
-        line = f"\n== {event.subject} - {event.state.value}"
+        line = f"\n== {event.subject} - {event.state}"
         if event.message:
             line += f" - {event.message}"
         print(line)
