@@ -738,6 +738,35 @@ class Agent:
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
+            if (
+                res is not None
+                and res.usage is not None
+                and self.state.context
+            ):
+                last_msg = self.state.context[-1]
+                compression_usage = Usage(
+                    input_tokens=res.usage.input_tokens,
+                    output_tokens=res.usage.output_tokens,
+                    cache_input_tokens=res.usage.cache_input_tokens or 0,
+                    cache_creation_input_tokens=(
+                        res.usage.cache_creation_input_tokens or 0
+                    ),
+                )
+                if last_msg.usage is None:
+                    last_msg.usage = compression_usage
+                else:
+                    last_msg.usage.input_tokens += (
+                        compression_usage.input_tokens
+                    )
+                    last_msg.usage.output_tokens += (
+                        compression_usage.output_tokens
+                    )
+                    last_msg.usage.cache_input_tokens += (
+                        compression_usage.cache_input_tokens
+                    )
+                    last_msg.usage.cache_creation_input_tokens += (
+                        compression_usage.cache_creation_input_tokens
+                    )
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",

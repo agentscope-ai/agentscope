@@ -11,7 +11,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import MockModel, AnyString
 
-from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.model import ChatResponse, ChatUsage, StructuredResponse
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.state import AgentState
 from agentscope.message import (
@@ -26,6 +26,7 @@ from agentscope.message import (
     DataBlock,
     Base64Source,
     URLSource,
+    Usage,
 )
 from agentscope.tool import Toolkit
 from agentscope.workspace import LocalWorkspace
@@ -215,6 +216,64 @@ def _make_failing_compression_agent(
         toolkit=Toolkit(),
     )
     return agent, model
+
+
+def _make_usage_recording_compression_agent(
+    last_msg_usage: Usage | None = None,
+) -> Agent:
+    """Build an agent whose compression model response includes usage."""
+    model = MockModel(context_size=100)
+    last_msg = UserMsg(
+        "User",
+        "".join(["3" for _ in range(10 * 4)]),
+        id="3",
+    )
+    last_msg.usage = last_msg_usage
+    agent = Agent(
+        name="Friday",
+        system_prompt="".join(["0" for _ in range(20 * 4)]),
+        model=model,
+        context_config=ContextConfig(
+            trigger_ratio=0.7,
+            reserve_ratio=0.4,
+        ),
+        state=AgentState(
+            session_id="123",
+            context=[
+                UserMsg(
+                    "User",
+                    "".join(["1" for _ in range(30 * 4)]),
+                    id="1",
+                ),
+                AssistantMsg(
+                    "Friday",
+                    "".join(["2" for _ in range(10 * 4)]),
+                    id="2",
+                ),
+                last_msg,
+            ],
+        ),
+        toolkit=Toolkit(),
+    )
+    model.set_structured_response(
+        StructuredResponse(
+            content={
+                "task_overview": "1",
+                "current_state": "2",
+                "important_discoveries": "3",
+                "next_steps": "4",
+                "context_to_preserve": "5",
+            },
+            usage=ChatUsage(
+                input_tokens=123,
+                output_tokens=45,
+                time=0.1,
+                cache_input_tokens=6,
+                cache_creation_input_tokens=7,
+            ),
+        ),
+    )
+    return agent
 
 
 def _has_instruction_hint(
@@ -2410,6 +2469,47 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "error": None,
                 },
             ],
+        )
+
+    async def test_context_compression_records_structured_usage(
+        self,
+    ) -> None:
+        """Compression model usage is accumulated onto retained context."""
+        agent = _make_usage_recording_compression_agent()
+
+        await agent.compress_context()
+
+        self.assertIsNotNone(agent.state.context[-1].usage)
+        self.assertEqual(agent.state.context[-1].usage.input_tokens, 123)
+        self.assertEqual(agent.state.context[-1].usage.output_tokens, 45)
+        self.assertEqual(agent.state.context[-1].usage.cache_input_tokens, 6)
+        self.assertEqual(
+            agent.state.context[-1].usage.cache_creation_input_tokens,
+            7,
+        )
+
+    async def test_context_compression_accumulates_structured_usage(
+        self,
+    ) -> None:
+        """Compression model usage is added to existing message usage."""
+        agent = _make_usage_recording_compression_agent(
+            Usage(
+                input_tokens=10,
+                output_tokens=20,
+                cache_input_tokens=3,
+                cache_creation_input_tokens=4,
+            ),
+        )
+
+        await agent.compress_context()
+
+        self.assertIsNotNone(agent.state.context[-1].usage)
+        self.assertEqual(agent.state.context[-1].usage.input_tokens, 133)
+        self.assertEqual(agent.state.context[-1].usage.output_tokens, 65)
+        self.assertEqual(agent.state.context[-1].usage.cache_input_tokens, 9)
+        self.assertEqual(
+            agent.state.context[-1].usage.cache_creation_input_tokens,
+            11,
         )
 
     async def test_summary_failure_truncates_context(self) -> None:
