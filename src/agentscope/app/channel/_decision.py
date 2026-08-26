@@ -20,7 +20,7 @@ async def _load_awaiting(
     user_id: str,
     agent_id: str,
     session_id: str,
-) -> tuple[list[ToolCallBlock], str]:
+) -> tuple[list[ToolCallBlock], str, int]:
     """Load a session's ASKING tool calls and its current reply id.
 
     Args:
@@ -40,13 +40,13 @@ async def _load_awaiting(
     )
     agent = await storage.get_agent(user_id=user_id, agent_id=agent_id)
     if session is None or agent is None:
-        return [], ""
+        return [], "", 0
     asking = [
         tc
         for tc in session.state.get_awaiting_tool_calls(agent.data.name)
         if tc.state == ToolCallState.ASKING
     ]
-    return asking, session.state.reply_id
+    return asking, session.state.reply_id, session.conversation_revision
 
 
 async def resume_after_decision(
@@ -77,7 +77,7 @@ async def resume_after_decision(
     Returns:
         `bool`: Whether a resume was enqueued.
     """
-    asking, reply_id = await _load_awaiting(
+    asking, reply_id, revision = await _load_awaiting(
         storage,
         user_id=user_id,
         agent_id=agent_id,
@@ -98,5 +98,6 @@ async def resume_after_decision(
                 ConfirmResult(confirmed=approved, tool_call=tool_call),
             ],
         ),
+        conversation_revision=revision,
     )
     return True

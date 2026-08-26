@@ -19,7 +19,7 @@ need no dialect-specific timezone handling.
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
-from .._base import StorageBase
+from .._base import SessionRevisionConflict, StorageBase
 from .._model import (
     AgentRecord,
     ChannelRecord,
@@ -1137,6 +1137,58 @@ class AsyncSQLAlchemyStorage(StorageBase):
             row.payload = new_row.payload
             row.updated_at = new_row.updated_at
             await sess.commit()
+
+    async def reset_session_conversation(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        state: AgentState,
+        expected_revision: int,
+    ) -> SessionRecord:
+        """Reset state and messages in one SQL transaction.
+
+        The application session lock serializes writers. The revision
+        check detects stale callers within that supported lock contract;
+        it is intentionally not a database-wide CAS independent of the
+        message bus.
+        """
+        from sqlalchemy import delete, select
+
+        async with self._session() as sess:
+            row = (
+                await sess.execute(
+                    select(SessionRow).where(
+                        SessionRow.id == session_id,
+                        SessionRow.user_id == user_id,
+                        SessionRow.agent_id == agent_id,
+                    ),
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise KeyError(f"Session {session_id!r} not found.")
+
+            record = _to_record(row, SessionRecord)
+            if record.conversation_revision != expected_revision:
+                raise SessionRevisionConflict(
+                    f"Session {session_id!r} revision changed from "
+                    f"{expected_revision} to "
+                    f"{record.conversation_revision}.",
+                )
+
+            record.state = state
+            record.conversation_revision += 1
+            record.updated_at = _utcnow()
+            new_row = _from_record(SessionRow, record)
+            row.payload = new_row.payload
+            row.updated_at = new_row.updated_at
+            await sess.execute(
+                delete(MessageRow).where(
+                    MessageRow.session_id == session_id,
+                ),
+            )
+            await sess.commit()
+            return record
 
     async def list_sessions(
         self,

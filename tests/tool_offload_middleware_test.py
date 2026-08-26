@@ -183,12 +183,14 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # delivery look like somebody was already going to drain it.
         message_bus = MagicMock(spec=MessageBus)
         message_bus.registry_get = AsyncMock(return_value=None)
+        message_bus.registry_getall = AsyncMock(return_value={})
         middleware = ToolOffloadMiddleware(
             bg_manager=self.bg_manager,
             message_bus=message_bus,
             user_id="u",
             agent_id="a",
             timeout_secs=timeout_secs,
+            conversation_revision=7,
         )
         agent = Agent(
             name="test_agent",
@@ -307,7 +309,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             if c.args[0] == MessageBusKeys.inbox(agent.state.session_id)
         ]
         self.assertEqual(len(inbox_calls), 1)
-        _, hint_dict = inbox_calls[0].args
+        _, envelope = inbox_calls[0].args
+        self.assertEqual(envelope["conversation_revision"], 7)
+        hint_dict = envelope["payload"]
         session_id_called = agent.state.session_id
         self.assertEqual(session_id_called, agent.state.session_id)
         self.maxDiff = None
@@ -373,6 +377,21 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(payload["user_id"], "u")
         self.assertEqual(payload["session_id"], agent.state.session_id)
         self.assertEqual(payload["agent_id"], "a")
+        self.assertEqual(payload["conversation_revision"], 7)
+
+    async def test_legacy_positional_timeout_remains_compatible(self) -> None:
+        """The former fifth positional argument still configures timeout."""
+        message_bus = MagicMock(spec=MessageBus)
+        middleware = ToolOffloadMiddleware(
+            self.bg_manager,
+            message_bus,
+            "u",
+            "a",
+            0.25,
+        )
+
+        self.assertEqual(middleware._timeout_secs, 0.25)
+        self.assertEqual(middleware._conversation_revision, 0)
 
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""

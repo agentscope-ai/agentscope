@@ -259,6 +259,7 @@ class SchedulerManager:
                     session_id=session.id,
                     agent_id=record.agent_id,
                     payload=hint.model_dump(mode="json"),
+                    conversation_revision=session.conversation_revision,
                 )
 
                 logger.info(

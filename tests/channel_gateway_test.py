@@ -378,6 +378,168 @@ class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
         )
 
 
+class ChannelSlashCommandTest(IsolatedAsyncioTestCase):
+    """Channel slash commands bypass inbox and model triggers."""
+
+    async def test_clear_uses_shared_dispatcher_and_sends_notice(self) -> None:
+        """A channel clear resets the resolved session directly."""
+        record = _channel_record("user")
+
+        class _Storage:
+            """Return the configured channel and its derived session."""
+
+            async def get_channel(self, _channel_id: str) -> ChannelRecord:
+                return record
+
+            async def get_session(
+                self,
+                user_id: str,
+                agent_id: str,
+                session_id: str,
+            ) -> SessionRecord:
+                return SessionRecord(
+                    id=session_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    config=SessionConfig(workspace_id="workspace"),
+                )
+
+        class _SessionService:
+            """Record the clear scope selected by the gateway."""
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, str]] = []
+                self.error: Exception | None = None
+
+            async def clear_conversation(
+                self,
+                user_id: str,
+                agent_id: str,
+                session_id: str,
+            ) -> tuple[str, ...]:
+                self.calls.append((user_id, agent_id, session_id))
+                if self.error is not None:
+                    raise self.error
+                return (session_id,)
+
+        class _NoticeChannel(_FakeChannel):
+            """Capture service notices without persisting a message."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.notices: list[str] = []
+
+            async def send_notice(
+                self,
+                _event: ChannelEvent,
+                text: str,
+            ) -> None:
+                self.notices.append(text)
+
+        class _Clients:
+            """Return the one outbound channel used by the test."""
+
+            def __init__(self, channel: _NoticeChannel) -> None:
+                self.channel = channel
+
+            async def get(self, _channel_id: str) -> _NoticeChannel:
+                return self.channel
+
+        bus = InMemoryMessageBus()
+        service = _SessionService()
+        channel = _NoticeChannel()
+        gateway = ChannelGateway(
+            storage=_Storage(),
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+            session_service=service,
+            channel_clients=_Clients(channel),
+        )
+
+        event = ChannelEvent(
+            channel_id=record.id,
+            channel_user_id="channel-user",
+            chat_id="chat",
+            content=[TextBlock(text="/clear")],
+        )
+        await gateway.process(event)
+
+        self.assertEqual(len(service.calls), 1)
+        self.assertEqual(service.calls[0][:2], ("user", "agent-x"))
+        self.assertEqual(channel.notices, ["Conversation cleared."])
+        self.assertEqual(
+            await bus.queue_drain(MessageBusKeys.wakeup_queue()),
+            [],
+        )
+
+        service.error = RuntimeError("partial clear")
+        channel.notices.clear()
+        await gateway.process(event)
+        self.assertEqual(
+            channel.notices,
+            ["Conversation clear did not fully complete. Please retry."],
+        )
+
+        service.error = KeyError("missing session")
+        channel.notices.clear()
+        await gateway.process(event)
+        self.assertEqual(
+            channel.notices,
+            ["Conversation no longer exists."],
+        )
+
+
+class ChannelSessionLookupTest(IsolatedAsyncioTestCase):
+    """Normal channel messages reuse the session loaded during ensure."""
+
+    async def test_idle_message_loads_existing_session_once(self) -> None:
+        """Avoid a second Storage read solely to obtain the revision."""
+        record = _channel_record("user")
+
+        class _Storage:
+            """Return one existing session and count authoritative reads."""
+
+            def __init__(self) -> None:
+                self.get_session_calls = 0
+
+            async def get_channel(self, _channel_id: str) -> ChannelRecord:
+                """Return the channel under test."""
+                return record
+
+            async def get_session(self, **kwargs: Any) -> SessionRecord:
+                """Return the existing derived channel session."""
+                self.get_session_calls += 1
+                return SessionRecord(
+                    id=kwargs["session_id"],
+                    user_id=kwargs["user_id"],
+                    agent_id=kwargs["agent_id"],
+                    config=SessionConfig(workspace_id="workspace"),
+                    conversation_revision=4,
+                )
+
+        storage = _Storage()
+        bus = InMemoryMessageBus()
+        gateway = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await gateway.process(
+            ChannelEvent(
+                channel_id=record.id,
+                channel_user_id="channel-user",
+                chat_id="chat",
+                content=[TextBlock(text="hello")],
+            ),
+        )
+
+        wakeups = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(storage.get_session_calls, 1)
+        self.assertEqual(len(wakeups), 1)
+        self.assertEqual(wakeups[0][1]["conversation_revision"], 4)
+
+
 class FeishuPostParseTest(IsolatedAsyncioTestCase):
     """Feishu rich-text ``post`` flattens to ordered text + data blocks."""
 
@@ -560,6 +722,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                 "session_id": "the-parked-session",
                 "agent_id": "agent-x",
                 "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                "conversation_revision": 0,
                 "input": {
                     "id": event["id"],
                     "created_at": event["created_at"],

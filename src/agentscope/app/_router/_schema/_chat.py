@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The chat endpoint schema."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ....message import Msg
@@ -36,10 +38,17 @@ class ChatTriggerResponse(BaseModel):
     run arrive separately via the session's SSE stream endpoint.
     """
 
-    status: str = Field(
+    status: Literal["started", "command_completed"] = Field(
         default="started",
-        description='Always ``"started"`` when the trigger succeeded.',
+        description=(
+            '``"started"`` for chat runs or ``"command_completed"`` '
+            "for synchronous commands."
+        ),
     )
     session_id: str = Field(
         description="Echo of the session id the run was started for.",
+    )
+    command: str | None = Field(
+        default=None,
+        description="Completed slash command, when status identifies one.",
     )

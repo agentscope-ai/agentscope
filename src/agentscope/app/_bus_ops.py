@@ -85,6 +85,7 @@ async def enqueue_run_trigger(
     | UserInterruptEvent
     | Msg
     | None = None,
+    conversation_revision: int | None = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
 
@@ -123,6 +124,18 @@ async def enqueue_run_trigger(
             ``model_dump(mode="json")`` internally — callers pass the
             event object, not a pre-serialised dict.
     """
+    if (
+        kind
+        in (
+            MessageBusKeys.WAKEUP_KIND_MESSAGE,
+            MessageBusKeys.WAKEUP_KIND_RESUME,
+        )
+        and conversation_revision is None
+    ):
+        raise ValueError(
+            f"A {kind!r} trigger requires conversation_revision.",
+        )
+
     await bus.queue_push(
         MessageBusKeys.wakeup_queue(),
         {
@@ -131,6 +144,7 @@ async def enqueue_run_trigger(
             "agent_id": agent_id,
             "kind": kind,
             "input": inputs.model_dump(mode="json") if inputs else None,
+            "conversation_revision": conversation_revision,
         },
     )
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
@@ -167,6 +181,7 @@ async def deliver_to_inbox(
     session_id: str,
     agent_id: str,
     payload: dict,
+    conversation_revision: int | None = None,
 ) -> None:
     """Push a payload to a session inbox and wake the session if no run
     is currently consuming it.
@@ -188,7 +203,20 @@ async def deliver_to_inbox(
         MessageBusKeys.inbox_lock(session_id),
         ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
     ):
-        await bus.queue_push(MessageBusKeys.inbox(session_id), payload)
+        barriers = await bus.registry_getall(
+            MessageBusKeys.session_reset_barrier(session_id),
+        )
+        if barriers:
+            return
+        entry = (
+            payload
+            if conversation_revision is None
+            else {
+                "conversation_revision": conversation_revision,
+                "payload": payload,
+            }
+        )
+        await bus.queue_push(MessageBusKeys.inbox(session_id), entry)
         consumer = await bus.registry_get(
             MessageBusKeys.inbox_consumer(session_id),
             MessageBusKeys.INBOX_CONSUMER_FIELD,
@@ -200,6 +228,7 @@ async def deliver_to_inbox(
             user_id=user_id,
             session_id=session_id,
             agent_id=agent_id,
+            conversation_revision=conversation_revision,
         )
 
 
@@ -287,6 +316,7 @@ async def abandon_inbox_consumer(
     user_id: str,
     session_id: str,
     agent_id: str,
+    conversation_revision: int,
 ) -> None:
     """Give up the consumer registration without having drained the
     inbox, waking the session when payloads are still queued.
@@ -305,6 +335,8 @@ async def abandon_inbox_consumer(
             The session being abandoned.
         agent_id (`str`):
             The agent that owns the session.
+        conversation_revision (`int`):
+            The revision owned by the run handing off the inbox.
     """
     pending = await has_pending_inbox_or_release(bus, session_id)
     if not pending:
@@ -319,6 +351,7 @@ async def abandon_inbox_consumer(
         user_id=user_id,
         session_id=session_id,
         agent_id=agent_id,
+        conversation_revision=conversation_revision,
     )
 
 

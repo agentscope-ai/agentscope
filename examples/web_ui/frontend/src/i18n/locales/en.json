@@ -136,6 +136,7 @@
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",
+		"conversationCleared": "Conversation cleared",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",

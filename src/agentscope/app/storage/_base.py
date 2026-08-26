@@ -26,6 +26,10 @@ from ...message import Msg
 from ...state import AgentState
 
 
+class SessionRevisionConflict(RuntimeError):
+    """Raised when a conversation reset targets a stale revision."""
+
+
 class StorageBase(ABC):
     """The storage abstract base class."""
 
@@ -448,6 +452,17 @@ class StorageBase(ABC):
             session_id (`str`): The session id.
             state (`AgentState`): The new agent state to persist.
         """
+
+    @abstractmethod
+    async def reset_session_conversation(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        state: AgentState,
+        expected_revision: int,
+    ) -> SessionRecord:
+        """Atomically replace conversation state and delete its messages."""
 
     @abstractmethod
     async def list_sessions(

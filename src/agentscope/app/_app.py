@@ -13,6 +13,7 @@ from ._router import (
     agent_router,
     channel_router,
     chat_router,
+    command_router,
     credential_router,
     health_router,
     hub_router,
@@ -379,6 +380,7 @@ def create_app(
     for router in (
         agent_router,
         chat_router,
+        command_router,
         credential_router,
         health_router,
         hub_router,

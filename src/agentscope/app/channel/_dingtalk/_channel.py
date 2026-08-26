@@ -386,6 +386,10 @@ class DingTalkChannel(ChannelBase):
                 reply.name if reply else "",
             )
 
+    async def send_notice(self, event: ChannelEvent, text: str) -> None:
+        """Post a plain service notice without an Agent reply stream."""
+        await self._api().send_text(event.chat_id, text)
+
     def _has_streaming_text(self, reply: Msg) -> bool:
         """Whether the partial reply contains text enabled for display."""
         for block in reply.content:

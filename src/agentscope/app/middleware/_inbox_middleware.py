@@ -41,6 +41,7 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     def __init__(
         self,
         message_bus: MessageBus,
+        conversation_revision: int = 0,
         max_count: int = 100,
     ) -> None:
         """Initialise the middleware.
@@ -52,6 +53,7 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 Maximum entries drained per reasoning step.
         """
         self._bus = message_bus
+        self._conversation_revision = conversation_revision
         self._max_count = max_count
 
     async def on_reasoning(  # type: ignore[override]
@@ -84,10 +86,20 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         )
 
         if entries:
-            hint_blocks = [
-                HintBlock.model_validate(payload)
-                for _entry_id, payload in entries
-            ]
+            hint_blocks: list[HintBlock] = []
+            for _entry_id, entry in entries:
+                if "conversation_revision" not in entry:
+                    if self._conversation_revision != 0:
+                        continue
+                    payload = entry
+                elif (
+                    entry.get("conversation_revision")
+                    != self._conversation_revision
+                ):
+                    continue
+                else:
+                    payload = entry.get("payload")
+                hint_blocks.append(HintBlock.model_validate(payload))
 
             logger.info(
                 "InboxMiddleware: injecting %d HintBlock(s) into context "

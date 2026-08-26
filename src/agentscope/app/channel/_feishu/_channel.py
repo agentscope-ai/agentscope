@@ -731,6 +731,15 @@ class FeishuChannel(ChannelBase):
         if confirm is not None:
             await self._present_confirm(event, confirm)
 
+    async def send_notice(self, event: ChannelEvent, text: str) -> None:
+        """Post a plain service notice without an Agent reply stream."""
+        await self._send(
+            event.channel_message_id,
+            event.chat_id,
+            "text",
+            json.dumps({"text": text}, ensure_ascii=False),
+        )
+
     async def _finish_card(
         self,
         event: ChannelEvent,

@@ -14,7 +14,12 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from agentscope.app.message_bus import MessageBus, RedisMessageBus
+from agentscope.app._bus_ops import publish_session_event
+from agentscope.app.message_bus import (
+    MessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 
 
 def _make_bus(
@@ -289,6 +294,44 @@ class TestSessionDomainHelpers(IsolatedAsyncioTestCase):
         # Live subscriber saw it without the internal _entry_id key.
         self.assertEqual(received, [{"hello": "world"}])
 
+    async def test_session_event_live_payload_carries_replay_entry_id(
+        self,
+    ) -> None:
+        """The canonical publisher gives replay and live events one id."""
+        session_id = "session-entry-id"
+        key = MessageBusKeys.session_events(session_id)
+        ready = asyncio.Event()
+        received: list[dict] = []
+
+        async def _consume() -> None:
+            """Capture one raw live payload without compatibility stripping."""
+            async for payload in self.bus.subscribe(
+                key,
+                on_ready=ready.set,
+            ):
+                received.append(payload)
+                break
+
+        consumer = asyncio.create_task(_consume())
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        event = {"name": "session_cleared"}
+
+        entry_id = await publish_session_event(
+            self.bus,
+            session_id,
+            event,
+        )
+        await asyncio.wait_for(consumer, timeout=2)
+
+        self.assertEqual(
+            await self.bus.log_read(key),
+            [(entry_id, event)],
+        )
+        self.assertEqual(
+            received,
+            [{"name": "session_cleared", "_entry_id": entry_id}],
+        )
+
     async def test_session_is_running_reflects_session_run(self) -> None:
         """``session_is_running`` returns True while inside
         ``session_run`` and False after."""
@@ -468,6 +511,64 @@ class TestRegistryPrimitive(IsolatedAsyncioTestCase):
         await self.bus.registry_set("ns", "f", "v", ttl_secs=3600)
         ttl_refreshed = await self.fr.ttl("ns")
         self.assertGreater(ttl_refreshed, 60)
+
+    async def test_set_with_ttl_uses_atomic_transaction(self) -> None:
+        """Queue the hash write and expiry in one Redis transaction."""
+
+        class _Pipeline:
+            """Record commands queued before transaction execution."""
+
+            def __init__(self) -> None:
+                self.commands: list[tuple[str, tuple[object, ...]]] = []
+                self.executed = False
+
+            async def __aenter__(self) -> "_Pipeline":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            def hset(self, *args: object) -> "_Pipeline":
+                """Queue one hash write."""
+                self.commands.append(("hset", args))
+                return self
+
+            def expire(self, *args: object) -> "_Pipeline":
+                """Queue one expiry update."""
+                self.commands.append(("expire", args))
+                return self
+
+            async def execute(self) -> list[object]:
+                """Mark the queued transaction as executed."""
+                self.executed = True
+                return []
+
+        class _Client:
+            """Expose only the transactional path expected by this test."""
+
+            def __init__(self) -> None:
+                self.pipe = _Pipeline()
+                self.transaction: bool | None = None
+
+            def pipeline(self, *, transaction: bool) -> _Pipeline:
+                """Return the recording transaction pipeline."""
+                self.transaction = transaction
+                return self.pipe
+
+        client = _Client()
+        self.bus._client = client
+
+        await self.bus.registry_set("ns", "field", "value", ttl_secs=30)
+
+        self.assertEqual(client.transaction, True)
+        self.assertEqual(
+            client.pipe.commands,
+            [
+                ("hset", ("ns", "field", "value")),
+                ("expire", ("ns", 30)),
+            ],
+        )
+        self.assertEqual(client.pipe.executed, True)
 
     async def test_set_without_ttl_leaves_namespace_persistent(
         self,

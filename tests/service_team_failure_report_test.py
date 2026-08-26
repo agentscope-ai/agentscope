@@ -240,7 +240,14 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
         entries = await self.bus.queue_drain(
             MessageBusKeys.inbox(self.leader_session.id),
         )
-        return [payload for _entry_id, payload in entries]
+        delivered: list[dict] = []
+        for _entry_id, entry in entries:
+            self.assertEqual(
+                entry["conversation_revision"],
+                self.leader_session.conversation_revision,
+            )
+            delivered.append(entry["payload"])
+        return delivered
 
     def _events(
         self,
@@ -420,7 +427,11 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             MessageBusKeys.inbox(self.leader_session.id),
         )
         self.assertEqual(len(entries), 1)
+        self.assertEqual(
+            entries[0][1]["conversation_revision"],
+            self.leader_session.conversation_revision,
+        )
         self.assertIn(
             "Error: boom.",
-            entries[0][1]["hint"],
+            entries[0][1]["payload"]["hint"],
         )

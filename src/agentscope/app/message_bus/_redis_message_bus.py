@@ -403,9 +403,14 @@ class RedisMessageBus(MessageBus):
             ttl_secs (`int | None`, optional):
                 Refresh the key's expiry (sliding TTL).
         """
-        await self._client.hset(namespace, field, value)
-        if ttl_secs is not None:
-            await self._client.expire(namespace, ttl_secs)
+        if ttl_secs is None:
+            await self._client.hset(namespace, field, value)
+            return
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.hset(namespace, field, value)
+            pipe.expire(namespace, ttl_secs)
+            await pipe.execute()
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the Redis Hash at ``namespace``.

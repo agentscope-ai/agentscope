@@ -436,6 +436,7 @@ class AgentInvite(_TeamToolBase):
                 session_id=borrowed.id,
                 agent_id=invited.id,
                 payload=hint.model_dump(mode="json"),
+                conversation_revision=borrowed.conversation_revision,
             )
 
             return ToolChunk(

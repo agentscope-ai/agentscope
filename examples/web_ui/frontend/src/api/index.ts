@@ -3,6 +3,8 @@ export { agentApi } from './agent';
 export { sessionApi, takeFreshlyCreated } from './session';
 export { credentialApi } from './credential';
 export { chatApi } from './chat';
+export { commandApi } from './command';
+export type { CommandInfo, CommandListResponse } from './types';
 export { workspaceApi } from './workspace';
 export { hubApi } from './hub';
 export { mcpApi } from './mcp';

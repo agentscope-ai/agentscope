@@ -149,6 +149,7 @@ export interface SessionRecord extends RecordBase {
 	team_id: string | null;
 	config: SessionConfig;
 	state: AgentState;
+	conversation_revision: number;
 }
 
 export interface CreateSessionRequest {
@@ -169,6 +170,24 @@ export interface CreateSessionResponse {
 
 export interface InterruptSessionResponse {
 	session_id: string;
+}
+
+export interface CommandInfo {
+	name: string;
+	command: string;
+	aliases: string[];
+	description: string;
+	accepts_args: boolean;
+}
+
+export interface CommandListResponse {
+	commands: CommandInfo[];
+}
+
+export interface ChatTriggerResponse {
+	status: 'started' | 'command_completed';
+	session_id: string;
+	command?: string | null;
 }
 
 export interface UpdateSessionRequest {

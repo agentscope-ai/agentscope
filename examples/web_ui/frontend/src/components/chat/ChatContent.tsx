@@ -12,6 +12,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from '../ui/button';
 import { DiffStats } from './tool-renderers/_shared';
 import type { GitStatus } from '@/api';
+import type { CommandInfo } from '@/api';
 import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
@@ -57,6 +58,7 @@ interface ChatContentProps {
 		rules?: ToolCallBlock['suggested_rules'],
 	) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
+	commands?: CommandInfo[];
 	className?: string;
 	/** Called when the user clicks the stop button. */
 	onInterrupt?: () => void;
@@ -94,6 +96,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onSend,
 	onUserConfirm,
 	autoComplete,
+	commands,
 	className,
 	onInterrupt,
 	footerSlot,
@@ -246,6 +249,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						onSend={onSend}
 						disabled={disabled}
 						autoComplete={autoComplete}
+						commands={commands}
 						allowedInputTypes={allowedInputTypes}
 						fileProcessor={fileProcessor}
 						phase={phase}

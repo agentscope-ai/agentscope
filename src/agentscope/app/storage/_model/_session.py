@@ -220,3 +220,6 @@ class SessionRecord(_RecordBase):
 
     state: AgentState = Field(default_factory=AgentState)
     """Mutable runtime state, updated after each chat turn."""
+
+    conversation_revision: int = 0
+    """Logical conversation generation, incremented by every clear."""

@@ -154,7 +154,9 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
         # Inbox has the wrapped HintBlock.
         inbox = await self.bus.inbox_drain(session.id, max_count=10)
         self.assertEqual(len(inbox), 1)
-        hint = inbox[0][1]
+        envelope = inbox[0][1]
+        self.assertEqual(envelope["conversation_revision"], 0)
+        hint = envelope["payload"]
         self.assertDictEqual(
             hint,
             {
@@ -182,6 +184,7 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
                 "user_id": record.user_id,
                 "kind": "wake",
                 "input": None,
+                "conversation_revision": 0,
             },
         )
 
@@ -238,6 +241,7 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
                     "user_id": record.user_id,
                     "kind": "wake",
                     "input": None,
+                    "conversation_revision": 0,
                 },
                 {
                     "session_id": sessions[0].id,
@@ -245,6 +249,7 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
                     "user_id": record.user_id,
                     "kind": "wake",
                     "input": None,
+                    "conversation_revision": 0,
                 },
             ],
         )

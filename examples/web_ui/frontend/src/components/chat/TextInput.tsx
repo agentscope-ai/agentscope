@@ -7,12 +7,14 @@ import {
 	XIcon,
 	FileText,
 	ArrowUp,
+	Terminal,
 } from 'lucide-react';
 import mime from 'mime';
 import React, {
 	useState,
 	useRef,
 	useMemo,
+	useEffect,
 	useLayoutEffect,
 	type KeyboardEvent,
 	useImperativeHandle,
@@ -21,6 +23,7 @@ import React, {
 
 import { Button } from '../ui/button';
 import { Kbd } from '../ui/kbd';
+import type { CommandInfo } from '@/api';
 import {
 	Attachment,
 	AttachmentAction,
@@ -52,6 +55,7 @@ interface TextInputProps {
 	onSend: (blocks: ContentBlock[]) => void;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
+	commands?: CommandInfo[];
 	disabled?: boolean;
 	className?: string;
 	/**
@@ -133,6 +137,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			onSend,
 			placeholder,
 			autoComplete,
+			commands = [],
 			disabled = false,
 			className,
 			allowedInputTypes,
@@ -148,6 +153,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const [value, setValue] = useState('');
 		const [files, setFiles] = useState<ProcessedFile[]>([]);
 		const [isFocused, setIsFocused] = useState(false);
+		const [activeCommand, setActiveCommand] = useState(0);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
@@ -202,7 +208,47 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			return '';
 		}, [value, autoComplete, isFocused]);
 
+		const commandMatches = useMemo(() => {
+			const query = value.trim().toLowerCase();
+			if (!isFocused || files.length > 0 || !query.startsWith('/') || /\s/.test(query)) {
+				return [];
+			}
+			return commands
+				.filter((command) => command.command.toLowerCase().startsWith(query))
+				.slice(0, 8);
+		}, [commands, files.length, isFocused, value]);
+
+		useEffect(() => setActiveCommand(0), [value, commandMatches.length]);
+
 		const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+			if (commandMatches.length > 0 && e.key === 'ArrowDown') {
+				e.preventDefault();
+				setActiveCommand((current) => (current + 1) % commandMatches.length);
+				return;
+			}
+			if (commandMatches.length > 0 && e.key === 'ArrowUp') {
+				e.preventDefault();
+				setActiveCommand(
+					(current) => (current - 1 + commandMatches.length) % commandMatches.length,
+				);
+				return;
+			}
+			if (commandMatches.length > 0 && e.key === 'Escape') {
+				e.preventDefault();
+				textareaRef.current?.blur();
+				return;
+			}
+			if (
+				commandMatches.length > 0 &&
+				(e.key === 'Tab' ||
+					(e.key === 'Enter' &&
+						value.trim().toLowerCase() !==
+							commandMatches[activeCommand].command.toLowerCase()))
+			) {
+				e.preventDefault();
+				setValue(commandMatches[activeCommand].command);
+				return;
+			}
 			// Tab key to select autocomplete
 			if (e.key === 'Tab' && suggestion) {
 				e.preventDefault();
@@ -326,6 +372,37 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		return (
 			<div className={cn('flex flex-col', className)}>
 				{headerSlot}
+				{commandMatches.length > 0 && (
+					<div
+						role="listbox"
+						aria-label="Slash commands"
+						className="mb-2 overflow-hidden rounded-xl border bg-popover p-1 shadow-lg"
+					>
+						{commandMatches.map((command, index) => (
+							<button
+								key={command.name}
+								type="button"
+								role="option"
+								aria-selected={index === activeCommand}
+								onMouseDown={(event) => event.preventDefault()}
+								onClick={() => {
+									setValue(command.command);
+									textareaRef.current?.focus();
+								}}
+								className={cn(
+									'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left',
+									index === activeCommand && 'bg-muted',
+								)}
+							>
+								<Terminal className="size-4 text-muted-foreground" />
+								<span className="font-mono text-sm">{command.command}</span>
+								<span className="truncate text-xs text-muted-foreground">
+									{command.description}
+								</span>
+							</button>
+						))}
+					</div>
+				)}
 				<div
 					id="tour-chat-input"
 					className="flex w-full flex-col rounded-[28px] border bg-background px-2"

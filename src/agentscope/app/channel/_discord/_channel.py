@@ -354,6 +354,12 @@ class DiscordChannel(ChannelBase):
         if confirm is not None:
             await self._present_confirm(event, confirm)
 
+    async def send_notice(self, event: ChannelEvent, text: str) -> None:
+        """Post a plain service notice without an Agent reply stream."""
+        channel = await self._channel(event.chat_id)
+        if channel is not None:
+            await channel.send(text)
+
     async def _present_confirm(
         self,
         event: ChannelEvent,

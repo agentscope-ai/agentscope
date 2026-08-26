@@ -138,9 +138,22 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
             user_id="u",
             session_id=self.sid,
             agent_id="a",
+            conversation_revision=7,
         )
 
-        self.assertEqual(len(await self._wakeups()), 1)
+        self.assertEqual(
+            await self._wakeups(),
+            [
+                {
+                    "user_id": "u",
+                    "session_id": self.sid,
+                    "agent_id": "a",
+                    "kind": MessageBusKeys.WAKEUP_KIND_WAKE,
+                    "input": None,
+                    "conversation_revision": 7,
+                },
+            ],
+        )
         self.assertIsNone(
             await self.bus.registry_get(
                 MessageBusKeys.inbox_consumer(self.sid),
@@ -157,6 +170,30 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
             user_id="u",
             session_id=self.sid,
             agent_id="a",
+            conversation_revision=7,
         )
 
+        self.assertEqual(await self._wakeups(), [])
+
+    async def test_reset_barrier_rejects_new_delivery(self) -> None:
+        """No inbox payload can enter after the clear cutover point."""
+        await self.bus.registry_set(
+            MessageBusKeys.session_reset_barrier(self.sid),
+            "operation",
+            "{}",
+        )
+
+        await deliver_to_inbox(
+            self.bus,
+            user_id="u",
+            session_id=self.sid,
+            agent_id="a",
+            payload={"type": "hint", "hint": "late"},
+            conversation_revision=0,
+        )
+
+        self.assertEqual(
+            await self.bus.queue_drain(MessageBusKeys.inbox(self.sid)),
+            [],
+        )
         self.assertEqual(await self._wakeups(), [])

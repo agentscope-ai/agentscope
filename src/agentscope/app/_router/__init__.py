@@ -3,6 +3,7 @@
 from ._agent import agent_router
 from ._channel import channel_router
 from ._chat import chat_router
+from ._command import command_router
 from ._credential import credential_router
 from ._embedding_model import embedding_model_router
 from ._health import health_router
@@ -23,6 +24,7 @@ __all__ = [
     "embedding_model_router",
     "tts_model_router",
     "chat_router",
+    "command_router",
     "credential_router",
     "health_router",
     "hub_router",

@@ -235,6 +235,7 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        accepted_revision: int | None = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -276,7 +277,13 @@ class ChatService:
                   results and ends the reply (Case B, no reasoning).
         """
         try:
-            await self._run_impl(user_id, session_id, agent_id, input_msg)
+            await self._run_impl(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+                accepted_revision,
+            )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -413,12 +420,20 @@ class ChatService:
                     ensure_ascii=False,
                 ),
             )
+            leader_session = await self._storage.get_session(
+                user_id,
+                team_ctx.leader_agent_id,
+                team_ctx.leader_session_id,
+            )
+            if leader_session is None:
+                return
             await deliver_to_inbox(
                 self._message_bus,
                 user_id=user_id,
                 session_id=team_ctx.leader_session_id,
                 agent_id=team_ctx.leader_agent_id,
                 payload=hint.model_dump(mode="json"),
+                conversation_revision=(leader_session.conversation_revision),
             )
         except Exception:  # pylint: disable=broad-except
             logger.exception(
@@ -573,6 +588,7 @@ class ChatService:
             agent_id=agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_RESUME,
             inputs=UserInterruptEvent(reply_id=session.state.reply_id),
+            conversation_revision=session.conversation_revision,
         )
 
     @staticmethod
@@ -643,6 +659,7 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        accepted_revision: int | None = None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -700,6 +717,33 @@ class ChatService:
                             f"agent {agent_id!r}."
                         ),
                     )
+                if session_record.agent_id != agent_id:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Session {session_id!r} not found.",
+                    )
+                barriers = await self._message_bus.registry_getall(
+                    MessageBusKeys.session_reset_barrier(session_id),
+                )
+                if barriers:
+                    logger.info(
+                        "Dropping run for session %s while it is resetting.",
+                        session_id,
+                    )
+                    return
+                if (
+                    accepted_revision is not None
+                    and accepted_revision
+                    != session_record.conversation_revision
+                ):
+                    logger.info(
+                        "Dropping stale input for session %s: accepted at "
+                        "revision %d, current revision %d.",
+                        session_id,
+                        accepted_revision,
+                        session_record.conversation_revision,
+                    )
+                    return
                 worker_name = agent_record.data.name
 
                 # -------------------------------------------------------------
@@ -791,7 +835,10 @@ class ChatService:
                 # in-process retrigger plumbing is needed here.
                 # -------------------------------------------------------------
                 middlewares: list = [
-                    InboxMiddleware(self._message_bus),
+                    InboxMiddleware(
+                        self._message_bus,
+                        session_record.conversation_revision,
+                    ),
                     StateChangeMiddleware(
                         message_bus=self._message_bus,
                         session_id=session_id,
@@ -801,6 +848,9 @@ class ChatService:
                         message_bus=self._message_bus,
                         user_id=user_id,
                         agent_id=agent_id,
+                        conversation_revision=(
+                            session_record.conversation_revision
+                        ),
                     ),
                 ]
                 # Equip the member middleware for loop control
@@ -1239,6 +1289,9 @@ class ChatService:
                         user_id=user_id,
                         session_id=session_id,
                         agent_id=agent_id,
+                        conversation_revision=(
+                            session_record.conversation_revision
+                        ),
                     )
 
                 # The last turn's reply is only in ``reply_msgs`` when the

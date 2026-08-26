@@ -498,6 +498,7 @@ optional):
                 session_id=worker_session.id,
                 agent_id=worker_agent.id,
                 payload=hint.model_dump(mode="json"),
+                conversation_revision=worker_session.conversation_revision,
             )
 
             return ToolChunk(

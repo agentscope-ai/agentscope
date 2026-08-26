@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access,missing-function-docstring,unused-argument
 """Tests for :class:`WakeupDispatcher` — one-per-process consumer of the
 shared wake-up queue + signal channel.
 
@@ -16,11 +16,13 @@ Verifies the four behaviours that callers rely on:
 """
 import asyncio
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
+from agentscope.message import UserMsg
 
 
 class _FakeStorage:
@@ -33,6 +35,7 @@ class _FakeStorage:
 
     def __init__(self) -> None:
         self.missing_session_ids: set[str] = set()
+        self.revisions: dict[str, int] = {}
 
     async def get_session(
         self,
@@ -43,7 +46,10 @@ class _FakeStorage:
         """Get a session id from the orphan guard."""
         if session_id in self.missing_session_ids:
             return None
-        return object()
+        return SimpleNamespace(
+            agent_id=_agent_id,
+            conversation_revision=self.revisions.get(session_id, 0),
+        )
 
 
 class _FakeBus(MessageBus):
@@ -205,6 +211,7 @@ class _FakeChatService:
         session_id: str,
         agent_id: str,
         input_msg: Any = None,
+        accepted_revision: int | None = None,
     ) -> None:
         """Record the call and signal a waiter."""
         self.calls.append(
@@ -213,6 +220,7 @@ class _FakeChatService:
                 "session_id": session_id,
                 "agent_id": agent_id,
                 "input_msg": input_msg,
+                "accepted_revision": accepted_revision,
             },
         )
         self.notify.set()
@@ -254,6 +262,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "session_id": "s1",
                     "agent_id": "a1",
                     "input_msg": None,
+                    "accepted_revision": None,
                 },
             ],
         )
@@ -284,6 +293,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "session_id": "pre",
                     "agent_id": "a",
                     "input_msg": None,
+                    "accepted_revision": None,
                 },
             ],
         )
@@ -342,8 +352,76 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "session_id": "s2",
                     "agent_id": "a",
                     "input_msg": None,
+                    "accepted_revision": None,
                 },
             ],
+        )
+
+    async def test_stale_message_revision_is_dropped(self) -> None:
+        """A queued user message cannot cross a clear boundary."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        storage = _FakeStorage()
+        storage.revisions["session"] = 1
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=storage,
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "user",
+                    "session_id": "session",
+                    "agent_id": "agent",
+                    "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                    "input": UserMsg(
+                        name="user",
+                        content="old input",
+                    ).model_dump(mode="json"),
+                    "conversation_revision": 0,
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.sleep(0.05)
+
+        self.assertEqual(chat.calls, [])
+
+    async def test_current_message_revision_is_dispatched(self) -> None:
+        """A post-clear message runs with its accepted revision."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        storage = _FakeStorage()
+        storage.revisions["session"] = 1
+        message = UserMsg(name="user", content="new input")
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=storage,
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "user",
+                    "session_id": "session",
+                    "agent_id": "agent",
+                    "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                    "input": message.model_dump(mode="json"),
+                    "conversation_revision": 1,
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["accepted_revision"], 1)
+        self.assertEqual(
+            chat.calls[0]["input_msg"].model_dump(mode="json"),
+            message.model_dump(mode="json"),
         )
 
     async def test_deleted_session_skipped(self) -> None:
@@ -380,6 +458,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "session_id": "live",
                     "agent_id": "a",
                     "input_msg": None,
+                    "accepted_revision": None,
                 },
             ],
         )
@@ -410,6 +489,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "agent_id": "wa1",
                     "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
                     "input": event.model_dump(mode="json"),
+                    "conversation_revision": 0,
                 },
             )
             await bus.publish(MessageBusKeys.wakeup_signal(), {})
@@ -451,6 +531,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "agent_id": "wa1",
                     "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
                     "input": event.model_dump(mode="json"),
+                    "conversation_revision": 0,
                 },
             )
             await bus.publish(MessageBusKeys.wakeup_signal(), {})

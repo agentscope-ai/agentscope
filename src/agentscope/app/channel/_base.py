@@ -331,6 +331,14 @@ class ChannelBase(ABC):
             events (`AsyncIterator[dict]`): The run's session events.
         """
 
+    async def send_notice(self, event: ChannelEvent, text: str) -> None:
+        """Send a non-conversation service notice to the source chat.
+
+        Custom channels written before slash commands may leave this
+        unsupported without becoming abstract.
+        """
+        raise NotImplementedError
+
     def _render(
         self,
         reply: Msg | None,

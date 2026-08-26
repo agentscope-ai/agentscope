@@ -2,7 +2,7 @@
 """The storage module in agentscope."""
 from typing import TYPE_CHECKING
 
-from ._base import StorageBase
+from ._base import SessionRevisionConflict, StorageBase
 from ._redis_storage import RedisStorage
 from ._model import (
     AgentData,
@@ -67,6 +67,7 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "StorageBase",
+    "SessionRevisionConflict",
     "RedisStorage",
     "AsyncSQLAlchemyStorage",
     # The ORM models

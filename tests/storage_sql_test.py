@@ -38,6 +38,7 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionSettings,
     SessionSource,
+    SessionRevisionConflict,
     SkillRecord,
     AsyncSQLAlchemyStorage,
     TeamData,
@@ -389,6 +390,88 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                 "no-such-session",
                 AgentState(),
             )
+
+    async def test_reset_conversation_is_atomic(self) -> None:
+        """Reset state and messages in the same SQL transaction."""
+        from agentscope.state import AgentState
+
+        agent = _agent_record("user-1")
+        await self.storage.upsert_agent("user-1", agent)
+        session = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=agent.id,
+            config=_session_config(),
+        )
+        old_state = AgentState(
+            session_id=session.id,
+            summary="old summary",
+            context=[UserMsg(name="alice", content="old context")],
+        )
+        await self.storage.update_session_state(
+            "user-1",
+            agent.id,
+            session.id,
+            old_state,
+        )
+        await self.storage.upsert_message(
+            "user-1",
+            session.id,
+            UserMsg(name="alice", content="persisted"),
+        )
+        fresh_state = AgentState(session_id=session.id)
+
+        updated = await self.storage.reset_session_conversation(
+            "user-1",
+            agent.id,
+            session.id,
+            fresh_state,
+            expected_revision=0,
+        )
+
+        fetched = await self.storage.get_session(
+            "user-1",
+            agent.id,
+            session.id,
+        )
+        messages = await self.storage.list_messages(
+            "user-1",
+            session.id,
+        )
+        self.assertEqual(updated.model_dump(), fetched.model_dump())
+        self.assertEqual(fetched.state.model_dump(), fresh_state.model_dump())
+        self.assertEqual(fetched.conversation_revision, 1)
+        self.assertEqual(fetched.config, session.config)
+        self.assertEqual(fetched.created_at, session.created_at)
+        self.assertEqual(messages, ([], False))
+        survivor = UserMsg(name="alice", content="new generation")
+        await self.storage.upsert_message(
+            "user-1",
+            session.id,
+            survivor,
+        )
+        before_conflict = fetched.model_dump()
+        with self.assertRaises(SessionRevisionConflict):
+            await self.storage.reset_session_conversation(
+                "user-1",
+                agent.id,
+                session.id,
+                AgentState(session_id=session.id),
+                expected_revision=0,
+            )
+        after_conflict = await self.storage.get_session(
+            "user-1",
+            agent.id,
+            session.id,
+        )
+        remaining = await self.storage.list_messages(
+            "user-1",
+            session.id,
+        )
+        self.assertEqual(after_conflict.model_dump(), before_conflict)
+        self.assertEqual(
+            [message.model_dump() for message in remaining[0]],
+            [survivor.model_dump()],
+        )
 
     # ------------------------------------------------------------------
     # Messages

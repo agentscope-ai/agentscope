@@ -280,12 +280,20 @@ class TeamSay(_TeamToolBase):
             payload = hint.model_dump(mode="json")
 
             for sid, aid in recipients:
+                target = await self._storage.get_session(
+                    self._user_id,
+                    aid,
+                    sid,
+                )
+                if target is None:
+                    continue
                 await deliver_to_inbox(
                     self._message_bus,
                     user_id=self._user_id,
                     session_id=sid,
                     agent_id=aid,
                     payload=payload,
+                    conversation_revision=target.conversation_revision,
                 )
 
             count = len(recipients)

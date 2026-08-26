@@ -12,10 +12,12 @@ import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/me
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 
-import { sessionApi, takeFreshlyCreated } from '@/api';
-import { chatApi } from '@/api';
+import type { CommandInfo } from '@/api';
+import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import { useTranslation } from '@/i18n/useI18n';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -110,6 +112,7 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
+		commands?: CommandInfo[];
 		/**
 		 * Called when a ``CUSTOM`` event with ``name="team_updated"``
 		 * arrives — the team membership has changed (TeamCreate /
@@ -124,8 +127,10 @@ export function useMessages(
 		 * ``tasks_context`` and ``permission_context``.
 		 */
 		onStateUpdated?: (value: Record<string, unknown>) => void;
+		onSessionCleared?: () => void;
 	},
 ) {
+	const { t } = useTranslation();
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	// The (agent, session) pair `msgs` actually belongs to. Loading is
 	// derived from it rather than set inside the fetch effect: an effect
@@ -137,6 +142,7 @@ export function useMessages(
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
+	const [commandPending, setCommandPending] = useState(false);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
@@ -145,6 +151,8 @@ export function useMessages(
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
 	// terminating REPLY_END never arrives (dropped SSE frame, etc.).
 	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const historyGenerationRef = useRef(0);
+	const clearNoticeRef = useRef(false);
 
 	const clearInterruptTimer = useCallback(() => {
 		if (interruptTimerRef.current !== null) {
@@ -159,6 +167,28 @@ export function useMessages(
 	useEffect(() => {
 		optionsRef.current = options;
 	}, [options]);
+	const resetForClear = useCallback(
+		(value?: Record<string, unknown>) => {
+			historyGenerationRef.current += 1;
+			msgsRef.current = [];
+			currentReplyRef.current = null;
+			setMsgs([]);
+			setSubagentHitl([]);
+			setPhase('idle');
+			setCommandPending(false);
+			clearInterruptTimer();
+			audioManager?.disposeAll();
+			if (value) {
+				optionsRef.current?.onStateUpdated?.(value);
+			}
+			optionsRef.current?.onSessionCleared?.();
+			if (!clearNoticeRef.current) {
+				clearNoticeRef.current = true;
+				toast.success(t('chat.conversationCleared'));
+			}
+		},
+		[audioManager, clearInterruptTimer, t],
+	);
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
 		rafRef.current = requestAnimationFrame(() => {
@@ -178,6 +208,8 @@ export function useMessages(
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+				} else if (custom.name === 'session_cleared') {
+					resetForClear(custom.value as Record<string, unknown> | undefined);
 				} else if (custom.name === 'subagent_require_user_confirm') {
 					// A team member is asking for confirmation; show (or
 					// refresh) its card on this leader view. Dedup by
@@ -251,11 +283,13 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[scheduleUpdate, audioManager, clearInterruptTimer, resetForClear],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
+		historyGenerationRef.current += 1;
+		clearNoticeRef.current = false;
 		msgsRef.current = [];
 		currentReplyRef.current = null;
 		setMsgs([]);
@@ -263,6 +297,7 @@ export function useMessages(
 		clearInterruptTimer();
 		setPhase('idle');
 		setSubagentHitl([]);
+		setCommandPending(false);
 		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
@@ -272,6 +307,7 @@ export function useMessages(
 		let cancelled = false;
 
 		(async () => {
+			const generation = historyGenerationRef.current;
 			// 1. Fetch persisted history — unless this tab just created the
 			// session, in which case there is provably none.
 			if (takeFreshlyCreated(sessionId)) {
@@ -279,7 +315,7 @@ export function useMessages(
 			} else {
 				try {
 					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
-					if (cancelled) return;
+					if (cancelled || generation !== historyGenerationRef.current) return;
 					msgsRef.current = messages;
 					// If a reply is in flight (running on a worker) OR the
 					// tail msg is parked on a pending tool_call (awaiting
@@ -355,20 +391,42 @@ export function useMessages(
 			if (!agentId || !sessionId) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			msgsRef.current = [...msgsRef.current, userMsg];
-			scheduleUpdate();
+			const text =
+				content.length === 1 && content[0].type === 'text' ? content[0].text.trim() : '';
+			const token = text.startsWith('/') ? text.split(/\s+/, 1)[0].toLowerCase() : '';
+			const commandIntent = optionsRef.current?.commands?.some(
+				(command) =>
+					command.command.toLowerCase() === token ||
+					command.aliases.some((alias) => `/${alias.toLowerCase()}` === token),
+			);
+			if (!commandIntent) {
+				msgsRef.current = [...msgsRef.current, userMsg];
+				scheduleUpdate();
+			} else {
+				clearNoticeRef.current = false;
+				setCommandPending(true);
+			}
 
 			try {
-				await chatApi.trigger({
+				const response = await chatApi.trigger({
 					agent_id: agentId,
 					session_id: sessionId,
 					input: userMsg,
 				});
+				if (commandIntent && response.status === 'started') {
+					msgsRef.current = [...msgsRef.current, userMsg];
+					scheduleUpdate();
+				}
+				if (response.status === 'command_completed') {
+					resetForClear();
+				}
 			} catch (e) {
 				setError(e as Error);
+			} finally {
+				if (commandIntent) setCommandPending(false);
 			}
 		},
-		[agentId, sessionId, scheduleUpdate],
+		[agentId, sessionId, scheduleUpdate, resetForClear],
 	);
 
 	/**
@@ -546,5 +604,6 @@ export function useMessages(
 		subagentHitl,
 		abort,
 		interrupt,
+		commandPending,
 	};
 }

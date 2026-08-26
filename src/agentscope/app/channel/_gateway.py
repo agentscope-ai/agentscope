@@ -22,18 +22,22 @@ from ..._logging import logger
 from ...message import DataBlock, HintBlock, TextBlock, UserMsg
 from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox, enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     ChannelRecord,
     ChatModelConfig,
     SessionConfig,
+    SessionRecord,
     SessionScope,
     SessionSource,
     StorageBase,
 )
 from ..workspace_manager import WorkspaceManagerBase
+from .._command import CommandContext, dispatch_command, parse_command
+from .._service._session import SessionService
 from ._base import ChannelEvent, ChannelConfirmationResultEvent
+from ._clients import ChannelClients
 from ._decision import resume_after_decision
 from ._routing import resolve
 
@@ -51,6 +55,8 @@ class ChannelGateway:
         storage: StorageBase,
         message_bus: MessageBus,
         workspace_manager: WorkspaceManagerBase,
+        session_service: SessionService | None = None,
+        channel_clients: ChannelClients | None = None,
     ) -> None:
         """Bind storage, the message bus, and the workspace manager.
 
@@ -63,6 +69,8 @@ class ChannelGateway:
         self._storage = storage
         self._bus = message_bus
         self._workspace_manager = workspace_manager
+        self._session_service = session_service
+        self._channel_clients = channel_clients
 
     async def process(
         self,
@@ -176,6 +184,7 @@ class ChannelGateway:
 
     # -- Message path --
 
+    # pylint: disable-next=too-many-return-statements
     async def _handle_message(self, event: ChannelEvent) -> None:
         """Aggregate buffered media, then inject a hint into a live run
         or start a fresh user turn on an idle session.
@@ -202,12 +211,114 @@ class ChannelGateway:
         if content is None:
             return  # media buffered; nothing to run until a text message
 
+        command = parse_command(
+            UserMsg(name=event.channel_user_id, content=content),
+        )
+        if command is not None:
+            channel = (
+                await self._channel_clients.get(event.channel_id)
+                if self._channel_clients is not None
+                else None
+            )
+            if command.args and not command.spec.accepts_args:
+                if channel is not None:
+                    await channel.send_notice(
+                        event,
+                        f"/{command.spec.name} does not accept arguments.",
+                    )
+                return
+            session = await self._storage.get_session(
+                record.user_id,
+                agent_id,
+                session_id,
+            )
+            if session is None:
+                if channel is not None:
+                    await channel.send_notice(event, "Conversation is empty.")
+                return
+            if self._session_service is None:
+                return
+            try:
+                result = await dispatch_command(
+                    command,
+                    CommandContext(
+                        user_id=record.user_id,
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        source="channel",
+                        command_message_id=command.message.id,
+                    ),
+                    self._session_service,
+                )
+            except KeyError:
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.warning(
+                    f"Channel command /{command.spec.name} targeted a "
+                    f"missing session {session_id}.",
+                )
+                if channel is not None:
+                    await channel.send_notice(
+                        event,
+                        "Conversation no longer exists.",
+                    )
+                return
+            except RuntimeError:
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.exception(
+                    f"Channel command /{command.spec.name} did not "
+                    f"complete for session {session_id}.",
+                )
+                if channel is not None:
+                    await channel.send_notice(
+                        event,
+                        "Conversation clear did not fully complete. "
+                        "Please retry.",
+                    )
+                return
+            except Exception:  # pylint: disable=broad-except
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.exception(
+                    f"Channel command /{command.spec.name} failed for "
+                    f"session {session_id}.",
+                )
+                if channel is not None:
+                    await channel.send_notice(
+                        event,
+                        "Conversation could not be cleared. Please retry.",
+                    )
+                return
+            if channel is not None:
+                await channel.send_notice(event, result.message)
+            return
+
+        if await self._bus.registry_getall(
+            MessageBusKeys.session_reset_barrier(session_id),
+        ):
+            channel = (
+                await self._channel_clients.get(event.channel_id)
+                if self._channel_clients is not None
+                else None
+            )
+            if channel is not None:
+                await channel.send_notice(event, "Conversation is resetting.")
+            return
+
         # A reply already in flight → inject the input as a hint so the
         # live run folds it in. Otherwise start a fresh user turn.
         if await self._bus.is_locked(MessageBusKeys.session_lock(session_id)):
-            await self._bus.queue_push(
-                MessageBusKeys.inbox(session_id),
-                HintBlock(
+            session = await self._storage.get_session(
+                record.user_id,
+                agent_id,
+                session_id,
+            )
+            if session is None:
+                return
+            await deliver_to_inbox(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                payload=HintBlock(
                     hint=content,
                     source=json.dumps(
                         {
@@ -218,10 +329,17 @@ class ChannelGateway:
                         ensure_ascii=False,
                     ),
                 ).model_dump(mode="json"),
+                conversation_revision=session.conversation_revision,
             )
             return
 
-        await self._ensure_session(record, agent_id, session_id, event, scope)
+        session = await self._ensure_session(
+            record,
+            agent_id,
+            session_id,
+            event,
+            scope,
+        )
         # Deliver as a genuine user turn; the run's output is streamed
         # back by the dispatcher's forward loop, not collected here.
         await enqueue_run_trigger(
@@ -231,6 +349,7 @@ class ChannelGateway:
             agent_id=agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
             inputs=UserMsg(name=event.channel_user_id, content=content),
+            conversation_revision=session.conversation_revision,
         )
 
     async def _aggregate_media(
@@ -271,8 +390,8 @@ class ChannelGateway:
         session_id: str,
         event: ChannelEvent,
         scope: SessionScope,
-    ) -> None:
-        """Create the derived session if absent (idempotent across nodes).
+    ) -> SessionRecord:
+        """Return the derived session, creating it if absent.
 
         Args:
             record (`ChannelRecord`): The owning channel record.
@@ -280,6 +399,9 @@ class ChannelGateway:
             session_id (`str`): The derived session id.
             event (`ChannelEvent`): The originating message.
             scope (`SessionScope`): How the session is grouped.
+
+        Returns:
+            `SessionRecord`: The existing or newly created channel session.
         """
         existing = await self._storage.get_session(
             user_id=record.user_id,
@@ -287,7 +409,7 @@ class ChannelGateway:
             session_id=session_id,
         )
         if existing is not None:
-            return
+            return existing
 
         fallback = record.session.fallback_chat_model_config
         session_config = SessionConfig(
@@ -309,7 +431,7 @@ class ChannelGateway:
                 mode=PermissionMode(record.session.permission_mode),
             ),
         )
-        await self._storage.upsert_session(
+        return await self._storage.upsert_session(
             user_id=record.user_id,
             agent_id=agent_id,
             config=session_config,

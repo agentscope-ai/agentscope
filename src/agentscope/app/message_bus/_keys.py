@@ -145,6 +145,16 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         """Per-session distributed-lock key."""
         return cls._SESSION_LOCK.format(sid=session_id)
 
+    _SESSION_RESET_BARRIER = "agentscope:session:reset:{sid}"
+
+    SESSION_RESET_BARRIER_TTL_SECS = 30
+    """Sliding lifetime of a clear-operation barrier."""
+
+    @classmethod
+    def session_reset_barrier(cls, session_id: str) -> str:
+        """Registry namespace for active clear operations."""
+        return cls._SESSION_RESET_BARRIER.format(sid=session_id)
+
     # ------------------------------------------------------------------
     # Session inbox
     # ------------------------------------------------------------------

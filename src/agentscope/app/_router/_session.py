@@ -805,11 +805,38 @@ async def stream_session_events(
         )
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
-        # 1. Replay buffered events from the current run (if any).
-        for _entry_id, event in await message_bus.log_read(
+        # Subscribe before replay so an event published during bootstrap
+        # lands either in the replay snapshot, the live queue, or both.
+        # Entry ids remove the deliberate overlap.
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        ready = asyncio.Event()
+
+        async def _feeder() -> None:
+            """Read live events into the bootstrap-safe local queue."""
+            try:
+                async for evt in message_bus.subscribe(
+                    MessageBusKeys.session_events(session_id),
+                    on_ready=ready.set,
+                ):
+                    await queue.put(evt)
+            except asyncio.CancelledError:
+                pass
+            finally:
+                ready.set()
+                await queue.put(None)
+
+        feeder_task = asyncio.create_task(
+            _feeder(),
+            name=f"sse-feeder:{session_id}",
+        )
+        await ready.wait()
+
+        replay_ids: set[str] = set()
+        for entry_id, event in await message_bus.log_read(
             MessageBusKeys.session_events(session_id),
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
+            replay_ids.add(entry_id)
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         # 1b. Inject pending subagent HITL cards projected onto this
@@ -853,39 +880,6 @@ async def stream_session_events(
 
             yield f"data: {data}\n\n"
 
-        # 2. Live subscribe via a background feeder task that pushes
-        #    events into a queue. The main loop reads from the queue
-        #    with a timeout so we can interleave heartbeat frames.
-        #
-        #    We avoid calling ``wait_for(__anext__())`` on the async
-        #    generator directly because cancelling a suspended
-        #    ``__anext__`` leaves the generator in a "running" state
-        #    that prevents ``aclose()`` from working.
-        queue: asyncio.Queue[dict | None] = asyncio.Queue()
-
-        async def _feeder() -> None:
-            """Read from the bus subscription and forward to the queue.
-
-            Pushes ``None`` as a sentinel when the subscription ends
-            (which in practice only happens if the bus shuts down).
-            """
-            try:
-                async for evt in message_bus.subscribe(
-                    MessageBusKeys.session_events(session_id),
-                ):
-                    await queue.put(
-                        {k: v for k, v in evt.items() if k != "_entry_id"},
-                    )
-            except asyncio.CancelledError:
-                pass
-            finally:
-                await queue.put(None)
-
-        feeder_task = asyncio.create_task(
-            _feeder(),
-            name=f"sse-feeder:{session_id}",
-        )
-
         try:
             while True:
                 try:
@@ -895,7 +889,16 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    entry_id = item.get("_entry_id")
+                    if entry_id in replay_ids:
+                        continue
+                    payload = {
+                        key: value
+                        for key, value in item.items()
+                        if key != "_entry_id"
+                    }
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:

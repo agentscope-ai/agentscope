@@ -68,6 +68,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         timeout_secs (`float`, defaults to ``10.0``):
             Maximum seconds to wait for a tool execution before
             offloading it to the background.
+        conversation_revision (`int`, defaults to ``0``):
+            Conversation generation that owns background results.
     """
 
     def __init__(
@@ -77,6 +79,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         user_id: str,
         agent_id: str,
         timeout_secs: float = 10.0,
+        *,
+        conversation_revision: int = 0,
     ) -> None:
         """Bind dependencies.
 
@@ -91,11 +95,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 Agent record id (not the display name).
             timeout_secs (`float`, defaults to ``10.0``):
                 Tool execution timeout before offloading to background.
+            conversation_revision (`int`, defaults to ``0``):
+                Conversation generation that owns background results.
         """
         self._bg_manager = bg_manager
         self._message_bus = message_bus
         self._user_id = user_id
         self._agent_id = agent_id
+        self._conversation_revision = conversation_revision
         self._timeout_secs = timeout_secs
 
     # ------------------------------------------------------------------
@@ -351,6 +358,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 session_id=session_id,
                 agent_id=self._agent_id,
                 payload=hint.model_dump(mode="json"),
+                conversation_revision=self._conversation_revision,
             )
 
         asyncio.create_task(_deliver_when_done())

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access, attribute-defined-outside-init
 """Tests for the four framework-builtin team tools — :class:`TeamCreate`,
 :class:`AgentCreate`, :class:`TeamSay`, :class:`TeamDelete`.
 
@@ -59,6 +59,7 @@ def _make_storage(
             return self
 
         async def aclose(self) -> None:
+            """Detach the shared fake Redis client."""
             self._client = None
 
     return _S()
@@ -77,6 +78,7 @@ def _make_bus(
             return self
 
         async def aclose(self) -> None:
+            """Detach the shared fake Redis client."""
             self._client = None
 
     return _B()
@@ -309,7 +311,11 @@ class TestAgentCreate(_TeamToolsTestBase):
             max_count=10,
         )
         self.assertEqual(len(inbox), 1)
-        hint_payload = inbox[0][1]
+        self.assertEqual(
+            inbox[0][1]["conversation_revision"],
+            worker_sessions[0].conversation_revision,
+        )
+        hint_payload = inbox[0][1]["payload"]
         self.assertDictEqual(
             hint_payload,
             {
@@ -335,6 +341,9 @@ class TestAgentCreate(_TeamToolsTestBase):
                 "user_id": self.user_id,
                 "kind": "wake",
                 "input": None,
+                "conversation_revision": (
+                    worker_sessions[0].conversation_revision
+                ),
             },
         )
 
@@ -971,8 +980,13 @@ class TestTeamSay(_TeamToolsTestBase):
         other_inbox = await self.bus.inbox_drain(other_sid, max_count=10)
         self.assertEqual(len(target_inbox), 1)
         self.assertEqual(len(other_inbox), 0)
+        self.assertEqual(
+            target_inbox[0][1]["conversation_revision"],
+            0,
+        )
+        hint_payload = target_inbox[0][1]["payload"]
         self.assertDictEqual(
-            target_inbox[0][1],
+            hint_payload,
             {
                 "type": "hint",
                 "id": AnyString(),
@@ -982,7 +996,7 @@ class TestTeamSay(_TeamToolsTestBase):
                 "source": AnyString(),
             },
         )
-        self.assertIn("hi w1", target_inbox[0][1]["hint"])
+        self.assertIn("hi w1", hint_payload["hint"])
 
         # Wakeup for the target only.
         wakeups = await self.bus.dequeue_wakeups(max_count=10)
@@ -995,6 +1009,7 @@ class TestTeamSay(_TeamToolsTestBase):
                     "user_id": self.user_id,
                     "kind": "wake",
                     "input": None,
+                    "conversation_revision": 0,
                 },
             ],
         )
@@ -1177,7 +1192,14 @@ class TestTeamSay(_TeamToolsTestBase):
             max_count=10,
         )
         self.assertEqual(len(leader_inbox), 1)
-        self.assertIn("task done", leader_inbox[0][1]["hint"])
+        self.assertEqual(
+            leader_inbox[0][1]["conversation_revision"],
+            self.leader_session.conversation_revision,
+        )
+        self.assertIn(
+            "task done",
+            leader_inbox[0][1]["payload"]["hint"],
+        )
 
         # Wakeup was enqueued for the leader.
         wakeups = await self.bus.dequeue_wakeups(max_count=10)
@@ -1190,6 +1212,9 @@ class TestTeamSay(_TeamToolsTestBase):
                     "user_id": self.user_id,
                     "kind": "wake",
                     "input": None,
+                    "conversation_revision": (
+                        self.leader_session.conversation_revision
+                    ),
                 },
             ],
         )
@@ -1460,7 +1485,14 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         # Initial prompt was delivered to the borrowed session only.
         inbox = await self.bus.inbox_drain(member.session_id, max_count=10)
         self.assertEqual(len(inbox), 1)
-        self.assertIn("please look up X", inbox[0][1]["hint"])
+        self.assertEqual(
+            inbox[0][1]["conversation_revision"],
+            borrowed.conversation_revision,
+        )
+        self.assertIn(
+            "please look up X",
+            inbox[0][1]["payload"]["hint"],
+        )
         # Monday's primary session inbox is untouched.
         primary_inbox = await self.bus.inbox_drain(
             self.monday_session.id,

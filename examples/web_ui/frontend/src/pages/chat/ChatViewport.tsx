@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useCommands } from '@/hooks/useCommands';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
@@ -223,6 +224,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			setPermissionContext(value.permission_context as PermissionContext);
 		}
 	}, []);
+	const commands = useCommands();
 
 	const {
 		msgs,
@@ -233,9 +235,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
+		commandPending,
 	} = useMessages(agentId, sessionId, {
+		commands,
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
+		onSessionCleared: () => {
+			void refetchSessions();
+		},
 	});
 	const {
 		mcps,
@@ -803,7 +810,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
-									disabled={selectedModel === null}
+									disabled={selectedModel === null || commandPending}
+									commands={commands}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}

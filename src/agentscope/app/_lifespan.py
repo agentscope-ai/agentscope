@@ -105,6 +105,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.resource_access_service = resource_access_service
 
+        session_service = SessionService(
+            storage=storage,
+            message_bus=message_bus,
+            workspace_manager=workspace_manager,
+        )
+        app.state.session_service = session_service
+
         # Channel wiring is built here (before ChatService) so the chat
         # service can hand the client factory to get_toolkit: a session
         # that came from a channel gets that channel's platform tools.
@@ -147,6 +154,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         storage=storage,
                         message_bus=message_bus,
                         workspace_manager=workspace_manager,
+                        session_service=session_service,
+                        channel_clients=channel_clients,
                     ),
                 )
         app.state.channel_clients = channel_clients
@@ -167,12 +176,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             channel_clients=channel_clients,
         )
         app.state.chat_service = chat_service
-
-        app.state.session_service = SessionService(
-            storage=storage,
-            message_bus=message_bus,
-            workspace_manager=workspace_manager,
-        )
 
         app.state.workspace_service = WorkspaceService(
             storage=storage,

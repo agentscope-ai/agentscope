@@ -8,7 +8,7 @@ from typing import Any, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
 
-from ._base import StorageBase
+from ._base import SessionRevisionConflict, StorageBase
 from ._model import (
     AgentRecord,
     ChannelRecord,
@@ -970,6 +970,63 @@ class RedisStorage(StorageBase):
         record.state = state
         record.updated_at = datetime.now()
         await self._set_with_ttl(key, record.model_dump_json())
+
+    async def reset_session_conversation(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        state: AgentState,
+        expected_revision: int,
+    ) -> SessionRecord:
+        """Atomically replace state and remove messages with WATCH/MULTI."""
+        session_key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        messages_key = self._key(
+            self.key_config.messages,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    await pipe.watch(session_key)
+                    raw = await pipe.get(session_key)
+                    if not raw:
+                        await pipe.unwatch()
+                        raise KeyError(f"Session {session_id!r} not found.")
+                    record = SessionRecord.model_validate_json(raw)
+                    if record.agent_id != agent_id:
+                        await pipe.unwatch()
+                        raise KeyError(f"Session {session_id!r} not found.")
+                    if record.conversation_revision != expected_revision:
+                        await pipe.unwatch()
+                        raise SessionRevisionConflict(
+                            f"Session {session_id!r} revision changed from "
+                            f"{expected_revision} to "
+                            f"{record.conversation_revision}.",
+                        )
+                    record.state = state
+                    record.conversation_revision += 1
+                    record.updated_at = datetime.now()
+                    pipe.multi()
+                    pipe.set(session_key, record.model_dump_json())
+                    pipe.delete(messages_key)
+                    if self.key_ttl is not None:
+                        pipe.expire(session_key, self.key_ttl)
+                    await pipe.execute()
+                    return record
+                except _watch_error():
+                    continue
+
+        raise SessionRevisionConflict(
+            f"Session {session_id!r} was concurrently modified; "
+            f"WATCH failed after 3 reset retries.",
+        )
 
     async def list_sessions(
         self,

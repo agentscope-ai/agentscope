@@ -1,5 +1,5 @@
 import { client } from './client';
-import type { ChatRequest } from './types';
+import type { ChatRequest, ChatTriggerResponse } from './types';
 
 /**
  * Chat API — fire-and-forget trigger for chat runs.
@@ -20,6 +20,5 @@ export const chatApi = {
 	 * @param body - The chat request payload.
 	 * @returns A confirmation object ``{ status, session_id }``.
 	 */
-	trigger: (body: ChatRequest) =>
-		client.post<{ status: string; session_id: string }>('/chat/', body),
+	trigger: (body: ChatRequest) => client.post<ChatTriggerResponse>('/chat/', body),
 };

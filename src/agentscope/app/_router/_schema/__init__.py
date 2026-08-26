@@ -11,6 +11,7 @@ from ._channel import (
     UpdateChannelRequest,
 )
 from ._chat import ChatRequest, ChatTriggerResponse
+from ._command import CommandInfo, CommandListResponse
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
 from ._hub_mcp import InstallMCPRequest, MCPView, UpdateMCPRequest
@@ -127,6 +128,8 @@ __all__ = [
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",
+    "CommandInfo",
+    "CommandListResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",

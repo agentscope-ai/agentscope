@@ -206,6 +206,7 @@ class WakeupDispatcher:
                 agent_id=agent_id,
                 kind=kind,
                 raw_input=payload.get("input"),
+                raw_revision=payload.get("conversation_revision"),
             )
 
     async def _dispatch_one(
@@ -215,6 +216,7 @@ class WakeupDispatcher:
         agent_id: str,
         kind: str,
         raw_input: dict | None,
+        raw_revision: int | None,
     ) -> None:
         """Dispatch a single trigger entry by its ``kind``.
 
@@ -236,6 +238,14 @@ class WakeupDispatcher:
         # ``resume`` and ``message`` both carry input that must be
         # delivered — never dropped while the session is busy.
         carries_input = is_resume or is_message
+        if carries_input and not isinstance(raw_revision, int):
+            logger.warning(
+                "WakeupDispatcher: dropping %s trigger for session %s "
+                "without a valid conversation revision.",
+                kind,
+                session_id,
+            )
+            return
 
         # Parse the carried input early so every downstream path
         # (lock-retry, spawn-retry) receives a typed object rather than a
@@ -272,6 +282,56 @@ class WakeupDispatcher:
                 )
                 return
 
+        session_record = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session_record is None:
+            logger.warning(
+                "WakeupDispatcher: dropping %s trigger for deleted "
+                "session %s (agent %s, user %s).",
+                kind,
+                session_id,
+                agent_id,
+                user_id,
+            )
+            await publish_session_event(
+                self._bus,
+                session_id,
+                ReplyEndEvent(
+                    session_id=session_id,
+                    reply_id="",
+                    finished_reason=ReplyFinishedReason.ERROR,
+                    error=ErrorInfo(
+                        type=ErrorType.INTERNAL,
+                        message="Session no longer exists.",
+                    ),
+                ).model_dump(mode="json"),
+            )
+            return
+        if session_record.agent_id != agent_id:
+            logger.warning(
+                "WakeupDispatcher: dropping %s trigger for session %s "
+                "because the agent does not match.",
+                kind,
+                session_id,
+            )
+            return
+        if (
+            isinstance(raw_revision, int)
+            and raw_revision != session_record.conversation_revision
+        ):
+            logger.info(
+                "WakeupDispatcher: dropping stale %s trigger for session "
+                "%s at revision %s; current revision is %d.",
+                kind,
+                session_id,
+                raw_revision,
+                session_record.conversation_revision,
+            )
+            return
+
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
@@ -289,42 +349,7 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
-            )
-            return
-
-        # Orphan guard: the queue is unaware of session lifecycle. A
-        # trigger enqueued before the session was deleted (e.g. by a
-        # BG-task completion callback or a schedule trigger) will still
-        # arrive here. Drop it rather than letting ChatService.run crash
-        # on a missing storage record.
-        if (
-            await self._storage.get_session(user_id, agent_id, session_id)
-            is None
-        ):
-            logger.warning(
-                "WakeupDispatcher: dropping %s trigger for session %s "
-                "(agent %s, user %s) — session no longer exists in "
-                "storage; it was likely enqueued before the session was "
-                "deleted.",
-                kind,
-                session_id,
-                agent_id,
-                user_id,
-            )
-            # Surface an error on the event stream so collectors (e.g. the
-            # channel gateway) fail fast instead of waiting for a timeout.
-            await publish_session_event(
-                self._bus,
-                session_id,
-                ReplyEndEvent(
-                    session_id=session_id,
-                    reply_id="",
-                    finished_reason=ReplyFinishedReason.ERROR,
-                    error=ErrorInfo(
-                        type=ErrorType.INTERNAL,
-                        message="Session no longer exists.",
-                    ),
-                ).model_dump(mode="json"),
+                raw_revision,
             )
             return
 
@@ -335,6 +360,7 @@ class WakeupDispatcher:
                     session_id=session_id,
                     agent_id=agent_id,
                     input_msg=input_msg,
+                    accepted_revision=raw_revision,
                 ),
                 session_id=session_id,
                 name=f"{kind}-run:{session_id}",
@@ -350,6 +376,7 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
+                raw_revision,
             )
 
     def _schedule_retry(
@@ -363,6 +390,7 @@ class WakeupDispatcher:
         | UserInterruptEvent
         | Msg
         | None,
+        conversation_revision: int | None,
     ) -> None:
         """Re-enqueue an input-carrying (``resume``/``message``) trigger
         after a short backoff.
@@ -395,6 +423,7 @@ class WakeupDispatcher:
                     agent_id=agent_id,
                     kind=kind,  # type: ignore[arg-type]  # resume | message
                     inputs=input_msg,
+                    conversation_revision=conversation_revision,
                 )
             except asyncio.CancelledError:
                 pass

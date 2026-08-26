@@ -46,9 +46,14 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+import json
+import uuid
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
+from .._bus_ops import publish_session_event
 from ..storage import StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ..storage._utils import _ensure_team_members
@@ -56,6 +61,34 @@ from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ..._logging import logger
 from ...message import ToolCallState
+from ...event import CustomEvent
+from ...state import AgentState
+
+
+@dataclass(frozen=True)
+class SessionResetTarget:
+    """Identify one session selected by a clear operation."""
+
+    user_id: str
+    agent_id: str
+    session_id: str
+    role: str
+
+
+async def _refresh_barriers_once(
+    bus: MessageBus,
+    targets: list[SessionResetTarget],
+    operation_id: str,
+    value: str,
+) -> None:
+    """Create or refresh one clear operation's barrier fields."""
+    for target in targets:
+        await bus.registry_set(
+            MessageBusKeys.session_reset_barrier(target.session_id),
+            operation_id,
+            value,
+            ttl_secs=MessageBusKeys.SESSION_RESET_BARRIER_TTL_SECS,
+        )
 
 
 class SessionStatus(StrEnum):
@@ -322,6 +355,256 @@ class SessionService:
     # ``delete_session`` so the cancel + bus-purge logic exists in
     # exactly one place.
     # ------------------------------------------------------------------
+
+    async def clear_conversation(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> tuple[str, ...]:
+        """Reset one conversation, cascading from a team leader.
+
+        The operation preserves session configuration, permissions,
+        workspace contents, MCP state, and team topology. It clears only
+        conversation state, persisted messages, and transient bus state.
+
+        Team resets are an idempotent saga rather than a cross-session
+        transaction. Resolved targets commit independently; after partial
+        success this method raises ``RuntimeError`` without rolling back
+        completed targets, and callers may safely retry the whole clear.
+        """
+        root = await self._storage.get_session(user_id, agent_id, session_id)
+        if root is None or root.agent_id != agent_id:
+            raise KeyError(f"Session {session_id!r} not found.")
+
+        targets = [
+            SessionResetTarget(user_id, agent_id, session_id, "standalone"),
+        ]
+        resolution_failures: list[str] = []
+        is_team_clear = False
+        if root.team_id is not None:
+            team = await self._storage.get_team(user_id, root.team_id)
+            if team is not None and team.session_id == session_id:
+                is_team_clear = True
+                targets[0] = SessionResetTarget(
+                    user_id,
+                    agent_id,
+                    session_id,
+                    "leader",
+                )
+                members = await _ensure_team_members(
+                    self._storage,
+                    user_id,
+                    team,
+                )
+                for member in members:
+                    record = await self._storage.get_session(
+                        member.owner_id,
+                        member.agent_id,
+                        member.session_id,
+                    )
+                    if (
+                        record is None
+                        or record.agent_id != member.agent_id
+                        or record.team_id != team.id
+                    ):
+                        resolution_failures.append(member.session_id)
+                        # pylint: disable-next=logging-fstring-interpolation
+                        logger.warning(
+                            f"Skipping unresolved team member session "
+                            f"{member.session_id} while clearing leader "
+                            f"session {session_id}.",
+                        )
+                        continue
+                    targets.append(
+                        SessionResetTarget(
+                            record.user_id,
+                            member.agent_id,
+                            member.session_id,
+                            "worker",
+                        ),
+                    )
+
+        deduped = {target.session_id: target for target in targets}
+        targets = [deduped[key] for key in sorted(deduped)]
+        operation_id = uuid.uuid4().hex
+        barrier_value = json.dumps(
+            {"root_session_id": session_id},
+            ensure_ascii=False,
+        )
+        heartbeat_stop = asyncio.Event()
+
+        async def _refresh_barriers() -> None:
+            """Keep every target barrier alive until reset finishes."""
+            while not heartbeat_stop.is_set():
+                for target in targets:
+                    await self._bus.registry_set(
+                        MessageBusKeys.session_reset_barrier(
+                            target.session_id,
+                        ),
+                        operation_id,
+                        barrier_value,
+                        ttl_secs=(
+                            MessageBusKeys.SESSION_RESET_BARRIER_TTL_SECS
+                        ),
+                    )
+                try:
+                    await asyncio.wait_for(heartbeat_stop.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    continue
+
+        heartbeat: asyncio.Task[None] | None = None
+        try:
+            await _refresh_barriers_once(
+                self._bus,
+                targets,
+                operation_id,
+                barrier_value,
+            )
+            heartbeat = asyncio.create_task(
+                _refresh_barriers(),
+                name=f"session-clear-barrier:{session_id}",
+            )
+            released = await asyncio.gather(
+                *(
+                    self.cancel_session_run(target.session_id)
+                    for target in targets
+                ),
+            )
+            if not all(released):
+                raise RuntimeError("A session run did not stop in time.")
+
+            failures = list(resolution_failures)
+            completed: list[str] = []
+            async with AsyncExitStack() as locks:
+                for target in targets:
+                    await locks.enter_async_context(
+                        self._bus.acquire_lock(
+                            MessageBusKeys.session_lock(target.session_id),
+                            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+                        ),
+                    )
+                for target in targets:
+                    try:
+                        await self._reset_conversation_target(
+                            target,
+                            root_session_id=session_id,
+                            scope="team" if is_team_clear else "session",
+                        )
+                        completed.append(target.session_id)
+                    except Exception:  # pylint: disable=broad-except
+                        failures.append(target.session_id)
+                        logger.exception(
+                            "Failed to clear session %s.",
+                            target.session_id,
+                        )
+            if failures:
+                raise RuntimeError(
+                    f"Conversation reset failed for {len(failures)} "
+                    f"session(s).",
+                )
+            return tuple(completed)
+        finally:
+            heartbeat_stop.set()
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            await asyncio.gather(
+                *(
+                    self._bus.registry_del(
+                        MessageBusKeys.session_reset_barrier(
+                            target.session_id,
+                        ),
+                        operation_id,
+                    )
+                    for target in targets
+                ),
+            )
+
+    async def _reset_conversation_target(
+        self,
+        target: SessionResetTarget,
+        *,
+        root_session_id: str,
+        scope: str,
+    ) -> None:
+        """Reset one already-locked target and publish its clear event."""
+
+        async def _reset_and_publish() -> None:
+            """Finish a reset after it starts despite caller cancellation."""
+            existing = await self._storage.get_session(
+                target.user_id,
+                target.agent_id,
+                target.session_id,
+            )
+            if existing is None or existing.agent_id != target.agent_id:
+                raise KeyError(f"Session {target.session_id!r} not found.")
+
+            state = AgentState(
+                session_id=existing.id,
+                permission_context=(
+                    existing.state.permission_context.model_copy(deep=True)
+                ),
+            )
+            updated = await self._storage.reset_session_conversation(
+                target.user_id,
+                target.agent_id,
+                target.session_id,
+                state,
+                existing.conversation_revision,
+            )
+
+            await self._purge_subagent_hitl(
+                target.user_id,
+                target.agent_id,
+                target.session_id,
+            )
+            await self._bus.queue_delete(
+                MessageBusKeys.inbox(target.session_id),
+            )
+            await self._bus.registry_drop(
+                MessageBusKeys.inbox_consumer(target.session_id),
+            )
+            await self._bus.registry_drop(
+                MessageBusKeys.bg_tasks(target.session_id),
+            )
+            await self._bus.log_trim(
+                MessageBusKeys.session_events(target.session_id),
+            )
+            event = CustomEvent(
+                name="session_cleared",
+                value={
+                    "root_session_id": root_session_id,
+                    "session_id": target.session_id,
+                    "scope": scope,
+                    "conversation_revision": updated.conversation_revision,
+                    "tasks_context": state.tasks_context.model_dump(
+                        mode="json",
+                    ),
+                    "permission_context": (
+                        state.permission_context.model_dump(mode="json")
+                    ),
+                },
+            )
+            await publish_session_event(
+                self._bus,
+                target.session_id,
+                event.model_dump(mode="json"),
+            )
+
+        reset_task = asyncio.create_task(_reset_and_publish())
+        try:
+            await asyncio.shield(reset_task)
+        except asyncio.CancelledError:
+            try:
+                await reset_task
+            except Exception:  # pylint: disable=broad-except
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.exception(
+                    f"Failed to finish session {target.session_id} after "
+                    f"cancellation.",
+                )
+            raise
 
     async def delete_session(
         self,
