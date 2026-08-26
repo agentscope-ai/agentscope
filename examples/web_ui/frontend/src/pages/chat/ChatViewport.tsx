@@ -228,7 +228,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		msgs,
 		loading: messagesLoading,
 		phase,
+		queuedCount,
+		queuedItems,
+		queueReorderDisabled,
 		send,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
 		onUserConfirm,
 		onSubagentConfirm,
 		subagentHitl,
@@ -803,17 +810,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
+									queuedCount={queuedCount}
+									queuedItems={queuedItems}
+									queueReorderDisabled={queueReorderDisabled}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
-									// cwd={
-									// 	{cwd: view?.session.config.cwd, git: {
-									// 		branch: 'main',
-									// 		deletion: 0,
-									// 		addition: 0,
-									// 	}}
-									// }
+									onUpdateQueued={updateQueued}
+									onDeleteQueued={deleteQueued}
+									onMoveQueued={moveQueued}
+									onReorderQueued={reorderQueued}
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard

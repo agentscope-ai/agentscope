@@ -59,6 +59,7 @@ from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
     AgentEvent,
+    CustomEvent,
     ReplyStartEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
@@ -223,6 +224,11 @@ class ChatService:
             SubagentHitlProjector(storage),
             *(extra_projectors or []),
         ]
+        # Queue nudges are detached from completed registry tasks so they
+        # run only after the local run slot is released. Keep strong
+        # references until completion; asyncio's loop retains only weak
+        # references to un-awaited tasks.
+        self._queue_nudge_tasks: set[asyncio.Task] = set()
 
     async def run(
         self,
@@ -286,6 +292,84 @@ class ChatService:
                 agent_id,
                 str(e),
             )
+            if isinstance(input_msg, (Msg, list)):
+                messages = (
+                    input_msg
+                    if isinstance(input_msg, list)
+                    else [
+                        input_msg,
+                    ]
+                )
+                try:
+                    event = CustomEvent(
+                        name="chat_input_failed",
+                        value={
+                            "message_ids": [msg.id for msg in messages],
+                            "message": (
+                                "The queued message could not be processed. "
+                                "Check the server log for details."
+                            ),
+                        },
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        event.model_dump(mode="json"),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to publish queued-input failure for "
+                        "session %s.",
+                        session_id,
+                    )
+
+    def schedule_queue_nudge(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Schedule and strongly retain a one-shot pending-queue nudge.
+
+        Args:
+            user_id (`str`):
+                User that owns the session queue.
+            session_id (`str`):
+                Session whose pending/in-flight state should be checked.
+            agent_id (`str`):
+                Agent that owns the session queue.
+        """
+
+        async def _nudge_if_pending() -> None:
+            try:
+                pending = await self._message_bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                    max_count=1,
+                )
+                claimed = await self._message_bus.registry_exists(
+                    MessageBusKeys.chat_input_inflight_registry(),
+                    session_id,
+                )
+                if pending or claimed:
+                    await enqueue_run_trigger(
+                        self._message_bus,
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        kind=MessageBusKeys.WAKEUP_KIND_QUEUED_MESSAGE,
+                    )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to signal queued chat inputs for session %s.",
+                    session_id,
+                )
+
+        task = asyncio.create_task(
+            _nudge_if_pending(),
+            name=f"chat-queue-nudge:{session_id}",
+        )
+        self._queue_nudge_tasks.add(task)
+        task.add_done_callback(self._queue_nudge_tasks.discard)
 
     async def _close_failed_reply(
         self,

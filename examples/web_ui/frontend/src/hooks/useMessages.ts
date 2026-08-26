@@ -12,10 +12,18 @@ import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/me
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 
-import { sessionApi, takeFreshlyCreated } from '@/api';
-import { chatApi } from '@/api';
+import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
+import type { ChatQueueItem } from '@/api/chat';
 import { useAudioManager } from '@/context/AudioContext';
+import {
+	getQueueMessages,
+	type ChatInputStartedValue,
+	type ChatInputTerminalValue,
+	useChatQueue,
+} from '@/hooks/useChatQueue';
+import { useTranslation } from '@/i18n/useI18n';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -60,9 +68,10 @@ const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
  *
  * - ``idle`` — no in-flight reply; the send button is enabled.
  * - ``streaming`` — a reply is in progress (either actively producing
- *   events or parked awaiting HITL). The send button is replaced by a
- *   Stop button. The parked-vs-generating distinction is not tracked
- *   here; HITL cards render themselves from message content when a
+ *   events or parked awaiting HITL). A separate Stop button is shown,
+ *   while Send remains available to enqueue another turn. The
+ *   parked-vs-generating distinction is not tracked here; HITL cards
+ *   render themselves from message content when a
  *   ``RequireUserConfirmEvent`` block is present.
  * - ``interrupting`` — the user has requested a stop and we are
  *   waiting for the backend's terminating ``ReplyEndEvent``. Stop
@@ -88,9 +97,9 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  *   background retrigger, team member message, …).
  *
  * The hook opens the SSE connection immediately after fetching
- * history. User input and human-in-the-loop confirmations are sent
- * via ``POST /chat/`` (fire-and-forget); the resulting events arrive
- * through the already-open SSE connection.
+ * history. Ordinary user input is accepted into the backend FIFO;
+ * human-in-the-loop confirmations use fire-and-forget control triggers.
+ * Resulting events arrive through the already-open SSE connection.
  *
  * ``phase`` is driven by event content, not HTTP lifecycle: it moves
  * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
@@ -101,10 +110,9 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  * @param agentId - The agent whose session to subscribe. ``null`` to
  *   skip.
  * @param sessionId - The session to subscribe. ``null`` to skip.
- * @returns Object with ``msgs``, ``loading``, ``phase``, ``error``,
- *   ``send``, ``onUserConfirm``, and ``abort``. ``loading`` stays true
- *   until the history for the *current* ``(agentId, sessionId)`` has
- *   landed, so ``msgs`` must not be rendered while it is set.
+ * @returns Message/reply state, editable queue state and mutations, HITL
+ *   handlers, send/interrupt actions, loading state, and the latest error.
+ *   ``loading`` stays true until history for the current session lands.
  */
 export function useMessages(
 	agentId: string | null,
@@ -126,6 +134,7 @@ export function useMessages(
 		onStateUpdated?: (value: Record<string, unknown>) => void;
 	},
 ) {
+	const { t } = useTranslation();
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	// The (agent, session) pair `msgs` actually belongs to. Loading is
 	// derived from it rather than set inside the fetch effect: an effect
@@ -137,6 +146,22 @@ export function useMessages(
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
+	const {
+		items: queuedItems,
+		visibleCount: queuedCount,
+		pendingCount: pendingQueueCount,
+		reorderDisabled: queueReorderDisabled,
+		addOptimistic,
+		acceptOptimistic,
+		rollbackOptimistic,
+		applyQueueSnapshot,
+		startItem,
+		finishItem,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
+	} = useChatQueue(agentId, sessionId, setError);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
@@ -191,6 +216,38 @@ export function useMessages(
 					// The member resolved (or its run ended); clear the card.
 					const v = custom.value as { worker_session_id: string; reply_id: string };
 					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
+				} else if (custom.name === 'chat_input_started') {
+					const startedItem = startItem(custom.value as ChatInputStartedValue);
+					if (startedItem) {
+						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
+						msgsRef.current = [
+							...msgsRef.current,
+							...getQueueMessages([startedItem]).filter(
+								(msg) => !existingIds.has(msg.id),
+							),
+						];
+						scheduleUpdate();
+					}
+				} else if (custom.name === 'chat_queue_changed') {
+					const value = custom.value as { items?: ChatQueueItem[] };
+					applyQueueSnapshot(value.items ?? []);
+				} else if (custom.name === 'chat_input_failed') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					const failure = new Error(value.message ?? t('chatQueue.processFailed'));
+					clearInterruptTimer();
+					currentReplyRef.current = null;
+					setPhase('idle');
+					setError(failure);
+					toast.error(failure.message);
+				} else if (custom.name === 'chat_input_cancelled') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					const message = value.message ?? t('chatQueue.processingCancelled');
+					clearInterruptTimer();
+					currentReplyRef.current = null;
+					setPhase('idle');
+					toast.info(message);
 				}
 				return;
 			}
@@ -251,7 +308,15 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[
+			scheduleUpdate,
+			audioManager,
+			clearInterruptTimer,
+			startItem,
+			applyQueueSnapshot,
+			finishItem,
+			t,
+		],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -344,9 +409,9 @@ export function useMessages(
 	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
 
 	/**
-	 * Send a user message. Appends the message to the local list
-	 * optimistically, then fires a ``POST /chat/`` trigger. Events
-	 * arrive via the already-open SSE connection.
+	 * Send a user message. The first idle input appears in the conversation
+	 * immediately (with its matching queue row hidden); later inputs remain
+	 * in the editable queue until ``chat_input_started`` arrives.
 	 *
 	 * @param content - The message content blocks.
 	 */
@@ -355,20 +420,41 @@ export function useMessages(
 			if (!agentId || !sessionId) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			msgsRef.current = [...msgsRef.current, userMsg];
-			scheduleUpdate();
-
+			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
+			if (showInConversationImmediately) {
+				msgsRef.current = [...msgsRef.current, userMsg];
+				scheduleUpdate();
+			}
+			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
 			try {
-				await chatApi.trigger({
+				const response = await chatApi.trigger({
 					agent_id: agentId,
 					session_id: sessionId,
 					input: userMsg,
 				});
+				acceptOptimistic(optimisticId, response.queue_item_id);
 			} catch (e) {
+				// The server never accepted this input. Remove the
+				// optimistic queue row and restore the caller's draft.
+				rollbackOptimistic(optimisticId, userMsg.id);
+				if (showInConversationImmediately) {
+					msgsRef.current = msgsRef.current.filter((msg) => msg.id !== userMsg.id);
+					scheduleUpdate();
+				}
 				setError(e as Error);
+				throw e;
 			}
 		},
-		[agentId, sessionId, scheduleUpdate],
+		[
+			agentId,
+			sessionId,
+			phase,
+			pendingQueueCount,
+			scheduleUpdate,
+			addOptimistic,
+			acceptOptimistic,
+			rollbackOptimistic,
+		],
 	);
 
 	/**
@@ -539,6 +625,13 @@ export function useMessages(
 		msgs,
 		loading,
 		phase,
+		queuedItems,
+		queuedCount,
+		queueReorderDisabled,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
 		error,
 		send,
 		onUserConfirm,

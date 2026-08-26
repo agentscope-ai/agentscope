@@ -155,6 +155,52 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Read queue entries without removing them.
+
+        Entries are returned oldest first. Callers that need a consistent
+        read-modify-write cycle must hold an application-level lock shared
+        with every writer of that queue.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                ``(entry_id, payload)`` pairs in queue order.
+        """
+
+    @abstractmethod
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Atomically replace a queue's contents with ``payloads``.
+
+        The replacement preserves the supplied order and assigns fresh
+        transport-level entry ids. Business-level identities therefore
+        belong inside each payload rather than in the transport id.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete new queue contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Newly assigned transport-level entry ids.
+        """
+
+    @abstractmethod
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key`` and all of its entries.
 
@@ -646,6 +692,15 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Delete all per-session bus state."""
         await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
         await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
+        await self.queue_delete(MessageBusKeys.chat_inputs(session_id))
+        await self.registry_del(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+        await self.registry_del(
+            MessageBusKeys.chat_input_inflight_registry(),
+            session_id,
+        )
         await self.registry_drop(self._BG_TASKS_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------

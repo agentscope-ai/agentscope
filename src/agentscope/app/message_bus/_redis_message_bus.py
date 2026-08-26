@@ -16,6 +16,7 @@ else:
     Redis = Any
 
 
+# pylint: disable=too-many-public-methods
 class RedisMessageBus(MessageBus):
     """Redis-backed implementation of :class:`MessageBus`.
 
@@ -265,6 +266,58 @@ class RedisMessageBus(MessageBus):
             await self._client.xdel(key, *ids_to_delete)
 
         return results
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Return queue entries without deleting them.
+
+        Args:
+            key (`str`):
+                Redis Stream key.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of oldest-first entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                Decoded ``(stream_entry_id, payload)`` pairs.
+        """
+        entries = await self._client.xrange(key, count=max_count)
+        results: list[tuple[str, dict]] = []
+        for entry_id, fields in entries:
+            raw = fields.get("payload")
+            if raw is not None:
+                results.append((entry_id, json.loads(raw)))
+        return results
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Replace a Redis Stream queue in one transactional pipeline.
+
+        Args:
+            key (`str`):
+                Redis Stream key.
+            payloads (`list[dict]`):
+                Complete replacement contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Fresh Redis Stream ids assigned to the new entries.
+        """
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            for payload in payloads:
+                pipe.xadd(
+                    key,
+                    {"payload": json.dumps(payload, ensure_ascii=False)},
+                )
+            results = await pipe.execute()
+        return [str(entry_id) for entry_id in results[1:]]
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
