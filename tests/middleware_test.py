@@ -1193,7 +1193,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         - The ``next_handler`` ultimately calls ``_compress_context_impl``.
         - A middleware can short-circuit and skip the actual implementation.
         """
-        seen_instructions = []
+        seen_inputs = []
 
         # ------------------------------------------------------------------ #
         # Middleware that records pre/post and forwards to next_handler.      #
@@ -1221,7 +1221,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             ) -> None:
                 """Forward to next handler, recording pre and post."""
                 self.log.append(f"{self.name}_pre")
-                seen_instructions.append(input_kwargs.get("instructions"))
+                seen_inputs.append(dict(input_kwargs))
                 await next_handler(**input_kwargs)
                 self.log.append(f"{self.name}_post")
 
@@ -1266,18 +1266,26 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=instructions,
+                force=False,
+                fallback_to_truncation=True,
             )
 
         # Verify onion execution order: mw1_pre -> mw2_pre -> mw2_post ->
         # mw1_post
         expected = ["mw1_pre", "mw2_pre", "mw2_post", "mw1_post"]
         self.assertListEqual(self.execution_log, expected)
-        self.assertListEqual(seen_instructions, [instructions, instructions])
+        expected_input = {
+            "context_config": context_config,
+            "instructions": instructions,
+            "force": False,
+            "fallback_to_truncation": True,
+        }
+        self.assertListEqual(seen_inputs, [expected_input, expected_input])
 
     async def test_on_compress_context_middleware_modify_instructions(
         self,
     ) -> None:
-        """Test that middleware can replace compress_context instructions."""
+        """Middleware can replace every compression control argument."""
 
         class ReplaceInstructionsMiddleware(MiddlewareBase):
             """Middleware that replaces the compression instructions."""
@@ -1292,8 +1300,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 input_kwargs: dict,
                 next_handler: Callable[..., Any],
             ) -> None:
-                """Replace instructions before forwarding."""
+                """Replace the tool-requested compression behavior."""
                 input_kwargs["instructions"] = self.replacement
+                input_kwargs["force"] = False
+                input_kwargs["fallback_to_truncation"] = True
                 await next_handler(**input_kwargs)
 
         original = HintBlock(
@@ -1319,14 +1329,18 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "_compress_context_impl",
             new_callable=AsyncMock,
         ) as mock_impl:
-            await agent.compress_context(
+            await agent._run_compress_context(
                 context_config=context_config,
                 instructions=original,
+                force=True,
+                fallback_to_truncation=False,
             )
 
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=replacement,
+                force=False,
+                fallback_to_truncation=True,
             )
 
     async def test_on_compress_context_middleware_short_circuit(
@@ -1419,6 +1433,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             mock_impl.assert_awaited_once_with(
                 context_config=context_config,
                 instructions=None,
+                force=False,
+                fallback_to_truncation=True,
             )
 
     async def asyncTearDown(self) -> None:

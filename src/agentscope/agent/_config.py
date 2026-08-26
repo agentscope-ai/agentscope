@@ -65,8 +65,7 @@ class ContextConfig(BaseModel):
 
     compression_prompt: str = Field(
         default=(
-            "<system-hint>You have been working on the task described above "
-            "but have not yet completed it. "
+            "<system-hint>You have been working on the task described above. "
             "Now write a continuation summary that will allow you to resume "
             "work efficiently in a future context window where the "
             "conversation history will be replaced with this summary. "
@@ -137,6 +136,17 @@ class ContextConfig(BaseModel):
         ),
     )
     """The tool result limit to avoid tool result bursting."""
+
+    compression_tool_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to expose a context compression tool to the agent. "
+            "When runtime-state injection is enabled, the agent is prompted "
+            "to use the tool between tasks as the context approaches the "
+            "hard compression threshold."
+        ),
+    )
+    """Whether the agent can explicitly request context compression."""
 
     max_image_num: int = Field(
         title="Max Image Number",
