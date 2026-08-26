@@ -1643,6 +1643,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             content=[TextBlock(text="done")],
                             is_last=True,
                         ),
+                        ChatResponse(
+                            content=[TextBlock(text="done again")],
+                            is_last=True,
+                        ),
                     ],
                 )
                 toolkit = Toolkit()
@@ -1664,6 +1668,11 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 tool = await toolkit.get_tool("CompressContext")
                 self.assertEqual(tool is not None, enabled)
                 if tool is not None:
+                    await agent.reply(UserMsg("User", "hello again"))
+                    self.assertIs(
+                        await toolkit.get_tool("CompressContext"),
+                        tool,
+                    )
                     agent._run_compress_context = AsyncMock()
                     result = await tool()
                     self.assertEqual(result.state, ToolResultState.SUCCESS)

@@ -18,10 +18,15 @@ class _CompressContext(ToolBase):
     description = """Compress older conversation context into a continuation
 summary while preserving the recent context needed for upcoming work.
 
-Use this tool only when the runtime-state reminder recommends compression and
-you are between tasks or have just completed a distinct phase of work. Do not
-call it while a task is in progress or when exact earlier details are still
-needed verbatim.
+Use this tool only after a runtime-state `<context-compression>` reminder
+explicitly recommends it. The reminder indicates that the context is large
+enough for compression and that no task was in progress when it was produced.
+
+Do not call this tool while any task is currently `in_progress`, even if an
+older compression reminder is still present. Finish or pause the active task
+first. Pending tasks do not prevent compression when you are between tasks.
+
+Keep the current context when exact earlier details are still needed verbatim.
 
 Conversation history is replaced only after a summary is generated
 successfully."""

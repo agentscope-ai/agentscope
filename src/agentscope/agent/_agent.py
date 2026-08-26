@@ -186,6 +186,9 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        self._context_compression_tool = _CompressContext(
+            self._compress_context_from_tool,
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -437,6 +440,19 @@ class Agent:
             force=True,
             fallback_to_truncation=False,
         )
+
+    async def _sync_context_compression_tool(self) -> None:
+        """Keep the agent-owned compression tool aligned with its config."""
+        registered = await self.toolkit.get_tool(
+            self._context_compression_tool.name,
+        )
+        if self.context_config.compression_tool_enabled:
+            if registered is not self._context_compression_tool:
+                await self.toolkit.add_tool(self._context_compression_tool)
+        elif registered is self._context_compression_tool:
+            await self.toolkit.remove_tool(
+                self._context_compression_tool.name,
+            )
 
     async def _compress_context_impl(
         self,
@@ -1068,14 +1084,12 @@ class Agent:
                     ),
                 )
 
-            # Keep the agent-owned compression tool in sync with the current
-            # context configuration. It is available throughout reasoning,
-            # while runtime-state injection decides when to recommend it.
-            await self.toolkit.remove_tool(_CompressContext.name)
-            if self.context_config.compression_tool_enabled:
-                await self.toolkit.add_tool(
-                    _CompressContext(self._compress_context_from_tool),
-                )
+            # Register the agent-owned compression tool before the first model
+            # input. While the config remains enabled the same tool instance
+            # stays registered across replies, keeping its serialized schema
+            # stable for prompt caching. Runtime-state injection independently
+            # decides when to recommend calling it.
+            await self._sync_context_compression_tool()
 
             # =================================================================
             # Step 3: Enter the reasoning-acting loop until reaching max_iters
