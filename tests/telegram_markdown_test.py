@@ -54,20 +54,19 @@ class TelegramMarkdownTest(TestCase):
             "```python\nprint('<tag>')\n```",
         )
 
-        self.assertIn("<b>Heading</b>", rendered)
-        self.assertIn("<b>bold</b>", rendered)
-        self.assertIn("<i>italic</i>", rendered)
-        self.assertIn("<s>gone</s>", rendered)
-        self.assertIn("<code>inline</code>", rendered)
-        self.assertIn("<blockquote>quote", rendered)
-        self.assertIn("• one", rendered)
-        self.assertIn("1. first", rendered)
-        self.assertIn(
-            '<a href="https://example.test/a?x=1&amp;y=2">safe</a>',
+        self.assertEqual(
             rendered,
+            "<b>Heading</b>\n\n"
+            "<b>bold</b> <i>italic</i> <s>gone</s> "
+            "<code>inline</code>\n\n"
+            "<blockquote>quote\n\n</blockquote>\n\n"
+            "• one\n• two\n\n"
+            "1. first\n2. second\n\n"
+            '<a href="https://example.test/a?x=1&amp;y=2">safe</a>'
+            "\n\n"
+            '<pre><code class="language-python">'
+            "print('&lt;tag&gt;')</code></pre>",
         )
-        self.assertIn('<pre><code class="language-python">', rendered)
-        self.assertIn("&lt;tag&gt;", rendered)
 
     def test_raw_html_and_unsafe_links_are_not_interpreted(self) -> None:
         rendered = _render_markdown(
@@ -77,10 +76,12 @@ class TelegramMarkdownTest(TestCase):
             "[telegram](tg://user?id=123)",
         )
 
-        self.assertIn("&lt;b&gt;raw&lt;/b&gt;", rendered)
-        self.assertNotIn('href="javascript:', rendered)
-        self.assertNotIn('href="/admin', rendered)
-        self.assertIn('href="tg://user?id=123"', rendered)
+        self.assertEqual(
+            rendered,
+            "&lt;b&gt;raw&lt;/b&gt;\n\n"
+            "[unsafe](javascript:alert(1)) relative "
+            '<a href="tg://user?id=123">telegram</a>',
+        )
 
     def test_table_degrades_to_preformatted_text(self) -> None:
         rendered = _render_markdown(
@@ -90,23 +91,33 @@ class TelegramMarkdownTest(TestCase):
             "| beta | 20 |",
         )
 
-        self.assertTrue(rendered.startswith("<pre>"))
-        self.assertTrue(rendered.endswith("</pre>"))
-        self.assertIn("name  | value", _plain_text(rendered))
-        self.assertIn("alpha | 1", _plain_text(rendered))
+        self.assertEqual(
+            rendered,
+            "<pre>name  | value\n"
+            "------+------\n"
+            "alpha | 1\n"
+            "beta  | 20</pre>",
+        )
+        self.assertEqual(
+            _plain_text(rendered),
+            "name  | value\n------+------\nalpha | 1\nbeta  | 20",
+        )
 
     def test_unlabelled_code_fence_is_safe_while_streaming(self) -> None:
-        for markdown in (
-            "```",
-            "```\nprint('<partial>')",
-            "```\nprint('<complete>')\n```",
-        ):
+        cases = (
+            ("```", "<pre><code></code></pre>"),
+            (
+                "```\nprint('<partial>')",
+                "<pre><code>print('&lt;partial&gt;')</code></pre>",
+            ),
+            (
+                "```\nprint('<complete>')\n```",
+                "<pre><code>print('&lt;complete&gt;')</code></pre>",
+            ),
+        )
+        for markdown, expected in cases:
             with self.subTest(markdown=markdown):
-                rendered = _render_markdown(markdown)
-                self.assertIn("<pre><code>", rendered)
-                self.assertNotIn('class="language-', rendered)
-                self.assertNotIn("<partial>", rendered)
-                self.assertNotIn("<complete>", rendered)
+                self.assertEqual(_render_markdown(markdown), expected)
 
     def test_long_formatted_text_has_independent_valid_chunks(self) -> None:
         chunks = _telegram_markdown_chunks(

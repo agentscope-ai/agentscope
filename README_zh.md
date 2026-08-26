@@ -73,7 +73,7 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 ## 新闻
 <!-- BEGIN NEWS -->
 - **[2026-08] `功能`:** 支持 Console —— 在终端中测试与调试智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
-- **[2026-08] `集成`:** 支持飞书（Lark）、Discord 与 Telegram 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord) | [Telegram](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service#telegram-channel)
+- **[2026-08] `集成`:** 支持飞书（Lark）、Discord 与 Telegram 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
 - **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
 - **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
 - **[2026-08] `功能`:** 支持 MCP & Skill Hub —— 浏览 hub、安装到个人库、再添加到工作区。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)

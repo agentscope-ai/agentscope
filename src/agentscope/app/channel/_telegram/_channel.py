@@ -240,19 +240,43 @@ class TelegramChannel(ChannelBase):
                 "IDs allowed to use private chats"
             ),
         )
+        allow_public_group_chats: bool = Field(
+            default=False,
+            title="Allow public group chats",
+            description=(
+                "Allow any Telegram group or supergroup to use this bot"
+            ),
+        )
+        allowed_group_chat_ids: str = Field(
+            default="",
+            title="Allowed group chat IDs",
+            description=(
+                "Comma-, whitespace-, or newline-separated Telegram group "
+                "or supergroup chat IDs allowed to use this bot"
+            ),
+        )
 
-        @field_validator("allowed_private_user_ids")
+        @field_validator("allowed_private_user_ids", "allowed_group_chat_ids")
         @classmethod
-        def _validate_allowed_private_user_ids(cls, value: str) -> str:
+        def _validate_allowed_chat_ids(
+            cls,
+            value: str,
+            info: Any,
+        ) -> str:
             tokens = [
                 token for token in re.split(r"[,\s]+", value.strip()) if token
             ]
             ids: set[int] = set()
             for token in tokens:
-                if re.fullmatch(r"[0-9]+", token) is None or int(token) <= 0:
+                allow_negative = info.field_name == "allowed_group_chat_ids"
+                pattern = r"-?[0-9]+" if allow_negative else r"[0-9]+"
+                if re.fullmatch(pattern, token) is None or int(token) == 0:
+                    id_kind = (
+                        "non-zero signed" if allow_negative else "positive"
+                    )
                     raise ValueError(
-                        "allowed_private_user_ids must contain only "
-                        "positive numeric Telegram user IDs",
+                        f"{info.field_name} must contain only "
+                        f"{id_kind} numeric Telegram IDs",
                     )
                 ids.add(int(token))
             return ",".join(str(user_id) for user_id in sorted(ids))
@@ -281,6 +305,11 @@ class TelegramChannel(ChannelBase):
             int(user_id)
             for user_id in config.allowed_private_user_ids.split(",")
             if user_id
+        )
+        self._allowed_group_chat_ids = frozenset(
+            int(chat_id)
+            for chat_id in config.allowed_group_chat_ids.split(",")
+            if chat_id
         )
         self.status = ChannelStatus()
         self._application: "Application | None" = None
@@ -602,8 +631,9 @@ class TelegramChannel(ChannelBase):
         if message is None or user is None or user.is_bot:
             return
         try:
-            if not self._is_private_user_allowed(message, user):
-                await self._notify_unapproved_private_user(message, user)
+            if not self._is_message_allowed(message, user):
+                if str(message.chat.type) == "private":
+                    await self._notify_unapproved_private_user(message, user)
                 return
             self._remember_chat(message.chat)
             if message.media_group_id and self._downloadable(message):
@@ -622,15 +652,49 @@ class TelegramChannel(ChannelBase):
                 self._channel_id,
             )
 
-    def _is_private_user_allowed(self, message: "Message", user: Any) -> bool:
-        """Return whether a sender may enter a private chat with the bot."""
-        if str(message.chat.type) != "private":
-            return True
-        if user is None:
+    def _is_message_allowed(self, message: "Message", user: Any) -> bool:
+        """Return whether a message may enter this channel's agent session."""
+        return self._is_chat_allowed(
+            chat_type=str(message.chat.type),
+            chat_id=message.chat.id,
+            user_id=user.id if user is not None else None,
+        )
+
+    def _is_chat_allowed(
+        self,
+        *,
+        chat_type: str,
+        chat_id: Any,
+        user_id: Any,
+    ) -> bool:
+        """Apply the configured access policy to one Telegram chat."""
+        if chat_type == "private":
+            return user_id is not None and (
+                self._config.allow_public_private_chats
+                or int(user_id) in self._allowed_private_user_ids
+            )
+        if chat_type in ("group", "supergroup"):
+            return (
+                self._config.allow_public_group_chats
+                or int(chat_id) in self._allowed_group_chat_ids
+            )
+        return False
+
+    def _is_callback_allowed(
+        self,
+        query: Any,
+        data: _ApprovalCallback,
+    ) -> bool:
+        """Validate a callback against its stored target and access policy."""
+        message = getattr(query, "message", None)
+        chat = getattr(message, "chat", None)
+        if chat is None or str(chat.id) != data.chat_id:
             return False
-        return (
-            self._config.allow_public_private_chats
-            or int(user.id) in self._allowed_private_user_ids
+        user = getattr(query, "from_user", None)
+        return self._is_chat_allowed(
+            chat_type=str(chat.type),
+            chat_id=chat.id,
+            user_id=user.id if user is not None else None,
         )
 
     @staticmethod
@@ -687,7 +751,7 @@ class TelegramChannel(ChannelBase):
             first = messages[0] if messages else None
             if (
                 first is None
-                or not self._is_private_user_allowed(first, first.from_user)
+                or not self._is_message_allowed(first, first.from_user)
                 or all(self._gated_out(msg) for msg in messages)
             ):
                 return
@@ -1434,12 +1498,12 @@ class TelegramChannel(ChannelBase):
             MessageBusKeys.channel_approval_callback(self._channel_id, token),
             "payload",
         )
-        return (
+        data = (
             _ApprovalCallback.from_json(payload)
             if payload is not None
-            else None,
-            token,
+            else None
         )
+        return data, token
 
     async def _delete_approval_callback(self, token: str) -> None:
         """Retire callback state after its decision reached the gateway."""
@@ -1479,6 +1543,15 @@ class TelegramChannel(ChannelBase):
             )
             data, token = None, None
         if data is None:
+            await self._expire_callback(query)
+            return
+
+        if not self._is_callback_allowed(query, data):
+            try:
+                if token is not None:
+                    await self._delete_approval_callback(token)
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Could not retire a rejected Telegram callback")
             await self._expire_callback(query)
             return
 
@@ -1674,7 +1747,8 @@ class TelegramChannel(ChannelBase):
     ) -> _T:
         from telegram.error import BadRequest, NetworkError, RetryAfter
 
-        for attempt in range(_MAX_API_ATTEMPTS):
+        network_failures = 0
+        while True:
             try:
                 return await operation()
             except RetryAfter as error:
@@ -1684,19 +1758,21 @@ class TelegramChannel(ChannelBase):
                     if isinstance(delay, timedelta)
                     else float(delay)
                 )
-                exhausted = attempt + 1 >= _MAX_API_ATTEMPTS
-                if exhausted:
-                    raise
+                # Telegram explicitly tells us when this operation may be
+                # retried. Honouring every flood-limit wait keeps the
+                # outbound message alive without imposing a shared deadline
+                # on the complete reply stream.
+                network_failures = 0
                 await asyncio.sleep(max(0.0, seconds))
             except NetworkError as error:
                 # PTB models BadRequest as a NetworkError subclass even
                 # though retrying a malformed Bot API request cannot help.
                 if isinstance(error, BadRequest):
                     raise
-                if attempt + 1 >= _MAX_API_ATTEMPTS:
+                network_failures += 1
+                if network_failures >= _MAX_API_ATTEMPTS:
                     raise
-                await asyncio.sleep(2**attempt)
-        raise RuntimeError("unreachable Telegram retry state")
+                await asyncio.sleep(2 ** (network_failures - 1))
 
     def _safe_error(self, error: BaseException) -> str:
         text = str(error) or type(error).__name__

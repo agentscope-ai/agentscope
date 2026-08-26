@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 from pydantic import ValidationError
@@ -18,6 +18,7 @@ from agentscope.app.channel._base import ChannelEvent, ChatKind
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.channel._telegram._channel import (
     _ApprovalCallback,
+    _MAX_API_ATTEMPTS,
     _MAX_DOCUMENT_BYTES,
     _MAX_DOWNLOAD_BYTES,
     _MAX_PHOTO_BYTES,
@@ -25,6 +26,7 @@ from agentscope.app.channel._telegram._channel import (
     _StreamPreview,
     _TelegramResult,
 )
+from agentscope.app.channel._telegram._markdown import _TelegramTextChunk
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -84,6 +86,60 @@ def _channel(
     )
     channel._bot_user = _BOT
     return channel
+
+
+def _deterministic_event(event: ChannelEvent) -> dict[str, Any]:
+    """Dump an event without generated timestamps and block ids."""
+    payload = event.model_dump(exclude={"received_at"})
+    for block in payload["content"]:
+        block.pop("id", None)
+        block.pop("created_at", None)
+    return payload
+
+
+def _expected_text_event(
+    text: str,
+    *,
+    chat_type: str = "private",
+    message_id: int = 1,
+) -> dict[str, Any]:
+    """Build the complete deterministic payload for one text message."""
+    private = chat_type == "private"
+    return {
+        "channel_id": "telegram-1",
+        "channel_user_id": "456",
+        "channel_user_name": "Alice",
+        "chat_id": "456" if private else "-100",
+        "chat_name": "Alice" if private else "Test Group",
+        "channel_message_id": str(message_id),
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+                "finished_at": None,
+            },
+        ],
+        "metadata": {"chat_type": chat_type},
+    }
+
+
+def _callback_query(
+    data: str,
+    *,
+    chat_id: int = -100,
+    chat_type: str = "supergroup",
+) -> Any:
+    """Build one callback query attached to a concrete Telegram chat."""
+    return SimpleNamespace(
+        data=data,
+        from_user=_USER,
+        message=SimpleNamespace(
+            chat=SimpleNamespace(id=chat_id, type=chat_type),
+        ),
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+        edit_message_reply_markup=AsyncMock(),
+    )
 
 
 def _message(
@@ -176,6 +232,8 @@ class TelegramSchemaTest(TestCase):
         self.assertFalse(config.show_thinking)
         self.assertFalse(config.allow_public_private_chats)
         self.assertEqual(config.allowed_private_user_ids, "")
+        self.assertFalse(config.allow_public_group_chats)
+        self.assertEqual(config.allowed_group_chat_ids, "")
         self.assertTrue(TelegramChannel.capabilities.text)
         self.assertTrue(TelegramChannel.capabilities.image)
         self.assertTrue(TelegramChannel.capabilities.file)
@@ -194,6 +252,16 @@ class TelegramSchemaTest(TestCase):
         self.assertEqual(config.allowed_private_user_ids, "123,456,789")
         with self.assertRaises(ValidationError):
             TelegramChannel.Config(allowed_private_user_ids="456, not-an-id")
+
+    def test_group_chat_allowlist_is_normalised_and_validated(self) -> None:
+        config = TelegramChannel.Config(
+            allowed_group_chat_ids=" -1002, -1001\n-1002 123 ",
+        )
+        self.assertEqual(config.allowed_group_chat_ids, "-1002,-1001,123")
+        for value in ("0", "not-an-id", "+100"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    TelegramChannel.Config(allowed_group_chat_ids=value)
 
     def test_credentials_are_normalised_and_validated_without_leaks(
         self,
@@ -470,7 +538,10 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
     """Exercise filtering, normalization, media, and album handling."""
 
     async def asyncSetUp(self) -> None:
-        self.channel = _channel(allowed_private_user_ids=str(_USER.id))
+        self.channel = _channel(
+            allowed_private_user_ids=str(_USER.id),
+            allowed_group_chat_ids="-100",
+        )
         self.received: list[ChannelEvent] = []
 
         async def emit(event: ChannelEvent) -> None:
@@ -483,35 +554,51 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         await self.channel._on_update(Update(1, message=message), None)
 
         self.assertEqual(len(self.received), 1)
-        event = self.received[0]
-        self.assertEqual(event.message, "hello")
-        self.assertEqual(event.channel_user_name, "Alice")
-        self.assertEqual(event.chat_name, "Alice")
+        self.assertEqual(
+            _deterministic_event(self.received[0]),
+            {
+                "channel_id": "telegram-1",
+                "channel_user_id": "456",
+                "channel_user_name": "Alice",
+                "chat_id": "456",
+                "chat_name": "Alice",
+                "channel_message_id": "1",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "finished_at": None,
+                    },
+                ],
+                "metadata": {"chat_type": "private"},
+            },
+        )
         self.assertEqual(await self.channel.chat_kind("456"), ChatKind.PRIVATE)
 
     async def test_unknown_private_text_is_silently_ignored(self) -> None:
         channel = _channel()
-        received: list[ChannelEvent] = []
-        channel._emit = received.append
+        channel._emit = AsyncMock()
 
         await channel._on_update(
             Update(1, message=_message(text="hello")),
             None,
         )
 
-        self.assertEqual(received, [])
+        channel._emit.assert_not_awaited()
         self.assertEqual(channel._chat_kind_cache, {})
         self.assertEqual(channel._chat_name_cache, {})
+        self.assertEqual(channel._album_messages, {})
+        self.assertEqual(channel._album_tasks, {})
 
     async def test_unknown_private_user_is_dropped_before_media_handling(
         self,
     ) -> None:
         channel = _channel()
-        received: list[ChannelEvent] = []
-        channel._emit = received.append
+        channel._emit = AsyncMock()
         media = SimpleNamespace(get_file=AsyncMock())
         message = SimpleNamespace(
             chat=SimpleNamespace(id=456, type="private"),
+            text=None,
             media_group_id="album-1",
             photo=(media,),
             document=None,
@@ -529,10 +616,42 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
 
         await channel._on_update(update, None)
 
-        self.assertEqual(received, [])
+        channel._emit.assert_not_awaited()
         self.assertEqual(channel._album_messages, {})
         self.assertEqual(channel._album_tasks, {})
         self.assertEqual(channel._chat_kind_cache, {})
+        self.assertEqual(channel._chat_name_cache, {})
+        media.get_file.assert_not_awaited()
+
+    async def test_unknown_group_is_dropped_before_media_handling(
+        self,
+    ) -> None:
+        channel = _channel()
+        channel._emit = AsyncMock()
+        media = SimpleNamespace(get_file=AsyncMock())
+        message = SimpleNamespace(
+            chat=SimpleNamespace(id=-100, type="supergroup"),
+            media_group_id="album-1",
+            photo=(media,),
+            document=None,
+            audio=None,
+            voice=None,
+            video=None,
+            animation=None,
+            video_note=None,
+            sticker=None,
+        )
+
+        await channel._on_update(
+            SimpleNamespace(effective_message=message, effective_user=_USER),
+            None,
+        )
+
+        channel._emit.assert_not_awaited()
+        self.assertEqual(channel._album_messages, {})
+        self.assertEqual(channel._album_tasks, {})
+        self.assertEqual(channel._chat_kind_cache, {})
+        self.assertEqual(channel._chat_name_cache, {})
         media.get_file.assert_not_awaited()
 
     async def test_public_private_chat_opt_in_allows_unknown_user(
@@ -550,7 +669,70 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
             None,
         )
 
-        self.assertEqual([event.message for event in received], ["hello"])
+        self.assertEqual(len(received), 1)
+        self.assertEqual(
+            _deterministic_event(received[0]),
+            {
+                "channel_id": "telegram-1",
+                "channel_user_id": "456",
+                "channel_user_name": "Alice",
+                "chat_id": "456",
+                "chat_name": "Alice",
+                "channel_message_id": "1",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "finished_at": None,
+                    },
+                ],
+                "metadata": {"chat_type": "private"},
+            },
+        )
+
+    async def test_group_chat_allowlist_and_public_opt_in_allow_messages(
+        self,
+    ) -> None:
+        configs: tuple[dict[str, Any], ...] = (
+            {"allowed_group_chat_ids": "-100"},
+            {"allow_public_group_chats": True},
+        )
+        for config in configs:
+            with self.subTest(config=config):
+                channel = _channel(**config)
+                channel._emit = AsyncMock()
+
+                await channel._on_update(
+                    Update(
+                        1,
+                        message=_mention(
+                            "@agent_bot hello",
+                            chat_type="supergroup",
+                        ),
+                    ),
+                    None,
+                )
+
+                channel._emit.assert_awaited_once()
+                self.assertEqual(
+                    _deterministic_event(channel._emit.await_args.args[0]),
+                    {
+                        "channel_id": "telegram-1",
+                        "channel_user_id": "456",
+                        "channel_user_name": "Alice",
+                        "chat_id": "-100",
+                        "chat_name": "Test Group",
+                        "channel_message_id": "1",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "hello",
+                                "finished_at": None,
+                            },
+                        ],
+                        "metadata": {"chat_type": "supergroup"},
+                    },
+                )
 
     async def test_unknown_start_returns_id_without_emitting_an_event(
         self,
@@ -558,24 +740,22 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         channel = _channel()
         bot = SimpleNamespace(send_message=AsyncMock())
         channel._application = SimpleNamespace(bot=bot)
-        received: list[ChannelEvent] = []
-
-        async def emit(event: ChannelEvent) -> None:
-            received.append(event)
-
-        channel._emit = emit
+        channel._emit = AsyncMock()
         await channel._on_update(
             Update(1, message=_message(text="/start")),
             None,
         )
 
-        self.assertEqual(received, [])
-        bot.send_message.assert_awaited_once()
-        self.assertEqual(bot.send_message.await_args.kwargs["chat_id"], 456)
-        self.assertIn(
-            str(_USER.id),
-            bot.send_message.await_args.kwargs["text"],
+        channel._emit.assert_not_awaited()
+        bot.send_message.assert_awaited_once_with(
+            chat_id=456,
+            text=(
+                "Your Telegram user ID is 456. Ask the channel owner to "
+                "add it to the allowed private user IDs."
+            ),
         )
+        self.assertEqual(channel._chat_kind_cache, {})
+        self.assertEqual(channel._chat_name_cache, {})
 
     async def test_group_requires_mention_or_reply(self) -> None:
         ignored = _message(chat_type="supergroup", text="hello")
@@ -597,13 +777,24 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         await self.channel._on_update(Update(3, message=replied), None)
 
         self.assertEqual(
-            [event.message for event in self.received],
-            ["hello", "follow up"],
+            [_deterministic_event(event) for event in self.received],
+            [
+                _expected_text_event(
+                    "hello",
+                    chat_type="supergroup",
+                    message_id=2,
+                ),
+                _expected_text_event(
+                    "follow up",
+                    chat_type="supergroup",
+                    message_id=3,
+                ),
+            ],
         )
         self.assertEqual(await self.channel.chat_kind("-100"), ChatKind.GROUP)
 
     async def test_group_filter_can_be_disabled(self) -> None:
-        channel = _channel(only_at_reply=False)
+        channel = _channel(only_at_reply=False, allowed_group_chat_ids="-100")
         received: list[ChannelEvent] = []
 
         async def emit(event: ChannelEvent) -> None:
@@ -612,7 +803,11 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         channel._emit = emit
         message = _message(chat_type="group", text="hello all")
         await channel._on_update(Update(1, message=message), None)
-        self.assertEqual(received[0].message, "hello all")
+        self.assertEqual(len(received), 1)
+        self.assertEqual(
+            _deterministic_event(received[0]),
+            _expected_text_event("hello all", chat_type="group"),
+        )
 
     async def test_bot_messages_are_ignored(self) -> None:
         message = _message(text="loop", from_user=_BOT)
@@ -626,7 +821,11 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
             chat_type="group",
         )
         event = await self.channel._normalise_messages([message])
-        self.assertEqual(event.message, "describe this")
+        assert event is not None
+        self.assertEqual(
+            _deterministic_event(event),
+            _expected_text_event("describe this", chat_type="group"),
+        )
 
     async def test_addressed_command_triggers_group_and_keeps_command(
         self,
@@ -647,7 +846,10 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         self.assertFalse(self.channel._gated_out(message))
         event = await self.channel._normalise_messages([message])
         assert event is not None
-        self.assertEqual(event.message, "/help topic")
+        self.assertEqual(
+            _deterministic_event(event),
+            _expected_text_event("/help topic", chat_type="group"),
+        )
 
     async def test_media_selection_covers_supported_types(self) -> None:
         def media(**kwargs: Any) -> SimpleNamespace:
@@ -800,8 +1002,13 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
             self.channel._buffer_album(second)
             await asyncio.sleep(0.03)
 
-        call = self.channel._normalise_messages.await_args.args[0]
-        self.assertEqual([message.message_id for message in call], [1, 2])
+        normalised_messages = self.channel._normalise_messages.await_args.args[
+            0
+        ]
+        self.assertEqual(
+            [message.message_id for message in normalised_messages],
+            [1, 2],
+        )
         self.assertEqual(self.received, [event])
 
     async def test_album_tasks_are_cancelled_on_shutdown(self) -> None:
@@ -824,14 +1031,20 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
         )
         event = await self.channel._normalise_messages([first, second])
         assert event is not None
-        self.assertEqual(event.message, "one")
+        self.assertEqual(
+            _deterministic_event(event),
+            _expected_text_event("one"),
+        )
 
 
 class TelegramOutboundTest(IsolatedAsyncioTestCase):
     """Exercise streaming replies, limits, and approval callbacks."""
 
     async def asyncSetUp(self) -> None:
-        self.channel = _channel()
+        self.channel = _channel(
+            allowed_private_user_ids=str(_USER.id),
+            allowed_group_chat_ids="-100",
+        )
         self.bot = SimpleNamespace(
             send_message=AsyncMock(
                 return_value=SimpleNamespace(message_id=99),
@@ -1071,6 +1284,31 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             "<b>x</b>",
         )
 
+    async def test_final_text_stops_after_the_first_failed_chunk(self) -> None:
+        self.channel._send_formatted_chunk = AsyncMock(
+            return_value=_TelegramResult(False, "offline"),
+        )
+        preview = _StreamPreview(mode="none", draft_id=7)
+
+        await self.channel._finish_streamed_text(
+            "-100",
+            preview,
+            "x" * 4097,
+        )
+
+        self.assertEqual(
+            self.channel._send_formatted_chunk.await_args_list,
+            [
+                call(
+                    "-100",
+                    _TelegramTextChunk(
+                        html="x" * 4096,
+                        plain="x" * 4096,
+                    ),
+                ),
+            ],
+        )
+
     async def test_response_image_degrades_to_document(self) -> None:
         raw = b"x" * (_MAX_PHOTO_BYTES + 1)
         block = DataBlock(
@@ -1198,28 +1436,32 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                     approved=approved,
                 ),
             )
-            query = SimpleNamespace(
-                data=callback_data,
-                from_user=_USER,
-                answer=AsyncMock(),
-                edit_message_text=AsyncMock(),
-                edit_message_reply_markup=AsyncMock(),
-            )
+            query = _callback_query(callback_data)
             await self.channel._on_callback(
                 SimpleNamespace(callback_query=query),
                 None,
             )
-            self.assertEqual(emitted[-1].approved, approved)
-            self.assertEqual(emitted[-1].actor, str(_USER.id))
-            query.answer.assert_awaited_once()
+            self.assertEqual(
+                emitted[-1].model_dump(),
+                {
+                    "channel_id": "telegram-1",
+                    "chat_id": "-100",
+                    "channel_user_id": "456",
+                    "agent_id": "agent-1",
+                    "session_id": "session-1",
+                    "tool_call_id": f"tool-{approved}",
+                    "approved": approved,
+                    "actor": "456",
+                },
+            )
+            query.answer.assert_awaited_once_with("Decision received.")
             query.edit_message_text.assert_awaited_once_with(expected_text)
+            stored, _ = await self.channel._load_approval_callback(
+                callback_data,
+            )
+            self.assertIsNone(stored)
 
-        expired = SimpleNamespace(
-            data="tampered",
-            from_user=_USER,
-            answer=AsyncMock(),
-            edit_message_reply_markup=AsyncMock(),
-        )
+        expired = _callback_query("tampered")
         await self.channel._on_callback(
             SimpleNamespace(callback_query=expired),
             None,
@@ -1247,13 +1489,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                     approved=True,
                 ),
             )
-            query = SimpleNamespace(
-                data=callback_data,
-                from_user=_USER,
-                answer=AsyncMock(),
-                edit_message_text=AsyncMock(),
-                edit_message_reply_markup=AsyncMock(),
-            )
+            query = _callback_query(callback_data)
             getattr(query, failed_ui).side_effect = RuntimeError("offline")
 
             await self.channel._on_callback(
@@ -1261,8 +1497,25 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 None,
             )
 
-            self.assertEqual(emitted[-1].tool_call_id, f"tool-{failed_ui}")
-            self.assertTrue(emitted[-1].approved)
+            self.assertEqual(
+                emitted[-1].model_dump(),
+                {
+                    "channel_id": "telegram-1",
+                    "chat_id": "-100",
+                    "channel_user_id": "456",
+                    "agent_id": "agent-1",
+                    "session_id": "session-1",
+                    "tool_call_id": f"tool-{failed_ui}",
+                    "approved": True,
+                    "actor": "456",
+                },
+            )
+            query.answer.assert_awaited_once_with("Decision received.")
+            query.edit_message_text.assert_awaited_once_with("✅ Approved")
+            stored, _ = await self.channel._load_approval_callback(
+                callback_data,
+            )
+            self.assertIsNone(stored)
 
     async def test_callback_emits_before_acknowledging_telegram(self) -> None:
         order: list[str] = []
@@ -1283,13 +1536,8 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 approved=True,
             ),
         )
-        query = SimpleNamespace(
-            data=callback_data,
-            from_user=_USER,
-            answer=AsyncMock(side_effect=answer),
-            edit_message_text=AsyncMock(),
-            edit_message_reply_markup=AsyncMock(),
-        )
+        query = _callback_query(callback_data)
+        query.answer = AsyncMock(side_effect=answer)
 
         await self.channel._on_callback(
             SimpleNamespace(callback_query=query),
@@ -1301,7 +1549,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
     async def test_callback_state_is_available_to_the_listener_instance(
         self,
     ) -> None:
-        listener = _channel()
+        listener = _channel(allowed_group_chat_ids="-100")
         listener.bind_message_bus(self.bus)
         emitted: list[Any] = []
 
@@ -1318,13 +1566,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 approved=False,
             ),
         )
-        query = SimpleNamespace(
-            data=callback_data,
-            from_user=_USER,
-            answer=AsyncMock(),
-            edit_message_text=AsyncMock(),
-            edit_message_reply_markup=AsyncMock(),
-        )
+        query = _callback_query(callback_data)
 
         await listener._on_callback(
             SimpleNamespace(callback_query=query),
@@ -1332,8 +1574,71 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(emitted), 1)
-        self.assertEqual(emitted[0].tool_call_id, "tool-shared")
-        self.assertFalse(emitted[0].approved)
+        self.assertEqual(
+            emitted[0].model_dump(),
+            {
+                "channel_id": "telegram-1",
+                "chat_id": "-100",
+                "channel_user_id": "456",
+                "agent_id": "agent-1",
+                "session_id": "session-1",
+                "tool_call_id": "tool-shared",
+                "approved": False,
+                "actor": "456",
+            },
+        )
+
+    async def test_callback_chat_and_current_access_policy_are_enforced(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "mismatched chat",
+                {"allowed_group_chat_ids": "-100,-200"},
+                "-100",
+                -200,
+                "supergroup",
+            ),
+            ("disallowed group", {}, "-100", -100, "supergroup"),
+            ("disallowed private", {}, "456", 456, "private"),
+        )
+        for label, config, stored_chat, query_chat, chat_type in cases:
+            with self.subTest(label=label):
+                listener = _channel(**config)
+                listener.bind_message_bus(self.bus)
+                listener._emit = AsyncMock()
+                callback_data = await self.channel._store_approval_callback(
+                    _ApprovalCallback(
+                        tool_call_id=f"tool-{label}",
+                        chat_id=stored_chat,
+                        agent_id="agent-1",
+                        session_id="session-1",
+                        approved=True,
+                    ),
+                )
+                query = _callback_query(
+                    callback_data,
+                    chat_id=query_chat,
+                    chat_type=chat_type,
+                )
+
+                await listener._on_callback(
+                    SimpleNamespace(callback_query=query),
+                    None,
+                )
+
+                listener._emit.assert_not_awaited()
+                query.answer.assert_awaited_once_with(
+                    "This approval has expired.",
+                    show_alert=True,
+                )
+                query.edit_message_reply_markup.assert_awaited_once_with(
+                    reply_markup=None,
+                )
+                stored, _ = await self.channel._load_approval_callback(
+                    callback_data,
+                )
+                self.assertIsNone(stored)
 
     async def test_approval_buttons_use_shared_callback_tokens(self) -> None:
         event = ChannelEvent(
@@ -1397,8 +1702,12 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
     async def test_outbound_response_retries_after_long_flood_wait(
         self,
     ) -> None:
+        retry_delays = [31 + offset for offset in range(_MAX_API_ATTEMPTS + 1)]
         self.bot.send_message.side_effect = [
-            RetryAfter(timedelta(seconds=31)),
+            *[
+                RetryAfter(timedelta(seconds=seconds))
+                for seconds in retry_delays
+            ],
             SimpleNamespace(message_id=100),
         ]
         event = ChannelEvent(
@@ -1418,8 +1727,21 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         with patch("asyncio.sleep", new=AsyncMock()) as sleep:
             await self.channel.send_response(event, _events(items))
 
-        self.assertEqual(self.bot.send_message.await_count, 2)
-        sleep.assert_awaited_once_with(31)
+        self.assertEqual(
+            self.bot.send_message.await_args_list,
+            [
+                call(
+                    chat_id=456,
+                    text="reply",
+                    parse_mode="HTML",
+                ),
+            ]
+            * (len(retry_delays) + 1),
+        )
+        self.assertEqual(
+            sleep.await_args_list,
+            [call(delay) for delay in retry_delays],
+        )
 
 
 class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
@@ -1493,16 +1815,62 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
     ) -> None:
         channel = _channel()
         bad_request = AsyncMock(side_effect=BadRequest("bad"))
+        retry_delays = [31 + offset for offset in range(_MAX_API_ATTEMPTS + 1)]
         long_retry = AsyncMock(
-            side_effect=[RetryAfter(timedelta(seconds=31)), "ok"],
+            side_effect=[
+                *[
+                    RetryAfter(timedelta(seconds=seconds))
+                    for seconds in retry_delays
+                ],
+                "ok",
+            ],
         )
         with self.assertRaises(BadRequest):
             await channel._retry_api(bad_request)
         with patch("asyncio.sleep", new=AsyncMock()) as sleep:
             self.assertEqual(await channel._retry_api(long_retry), "ok")
         self.assertEqual(bad_request.await_count, 1)
-        self.assertEqual(long_retry.await_count, 2)
-        sleep.assert_awaited_once_with(31)
+        self.assertEqual(
+            long_retry.await_args_list,
+            [call()] * (len(retry_delays) + 1),
+        )
+        self.assertEqual(
+            sleep.await_args_list,
+            [call(delay) for delay in retry_delays],
+        )
+
+    async def test_network_error_budget_and_retry_cancellation(self) -> None:
+        channel = _channel()
+        network_operation = AsyncMock(
+            side_effect=[NetworkError("offline")] * _MAX_API_ATTEMPTS,
+        )
+        with patch("asyncio.sleep", new=AsyncMock()) as sleep:
+            with self.assertRaises(NetworkError):
+                await channel._retry_api(network_operation)
+        self.assertEqual(network_operation.await_count, _MAX_API_ATTEMPTS)
+        self.assertEqual(
+            [call.args[0] for call in sleep.await_args_list],
+            [1, 2],
+        )
+
+        sleep_started = asyncio.Event()
+
+        async def wait_until_cancelled(_seconds: float) -> None:
+            sleep_started.set()
+            await asyncio.Event().wait()
+
+        retry_after_operation = AsyncMock(
+            side_effect=RetryAfter(timedelta(seconds=60)),
+        )
+        with patch("asyncio.sleep", side_effect=wait_until_cancelled):
+            task = asyncio.create_task(
+                channel._retry_api(retry_after_operation),
+            )
+            await sleep_started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(retry_after_operation.await_count, 1)
 
     async def test_token_is_redacted_from_platform_errors(self) -> None:
         channel = _channel()
