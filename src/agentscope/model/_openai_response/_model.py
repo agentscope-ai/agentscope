@@ -357,6 +357,14 @@ class OpenAIResponseModel(ChatModelBase):
                                     thinking="",
                                     block_id=thinking_id,
                                     reasoning_item_id=reasoning_item_id,
+                                    # Preserve the encrypted reasoning
+                                    # payload so multi-turn replay can
+                                    # echo it back to stateless upstreams.
+                                    encrypted_content=getattr(
+                                        output_item,
+                                        "encrypted_content",
+                                        None,
+                                    ),
                                 )
 
                 if delta_res.content or usage:
@@ -395,11 +403,25 @@ class OpenAIResponseModel(ChatModelBase):
                 # Keep even empty-summary reasoning items: the API requires
                 # reasoning_item_id to be echoed back in multi-turn history.
                 if combined_summary or reasoning_item_id:
+                    # Preserve encrypted_content so the formatter can echo
+                    # the reasoning item verbatim to stateless upstreams
+                    # (e.g. store=false Responses providers), which validate
+                    # replays against it.
+                    encrypted_content = getattr(
+                        item,
+                        "encrypted_content",
+                        None,
+                    )
                     content_blocks.append(
                         ThinkingBlock(
                             type="thinking",
                             thinking=combined_summary,
                             reasoning_item_id=reasoning_item_id,
+                            **(
+                                {"encrypted_content": encrypted_content}
+                                if encrypted_content
+                                else {}
+                            ),
                         ),
                     )
 

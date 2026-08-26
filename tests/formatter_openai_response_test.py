@@ -395,6 +395,47 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_thinking_echoes_encrypted_content(
+        self,
+    ) -> None:
+        """Reasoning replay includes encrypted_content when present.
+
+        Stateless upstreams (e.g. store=false Responses providers) validate
+        a replayed reasoning item against its encrypted payload; dropping it
+        makes every subsequent turn fail with a 400.
+        """
+        fmt = OpenAIResponseFormatter()
+        thinking = ThinkingBlock(thinking="my reasoning")
+        thinking.reasoning_item_id = "rs_001"
+        thinking.encrypted_content = "enc_payload_123"
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[thinking, TextBlock(text="reply")],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "type": "reasoning",
+                    "id": "rs_001",
+                    "summary": [
+                        {"type": "summary_text", "text": "my reasoning"},
+                    ],
+                    "content": [],
+                    "encrypted_content": "enc_payload_123",
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_echoed_with_reasoning_item_id(
         self,
     ) -> None:

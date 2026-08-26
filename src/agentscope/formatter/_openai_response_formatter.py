@@ -299,14 +299,25 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                             if block.thinking
                             else []
                         )
-                        items.append(
-                            {
-                                "type": "reasoning",
-                                "id": reasoning_item_id,
-                                "summary": summary,
-                                "content": [],
-                            },
+                        reasoning_item: dict[str, Any] = {
+                            "type": "reasoning",
+                            "id": reasoning_item_id,
+                            "summary": summary,
+                            "content": [],
+                        }
+                        # Echo the encrypted reasoning payload back so
+                        # stateless upstreams (e.g. store=false Responses
+                        # providers) can validate the replayed item.
+                        encrypted_content = getattr(
+                            block,
+                            "encrypted_content",
+                            None,
                         )
+                        if encrypted_content:
+                            reasoning_item[
+                                "encrypted_content"
+                            ] = encrypted_content
+                        items.append(reasoning_item)
 
                 elif isinstance(block, ToolCallBlock):
                     function_calls.append(

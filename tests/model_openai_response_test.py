@@ -49,6 +49,7 @@ def _mock_completion(
     reasoning_summary: Any = None,
     reasoning_id: str = "rs_test123",
     response_id: str = "resp-openai-1",
+    reasoning_encrypted_content: Any = None,
 ) -> MagicMock:
     """Build a mock non-streaming Responses API response."""
     output = []
@@ -57,6 +58,9 @@ def _mock_completion(
         reasoning_item = MagicMock()
         reasoning_item.type = "reasoning"
         reasoning_item.id = reasoning_id
+        # The real pydantic model defaults this to None; MagicMock would
+        # otherwise auto-create a truthy attribute for it.
+        reasoning_item.encrypted_content = reasoning_encrypted_content
         summary_texts = (
             reasoning_summary
             if isinstance(reasoning_summary, list)
@@ -298,6 +302,56 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_reasoning_encrypted_content_preserved(
+        self,
+    ) -> None:
+        """Reasoning item encrypted_content is kept for multi-turn replay.
+
+        Stateless upstreams (e.g. store=false Responses providers) validate
+        a replayed reasoning item against its encrypted payload, so parsing
+        must not drop it.
+        """
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                reasoning_summary="Thinking step...",
+                text="Answer",
+                reasoning_id="rs_enc",
+                reasoning_encrypted_content="enc_payload_123",
+            ),
+        )
+        self.mock_client.responses.create = mock_create
+
+        result = await self.model([])
+
+        thinking_block = result.content[0]
+        self.assertIsInstance(thinking_block, ThinkingBlock)
+        self.assertEqual(thinking_block.reasoning_item_id, "rs_enc")
+        self.assertEqual(
+            getattr(thinking_block, "encrypted_content", None),
+            "enc_payload_123",
+        )
+
+    async def test_reasoning_without_encrypted_content_has_no_extra(
+        self,
+    ) -> None:
+        """Without encrypted_content, no extra field leaks onto the block."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                reasoning_summary="Thinking step...",
+                text="Answer",
+                reasoning_id="rs_plain",
+            ),
+        )
+        self.mock_client.responses.create = mock_create
+
+        result = await self.model([])
+
+        thinking_block = result.content[0]
+        self.assertIsInstance(thinking_block, ThinkingBlock)
+        self.assertIsNone(
+            getattr(thinking_block, "encrypted_content", None),
+        )
+
     async def test_empty_reasoning_summary_response(
         self,
     ) -> None:
@@ -450,6 +504,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         reasoning_item = MagicMock()
         reasoning_item.type = "reasoning"
         reasoning_item.id = "rs_123"
+        reasoning_item.encrypted_content = None
 
         completed_resp = MagicMock()
         completed_resp.id = "resp-2"
@@ -536,6 +591,48 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_reasoning_encrypted_content_preserved(
+        self,
+    ) -> None:
+        """Streamed reasoning items keep encrypted_content for replay."""
+        reasoning_item = MagicMock()
+        reasoning_item.type = "reasoning"
+        reasoning_item.id = "rs_stream_enc"
+        reasoning_item.encrypted_content = "enc_stream_payload"
+
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-enc"
+        completed_resp.output = [reasoning_item]
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 10
+        completed_resp.usage.output_tokens = 5
+        completed_resp.usage.input_tokens_details = None
+
+        events = [
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="Thinking",
+                response=MagicMock(id="resp-enc"),
+            ),
+            _make_event("response.completed", response=completed_resp),
+        ]
+        mock_create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        self.mock_client.responses.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        final = responses[-1]
+        thinking_block = final.content[0]
+        self.assertIsInstance(thinking_block, ThinkingBlock)
+        self.assertEqual(thinking_block.reasoning_item_id, "rs_stream_enc")
+        self.assertEqual(
+            getattr(thinking_block, "encrypted_content", None),
+            "enc_stream_payload",
+        )
+
     async def test_stream_empty_reasoning_summary_keeps_reasoning_item_id(
         self,
     ) -> None:
@@ -543,6 +640,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         reasoning_item = MagicMock()
         reasoning_item.type = "reasoning"
         reasoning_item.id = "rs_empty"
+        reasoning_item.encrypted_content = None
 
         msg_item = MagicMock()
         msg_item.type = "message"
