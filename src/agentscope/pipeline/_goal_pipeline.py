@@ -13,6 +13,7 @@ from ..event import (
     ExternalExecutionResultEvent,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
+    UserInterruptEvent,
 )
 
 
@@ -72,16 +73,17 @@ class GoalPipeline:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent,
     ) -> AsyncGenerator:
         """Run the goal pipeline.
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent`):
+            UserInterruptEvent | ExternalExecutionResultEvent`):
                 The inputs to the pipeline, which can be a message, a list of
-                messages, a user confirmation result event, or an external
-                execution result event.
+                messages, a user confirmation result event, a user interrupt
+                event, or an external execution result event.
 
         Yields:
             `AgentEvent`:
@@ -101,7 +103,11 @@ class GoalPipeline:
 
         elif isinstance(
             inputs,
-            (UserConfirmResultEvent, ExternalExecutionResultEvent),
+            (
+                UserConfirmResultEvent,
+                UserInterruptEvent,
+                ExternalExecutionResultEvent,
+            ),
         ):
             if inputs.reply_id == self.executor.state.reply_id:
                 executor_inputs = inputs
@@ -111,6 +117,14 @@ class GoalPipeline:
                 raise ValueError(
                     f"Invalid inputs with reply_id: {inputs.reply_id}. ",
                 )
+
+        if isinstance(inputs, UserInterruptEvent):
+            parked = (
+                self.verifier if verifier_inputs is not None else self.executor
+            )
+            async for _ in parked.reply_stream(inputs=inputs):
+                yield _
+            return
 
         while True:
             # Executor

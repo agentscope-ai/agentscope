@@ -1,26 +1,32 @@
 # -*- coding: utf-8 -*-
 """The base pipeline protocol."""
 
-
-from typing import Protocol, AsyncGenerator, Any
+from typing import AsyncGenerator, Protocol
 
 from ..event import (
+    AgentEvent,
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
-    AgentEvent,
+    UserInterruptEvent,
 )
 from ..message import Msg
 
 
 class PipelineProtocol(Protocol):
-    """The base pipeline protocol."""
+    """What a pipeline has to offer to go where an agent goes.
 
-    async def reply_stream(
+    Declared as a plain ``def`` returning an async generator rather than
+    an ``async def``: such a function is called, not awaited, and an
+    ``async def`` here would be satisfied by neither ``Agent`` nor any
+    pipeline.
+    """
+
+    def reply_stream(
         self,
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent,
-        **kwargs: Any,
-    ) -> AsyncGenerator[AgentEvent | Any, None]:
-        """Run the pipeline."""
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Reply to the given inputs and stream what happens."""
