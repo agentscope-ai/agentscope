@@ -1539,6 +1539,7 @@ class Agent:
             "data": [],
         }
         completed_response: ChatResponse | None = None
+        has_streamed_content = False
 
         # Check if res is an async generator (streaming response)
         if inspect.isasyncgen(res):
@@ -1546,8 +1547,31 @@ class Agent:
                 # Save the last chunk with completed response
                 if chunk.is_last:
                     completed_response = chunk
+                    if not has_streamed_content:
+                        # Surface final-only text without replaying aggregate
+                        # tool, thinking, or data content as duplicate deltas.
+                        text_blocks = [
+                            block
+                            for block in chunk.content
+                            if isinstance(block, TextBlock)
+                        ]
+                        if text_blocks:
+                            event_stream = (
+                                self._convert_chat_response_to_event(
+                                    block_ids,
+                                    ChatResponse(
+                                        content=text_blocks,
+                                        is_last=False,
+                                    ),
+                                )
+                            )
+                            async for evt in event_stream:
+                                yield evt
 
                 else:
+                    has_streamed_content = has_streamed_content or bool(
+                        chunk.content,
+                    )
                     # Convert the chunk into events
                     async for evt in self._convert_chat_response_to_event(
                         block_ids,

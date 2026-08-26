@@ -439,6 +439,72 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
 
+    async def test_final_only_streaming_response_emits_content(self) -> None:
+        """A streaming model may return its content only in the final chunk."""
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Hello world!")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hi"),
+        ):
+            events.append(event.model_dump())
+
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+        event_base = self._get_event_base(reply_id)
+        expected_events = [
+            {
+                "type": "REPLY_START",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {
+                "type": "MODEL_CALL_START",
+                "model_name": "mock-model",
+            },
+            {
+                "type": "TEXT_BLOCK_START",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "Hello world!",
+            },
+            {
+                "type": "TEXT_BLOCK_END",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
+        ]
+        self.assertListEqual(
+            events,
+            [{**event_base, **event} for event in expected_events],
+        )
+
     async def test_non_streaming_reasoning(self) -> None:
         """Test the non-streaming model inference without tool calls generated,
         only text in model response.
