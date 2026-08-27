@@ -12,7 +12,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import (
+    AssistantMsg,
+    Base64Source,
+    DataBlock,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    ThinkingBlock,
+)
 from agentscope.model import OpenAIResponseModel
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
@@ -109,6 +118,13 @@ class _MockAsyncEventStream:
     def __init__(self, events: list) -> None:
         self._events = events
         self._index = 0
+        self.exited = False
+
+    async def __aenter__(self) -> "_MockAsyncEventStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        self.exited = True
 
     def __aiter__(self) -> "_MockAsyncEventStream":
         return self
@@ -185,6 +201,66 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                     ),
                 ],
             ),
+        )
+
+    async def test_native_multimodal_tool_result_request(self) -> None:
+        """The model sends native multimodal function-call output."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="verified"),
+        )
+        self.mock_client.responses.create = mock_create
+        messages = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call-image",
+                        name="inspect_image",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call-image",
+                        name="inspect_image",
+                        output=[
+                            TextBlock(text="marker-before"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="aW1hZ2U=",
+                                    media_type="image/png",
+                                ),
+                            ),
+                            TextBlock(text="marker-after"),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        await self.model(messages)
+
+        self.assertListEqual(
+            mock_create.await_args.kwargs["input"],
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "call-image",
+                    "name": "inspect_image",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-image",
+                    "output": [
+                        {"type": "input_text", "text": "marker-before"},
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,aW1hZ2U=",
+                        },
+                        {"type": "input_text", "text": "marker-after"},
+                    ],
+                },
+            ],
         )
 
     async def test_reasoning_response(
@@ -321,13 +397,14 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ),
             _make_event("response.completed", response=completed_resp),
         ]
-        mock_create = AsyncMock(
-            return_value=_MockAsyncEventStream(events),
-        )
+        stream = _MockAsyncEventStream(events)
+        mock_create = AsyncMock(return_value=stream)
         self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
+
+        self.assertTrue(stream.exited)
 
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],

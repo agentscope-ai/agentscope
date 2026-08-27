@@ -121,10 +121,9 @@ class AddSkillArchiveLocalTest(IsolatedAsyncioTestCase):
             "zip",
             "pack",
         )
-        self.assertEqual(
-            sorted(os.listdir(self.tmp)),
-            [".mcp", "skills"],
-        )
+        # No ``.mcp``: it is only written once an agent/session
+        # diverges from ``default_mcps``.
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["skills"])
 
 
 class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
@@ -142,7 +141,7 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
         self.tmp = self.enterContext(tempfile.TemporaryDirectory())
         self.workspace = LocalWorkspace(workdir=self.tmp)
         await self.workspace.initialize()
-        self.skills_dir = os.path.join(self.tmp, "skills")
+        self.skills_dir = os.path.join(self.tmp, "skills", "default")
 
     async def test_directory_name_is_suffixed_when_taken(self) -> None:
         """A repeated name gets a numeric suffix rather than an error."""

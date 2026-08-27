@@ -187,28 +187,12 @@ class OllamaChatFormatter(_OllamaFormatterBase):
 
                 elif isinstance(block, ToolCallBlock):
                     messages.append(
-                        {
-                            "role": msg.role,
-                            "content": "\n".join(content_parts)
-                            if content_parts
-                            else "",
-                            "tool_calls": [
-                                {
-                                    "function": {
-                                        "name": block.name,
-                                        # Ollama SDK expects a dict, not a
-                                        # JSON string. Use the repair helper
-                                        # so a truncated input (from
-                                        # interrupted streaming or context
-                                        # compression) degrades to {} instead
-                                        # of raising JSONDecodeError.
-                                        "arguments": _json_loads_with_repair(
-                                            block.input or "{}",
-                                        ),
-                                    },
-                                },
-                            ],
-                        },
+                        self._format_tool_call_message(
+                            msg.role,
+                            content_parts,
+                            images,
+                            block,
+                        ),
                     )
                     content_parts = []
                     images = []
@@ -290,6 +274,59 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                 messages.append(msg_ollama)
 
         return messages
+
+    def _format_tool_call_message(
+        self,
+        role: str,
+        content_parts: list[str],
+        images: list[str],
+        block: ToolCallBlock,
+    ) -> dict[str, Any]:
+        """Format a tool call block as one assistant message, keeping
+        pending text and images on the same message.
+
+        Ollama merges consecutive same-role messages server-side by
+        appending only content to the first one, so a separate images or
+        tool_calls message would be discarded. Images therefore stay on
+        the tool call message itself.
+
+        Args:
+            role (`str`):
+                The role of the message.
+            content_parts (`list[str]`):
+                Pending text blocks accumulated for this message.
+            images (`list[str]`):
+                Pending formatted images accumulated for this message.
+            block (`ToolCallBlock`):
+                The tool call block to format.
+
+        Returns:
+            `dict[str, Any]`:
+                A single assistant message carrying content, images and
+                the tool call.
+        """
+        tool_call_msg: dict[str, Any] = {
+            "role": role,
+            "content": "\n".join(content_parts) if content_parts else "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": block.name,
+                        # Ollama SDK expects a dict, not a JSON string. Use
+                        # the repair helper so a truncated input (from
+                        # interrupted streaming or context compression)
+                        # degrades to {} instead of raising
+                        # JSONDecodeError.
+                        "arguments": _json_loads_with_repair(
+                            block.input or "{}",
+                        ),
+                    },
+                },
+            ],
+        }
+        if images:
+            tool_call_msg["images"] = images
+        return tool_call_msg
 
 
 class OllamaMultiAgentFormatter(_OllamaFormatterBase):

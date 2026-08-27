@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 # pylint: disable=protected-access
+import hashlib
 import json
 import os
 import tempfile
@@ -22,8 +23,86 @@ from agentscope.message import (
     ToolResultState,
     HintBlock,
     Msg,
+    DataBlock,
+    Base64Source,
+    URLSource,
 )
 from agentscope.tool import Toolkit
+from agentscope.workspace import LocalWorkspace
+
+
+# A 1x1 transparent PNG image
+_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB"
+    "0C8AAAAASUVORK5CYII="
+)
+
+
+def _image_block(name: str) -> DataBlock:
+    """Create a base64 image data block."""
+    return DataBlock(
+        source=Base64Source(data=_PNG_BASE64, media_type="image/png"),
+        name=name,
+    )
+
+
+def _build_image_context() -> list[Msg]:
+    """Build a context with 6 images located at the message top level (user
+    and assistant), inside a tool result and inside a hint block, plus one
+    audio block."""
+    return [
+        UserMsg(
+            "User",
+            [_image_block("img1"), TextBlock(type="text", text="hello")],
+            id="1",
+        ),
+        AssistantMsg(
+            "Friday",
+            [
+                ToolCallBlock(
+                    type="tool_call",
+                    id="call_1",
+                    name="view",
+                    input="{}",
+                ),
+                ToolResultBlock(
+                    type="tool_result",
+                    id="call_1",
+                    name="view",
+                    output=[
+                        TextBlock(type="text", text="the image:"),
+                        _image_block("img2"),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+                HintBlock(
+                    hint=[
+                        TextBlock(type="text", text="a hint image:"),
+                        _image_block("img3"),
+                    ],
+                ),
+                _image_block("img4"),
+            ],
+            id="2",
+        ),
+        UserMsg(
+            "User",
+            [
+                DataBlock(
+                    source=Base64Source(data="AAAA", media_type="audio/wav"),
+                ),
+                DataBlock(
+                    source=URLSource(
+                        url="https://example.com/img5.png",
+                        media_type="image/png",
+                    ),
+                    name="img5",
+                ),
+                _image_block("img6"),
+            ],
+            id="3",
+        ),
+    ]
 
 
 class RecordingStructuredMockModel(MockModel):
@@ -79,6 +158,63 @@ class RecordingStructuredMockModel(MockModel):
             structured_model,
             **kwargs,
         )
+
+
+class FixedPathOffloader:
+    """Return one stable offload path for reminder tests."""
+
+    async def offload_context(
+        self,
+        session_id: str,
+        msgs: list[Msg],
+    ) -> str:
+        """Return the fixed path without persisting test messages."""
+        del session_id, msgs
+        return "sessions/123/context.jsonl"
+
+
+def _make_failing_compression_agent(
+    summary: str = "",
+    offloader: Any = None,
+) -> tuple[Agent, RecordingStructuredMockModel]:
+    """Build an agent whose summary generation fails once."""
+    model = RecordingStructuredMockModel(
+        context_size=100,
+        fail_structured_output_times=1,
+    )
+    agent = Agent(
+        name="Friday",
+        system_prompt="".join(["0" for _ in range(20 * 4)]),
+        model=model,
+        context_config=ContextConfig(
+            trigger_ratio=0.7,
+            reserve_ratio=0.4,
+        ),
+        state=AgentState(
+            session_id="123",
+            summary=summary,
+            context=[
+                UserMsg(
+                    "User",
+                    "".join(["1" for _ in range(30 * 4)]),
+                    id="1",
+                ),
+                AssistantMsg(
+                    "Friday",
+                    "".join(["2" for _ in range(10 * 4)]),
+                    id="2",
+                ),
+                UserMsg(
+                    "User",
+                    "".join(["3" for _ in range(10 * 4)]),
+                    id="3",
+                ),
+            ],
+        ),
+        offloader=offloader,
+        toolkit=Toolkit(),
+    )
+    return agent, model
 
 
 def _has_instruction_hint(
@@ -1383,6 +1519,655 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 instructions,
             ),
         )
+
+    async def test_max_image_num_without_offloader(self) -> None:
+        """The oldest images exceeding the limit are dropped and replaced by
+        hints without path information when no offloader is provided."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You're a helpful assistant.",
+            model=MockModel(context_size=100000),
+            context_config=ContextConfig(max_image_num=2),
+            state=AgentState(session_id="123", context=_build_image_context()),
+            toolkit=Toolkit(),
+        )
+
+        # The token count is far below the trigger threshold, so only the
+        # image limitation takes effect
+        await agent.compress_context()
+
+        expected = [
+            {
+                "name": "User",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "<system-reminder>The image named 'img1' is "
+                            "removed to free up context "
+                            "space.</system-reminder>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": "1",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": "call_1",
+                        "name": "view",
+                        "input": "{}",
+                        "state": "pending",
+                        "suggested_rules": [],
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "tool_result",
+                        "id": "call_1",
+                        "name": "view",
+                        "output": [
+                            {
+                                "type": "text",
+                                "text": "the image:",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img2' "
+                                    "is removed to free up context "
+                                    "space.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "hint",
+                        "hint": [
+                            {
+                                "type": "text",
+                                "text": "a hint image:",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img3' "
+                                    "is removed to free up context "
+                                    "space.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "id": AnyString(),
+                        "source": None,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
+                    },
+                    {
+                        "type": "hint",
+                        "hint": (
+                            "<system-reminder>The image named 'img4' is "
+                            "removed to free up context "
+                            "space.</system-reminder>"
+                        ),
+                        "id": AnyString(),
+                        "source": None,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
+                    },
+                ],
+                "role": "assistant",
+                "id": "2",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "User",
+                "content": [
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": "AAAA",
+                            "media_type": "audio/wav",
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/img5.png",
+                            "media_type": "image/png",
+                        },
+                        "name": "img5",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_BASE64,
+                            "media_type": "image/png",
+                        },
+                        "name": "img6",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": "3",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+        ]
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            expected,
+        )
+
+        # Calling again should be a no-op
+        await agent.compress_context()
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            expected,
+        )
+
+    async def test_max_image_num_with_offloader(self) -> None:
+        """The oldest images exceeding the limit are offloaded and replaced
+        by hints recording the offloaded path when an offloader is
+        provided; URL images keep their original URL."""
+        with tempfile.TemporaryDirectory() as workdir:
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're a helpful assistant.",
+                model=MockModel(context_size=100000),
+                context_config=ContextConfig(max_image_num=1),
+                state=AgentState(
+                    session_id="123",
+                    context=_build_image_context(),
+                ),
+                toolkit=Toolkit(),
+                offloader=LocalWorkspace(workdir=workdir),
+            )
+
+            await agent.compress_context()
+
+            # All the base64 images share the same content, thus the same
+            # offloaded path
+            rel = "data/" + hashlib.sha256(_PNG_BASE64.encode()).hexdigest()
+            url = f"workspace:///{rel}.png"
+            self.assertTrue(
+                os.path.exists(os.path.join(workdir, rel + ".png")),
+            )
+
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [
+                    {
+                        "name": "User",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img1' "
+                                    "is offloaded into "
+                                    + url
+                                    + ", you can refer to it when "
+                                    "needed.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": "hello",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "user",
+                        "id": "1",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "Friday",
+                        "content": [
+                            {
+                                "type": "tool_call",
+                                "id": "call_1",
+                                "name": "view",
+                                "input": "{}",
+                                "state": "pending",
+                                "suggested_rules": [],
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "tool_result",
+                                "id": "call_1",
+                                "name": "view",
+                                "output": [
+                                    {
+                                        "type": "text",
+                                        "text": "the image:",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "<system-reminder>The image named "
+                                            "'img2' is offloaded into "
+                                            + url
+                                            + ", you can refer to it when "
+                                            "needed.</system-reminder>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "state": "success",
+                                "metadata": {},
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "hint",
+                                "hint": [
+                                    {
+                                        "type": "text",
+                                        "text": "a hint image:",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "<system-reminder>The image named "
+                                            "'img3' is offloaded into "
+                                            + url
+                                            + ", you can refer to it when "
+                                            "needed.</system-reminder>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "id": AnyString(),
+                                "source": None,
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                            {
+                                "type": "hint",
+                                "hint": (
+                                    "<system-reminder>The image named 'img4' "
+                                    "is offloaded into "
+                                    + url
+                                    + ", you can refer to it when "
+                                    "needed.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "source": None,
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                        ],
+                        "role": "assistant",
+                        "id": "2",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": None,
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "User",
+                        "content": [
+                            {
+                                "type": "data",
+                                "id": AnyString(),
+                                "source": {
+                                    "type": "base64",
+                                    "data": "AAAA",
+                                    "media_type": "audio/wav",
+                                },
+                                "name": None,
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img5' "
+                                    "is offloaded into "
+                                    "https://example.com/img5.png, you can "
+                                    "refer to it when needed."
+                                    "</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "data",
+                                "id": AnyString(),
+                                "source": {
+                                    "type": "base64",
+                                    "data": _PNG_BASE64,
+                                    "media_type": "image/png",
+                                },
+                                "name": "img6",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "user",
+                        "id": "3",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                ],
+            )
+
+    async def test_max_image_num_default(self) -> None:
+        """The default limit is 5, so only the oldest image is removed for a
+        context with 6 images."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You're a helpful assistant.",
+            model=MockModel(context_size=100000),
+            state=AgentState(session_id="123", context=_build_image_context()),
+            toolkit=Toolkit(),
+        )
+        self.assertEqual(agent.context_config.max_image_num, 5)
+
+        await agent.compress_context()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "name": "User",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<system-reminder>The image named 'img1' is "
+                                "removed to free up context "
+                                "space.</system-reminder>"
+                            ),
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "text",
+                            "text": "hello",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "user",
+                    "id": "1",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "Friday",
+                    "content": [
+                        {
+                            "type": "tool_call",
+                            "id": "call_1",
+                            "name": "view",
+                            "input": "{}",
+                            "state": "pending",
+                            "suggested_rules": [],
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "tool_result",
+                            "id": "call_1",
+                            "name": "view",
+                            "output": [
+                                {
+                                    "type": "text",
+                                    "text": "the image:",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                {
+                                    "type": "data",
+                                    "id": AnyString(),
+                                    "source": {
+                                        "type": "base64",
+                                        "data": _PNG_BASE64,
+                                        "media_type": "image/png",
+                                    },
+                                    "name": "img2",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "hint",
+                            "hint": [
+                                {
+                                    "type": "text",
+                                    "text": "a hint image:",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                {
+                                    "type": "data",
+                                    "id": AnyString(),
+                                    "source": {
+                                        "type": "base64",
+                                        "data": _PNG_BASE64,
+                                        "media_type": "image/png",
+                                    },
+                                    "name": "img3",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "id": AnyString(),
+                            "source": None,
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": _PNG_BASE64,
+                                "media_type": "image/png",
+                            },
+                            "name": "img4",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "assistant",
+                    "id": "2",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "User",
+                    "content": [
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": "AAAA",
+                                "media_type": "audio/wav",
+                            },
+                            "name": None,
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/img5.png",
+                                "media_type": "image/png",
+                            },
+                            "name": "img5",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": _PNG_BASE64,
+                                "media_type": "image/png",
+                            },
+                            "name": "img6",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "user",
+                    "id": "3",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+            ],
+        )
+
+    async def test_summary_failure_truncates_context(self) -> None:
+        """Summary failures fall back to lossy context truncation."""
+        agent, _ = _make_failing_compression_agent()
+        expected_state = agent.state.model_copy(deep=True)
+        expected_state.context = expected_state.context[1:]
+        expected_state.summary = (
+            "<system-info>Some earlier messages were truncated for limited "
+            "context.</system-info>"
+        )
+
+        await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
+
+    async def test_offload_reminder_is_not_duplicated(self) -> None:
+        """Repeated fallback preserves one reminder for a stable path."""
+        reminder = (
+            "<system-reminder>The compressed context is offloaded to "
+            "'sessions/123/context.jsonl', you can refer to it when "
+            "needed.</system-reminder>"
+        )
+        agent, _ = _make_failing_compression_agent(
+            summary=reminder,
+            offloader=FixedPathOffloader(),
+        )
+        expected_state = agent.state.model_copy(deep=True)
+        expected_state.context = []
+
+        await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

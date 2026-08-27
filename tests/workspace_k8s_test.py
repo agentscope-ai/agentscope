@@ -157,7 +157,6 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
             f"{POD_WORKDIR}/data",
             f"{POD_WORKDIR}/skills",
             f"{POD_WORKDIR}/sessions",
-            f"{POD_WORKDIR}/.mcp",
             f"{GATEWAY_HOME}/_mcp_gateway_app.py",
             f"{GATEWAY_HOME}/_glob_helper.py",
             f"{GATEWAY_HOME}/.venv/bin/python",
@@ -183,7 +182,7 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
         self.assertEqual(len(skills), 1)
         self.assertEqual(
             (skills[0].name, skills[0].description, skills[0].dir),
-            ("greeter", "Says hi.", f"{POD_WORKDIR}/skills/greeter"),
+            ("greeter", "Says hi.", f"{POD_WORKDIR}/skills/default/greeter"),
         )
 
         await ws.remove_skill("greeter")
@@ -201,18 +200,41 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
                 args=["--with", "mcp<2.0.0", "mcp-server-time"],
             ),
         )
-        self.assertListEqual(await ws.list_mcps(), [])
+        self.assertListEqual(
+            await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            ),
+            [],
+        )
 
-        await ws.add_mcp(mcp_client)
-        mcps = await ws.list_mcps()
+        await ws.add_mcp(
+            mcp_client,
+            agent_id="test-agent",
+            session_id="test-session",
+        )
+        mcps = await ws.list_mcps(
+            agent_id="test-agent",
+            session_id="test-session",
+        )
         self.assertEqual(len(mcps), 1)
         self.assertEqual(mcps[0].name, "time")
 
         tools = await mcps[0].list_raw_tools()
         self.assertGreater(len(tools), 0)
 
-        await ws.remove_mcp("time")
-        self.assertListEqual(await ws.list_mcps(), [])
+        await ws.remove_mcp(
+            "time",
+            agent_id="test-agent",
+            session_id="test-session",
+        )
+        self.assertListEqual(
+            await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            ),
+            [],
+        )
 
         # ── 4. Backend public API ───────────────────────────────
         # 4a. exec_shell success
@@ -329,7 +351,10 @@ class TestK8sWorkspaceReset(IsolatedAsyncioTestCase):
 
             state_after = {
                 "skills": await ws.list_skills(),
-                "mcps": await ws.list_mcps(),
+                "mcps": await ws.list_mcps(
+                    agent_id="test-agent",
+                    session_id="test-session",
+                ),
                 "sessions_exists": await backend.file_exists(
                     f"{POD_WORKDIR}/sessions",
                 ),

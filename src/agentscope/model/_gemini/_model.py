@@ -28,6 +28,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     Gemini API does not support certain JSON Schema constructs. This
     function removes or rewrites the following:
 
+    - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
@@ -54,6 +55,9 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         return schema
 
     schema = dict(schema)
+
+    # Gemini's Schema model does not support the JSON Schema dialect marker.
+    schema.pop("$schema", None)
 
     # Gemini (and many third-party proxies) reject `null` as a standalone
     # functionDeclaration property type. Some MCP servers emit
@@ -466,9 +470,30 @@ class GeminiChatModel(ChatModelBase):
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
         if prompt_tokens is not None and total_tokens is not None:
+            tool_use_tokens = (
+                getattr(
+                    usage_metadata,
+                    "tool_use_prompt_token_count",
+                    0,
+                )
+                or 0
+            )
+            input_tokens = prompt_tokens + tool_use_tokens
+            candidates_tokens = getattr(
+                usage_metadata,
+                "candidates_token_count",
+                None,
+            )
+            if candidates_tokens is not None:
+                output_tokens = candidates_tokens + (
+                    getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                )
+            else:
+                # Fallback for SDK versions without the candidate count.
+                output_tokens = total_tokens - input_tokens
             return ChatUsage(
-                input_tokens=prompt_tokens,
-                output_tokens=total_tokens - prompt_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     usage_metadata,
