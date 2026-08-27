@@ -256,6 +256,7 @@ export function useMessages(
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
+		setLoadedKey(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
 		setMsgs([]);
