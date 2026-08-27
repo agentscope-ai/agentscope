@@ -763,6 +763,72 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             {"type": "object"},
         )
 
+    def test_sanitize_inlines_nullable_type_array(self) -> None:
+        """JSON Schema type arrays with null are inlined for Gemini."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": ["string", "null"],
+                            "description": "Optional name",
+                        },
+                    },
+                },
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Optional name",
+                    },
+                },
+            },
+        )
+
+    def test_sanitize_converts_nullable_union_type_array_to_anyof(
+        self,
+    ) -> None:
+        """Nullable type arrays with multiple non-null types use anyOf."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": ["string", "integer", "null"],
+                    "description": "String or integer identifier",
+                },
+            ),
+            {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "integer"},
+                ],
+                "description": "String or integer identifier",
+            },
+        )
+
+    def test_sanitize_inlines_annotated_null_anyof(self) -> None:
+        """Annotated null schemas in anyOf are treated as null branches."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "description": "Optional name",
+                    "anyOf": [
+                        {"type": "string"},
+                        {
+                            "type": "null",
+                            "description": "No value",
+                        },
+                    ],
+                },
+            ),
+            {
+                "type": "string",
+                "description": "Optional name",
+            },
+        )
+
     def test_sanitize_pydantic_optional_list_dict(self) -> None:
         """End-to-end: Pydantic Optional[list[dict]] schema is cleaned."""
         result = _sanitize_schema_for_gemini(
