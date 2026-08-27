@@ -953,3 +953,73 @@ class StartupOutcomeTest(IsolatedAsyncioTestCase):
         )
         self.assertIsNone(channel._web)
         self.assertIsNone(channel._client)
+
+
+class ClientOnlyTest(IsolatedAsyncioTestCase):
+    """An instance that never connects still does outbound REST.
+
+    ChannelClients builds channels from a record and never calls
+    start_listening, so nothing connection-bound may gate the Web API.
+    """
+
+    def _channel(self) -> SlackChannel:
+        return SlackChannel(
+            "chan-1",
+            SlackChannel.Credentials(
+                app_id="A1",
+                bot_token="xoxb-x",
+                app_token="xapp-x",
+            ),
+            SlackChannel.Config(),
+        )
+
+    async def test_client_is_built_on_demand_and_cached(self) -> None:
+        channel = self._channel()
+        self.assertIsNone(channel._web)
+        with patch("slack_sdk.web.async_client.AsyncWebClient", _FakeWeb):
+            web = channel._web_client()
+            self.assertIsNotNone(web)
+            # Built once, then reused for the life of the instance.
+            self.assertIs(channel._web_client(), web)
+        self.assertEqual(
+            [type(h).__name__ for h in web.client_kwargs["retry_handlers"]],
+            [
+                "AsyncConnectionErrorRetryHandler",
+                "AsyncRateLimitErrorRetryHandler",
+            ],
+        )
+
+    async def test_aclose_releases_the_client(self) -> None:
+        channel = self._channel()
+        with patch("slack_sdk.web.async_client.AsyncWebClient", _FakeWeb):
+            channel._web_client()
+            self.assertIsNotNone(channel._web)
+            await channel.aclose()
+        self.assertIsNone(channel._web)
+
+    async def test_send_works_without_start_listening(self) -> None:
+        channel = self._channel()
+        with patch("slack_sdk.web.async_client.AsyncWebClient", _FakeWeb):
+            result = await channel.send_message_to("C1", "hi")
+            posts = channel._web.posts
+        self.assertEqual(
+            result,
+            {"ok": True, "sent_ts": ["1.000100"], "segments": 1},
+        )
+        self.assertEqual(posts[0]["channel"], "C1")
+
+    async def test_discovery_works_without_start_listening(self) -> None:
+        channel = self._channel()
+        with patch("slack_sdk.web.async_client.AsyncWebClient", _FakeWeb):
+            channel._web_client()
+            channel._web.list_pages = [
+                {
+                    "channels": [{"id": "C1", "name": "general"}],
+                    "response_metadata": {"next_cursor": ""},
+                },
+            ]
+            chats = await channel.list_bot_chats()
+        self.assertEqual(
+            chats,
+            [{"chat_id": "C1", "name": "general", "chat_type": "channel"}],
+        )

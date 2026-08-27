@@ -191,12 +191,7 @@ class SlackChannel(ChannelBase):
             emit (`Callable`): Gateway callback for inbound events.
         """
         try:
-            from slack_sdk.http_retry.builtin_async_handlers import (
-                AsyncRateLimitErrorRetryHandler,
-                async_default_handlers,
-            )
             from slack_sdk.socket_mode.aiohttp import SocketModeClient
-            from slack_sdk.web.async_client import AsyncWebClient
         except ImportError as e:
             raise ImportError(
                 "Slack channel requires 'slack_sdk' "
@@ -210,19 +205,7 @@ class SlackChannel(ChannelBase):
         client: Any = None
         connect_task: asyncio.Task | None = None
         try:
-            self._web = AsyncWebClient(
-                token=self._bot_token,
-                # Passing this list replaces the client's defaults, so keep
-                # them: they carry the connection-error retries that ride
-                # out a transient blip. The added handler waits out a 429
-                # per its Retry-After rather than dropping the call.
-                retry_handlers=[
-                    *async_default_handlers(),
-                    AsyncRateLimitErrorRetryHandler(
-                        max_retry_count=_RATE_LIMIT_RETRIES,
-                    ),
-                ],
-            )
+            self._web_client()
             # Identify ourselves up front: needed to drop our own messages
             # and to recognise an @mention. A bad bot token fails here,
             # which is a cleaner signal than the socket's silent retry loop.
@@ -335,6 +318,56 @@ class SlackChannel(ChannelBase):
         while not self._stopped:
             await asyncio.sleep(_PARK_INTERVAL)
 
+    def _web_client(self) -> Any:
+        """The Web API client, built on first use.
+
+        Outbound is plain REST, so an instance built by
+        :class:`~agentscope.app.channel.ChannelClients` — one that never
+        runs ``start_listening`` — has to reach Slack too. The client is
+        therefore created on demand rather than during connection setup.
+
+        Returns:
+            `Any`: The ``AsyncWebClient``, or ``None`` when slack_sdk is
+            not installed, which every caller already treats as failure.
+        """
+        if self._web is not None:
+            return self._web
+        try:
+            from slack_sdk.http_retry.builtin_async_handlers import (
+                AsyncRateLimitErrorRetryHandler,
+                async_default_handlers,
+            )
+            from slack_sdk.web.async_client import AsyncWebClient
+        except ImportError:
+            logger.error(
+                "Slack '%s' needs slack_sdk (pip install slack_sdk)",
+                self._channel_id,
+            )
+            return None
+        self._web = AsyncWebClient(
+            token=self._bot_token,
+            # Passing this list replaces the client's defaults, so keep
+            # them: they carry the connection-error retries that ride out
+            # a transient blip. The added handler waits out a 429 per its
+            # Retry-After rather than dropping the call.
+            retry_handlers=[
+                *async_default_handlers(),
+                AsyncRateLimitErrorRetryHandler(
+                    max_retry_count=_RATE_LIMIT_RETRIES,
+                ),
+            ],
+        )
+        return self._web
+
+    async def aclose(self) -> None:
+        """Drop the Web API client this instance built lazily.
+
+        slack_sdk opens and closes a session per request when it was not
+        handed one, so there is no connection to shut down here; letting
+        the client go is all a retired instance needs.
+        """
+        self._web = None
+
     async def _load_identity(self) -> str:
         """Resolve and cache the bot's own user id via ``auth.test``.
 
@@ -350,8 +383,12 @@ class SlackChannel(ChannelBase):
         """
         from slack_sdk.errors import SlackApiError
 
+        web = self._web_client()
+        if web is None:
+            self.status.last_error = "slack_sdk is not installed"
+            return _IDENTITY_REFUSED
         try:
-            auth = await self._web.auth_test()
+            auth = await web.auth_test()
         except SlackApiError as e:
             code = self._error_code(e)
             if code not in _TERMINAL_AUTH_ERRORS:
@@ -698,8 +735,11 @@ class SlackChannel(ChannelBase):
         Args:
             chat_id (`str`): The conversation to look up.
         """
+        web = self._web_client()
+        if web is None:
+            return None
         try:
-            resp = await self._web.conversations_info(channel=chat_id)
+            resp = await web.conversations_info(channel=chat_id)
             return resp.get("channel") or {}
         except Exception:  # pylint: disable=broad-except
             logger.debug("Slack conversations.info failed for %s", chat_id)
@@ -716,8 +756,11 @@ class SlackChannel(ChannelBase):
         cached = self._user_name_cache.get(user_id)
         if cached:
             return cached
+        web = self._web_client()
+        if web is None:
+            return ""
         try:
-            resp = await self._web.users_info(user=user_id)
+            resp = await web.users_info(user=user_id)
             user = resp.get("user") or {}
             name = (
                 (user.get("profile") or {}).get("display_name")
@@ -735,11 +778,14 @@ class SlackChannel(ChannelBase):
     async def list_bot_chats(self) -> list[dict]:
         """List the conversations the bot is in as ``{chat_id, name,
         chat_type}``."""
+        web = self._web_client()
+        if web is None:
+            return []
         results: list[dict] = []
         cursor = ""
         while True:
             try:
-                resp = await self._web.conversations_list(
+                resp = await web.conversations_list(
                     types="public_channel,private_channel,mpim,im",
                     exclude_archived=True,
                     limit=200,
@@ -773,11 +819,14 @@ class SlackChannel(ChannelBase):
         Returns:
             `list[dict]`: One ``{user_id, name}`` per member.
         """
+        web = self._web_client()
+        if web is None:
+            return []
         results: list[dict] = []
         cursor = ""
         while True:
             try:
-                resp = await self._web.conversations_members(
+                resp = await web.conversations_members(
                     channel=chat_id,
                     limit=200,
                     cursor=cursor or None,
@@ -1078,8 +1127,11 @@ class SlackChannel(ChannelBase):
         Returns:
             `dict`: ``{"ok": bool}``, with ``"error"`` when it failed.
         """
+        web = self._web_client()
+        if web is None:
+            return {"ok": False, "error": "slack_sdk is not installed"}
         try:
-            await self._web.files_upload_v2(
+            await web.files_upload_v2(
                 channel=chat_id,
                 file=data,
                 filename=file_name,
@@ -1108,14 +1160,15 @@ class SlackChannel(ChannelBase):
         Returns:
             `str | None`: The message ``ts``, or ``None`` on error.
         """
-        if not chat_id:
+        web = self._web_client()
+        if not chat_id or web is None:
             return None
         try:
             # Only pass ``blocks`` when there are some: these methods send
             # their kwargs as a JSON body, and slack_sdk does not drop the
             # None values from it the way it does for form params.
             extra = {"blocks": blocks} if blocks else {}
-            resp = await self._web.chat_postMessage(
+            resp = await web.chat_postMessage(
                 channel=chat_id,
                 text=text,
                 **extra,
@@ -1146,9 +1199,12 @@ class SlackChannel(ChannelBase):
             this, but the final write has to know: a failed edit leaves a
             stale message that something else must replace.
         """
+        web = self._web_client()
+        if web is None:
+            return False
         try:
             extra = {"blocks": blocks} if blocks else {}
-            await self._web.chat_update(
+            await web.chat_update(
                 channel=chat_id,
                 ts=ts,
                 text=text,
