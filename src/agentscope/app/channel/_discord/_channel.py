@@ -34,6 +34,9 @@ from .._base import (
 if TYPE_CHECKING:
     import discord
 
+    from ....tool import ToolBase
+    from ....workspace import WorkspaceBase
+
 # Discord's hard limit is 2000 characters per message.
 _MAX_LEN = 2000
 # Give up (and park in 'failed') after this many connects that never came up.
@@ -145,6 +148,12 @@ class DiscordChannel(ChannelBase):
 
                 intents = discord.Intents.default()
                 intents.message_content = True
+                # This client logs in for REST calls only and never opens a
+                # gateway connection. Enabling the privileged member intent
+                # here lets ``fetch_members`` validate member lookups without
+                # changing the listening client's backward-compatible
+                # gateway intents.
+                intents.members = True
                 client = discord.Client(intents=intents)
                 try:
                     await client.login(self._bot_token)
@@ -403,6 +412,112 @@ class DiscordChannel(ChannelBase):
                     )
         return results
 
+    async def list_tools(
+        self,
+        workspace: "WorkspaceBase",
+    ) -> list["ToolBase"]:
+        """Expose Discord discovery and cross-target send tools.
+
+        Args:
+            workspace (`WorkspaceBase`): Calling session workspace whose
+                backend is used for file reads.
+
+        Returns:
+            `list[ToolBase]`: Discord agent-callable tools.
+        """
+        from ._tools import (
+            ListChats,
+            ListChatMembers,
+            SendFile,
+            SendMessage,
+        )
+
+        backend = workspace.get_backend()
+        return [
+            ListChats(self, backend),
+            ListChatMembers(self, backend),
+            SendMessage(self, backend),
+            SendFile(self, backend),
+        ]
+
+    async def list_chat_members(self, chat_id: str) -> list[dict]:
+        """List users who can view one Discord guild text channel.
+
+        Member enumeration uses Discord's REST endpoint and therefore
+        requires the privileged members intent to be enabled for the bot
+        application. Platform authorization errors intentionally propagate
+        to the tool result instead of masquerading as an empty member list.
+
+        Args:
+            chat_id (`str`): Discord guild text-channel id.
+
+        Returns:
+            `list[dict]`: Visible users as ``{user_id, name}`` mappings.
+        """
+        import discord
+
+        channel = await self._channel(chat_id)
+        if not isinstance(channel, discord.TextChannel):
+            return []
+        client = await self._ensure_client()
+        results: list[dict] = []
+        async for member in channel.guild.fetch_members(limit=None):
+            if member.id == client.user.id:
+                continue
+            if not channel.permissions_for(member).view_channel:
+                continue
+            results.append(
+                {
+                    "user_id": str(member.id),
+                    "name": member.display_name,
+                },
+            )
+        return results
+
+    async def send_message_to(self, target: str, text: str) -> bool:
+        """Send text to an explicit Discord channel or user target.
+
+        Args:
+            target (`str`): Encoded ``channel:<id>`` or ``user:<id>``.
+            text (`str`): Message text.
+
+        Returns:
+            `bool`: Whether the target was valid and every part was sent.
+        """
+        destination = await self._target(target)
+        if destination is None:
+            return False
+        for part in self._split_long_message(text):
+            if part:
+                await destination.send(part)
+        return True
+
+    async def send_file_to(
+        self,
+        target: str,
+        raw: bytes,
+        file_name: str,
+    ) -> bool:
+        """Send one in-memory file to a Discord channel or user.
+
+        Args:
+            target (`str`): Encoded ``channel:<id>`` or ``user:<id>``.
+            raw (`bytes`): File payload from the session workspace.
+            file_name (`str`): Display filename.
+
+        Returns:
+            `bool`: Whether the target was valid and the file was sent.
+        """
+        import discord
+
+        destination = await self._target(target)
+        if destination is None:
+            return False
+        await destination.send(
+            file=discord.File(io.BytesIO(raw), filename=file_name),
+        )
+        return True
+
     async def chat_kind(self, chat_id: str) -> ChatKind | None:
         """Private for a DM channel, group otherwise; ``None`` if the
         channel id can't be resolved.
@@ -431,6 +546,34 @@ class DiscordChannel(ChannelBase):
         return getattr(channel, "name", "") or "" if channel else ""
 
     # -- Helpers --
+
+    async def _target(
+        self,
+        target: str,
+    ) -> "discord.abc.Messageable | None":
+        """Resolve an encoded channel/user target to a send destination.
+
+        Args:
+            target (`str`): ``channel:<id>`` or ``user:<id>``.
+
+        Returns:
+            `discord.abc.Messageable | None`: Send destination or ``None``
+            for malformed and unsupported targets.
+        """
+        try:
+            target_type, raw_id = target.split(":", 1)
+            target_id = int(raw_id)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        client = await self._ensure_client()
+        if target_type == "channel":
+            return client.get_channel(target_id) or await client.fetch_channel(
+                target_id,
+            )
+        if target_type == "user":
+            user = await client.fetch_user(target_id)
+            return await user.create_dm()
+        return None
 
     async def _channel(
         self,
