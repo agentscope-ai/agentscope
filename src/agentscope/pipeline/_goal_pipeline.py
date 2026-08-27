@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """The goal pipeline class."""
 
-from typing import AsyncGenerator
+from copy import deepcopy
+from typing import AsyncGenerator, Literal
 
 from pydantic import BaseModel, Field
 
+from .._logging import logger
 from ..types import ReplyFinishedReason
 from ..agent import Agent
 from ..message import UserMsg, Msg, TextBlock, DataBlock
@@ -17,17 +19,35 @@ from ..event import (
 )
 
 
+class _ExecutionReport(BaseModel):
+    """The output of an execution."""
+
+    report: str = Field(
+        description=(
+            "An achievement report of the given goal. E.g. file paths, entry "
+            "points, how-to-run, runtime environment, etc. "
+            "So that a verifier can check if you have achieved the goal. "
+        ),
+    )
+
+
 class _VerificationResult(BaseModel):
     """The result of a verification."""
 
-    passed: bool = Field(
-        description="Whether the verification passed or not.",
+    result: Literal["pass", "fail", "impossible"] = Field(
+        description=(
+            "The verfication result, which can be 'pass', 'fail', or "
+            "'impossible'. 'impossible' means the given goal is impossible to "
+            "achieve, and the executor should stop trying."
+        ),
     )
 
     message: str = Field(
         description=(
             "If not passed, the message should explain why it "
-            "failed, and what needs to be fixed."
+            "failed, and what needs to be fixed. List the specific "
+            "issues that need to be addressed, including where to "
+            "exactly find them (e.g., file paths, line numbers)."
         ),
     )
 
@@ -40,9 +60,9 @@ class GoalPipeline:
         self,
         executor: Agent,
         verifier: Agent,
-        goal: str | list[TextBlock | DataBlock],
         verifier_reset_context: bool = True,
         max_iters: int = 10,
+        max_retries: int = 3,
     ) -> None:
         """Initialize the goal pipeline.
 
@@ -51,22 +71,24 @@ class GoalPipeline:
                 The executor agent that performs the work.
             verifier (`Agent`):
                 The verifier agent that checks the goal achievement.
-            goal (`str | list[TextBlock | DataBlock]`):
-                The goal that the executor should achieve.
             verifier_reset_context (`bool`, optional):
                 Whether to reset the verifier's context after each iteration.
-                Defaults to `False`.
+                Defaults to `True`.
             max_iters (`int`, optional):
                 The maximum number of goal achievement attempts.
+            max_retries (`int`, optional):
+                The maximum number of retries for the executor and verifier
+                agents to generate valid structured outputs. Defaults to `3`.
         """
         self.executor = executor
         self.verifier = verifier
-        self.goal = goal
         self.verifier_reset_context = verifier_reset_context
         self.max_iters = max_iters
+        self.max_retries = max_retries
         # Rounds already judged. On the instance rather than in
         # ``reply_stream``, so a HITL resume does not restart the budget.
         self._iters = 0
+        self._goal: None | list[TextBlock | DataBlock] = None
 
     async def reply_stream(
         self,
@@ -91,15 +113,35 @@ class GoalPipeline:
                 during the pipeline execution.
         """
 
+        # Prepare inputs for executor and verifier
         executor_inputs, verifier_inputs = None, None
         if (
             isinstance(inputs, Msg)
             or isinstance(inputs, list)
             and all(isinstance(_, Msg) for _ in inputs)
         ):
-            executor_inputs = inputs
+            executor_inputs = deepcopy(inputs)
             # A fresh run, so the iteration budget starts over.
             self._iters = 0
+
+            hint = (
+                "<system-reminder>When you finish the goal, you should "
+                "summarize your output (if any) so that a verifier can check "
+                "whether you have achieved the goal (e.g., file paths, entry "
+                "points, how-to-run, runtime environment, etc.)."
+                "</system-reminder>"
+            )
+
+            if isinstance(inputs, Msg):
+                self._goal = inputs.content
+                executor_inputs.content.append(TextBlock(text=hint))
+            else:
+                self._goal = []
+                for _ in inputs:
+                    self._goal.extend(_.content)
+                executor_inputs.append(
+                    UserMsg("system", content=hint),
+                )
 
         elif isinstance(
             inputs,
@@ -126,33 +168,81 @@ class GoalPipeline:
                 yield _
             return
 
+        # Start the pipeline loop
         while True:
-            # Executor
+            # Executor step
             break_loop = False
+            execution_report = None
             if executor_inputs is not None:
-                # Run the executor with the given inputs
-                async for _ in self.executor.reply_stream(
-                    inputs=executor_inputs,
-                ):
-                    yield _
-                    if isinstance(
-                        _,
-                        (
-                            RequireExternalExecutionEvent,
-                            RequireUserConfirmEvent,
-                        ),
+                while execution_report is None:
+                    # Run the executor with the given inputs
+                    async for _ in self.executor.reply_stream(
+                        inputs=executor_inputs,
+                        structured_schema=_ExecutionReport,
+                        yield_final_msg=True,
                     ):
-                        break_loop = True
+                        yield _
+                        if isinstance(
+                            _,
+                            (
+                                RequireExternalExecutionEvent,
+                                RequireUserConfirmEvent,
+                            ),
+                        ):
+                            break_loop = True
+                        elif (
+                            isinstance(_, Msg)
+                            and _.finished_reason
+                            == ReplyFinishedReason.COMPLETED
+                            and _.structured_output
+                        ):
+                            execution_report = _.structured_output.get(
+                                "report",
+                            )
 
-                if break_loop:
-                    # Break the loop for hitl events
-                    break
+                    if break_loop:
+                        # Break the loop for hitl events
+                        break
+
+                    if execution_report is None:
+                        # Update the instruction
+                        executor_inputs = UserMsg(
+                            name="system",
+                            content=(
+                                "<system-reminder>You have failed to generate "
+                                "valid execution report. You should call the "
+                                "'GenerateStructuredOutput' tool with a valid "
+                                "structured output that matches the schema. "
+                            ),
+                        )
+
+            if break_loop:
+                # The executor parked, so there is nothing to verify yet.
+                break
 
             # Verifier
             final_msg = None
             instruction = verifier_inputs or UserMsg(
                 name="user",
-                content=self.goal,
+                content=[
+                    TextBlock(
+                        text=(
+                            "<system-reminder>Now you should verify the work "
+                            "done by the executor. "
+                            "The goal is as follows, you should "
+                            "verify whether the executor has "
+                            "achieved the goal.\n<goal>"
+                        ),
+                    ),
+                    *(self._goal or []),
+                    TextBlock(
+                        text=(
+                            "</goal>\nThe executor's achievement report is as "
+                            f"follows:\n<report>{execution_report}</report>"
+                            "</system-reminder>"
+                        ),
+                    ),
+                ],
             )
             verifier_inputs = None
             while final_msg is None:
@@ -197,11 +287,19 @@ class GoalPipeline:
                             "a valid structured output that matches "
                             "the schema. Recall the verification "
                             "requirements as follows:\n"
-                            f"{self.goal}</system-reminder>"
+                            f"{self._goal}</system-reminder>"
                         ),
                     )
-                elif final_msg.structured_output.get("passed"):
-                    # Verification passed, exit the loop
+                elif final_msg.structured_output.get("result") in (
+                    "pass",
+                    "impossible",
+                ):
+                    if final_msg.structured_output["result"] == "impossible":
+                        logger.info(
+                            "The verifier judged the goal impossible: %s",
+                            final_msg.structured_output.get("message"),
+                        )
+                    # Settled either way, so the loop ends here.
                     break_loop = True
                 else:
                     self._iters += 1

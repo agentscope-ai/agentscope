@@ -4,33 +4,42 @@ from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from utils import AnyString
-
 from agentscope.event import (
     ConfirmResult,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import Msg, TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import Msg, ToolCallBlock, UserMsg
 from agentscope.pipeline import GoalPipeline
 from agentscope.types import ReplyFinishedReason
 
 
-def _verdict(passed: bool, message: str = "") -> Msg:
+def _report(text: str = "已完成，见 main.py") -> Msg:
+    """An executor's final message carrying its achievement report."""
+    return Msg(
+        name="executor",
+        content=[],
+        role="assistant",
+        finished_reason=ReplyFinishedReason.COMPLETED,
+        structured_output={"report": text},
+    )
+
+
+def _verdict(result: str, message: str = "") -> Msg:
     """A verifier's final message carrying a structured verdict."""
     return Msg(
         name="verifier",
         content=[],
         role="assistant",
         finished_reason=ReplyFinishedReason.COMPLETED,
-        structured_output={"passed": passed, "message": message},
+        structured_output={"result": result, "message": message},
     )
 
 
-def _no_verdict() -> Msg:
-    """A verifier's final message that never called the output tool."""
+def _no_output(name: str) -> Msg:
+    """A final message from an agent that never called the output tool."""
     return Msg(
-        name="verifier",
+        name=name,
         content=[],
         role="assistant",
         finished_reason=ReplyFinishedReason.COMPLETED,
@@ -83,91 +92,80 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Prepare the input every test starts from."""
-        self.query = UserMsg(name="user", content="build it")
+        self.query = UserMsg(name="user", content="写一个爬虫")
 
     async def _run(self, pipe: GoalPipeline, inputs: Any) -> list:
         """Drain one pipeline run into what it yielded."""
         return [chunk async for chunk in pipe.reply_stream(inputs)]
 
     async def test_passes_on_first_round(self) -> None:
-        """A verdict that passes ends the run after one round."""
-        executor = StubAgent("executor", [[TextBlock(text="done")]])
-        verifier = StubAgent("verifier", [[_verdict(True)]])
-        pipe = GoalPipeline(executor, verifier, goal="check it")
+        """A passing verdict ends the run, and the verifier is told both
+        the goal and what the executor reported."""
+        executor = StubAgent("executor", [[_report("见 main.py")]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier)
 
         yielded = await self._run(pipe, self.query)
 
         self.assertListEqual(
-            [chunk.model_dump() for chunk in yielded],
-            [
-                {
-                    "type": "text",
-                    "text": "done",
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "finished_at": None,
-                },
-            ],
+            [chunk.structured_output for chunk in yielded],
+            [{"report": "见 main.py"}],
         )
-        self.assertListEqual(executor.received, [self.query])
-        self.assertListEqual(
-            [msg.model_dump() for msg in verifier.received],
-            [
-                {
-                    "name": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "check it",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
-                    ],
-                    "role": "user",
-                    "id": AnyString(),
-                    "metadata": {},
-                    "created_at": AnyString(),
-                    "usage": None,
-                    "finished_at": AnyString(),
-                    "finished_reason": None,
-                    "structured_output": None,
-                    "error": None,
-                },
-            ],
-        )
+        told = verifier.received[0].get_text_content()
+        self.assertIn("写一个爬虫", told)
+        self.assertIn("见 main.py", told)
 
     async def test_refusal_reaches_the_executor(self) -> None:
         """A refusal is fed back verbatim and the run tries again."""
-        executor = StubAgent("executor", [[], []])
+        executor = StubAgent("executor", [[_report()], [_report()]])
         verifier = StubAgent(
             "verifier",
-            [[_verdict(False, "missing tests")], [_verdict(True)]],
+            [[_verdict("fail", "缺 requirements.txt")], [_verdict("pass")]],
         )
-        pipe = GoalPipeline(executor, verifier, goal="check it")
+        pipe = GoalPipeline(executor, verifier)
 
         await self._run(pipe, self.query)
 
         self.assertEqual(len(executor.received), 2)
-        self.assertIn("missing tests", executor.received[1].get_text_content())
+        self.assertIn(
+            "缺 requirements.txt",
+            executor.received[1].get_text_content(),
+        )
 
     async def test_stops_at_max_iters(self) -> None:
         """A verdict that never passes stops once the budget is spent."""
-        executor = StubAgent("executor", [[]])
-        verifier = StubAgent("verifier", [[_verdict(False, "still wrong")]])
-        pipe = GoalPipeline(executor, verifier, goal="check it", max_iters=2)
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[_verdict("fail", "还是不行")]])
+        pipe = GoalPipeline(executor, verifier, max_iters=2)
 
         await self._run(pipe, self.query)
 
         self.assertEqual(len(executor.received), 2)
         self.assertEqual(len(verifier.received), 2)
 
+    async def test_impossible_ends_the_run(self) -> None:
+        """An impossible goal settles the run rather than retrying."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_verdict("impossible", "目标自相矛盾")]],
+        )
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        self.assertEqual(len(executor.received), 1)
+        self.assertEqual(len(verifier.received), 1)
+
     async def test_reprompts_a_verifier_that_skips_the_tool(self) -> None:
         """A final message with no verdict is not a refusal: the verifier
         is reminded rather than the executor being sent back."""
-        executor = StubAgent("executor", [[]])
-        verifier = StubAgent("verifier", [[_no_verdict()], [_verdict(True)]])
-        pipe = GoalPipeline(executor, verifier, goal="check it")
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_no_output("verifier")], [_verdict("pass")]],
+        )
+        pipe = GoalPipeline(executor, verifier)
 
         await self._run(pipe, self.query)
 
@@ -179,20 +177,46 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         # A malfunction is not charged to the executor.
         self.assertEqual(len(executor.received), 1)
 
-    async def test_parks_on_hitl_and_resumes_into_the_same_agent(
-        self,
-    ) -> None:
-        """A confirmation request ends the stream, and the reply id sends
-        the answer back to the agent that asked for it."""
+    async def test_reprompts_an_executor_that_skips_the_tool(self) -> None:
+        """The same for the executor: a missing report is asked for again
+        rather than read through as if it were there."""
+        executor = StubAgent(
+            "executor",
+            [[_no_output("executor")], [_report()]],
+        )
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        self.assertEqual(len(executor.received), 2)
+        self.assertIn(
+            "GenerateStructuredOutput",
+            executor.received[1].get_text_content(),
+        )
+        self.assertEqual(len(verifier.received), 1)
+
+    async def test_a_parked_executor_is_not_verified(self) -> None:
+        """The work is unfinished while the executor waits on a human, so
+        there is nothing for the verifier to judge yet."""
         request = _confirm_request()
-        executor = StubAgent("executor", [[request], []])
-        verifier = StubAgent("verifier", [[_verdict(True)]])
-        pipe = GoalPipeline(executor, verifier, goal="check it")
+        executor = StubAgent("executor", [[request]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier)
 
         yielded = await self._run(pipe, self.query)
 
         self.assertListEqual(yielded, [request])
         self.assertListEqual(verifier.received, [])
+
+    async def test_resumes_into_the_agent_that_parked(self) -> None:
+        """The reply id sends the answer back to whoever asked for it."""
+        request = _confirm_request()
+        executor = StubAgent("executor", [[request], [_report()]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
 
         answer = UserConfirmResultEvent(
             reply_id="executor-reply",
@@ -202,7 +226,7 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         )
         await self._run(pipe, answer)
 
-        self.assertListEqual(executor.received, [self.query, answer])
+        self.assertEqual(executor.received[1], answer)
         self.assertEqual(len(verifier.received), 1)
 
     async def test_resume_keeps_the_iteration_budget(self) -> None:
@@ -212,12 +236,15 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         the resumed round is the last one — were the budget to restart,
         the executor would be sent back a fourth time.
         """
-        executor = StubAgent("executor", [[], [_confirm_request()], []])
+        executor = StubAgent(
+            "executor",
+            [[_report()], [_confirm_request()], [_report()]],
+        )
         verifier = StubAgent(
             "verifier",
-            [[_verdict(False, "no")], [_verdict(False, "still no")]],
+            [[_verdict("fail", "不行")], [_verdict("fail", "还是不行")]],
         )
-        pipe = GoalPipeline(executor, verifier, goal="check it", max_iters=2)
+        pipe = GoalPipeline(executor, verifier, max_iters=2)
 
         await self._run(pipe, self.query)
         await self._run(
@@ -234,9 +261,9 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
     async def test_rejects_an_unknown_reply_id(self) -> None:
         """An answer belonging to neither agent is a programming error,
         not something to guess at."""
-        executor = StubAgent("executor", [[]])
-        verifier = StubAgent("verifier", [[_verdict(True)]])
-        pipe = GoalPipeline(executor, verifier, goal="check it")
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier)
 
         with self.assertRaises(ValueError):
             await self._run(

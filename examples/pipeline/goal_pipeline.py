@@ -61,15 +61,12 @@ async def main() -> None:
             ),
         )
 
+        # The goal arrives with the task, not at construction: whatever
+        # the pipeline is first asked to do is also what the verifier
+        # judges against.
         pipe = GoalPipeline(
             executor=executor,
             verifier=verifier,
-            goal="""Check the code written by the executor, and judge
-whether it is correct or not.
-1. The code should be Python.
-2. A requirement.txt file should be included.
-3. The code should be able to run without errors.
-4. The code should be well-structured and follow best practices.""",
         )
 
         await launch_console(
