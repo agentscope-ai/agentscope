@@ -527,12 +527,27 @@ class DeliveryMetadataTest(IsolatedAsyncioTestCase):
 
 
 class _FailingWeb(_FakeWeb):
-    """A web client whose auth.test is refused by Slack."""
+    """A web client whose auth.test is refused outright by Slack."""
 
     async def auth_test(self) -> dict:
         from slack_sdk.errors import SlackApiError
 
-        raise SlackApiError("invalid_auth", {"ok": False})
+        raise SlackApiError(
+            "invalid_auth",
+            {"ok": False, "error": "invalid_auth"},
+        )
+
+
+class _TransientApiWeb(_FakeWeb):
+    """A web client whose auth.test fails with a retryable API error."""
+
+    async def auth_test(self) -> dict:
+        from slack_sdk.errors import SlackApiError
+
+        raise SlackApiError(
+            "ratelimited",
+            {"ok": False, "error": "ratelimited"},
+        )
 
 
 class _UnreachableWeb(_FakeWeb):
@@ -619,9 +634,14 @@ class ProactiveSendTest(IsolatedAsyncioTestCase):
         text = "a" * _MAX_LEN + "b" * 200
         with patch.object(channel, "_post", wraps=channel._post) as post:
             result = await channel.send_message_to("C1", text)
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["segments"], 2)
-        self.assertEqual(len(result["sent_ts"]), 2)
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "sent_ts": ["1.000100", "2.000100"],
+                "segments": 2,
+            },
+        )
         self.assertEqual(post.call_count, 2)
         # Nothing was dropped.
         self.assertEqual(
@@ -632,8 +652,10 @@ class ProactiveSendTest(IsolatedAsyncioTestCase):
     async def test_short_message_reports_one_segment(self) -> None:
         channel, _ = _channel()
         result = await channel.send_message_to("C1", "hi")
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["segments"], 1)
+        self.assertEqual(
+            result,
+            {"ok": True, "sent_ts": ["1.000100"], "segments": 1},
+        )
 
     async def test_partial_failure_reports_what_landed(self) -> None:
         channel, _ = _channel()
@@ -648,15 +670,29 @@ class ProactiveSendTest(IsolatedAsyncioTestCase):
             "C1",
             "a" * _MAX_LEN + "b" * 200,
         )
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["sent_ts"], ["1.0001"])
-        self.assertEqual(result["failed_segment"], 1)
-        self.assertEqual(result["segments"], 2)
+        self.assertEqual(
+            result,
+            {
+                "ok": False,
+                "error": "the platform rejected the request",
+                "sent_ts": ["1.0001"],
+                "failed_segment": 1,
+                "segments": 2,
+            },
+        )
 
     async def test_empty_message_is_refused(self) -> None:
         channel, web = _channel()
         result = await channel.send_message_to("C1", "")
-        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result,
+            {
+                "ok": False,
+                "error": "there was no text to send",
+                "sent_ts": [],
+                "segments": 0,
+            },
+        )
         self.assertEqual(web.posts, [])
 
 
@@ -773,8 +809,16 @@ class FinishTest(IsolatedAsyncioTestCase):
 
         setattr(channel, "_post", _flaky)
         result = await channel._send_segments("C1", ["a", "b", "c"])
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["failed_segment"], 1)
+        self.assertEqual(
+            result,
+            {
+                "ok": False,
+                "error": "the platform rejected the request",
+                "sent_ts": ["1.0001"],
+                "failed_segment": 1,
+                "segments": 3,
+            },
+        )
         # The third segment is never attempted.
         self.assertEqual(attempts, ["a", "b"])
 
@@ -799,79 +843,113 @@ class FinishTest(IsolatedAsyncioTestCase):
             self.assertEqual(waits, [_STREAM_MIN_INTERVAL])
 
 
-class RetryHandlerTest(IsolatedAsyncioTestCase):
-    """The client keeps its default handlers and gains the 429 one."""
+class StartupOutcomeTest(IsolatedAsyncioTestCase):
+    """Start-up either parks on a refusal or defers, never in between."""
 
-    async def _capture(self, web_cls: Any) -> Any:
+    def _channel(self) -> SlackChannel:
+        return SlackChannel(
+            "chan-1",
+            SlackChannel.Credentials(
+                app_id="A1",
+                bot_token="xoxb-x",
+                app_token="xapp-x",
+            ),
+            SlackChannel.Config(),
+        )
+
+    @staticmethod
+    async def _emit(event: Any) -> None:
+        pass
+
+    async def _deferred(self, web_cls: Any) -> SlackChannel:
+        """Run a start-up expected to end without parking."""
+        channel = self._channel()
+        with patch("slack_sdk.web.async_client.AsyncWebClient", web_cls):
+            await asyncio.wait_for(
+                channel.start_listening(self._emit),
+                timeout=5,
+            )
+        return channel
+
+    async def test_handlers_are_the_defaults_plus_the_rate_limit_one(
+        self,
+    ) -> None:
         built: list = []
 
         def _make(**kwargs: Any) -> Any:
-            web = web_cls(**kwargs)
+            web = _FailingWeb(**kwargs)
             built.append(web)
             return web
 
-        channel = SlackChannel(
-            "chan-1",
-            SlackChannel.Credentials(
-                app_id="A1",
-                bot_token="xoxb-x",
-                app_token="xapp-x",
-            ),
-            SlackChannel.Config(),
-        )
-
-        async def _emit(event: Any) -> None:
-            pass
-
+        channel = self._channel()
         with patch("slack_sdk.web.async_client.AsyncWebClient", _make):
-            task = asyncio.create_task(channel.start_listening(_emit))
-            for _ in range(200):
-                if built and not channel._stopped:
+            task = asyncio.create_task(channel.start_listening(self._emit))
+            for _ in range(300):
+                if channel.status.state == "failed":
                     break
                 await asyncio.sleep(0.01)
-            await asyncio.sleep(0.05)
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-        self.assertTrue(built, "the web client was never constructed")
-        return channel, built[0]
-
-    async def test_default_and_rate_limit_handlers_are_installed(
-        self,
-    ) -> None:
-        _, web = await self._capture(_FailingWeb)
-        handlers = web.client_kwargs["retry_handlers"]
-        names = {type(h).__name__ for h in handlers}
-        # Dropping the default would remove retries for transient
-        # connection failures.
-        self.assertIn("AsyncConnectionErrorRetryHandler", names)
-        self.assertIn("AsyncRateLimitErrorRetryHandler", names)
-
-    async def test_refused_token_parks_the_channel(self) -> None:
-        channel, _ = await self._capture(_FailingWeb)
-        self.assertIn("invalid_auth", channel.status.last_error)
-
-    async def test_unreachable_slack_does_not_park(self) -> None:
-        channel = SlackChannel(
-            "chan-1",
-            SlackChannel.Credentials(
-                app_id="A1",
-                bot_token="xoxb-x",
-                app_token="xapp-x",
-            ),
-            SlackChannel.Config(),
+        self.assertEqual(len(built), 1)
+        handlers = built[0].client_kwargs["retry_handlers"]
+        # Exactly the SDK default, then ours. Replacing rather than
+        # extending would drop the connection-error retries.
+        self.assertEqual(
+            [type(h).__name__ for h in handlers],
+            [
+                "AsyncConnectionErrorRetryHandler",
+                "AsyncRateLimitErrorRetryHandler",
+            ],
         )
 
-        async def _emit(event: Any) -> None:
-            pass
-
+    async def test_refused_token_parks_then_stops_cleanly(self) -> None:
+        channel = self._channel()
         with patch(
             "slack_sdk.web.async_client.AsyncWebClient",
-            _UnreachableWeb,
+            _FailingWeb,
         ):
-            # It returns instead of parking, so the dispatcher's next
-            # reconcile starts a fresh listener rather than the channel
-            # sitting in 'failed' until somebody edits it.
-            await asyncio.wait_for(channel.start_listening(_emit), timeout=5)
-        self.assertNotEqual(channel.status.state, "failed")
-        self.assertIn("could not reach Slack", channel.status.last_error)
+            task = asyncio.create_task(channel.start_listening(self._emit))
+            for _ in range(300):
+                if channel.status.state == "failed":
+                    break
+                await asyncio.sleep(0.01)
+            # Parked: the full expected state, not just a substring.
+            self.assertEqual(
+                (channel.status.state, channel.status.last_error),
+                ("failed", "auth.test rejected the token: invalid_auth"),
+            )
+            self.assertIsNone(channel._client)
+            self.assertFalse(task.done(), "a parked channel must stay alive")
+
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        self.assertEqual(channel.status.state, "stopped")
+        self.assertIsNone(channel._web)
+        self.assertIsNone(channel._client)
+
+    async def test_transient_api_error_defers_instead_of_parking(
+        self,
+    ) -> None:
+        # An exhausted 429 is not a verdict on the credentials, so the
+        # listener ends and the dispatcher starts a fresh one.
+        channel = await self._deferred(_TransientApiWeb)
+        self.assertEqual(
+            (channel.status.state, channel.status.last_error),
+            ("stopped", "auth.test failed with 'ratelimited'"),
+        )
+        self.assertIsNone(channel._web)
+        self.assertIsNone(channel._client)
+
+    async def test_unreachable_slack_defers_instead_of_parking(self) -> None:
+        channel = await self._deferred(_UnreachableWeb)
+        self.assertEqual(
+            (channel.status.state, channel.status.last_error),
+            (
+                "stopped",
+                "auth.test could not reach Slack: connection reset",
+            ),
+        )
+        self.assertIsNone(channel._web)
+        self.assertIsNone(channel._client)

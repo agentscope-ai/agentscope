@@ -65,6 +65,19 @@ _IDENTITY_OK = "ok"
 _IDENTITY_REFUSED = "refused"
 _IDENTITY_UNAVAILABLE = "unavailable"
 
+# Slack error codes that no amount of retrying will fix: the stored
+# credentials themselves have to change. Every other API error, from
+# 'ratelimited' to 'service_unavailable', is transient by comparison.
+_TERMINAL_AUTH_ERRORS = frozenset(
+    {
+        "account_inactive",
+        "invalid_auth",
+        "not_authed",
+        "token_expired",
+        "token_revoked",
+    },
+)
+
 # Message subtypes that are still a person talking. Anything else (joins,
 # edits, deletions, bot posts) is not input for the agent.
 _USER_SUBTYPES = frozenset({"file_share", "thread_broadcast"})
@@ -340,11 +353,20 @@ class SlackChannel(ChannelBase):
         try:
             auth = await self._web.auth_test()
         except SlackApiError as e:
-            self.status.last_error = f"auth.test rejected the token: {e}"
+            code = self._error_code(e)
+            if code not in _TERMINAL_AUTH_ERRORS:
+                # Slack answered, but with something a retry can clear:
+                # rate limiting, an internal error, a timeout. Parking on
+                # that would brick the channel over a passing outage.
+                self.status.last_error = (
+                    f"auth.test failed with '{code or 'an unknown error'}'"
+                )
+                return _IDENTITY_UNAVAILABLE
+            self.status.last_error = f"auth.test rejected the token: {code}"
             logger.error(
                 "Slack '%s' bot token rejected: %s",
                 self._channel_id,
-                e,
+                code,
             )
             return _IDENTITY_REFUSED
         except Exception as e:  # pylint: disable=broad-except
@@ -359,6 +381,26 @@ class SlackChannel(ChannelBase):
             )
             return _IDENTITY_REFUSED
         return _IDENTITY_OK
+
+    @staticmethod
+    def _error_code(error: Exception) -> str:
+        """Read Slack's ``error`` code off a failed Web API response.
+
+        Args:
+            error (`Exception`): The ``SlackApiError`` to read.
+
+        Returns:
+            `str`: The code, or ``""`` when the response carried none —
+            which callers treat as transient, since parking a channel on
+            an error we could not even identify is the costlier mistake.
+        """
+        response = getattr(error, "response", None)
+        if response is None:
+            return ""
+        try:
+            return str(response.get("error") or "")
+        except Exception:  # pylint: disable=broad-except
+            return ""
 
     # -- Inbound --
 
