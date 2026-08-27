@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Schedule router — CRUD endpoints for scheduled agent tasks."""
 from datetime import datetime
+from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -33,6 +34,20 @@ schedule_router = APIRouter(
     tags=["schedule"],
     responses={404: {"description": "Not found"}},
 )
+
+
+def _validate_schedule(
+    scheduler: SchedulerManager,
+    record: ScheduleRecord,
+) -> None:
+    """Map invalid APScheduler configuration to an HTTP 422 response."""
+    try:
+        scheduler.validate_schedule(record)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
 
 
 @schedule_router.get(
@@ -120,6 +135,7 @@ async def create_schedule(
             started_at=datetime.now(),
         ),
     )
+    _validate_schedule(scheduler, record)
     await storage.upsert_schedule(user_id, record)
 
     if record.data.enabled:
@@ -173,6 +189,7 @@ async def update_schedule(
     updated_record = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
+    _validate_schedule(scheduler, updated_record)
     await storage.upsert_schedule(user_id, updated_record)
 
     # Always remove the existing job first; re-register only if still enabled.

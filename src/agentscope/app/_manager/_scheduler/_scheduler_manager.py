@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable, Coroutine
 
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from ....message import HintBlock
 from ....permission import PermissionContext
@@ -22,6 +22,9 @@ from ...storage import (
     SessionConfig,
     SessionSource,
 )
+
+if TYPE_CHECKING:
+    from apscheduler.triggers.cron import CronTrigger
 
 
 class SchedulerManager:
@@ -281,6 +284,34 @@ class SchedulerManager:
     # Schedule management
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _create_cron_trigger(record: ScheduleRecord) -> "CronTrigger":
+        """Build and validate the APScheduler cron trigger."""
+        from apscheduler.triggers.cron import CronTrigger
+
+        fields = record.data.cron_expression.split()
+        if len(fields) != 5:
+            raise ValueError(
+                "Expected a 5-field cron expression, got "
+                f"{record.data.cron_expression!r}",
+            )
+        minute, hour, day, month, day_of_week = fields
+
+        return CronTrigger(
+            minute=minute,
+            hour=hour,
+            day=day,
+            month=month,
+            day_of_week=day_of_week,
+            timezone=record.data.timezone,
+            start_date=record.data.started_at,
+            end_date=record.data.ended_at,
+        )
+
+    def validate_schedule(self, record: ScheduleRecord) -> None:
+        """Validate a schedule without mutating storage or APScheduler."""
+        self._create_cron_trigger(record)
+
     async def register_schedule(self, record: ScheduleRecord) -> str:
         """Persist-and-register a schedule record with APScheduler.
 
@@ -297,8 +328,6 @@ class SchedulerManager:
                 The APScheduler job ID (equal to ``record.id``).
         """
 
-        from apscheduler.triggers.cron import CronTrigger
-
         logger.info(
             "Registering schedule %s(%s) cron=%s tz=%s",
             record.id,
@@ -311,27 +340,12 @@ class SchedulerManager:
         # the 5 parsed fields and ``timezone`` — it has no parameter for
         # ``start_date`` / ``end_date``.  Parse the expression ourselves so
         # the configured activation window is honoured.
-        fields = record.data.cron_expression.split()
-        if len(fields) != 5:
-            raise ValueError(
-                "Expected a 5-field cron expression, got "
-                f"{record.data.cron_expression!r}",
-            )
-        minute, hour, day, month, day_of_week = fields
+        cron_trigger = self._create_cron_trigger(record)
 
         trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
             trigger,
-            trigger=CronTrigger(
-                minute=minute,
-                hour=hour,
-                day=day,
-                month=month,
-                day_of_week=day_of_week,
-                timezone=record.data.timezone,
-                start_date=record.data.started_at,
-                end_date=record.data.ended_at,
-            ),
+            trigger=cron_trigger,
             id=record.id,
             name=record.data.name,
             misfire_grace_time=300,
