@@ -72,6 +72,8 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-08] `功能`:** 支持流水线 —— 按照固化逻辑运行多智能体，并向外提供统一接口。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/overview)
+- **[2026-08] `集成`:** 支持钉钉（DingTalk）频道。[文档](https://docs.agentscope.io/latest/zh/deploy/channel/dingtalk)
 - **[2026-08] `功能`:** 支持 Console —— 在终端中测试与调试智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
 - **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
 - **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
@@ -80,8 +82,6 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 - **[2026-07] `集成`:** 集成 Daytona 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `集成`:** 集成 K8s，OpenSandbox 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `集成`:** 集成 ReMe 长期记忆。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
-- **[2026-06] `功能`:** 支持 Agentic Memory。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
-- **[2026-06] `功能`:** 支持分布式 & 多租户 & 多会话 RAG 服务。 [文档](https://docs.agentscope.io/latest/en/deploy/agent-team)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
