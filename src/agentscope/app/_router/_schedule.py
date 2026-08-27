@@ -120,6 +120,15 @@ async def create_schedule(
             started_at=datetime.now(),
         ),
     )
+
+    try:
+        scheduler.validate_schedule(record)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
     await storage.upsert_schedule(user_id, record)
 
     if record.data.enabled:
@@ -173,6 +182,15 @@ async def update_schedule(
     updated_record = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
+
+    try:
+        scheduler.validate_schedule(updated_record)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
     await storage.upsert_schedule(user_id, updated_record)
 
     # Always remove the existing job first; re-register only if still enabled.

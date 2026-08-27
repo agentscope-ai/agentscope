@@ -281,6 +281,47 @@ class SchedulerManager:
     # Schedule management
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def validate_schedule(record: ScheduleRecord) -> tuple[str, ...]:
+        """Validate a schedule record without constructing its trigger."""
+        from apscheduler.triggers.cron import CronTrigger
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        fields = record.data.cron_expression.split()
+        if len(fields) != 5:
+            raise ValueError(
+                "Expected a 5-field cron expression, got "
+                f"{record.data.cron_expression!r}",
+            )
+
+        field_names = ("minute", "hour", "day", "month", "day_of_week")
+        for field_name, expression in zip(field_names, fields, strict=True):
+            field_class = CronTrigger.FIELDS_MAP[field_name]
+            field_class(field_name, expression, is_default=False)
+
+        try:
+            timezone = ZoneInfo(record.data.timezone)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError(
+                f"Unknown timezone {record.data.timezone!r}",
+            ) from exc
+
+        if record.data.ended_at is not None:
+            started_at = record.data.started_at
+            ended_at = record.data.ended_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone)
+            else:
+                started_at = started_at.astimezone(timezone)
+            if ended_at.tzinfo is None:
+                ended_at = ended_at.replace(tzinfo=timezone)
+            else:
+                ended_at = ended_at.astimezone(timezone)
+            if ended_at <= started_at:
+                raise ValueError("ended_at must be later than started_at")
+
+        return tuple(fields)
+
     async def register_schedule(self, record: ScheduleRecord) -> str:
         """Persist-and-register a schedule record with APScheduler.
 
@@ -311,13 +352,7 @@ class SchedulerManager:
         # the 5 parsed fields and ``timezone`` — it has no parameter for
         # ``start_date`` / ``end_date``.  Parse the expression ourselves so
         # the configured activation window is honoured.
-        fields = record.data.cron_expression.split()
-        if len(fields) != 5:
-            raise ValueError(
-                "Expected a 5-field cron expression, got "
-                f"{record.data.cron_expression!r}",
-            )
-        minute, hour, day, month, day_of_week = fields
+        minute, hour, day, month, day_of_week = self.validate_schedule(record)
 
         trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
