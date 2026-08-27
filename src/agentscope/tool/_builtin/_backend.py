@@ -807,12 +807,14 @@ class LocalBackend(BackendBase):
                 **kwargs,
             )
         except NotImplementedError as exc:
+            # Windows SelectorEventLoop does not implement subprocess
+            # transport (Python docs: asyncio platform support). Uvicorn
+            # reload=True forces that loop; use ProactorEventLoop instead.
             raise RuntimeError(
                 "asyncio subprocesses are not supported by the current "
-                "event loop on Windows. Call "
-                "agentscope._utils._asyncio.ensure_windows_proactor_event_loop_policy() "
-                "before the event loop is created, and avoid uvicorn "
-                "reload=True on Windows when using LocalWorkspace.",
+                "event loop on Windows. Use WindowsProactorEventLoopPolicy "
+                "(the Python 3.8+ default) and avoid uvicorn reload=True, "
+                "which installs SelectorEventLoop and breaks LocalBackend.",
             ) from exc
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             # The executable could not be found or spawned. A shell would

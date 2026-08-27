@@ -171,7 +171,8 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        # Uvicorn reload on Windows can install a selector loop before the
-        # worker imports the app, breaking LocalWorkspace subprocess I/O.
+        # Uvicorn reload on Windows forces WindowsSelectorEventLoopPolicy,
+        # which does not support asyncio subprocesses (see Python docs).
+        # LocalWorkspace / LocalBackend need ProactorEventLoop instead.
         reload=sys.platform != "win32",
     )

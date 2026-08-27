@@ -7,16 +7,18 @@ import sys
 def ensure_windows_proactor_event_loop_policy() -> None:
     """Use an event loop policy that supports subprocesses on Windows.
 
-    :class:`~agentscope.tool.LocalBackend` and several workspace code paths
-    spawn subprocesses via ``asyncio.create_subprocess_exec``. On Windows the
-    legacy :class:`asyncio.SelectorEventLoop` raises
-    :exc:`NotImplementedError` for subprocess transport, while
-    :class:`asyncio.ProactorEventLoop` (selected by
-    :class:`asyncio.WindowsProactorEventLoopPolicy`) does not.
+    Per the `Python asyncio platform notes
+    <https://docs.python.org/3/library/asyncio-platforms.html#windows>`_,
+    :class:`asyncio.SelectorEventLoop` does **not** support subprocesses on
+    Windows, while :class:`asyncio.ProactorEventLoop` does.
+    :class:`asyncio.WindowsProactorEventLoopPolicy` has been the default
+    since Python 3.8, but uvicorn's reload mode (and some test runners) may
+    replace it with :class:`asyncio.WindowsSelectorEventLoopPolicy`.
 
-    Uvicorn and some test runners may install a selector-based loop before
-    AgentScope code runs. Call this **before** the running loop is created —
-    for example at app factory time or when importing the local backend.
+    :class:`~agentscope.tool.LocalBackend` and local workspace code paths
+    spawn subprocesses via ``asyncio.create_subprocess_exec``. Call this
+    helper **before** the running loop is created — for example in
+    :func:`~agentscope.app.create_app` or when importing the local backend.
     """
     if sys.platform != "win32":
         return
