@@ -43,7 +43,8 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
-      OpenAPI 3.1.
+      OpenAPI 3.1. Multi-type arrays with an existing ``anyOf`` raise
+      ``ValueError`` rather than dropping conjunctive constraints.
     - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
       the single non-null type. If there is exactly one non-null
       alternative it is inlined directly; otherwise the ``anyOf`` is
@@ -82,6 +83,11 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         if len(non_null_types) == 1:
             schema["type"] = non_null_types[0]
         elif non_null_types:
+            if "anyOf" in schema:
+                raise ValueError(
+                    "Cannot safely sanitize Gemini schema with both a "
+                    "multi-type nullable type array and anyOf.",
+                )
             schema.pop("type")
             schema["anyOf"] = [{"type": type_} for type_ in non_null_types]
         else:

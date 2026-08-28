@@ -808,6 +808,25 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+        self,
+    ) -> None:
+        """Existing anyOf constraints are not overwritten silently."""
+        with self.assertRaisesRegex(
+            ValueError,
+            "multi-type nullable type array and anyOf",
+        ):
+            _sanitize_schema_for_gemini(
+                {
+                    "type": ["string", "integer", "null"],
+                    "anyOf": [
+                        {"enum": ["auto"]},
+                        {"enum": [0]},
+                        {"type": "null"},
+                    ],
+                },
+            )
+
     def test_sanitize_inlines_annotated_null_anyof(self) -> None:
         """Annotated null schemas in anyOf are treated as null branches."""
         self.assertEqual(
