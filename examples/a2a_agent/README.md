@@ -86,23 +86,54 @@ reply = await agent.reply(current_message)
 
 ## Task lifecycle
 
-- `INPUT_REQUIRED`: catch `A2ATaskStateError` and call `reply()` again with the
-  requested user input. The active context ID and Task ID are reused.
+A remote Task suspends server-side, but nothing suspends locally, so every
+response stream ends the reply. The state it ended on decides how:
+
+- `COMPLETED`, `INPUT_REQUIRED`, `AUTH_REQUIRED`: `ReplyFinishedReason.COMPLETED`.
+  The Task status message is emitted as ordinary content, so the remote agent's
+  question — or its authorization instructions — is part of the reply. Answer it
+  with the next `reply()`; the context ID and Task ID are reused automatically.
+- `CANCELED`: `ReplyFinishedReason.INTERRUPTED`.
+- `FAILED`, `REJECTED`, or a stream that ends while the Task is still running:
+  `ReplyFinishedReason.ERROR` with `ErrorInfo` on the final message and on
+  `ReplyEndEvent`.
+
+Every event carries the remote `context_id`, `task_id`, and `task_state` in its
+metadata, and a `CustomEvent` named `a2a_status_update` reports each state change.
+
 - `SUBMITTED` or `WORKING`: call `resume()` / `resume_stream()` to subscribe to
   the active Task. If subscription is unsupported, the adapter fetches the
-  current Task snapshot.
-- `AUTH_REQUIRED`: complete authorization through the application-specific,
-  out-of-band flow and then call `resume()`.
-- Use `get_task()` to inspect the active Task and `cancel_task()` to request
-  remote cancellation.
-- `FAILED`, `REJECTED`, and `CANCELED` are reported as `A2ATaskStateError` with
-  `context_id`, `task_id`, `task_state`, and an optional `status_message`.
+  current Task snapshot. This is also how to follow a Task that continues on its
+  own after authorization is granted out of band.
+- Use `get_task()` to inspect the active Task, `list_tasks()` to enumerate every
+  Task in the context (optionally filtered by state), and `cancel_task()` to
+  request remote cancellation.
+
+## Resuming a stored conversation
+
+The remote `context_id` and `task_id` are the only state worth persisting, and
+both are accepted by the constructor:
+
+```python
+agent = A2AAgent(card, context_id=stored_context_id, task_id=stored_task_id)
+
+# The context is reused immediately; the Task is not, because its state is
+# unknown locally. Sync it first when the stored Task should be continued.
+task = await agent.get_task()
+```
+
+The server may have dropped the context or the Task in the meantime, so
+`get_task()` and `resume()` raise the SDK's `TaskNotFoundError` and
+`list_tasks()` returns an empty list. `reply()` needs no such handling: without
+a synced state it opens a new Task inside `context_id`.
+
+A2A carries credentials out of band, so an `AUTH_REQUIRED` Task cannot be
+approved through this adapter; follow the instructions in the status message.
+Sending a message while the Task is in `AUTH_REQUIRED` negotiates, corrects, or
+rejects the request, as the specification allows.
 
 The adapter does not translate local coroutine cancellation into remote Task
 cancellation; call `cancel_task()` explicitly when that is the desired action.
-The `INPUT_REQUIRED` handling above supports ordinary continuation of an A2A
-Task; durable AgentScope-native HITL persistence and recovery are outside this
-client adapter's current scope.
 
 ## Content support
 

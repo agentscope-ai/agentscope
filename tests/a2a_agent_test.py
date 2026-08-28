@@ -20,10 +20,12 @@ from a2a.client import ClientConfig, ClientFactory
 from a2a.utils.constants import TransportProtocol
 from google.protobuf import json_format
 import httpx
+from utils import AnyString
 
-from agentscope.agent import Agent, A2AAgent, A2ATaskStateError
+from agentscope.agent import Agent, A2AAgent
 from agentscope.event import (
     CustomEvent,
+    ReplyFinishedReason,
     DataBlockDeltaEvent,
     DataBlockStartEvent,
     ReplyEndEvent,
@@ -105,17 +107,20 @@ class _FakeClient:
         subscriptions: list[list[object]] | None = None,
         get_tasks: list[types.Task] | None = None,
         canceled_tasks: list[types.Task] | None = None,
+        listed_tasks: list[types.ListTasksResponse] | None = None,
         close_errors: list[BaseException] | None = None,
     ) -> None:
         self.responses = responses
         self.subscriptions = subscriptions or []
         self.get_tasks = get_tasks or []
         self.canceled_tasks = canceled_tasks or []
+        self.listed_tasks = listed_tasks or []
         self.close_errors = close_errors or []
         self.requests: list[types.SendMessageRequest] = []
         self.subscribe_requests: list[types.SubscribeToTaskRequest] = []
         self.get_requests: list[types.GetTaskRequest] = []
         self.cancel_requests: list[types.CancelTaskRequest] = []
+        self.list_requests: list[types.ListTasksRequest] = []
         self.close_count = 0
 
     async def send_message(
@@ -156,6 +161,17 @@ class _FakeClient:
         del context
         self.get_requests.append(request)
         return self.get_tasks.pop(0)
+
+    async def list_tasks(
+        self,
+        request: types.ListTasksRequest,
+        *,
+        context: Any = None,
+    ) -> types.ListTasksResponse:
+        """Return one configured page of Tasks."""
+        del context
+        self.list_requests.append(request)
+        return self.listed_tasks.pop(0)
 
     async def cancel_task(
         self,
@@ -339,21 +355,25 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
         reply = await agent.reply(UserMsg(name="user", content="again"))
         self.assertEqual(client.requests[0].message.context_id, "")
         self.assertEqual(client.requests[1].message.context_id, "context-1")
-        self.assertEqual(
-            reply.model_dump(
-                exclude={"created_at", "finished_at", "finished_reason"},
-            ),
+        self.assertDictEqual(
+            reply.model_dump(),
             {
                 "name": "remote-agent",
                 "content": [
                     {
                         "type": "text",
                         "text": "second",
-                        "id": reply.content[0].id,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
                 "role": "assistant",
-                "id": reply.id,
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "metadata": {
                     "a2a": {
                         "context_id": "context-1",
@@ -720,35 +740,8 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
             [],
         )
 
-    async def test_unsupported_content_and_task_states_fail_explicitly(
-        self,
-    ) -> None:
-        """Unsupported content and incomplete task states are explicit."""
-        agent = A2AAgent(
-            _card("1.0"),
-            client=_FakeClient(
-                [[_task_response("TASK_STATE_INPUT_REQUIRED")]],
-            ),
-        )
-        with self.assertRaises(A2ATaskStateError) as raised:
-            await agent.reply(UserMsg(name="user", content="hello"))
-        self.assertEqual(raised.exception.context_id, "context-1")
-        self.assertEqual(raised.exception.task_id, "task-1")
-        self.assertEqual(
-            raised.exception.task_state,
-            "TASK_STATE_INPUT_REQUIRED",
-        )
-
-        incomplete = A2AAgent(
-            _card("1.0"),
-            client=_FakeClient(
-                [[_task_response("TASK_STATE_WORKING")]],
-            ),
-        )
-        with self.assertRaises(A2ATaskStateError) as raised:
-            await incomplete.reply(UserMsg(name="user", content="hello"))
-        self.assertEqual(raised.exception.task_state, "TASK_STATE_WORKING")
-
+    async def test_unsupported_content_fails_explicitly(self) -> None:
+        """Unsupported Part content is rejected rather than lost."""
         unsupported_output = A2AAgent(
             _card("1.0"),
             client=_FakeClient(
@@ -1026,8 +1019,7 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
             ],
         )
         agent = A2AAgent(_card("1.0"), client=client)
-        with self.assertRaises(A2ATaskStateError):
-            await agent.reply(UserMsg(name="user", content="start"))
+        await agent.reply(UserMsg(name="user", content="start"))
 
         reply = await agent.reply(UserMsg(name="user", content="details"))
         self.assertEqual(client.requests[1].message.context_id, "context-1")
@@ -1053,10 +1045,7 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
             get_tasks=[completed_task],
         )
         agent = A2AAgent(_card("1.0"), client=client)
-        with self.assertRaises(A2ATaskStateError):
-            await agent.reply(UserMsg(name="user", content="start"))
-        with self.assertRaisesRegex(RuntimeError, "call resume"):
-            await agent.reply(UserMsg(name="user", content="credentials"))
+        await agent.reply(UserMsg(name="user", content="start"))
 
         reply = await agent.resume()
         self.assertEqual(reply.get_text_content(), "resumed")
@@ -1073,8 +1062,7 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
             canceled_tasks=[canceled],
         )
         agent = A2AAgent(_card("1.0"), client=client)
-        with self.assertRaises(A2ATaskStateError):
-            await agent.reply(UserMsg(name="user", content="start"))
+        await agent.reply(UserMsg(name="user", content="start"))
 
         await agent.get_task()
         result = await agent.cancel_task()
@@ -1103,3 +1091,239 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
             await agent.aclose()
         await agent.aclose()
         self.assertEqual(client.close_count, 2)
+
+
+class A2AAgentTaskLifecycleTest(IsolatedAsyncioTestCase):
+    """Tests for remote Task outcomes and for resuming a stored context."""
+
+    async def test_task_state_decides_the_reply_outcome(self) -> None:
+        """An interrupted Task ends the reply; a failed one reports an error."""
+        agent = A2AAgent(
+            _card("1.0"),
+            client=_FakeClient(
+                [
+                    [
+                        _task_response(
+                            "TASK_STATE_INPUT_REQUIRED",
+                            status_message=types.Message(
+                                message_id="ask",
+                                role=types.Role.Value("ROLE_AGENT"),
+                                parts=[
+                                    types.Part(text="Where are you flying?"),
+                                ],
+                            ),
+                        ),
+                    ],
+                ],
+            ),
+        )
+        reply = await agent.reply(UserMsg(name="user", content="book a seat"))
+        self.assertDictEqual(
+            reply.model_dump(),
+            {
+                "name": "remote-agent",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Where are you flying?",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "metadata": {
+                    "a2a": {
+                        "context_id": "context-1",
+                        "task_id": "task-1",
+                        "task_state": "TASK_STATE_INPUT_REQUIRED",
+                        "artifact_ids": [],
+                    },
+                },
+                "error": None,
+                "usage": None,
+            },
+        )
+
+        outcomes = []
+        for state in [
+            "TASK_STATE_AUTH_REQUIRED",
+            "TASK_STATE_CANCELED",
+            "TASK_STATE_FAILED",
+            "TASK_STATE_REJECTED",
+            # A stream that ends while the Task still runs never resolved.
+            "TASK_STATE_WORKING",
+        ]:
+            other = A2AAgent(
+                _card("1.0"),
+                client=_FakeClient([[_task_response(state)]]),
+            )
+            other_reply = await other.reply(
+                UserMsg(name="user", content="hello"),
+            )
+            outcomes.append(
+                (
+                    state,
+                    other_reply.finished_reason,
+                    other_reply.error and other_reply.error.message,
+                ),
+            )
+        self.assertListEqual(
+            outcomes,
+            [
+                (
+                    "TASK_STATE_AUTH_REQUIRED",
+                    ReplyFinishedReason.COMPLETED,
+                    None,
+                ),
+                ("TASK_STATE_CANCELED", ReplyFinishedReason.INTERRUPTED, None),
+                (
+                    "TASK_STATE_FAILED",
+                    ReplyFinishedReason.ERROR,
+                    "The remote A2A task ended in TASK_STATE_FAILED.",
+                ),
+                (
+                    "TASK_STATE_REJECTED",
+                    ReplyFinishedReason.ERROR,
+                    "The remote A2A task ended in TASK_STATE_REJECTED.",
+                ),
+                (
+                    "TASK_STATE_WORKING",
+                    ReplyFinishedReason.ERROR,
+                    "The remote A2A task ended in TASK_STATE_WORKING.",
+                ),
+            ],
+        )
+
+        detailed = A2AAgent(
+            _card("1.0"),
+            client=_FakeClient(
+                [
+                    [
+                        _task_response(
+                            "TASK_STATE_FAILED",
+                            status_message=types.Message(
+                                message_id="why",
+                                role=types.Role.Value("ROLE_AGENT"),
+                                parts=[
+                                    types.Part(text="Upstream API is down"),
+                                ],
+                            ),
+                        ),
+                    ],
+                ],
+            ),
+        )
+        detailed_reply = await detailed.reply(
+            UserMsg(name="user", content="hello"),
+        )
+        self.assertEqual(
+            detailed_reply.error.message,
+            "Upstream API is down",
+        )
+
+    async def test_stored_context_is_reused_and_stale_task_degrades(
+        self,
+    ) -> None:
+        """A restored context continues; a dropped Task starts a new one."""
+        client = _FakeClient(
+            [
+                [
+                    _task_response(
+                        "TASK_STATE_COMPLETED",
+                        artifacts=[
+                            types.Artifact(
+                                artifact_id="answer",
+                                parts=[types.Part(text="done")],
+                            ),
+                        ],
+                    ),
+                ],
+            ],
+            get_tasks=[_task_response("TASK_STATE_INPUT_REQUIRED").task],
+        )
+        agent = A2AAgent(
+            _card("1.0"),
+            client=client,
+            context_id="stored-context",
+            task_id="stored-task",
+        )
+        self.assertEqual(agent.context_id, "stored-context")
+        self.assertEqual(agent.task_id, "stored-task")
+        self.assertIsNone(agent.task_state)
+
+        reply = await agent.reply(UserMsg(name="user", content="hello"))
+        self.assertEqual(reply.get_text_content(), "done")
+        self.assertEqual(
+            client.requests[0].message.context_id,
+            "stored-context",
+        )
+        # The stored Task's state is unknown locally, so the turn opens a new
+        # Task in the stored context instead of continuing a possibly dead one.
+        self.assertEqual(client.requests[0].message.task_id, "")
+
+        restored = A2AAgent(
+            _card("1.0"),
+            client=_FakeClient(
+                [],
+                get_tasks=[
+                    _task_response("TASK_STATE_INPUT_REQUIRED").task,
+                ],
+            ),
+            context_id="stored-context",
+            task_id="stored-task",
+        )
+        await restored.get_task()
+        self.assertEqual(restored.task_state, "TASK_STATE_INPUT_REQUIRED")
+
+    async def test_list_tasks_filters_by_context_and_follows_pages(
+        self,
+    ) -> None:
+        """Listing spans every page and scopes to the current context."""
+        first = _task_response("TASK_STATE_INPUT_REQUIRED").task
+        second = _task_response("TASK_STATE_COMPLETED").task
+        client = _FakeClient(
+            [],
+            listed_tasks=[
+                types.ListTasksResponse(
+                    tasks=[first],
+                    next_page_token="page-2",
+                ),
+                types.ListTasksResponse(tasks=[second]),
+            ],
+        )
+        agent = A2AAgent(
+            _card("1.0"),
+            client=client,
+            context_id="stored-context",
+        )
+
+        tasks = await agent.list_tasks("TASK_STATE_INPUT_REQUIRED")
+        self.assertListEqual(tasks, [first, second])
+        self.assertListEqual(
+            [
+                (
+                    request.context_id,
+                    request.page_token,
+                    request.status,
+                )
+                for request in client.list_requests
+            ],
+            [
+                ("stored-context", "", _state("TASK_STATE_INPUT_REQUIRED")),
+                (
+                    "stored-context",
+                    "page-2",
+                    _state("TASK_STATE_INPUT_REQUIRED"),
+                ),
+            ],
+        )
+
+        empty = A2AAgent(_card("1.0"), client=_FakeClient([]))
+        with self.assertRaisesRegex(RuntimeError, "no remote context"):
+            await empty.list_tasks()
