@@ -15,7 +15,7 @@ export const BashRenderer: ToolRenderer = {
 			description?: string;
 		};
 		return (
-			<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
+			<div className="w-full max-w-full">
 				<div className="text-secondary-foreground font-mono">{command}</div>
 				{description && <div className="text-muted-foreground">{description}</div>}
 			</div>

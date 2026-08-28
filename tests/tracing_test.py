@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the tracing module using an in-memory OTel exporter."""
+import asyncio
 import json
 from typing import Any
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
@@ -13,7 +15,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 
 from utils import MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -28,7 +30,11 @@ from agentscope.message import (
     ToolResultState,
     UserMsg,
 )
-from agentscope.model import ChatResponse, ChatUsage
+from agentscope.middleware._tracing._attributes import SpanAttributes
+from agentscope.middleware._tracing._extractor import (
+    _get_llm_response_attributes,
+)
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -134,6 +140,34 @@ class ExternalWeatherTool(ToolBase):
     async def execute(self, city: str) -> str:
         """Stub weather tool for tracing tests."""
         return f"{city}: sunny, 25°C."
+
+
+class TracingExtractorTest(TestCase):
+    """Tests for tracing attribute extraction helpers."""
+
+    def test_llm_response_tracing_uses_chat_response_finish_reason(
+        self,
+    ) -> None:
+        """LLM response tracing should preserve ChatResponse finish reason."""
+        response = ChatResponse(
+            content=[TextBlock(text="partial answer")],
+            is_last=True,
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+
+        attributes = _get_llm_response_attributes(response)
+        output_messages = json.loads(
+            attributes[SpanAttributes.GEN_AI_OUTPUT_MESSAGES],
+        )
+
+        self.assertEqual(
+            attributes[SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS],
+            '["interrupted"]',
+        )
+        self.assertEqual(
+            output_messages[0]["finish_reason"],
+            "interrupted",
+        )
 
 
 def _make_tool_call_response(tool_id: str, city: str) -> ChatResponse:
@@ -359,6 +393,54 @@ class TracingTest(IsolatedAsyncioTestCase):
             span_attrs.get("gen_ai.operation.name"),
             "chat",
             "chat span gen_ai.operation.name should equal chat",
+        )
+
+    async def test_chat_span_has_input_messages(self) -> None:
+        """Chat spans carry messages observed at the tracing middleware
+        boundary."""
+        self.agent.injection_config = InjectionConfig(
+            inject_runtime_state=False,
+        )
+        self.model.set_responses(
+            [_make_text_response("Input captured.")],
+        )
+        user_text = "Which messages reached the tracing boundary?"
+        await self.agent.reply(UserMsg(name="user", content=user_text))
+
+        chat_spans = self._spans_by_name("chat")
+        self.assertEqual(len(chat_spans), 1, "Expected exactly one chat span")
+        span_attrs = dict(chat_spans[0].attributes or {})
+        input_raw = span_attrs.get("gen_ai.input.messages")
+        assert isinstance(
+            input_raw,
+            str,
+        ), "chat span gen_ai.input.messages should be a string"
+        self.assertEqual(
+            json.loads(input_raw),
+            [
+                {
+                    "role": "system",
+                    "parts": [
+                        {
+                            "type": "text",
+                            "content": "You are a test assistant.",
+                        },
+                    ],
+                    "name": "system",
+                    "finish_reason": "stop",
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "type": "text",
+                            "content": user_text,
+                        },
+                    ],
+                    "name": "user",
+                    "finish_reason": "stop",
+                },
+            ],
         )
 
     async def test_chat_span_has_output_messages(self) -> None:
@@ -847,3 +929,65 @@ class TracingTest(IsolatedAsyncioTestCase):
             span_attrs.get("agentscope.agent.incoming_event_type"),
             "external_execution_result",
         )
+
+    # -----------------------------------------------------------------------
+    # Tests: streaming close from another asyncio task (issue #2076)
+    # -----------------------------------------------------------------------
+
+    async def _drive_then_close_from_other_task(self, gen: Any) -> None:
+        """Advance an async generator once, then close it from a *different*
+        asyncio task, reproducing the cross-context close in issue #2076."""
+        await anext(gen)
+
+        async def _close() -> None:
+            await gen.aclose()
+
+        await asyncio.create_task(_close())
+
+    async def test_on_reply_close_from_other_task_no_detach_error(
+        self,
+    ) -> None:
+        """on_reply must not emit OTel 'Failed to detach context' errors when
+        its stream is closed from another asyncio task (issue #2076)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield "chunk-1"
+            await asyncio.Event().wait()  # suspend at the yield boundary
+
+        gen = middleware.on_reply(
+            self.agent,
+            {"inputs": UserMsg(name="user", content="hi")},
+            next_handler,
+        )
+        with self.assertNoLogs("opentelemetry.context", level="ERROR"):
+            await self._drive_then_close_from_other_task(gen)
+
+    async def test_on_acting_close_from_other_task_no_detach_error(
+        self,
+    ) -> None:
+        """on_acting must not emit OTel 'Failed to detach context' errors when
+        its stream is closed from another asyncio task (issue #2076)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield ToolResultBlock(
+                id="t1",
+                name="get_weather",
+                output="ok",
+                state=ToolResultState.SUCCESS,
+            )
+            await asyncio.Event().wait()  # suspend at the yield boundary
+
+        tool_call = ToolCallBlock(
+            id="t1",
+            name="get_weather",
+            input=json.dumps({"city": "Hangzhou"}),
+        )
+        gen = middleware.on_acting(
+            self.agent,
+            {"tool_call": tool_call},
+            next_handler,
+        )
+        with self.assertNoLogs("opentelemetry.context", level="ERROR"):
+            await self._drive_then_close_from_other_task(gen)

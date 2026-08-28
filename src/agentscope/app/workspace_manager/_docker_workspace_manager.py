@@ -33,6 +33,7 @@ from typing import Self
 from typing_extensions import deprecated
 
 from ..._logging import logger
+from ..._utils._common import _generate_id
 from ...mcp import MCPClient
 from ...workspace import DockerWorkspace
 from ...workspace._docker._make_dockerfile import (
@@ -40,11 +41,15 @@ from ...workspace._docker._make_dockerfile import (
     DEFAULT_GATEWAY_PORT,
 )
 from ._base import WorkspaceManagerBase, IsolationPolicy
+from ._prewarm import PrewarmConfig, WorkspacePrewarmMixin
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
 
-class DockerWorkspaceManager(WorkspaceManagerBase):
+class DockerWorkspaceManager(
+    WorkspacePrewarmMixin[DockerWorkspace],
+    WorkspaceManagerBase,
+):
     """Manages :class:`DockerWorkspace` instances with TTL-based caching.
 
     The manager owns a single set of image-build parameters
@@ -71,15 +76,20 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
+        prewarm: PrewarmConfig | None = None,
     ) -> None:
         """Initialize the docker workspace manager.
 
         Args:
             basedir (`str`):
-                Host root under which per-user/per-agent workdir are
-                created (``<basedir>/<user_id>/<agent_id>``). Each
-                workdir is bind-mounted to ``/workspace`` inside its
-                container.
+                Host root under which per-workspace workdir are
+                created (``<basedir>/<workspace_id>``). Each workdir
+                is bind-mounted to ``/workspace`` inside its container.
+                Keying on the workspace id — rather than on
+                ``(user, agent)`` — is what lets a container be built
+                before anyone knows who will get it. Workspaces built
+                under the older ``<basedir>/<user_id>/<agent_id>``
+                layout keep mounting that directory.
             isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
                 Isolation grain for :meth:`assign_workspace_id`.
                 ``PER_SESSION`` → fresh UUID (one workspace per
@@ -113,6 +123,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up
                 to look for idle workspaces. Defaults to 5 minutes.
+            prewarm (`PrewarmConfig | None`, optional):
+                Keep this many containers built and idle, ready to be
+                handed to the next session that needs one. ``None``
+                disables pre-warming.
         """
         self._basedir = os.path.abspath(basedir)
         self._base_image = base_image
@@ -122,7 +136,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self._env = dict(env or {})
         self._default_mcps = list(default_mcps or [])
         self._skill_paths = list(skill_paths or [])
-        super().__init__(isolation=isolation)
+        WorkspacePrewarmMixin.__init__(self, prewarm=prewarm)
+        WorkspaceManagerBase.__init__(self, isolation=isolation)
         self._ttl = ttl
         self._sweep_interval = sweep_interval
 
@@ -133,35 +148,81 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
     # ── isolation helpers ─────────────────────────────────────────
 
-    def _workdir_for(self, user_id: str, agent_id: str) -> str:
-        """Resolve the host workdir for ``(user_id, agent_id)``.
+    def _workdir_for(
+        self,
+        workspace_id: str,
+        user_id: str = "",
+        agent_id: str = "",
+    ) -> str:
+        """Resolve the host workdir bind-mounted into ``workspace_id``.
 
-        Two-level layout — ``<basedir>/<user_id>/<agent_id>`` — so
-        different users never share a bind-mount even when their
-        ``agent_id`` collides.
+        Keyed on the workspace id, so the directory can be created
+        alongside a pre-warmed container, long before the
+        ``(user, agent)`` that will own it is known.
+
+        A session may name its own ``workspace_id``, and this path is
+        bind-mounted read-write into the container, so a value that
+        escapes ``basedir`` would hand the container the host
+        filesystem. Anything not landing strictly inside is rejected.
+
+        Args:
+            workspace_id (`str`):
+                The workspace whose bind mount is being resolved.
+            user_id (`str`, defaults to `""`):
+                Owner of the workspace, for the legacy layout below.
+                Empty for a workspace nobody owns yet.
+            agent_id (`str`, defaults to `""`):
+                Agent of the workspace, for the legacy layout below.
+
+        Raises:
+            `ValueError`:
+                If ``workspace_id`` resolves outside ``basedir``.
         """
-        return os.path.join(self._basedir, user_id, agent_id)
+        root = os.path.realpath(self._basedir)
+        workdir = os.path.realpath(os.path.join(root, workspace_id))
+        if not workdir.startswith(root + os.sep):
+            raise ValueError(
+                f"workspace_id {workspace_id!r} escapes the workspace "
+                f"base directory",
+            )
+        if os.path.isdir(workdir) or not (user_id and agent_id):
+            return workdir
+
+        # Workspaces built before the id-keyed layout live under
+        # ``<basedir>/<user_id>/<agent_id>``. Keep mounting such a
+        # directory where it stands: several workspace ids may share
+        # one, so no rename can move them all. Legacy paths escaping
+        # ``basedir`` are declined rather than rejected, leaving the
+        # caller with an ordinary empty workspace.
+        legacy = os.path.realpath(os.path.join(root, user_id, agent_id))
+        if legacy.startswith(root + os.sep) and os.path.isdir(legacy):
+            return legacy
+        return workdir
 
     # ── workspace construction ────────────────────────────────────
 
     async def _build_and_start(
         self,
         *,
-        workspace_id: str,
-        user_id: str,
-        agent_id: str,
+        workspace_id: str | None = None,
+        user_id: str = "",
+        agent_id: str = "",
     ) -> DockerWorkspace:
-        """Create a :class:`DockerWorkspace` for ``(user_id, agent_id)``
-        and run its full ``initialize``.
+        """Create a :class:`DockerWorkspace` and run its full
+        ``initialize``.
 
-        ``workspace_id`` is forwarded so the container name is
-        deterministic and the same id round-trips through the cache.
+        ``workspace_id`` names both the container and its host workdir,
+        so the same id round-trips through the cache and re-attaches
+        after a restart. ``None`` mints one. ``user_id``/``agent_id``
+        are forwarded only to find a legacy workdir — see
+        :meth:`_workdir_for`.
         """
-        workdir = self._workdir_for(user_id, agent_id)
+        workspace_id = workspace_id or _generate_id()
+        workdir = self._workdir_for(workspace_id, user_id, agent_id)
         os.makedirs(workdir, exist_ok=True)
         ws = DockerWorkspace(
             workspace_id=workspace_id,
-            workdir=workdir,
+            host_workdir=workdir,
             base_image=self._base_image,
             node_version=self._node_version,
             extra_pip=self._extra_pip,
@@ -203,7 +264,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 ``sessions/<session_id>/``).
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — used both as the cache
-                key and the container name suffix. When ``None`` the
+                key and the container name suffix. When unset the
                 manager falls back to :meth:`assign_workspace_id`;
                 the session flow should pre-resolve this so container
                 names stay stable across restarts.
@@ -214,8 +275,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",
@@ -277,21 +338,9 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             `DockerWorkspace`:
                 The newly built workspace, already initialised.
         """
-        del session_id  # accepted for interface parity; not used here
+        del user_id, agent_id, session_id  # kept for interface parity
 
-        workdir = self._workdir_for(user_id, agent_id)
-        os.makedirs(workdir, exist_ok=True)
-        ws = DockerWorkspace(
-            host_workdir=workdir,
-            base_image=self._base_image,
-            node_version=self._node_version,
-            extra_pip=self._extra_pip,
-            gateway_port=self._gateway_port,
-            env=self._env,
-            default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
-        )
-        await ws.initialize()
+        ws = await self._build_and_start()
         async with self._lock:
             self._cache[ws.workspace_id] = (ws, time.monotonic())
         return ws
@@ -329,16 +378,37 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             return_exceptions=True,
         )
 
+    # ── pre-warming hooks ─────────────────────────────────────────
+
+    async def _create_prewarmed(self) -> DockerWorkspace:
+        """Build a container for nobody in particular."""
+        ws = await self._build_and_start()
+        logger.info(
+            "DockerWorkspaceManager: pre-warmed workspace %s",
+            ws.workspace_id,
+        )
+        return ws
+
+    async def _adopt_prewarmed(self, workspace: DockerWorkspace) -> None:
+        """Track a handed-out container under the ordinary TTL cache."""
+        async with self._lock:
+            self._cache[workspace.workspace_id] = (
+                workspace,
+                time.monotonic(),
+            )
+
     # ── async context manager ─────────────────────────────────────
 
     async def __aenter__(self) -> Self:
-        """Start the TTL sweeper task."""
+        """Start the TTL sweeper task and fill the pre-warm buffer."""
         if self._sweep_task is None:
             self._sweep_task = asyncio.create_task(self._sweep_loop())
+        self._start_prewarm()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Stop the TTL sweeper task, then close every cached workspace."""
+        """Stop the sweeper and buffer, then close every workspace."""
+        await self._stop_prewarm()
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             try:

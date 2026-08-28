@@ -8,16 +8,46 @@ OpenAI Responses API uses event-based streaming with response.completed.
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
+from pydantic import BaseModel
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import (
+    AssistantMsg,
+    Base64Source,
+    DataBlock,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    ThinkingBlock,
+)
 from agentscope.model import OpenAIResponseModel
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
 
 A = AnyString()
+
+
+class _MockReasoningSummary(BaseModel):
+    """Mock an OpenAI reasoning summary item."""
+
+    text: str
+    type: str = "summary_text"
+
+
+class _MockReasoningItem(BaseModel):
+    """Mock an OpenAI reasoning output item."""
+
+    id: str
+    summary: list[_MockReasoningSummary]
+    type: str = "reasoning"
+    content: list[dict[str, Any]] | None = None
+    encrypted_content: str | None = None
+    status: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -40,14 +70,15 @@ def _mock_completion(
     reasoning_summary: Any = None,
     reasoning_id: str = "rs_test123",
     response_id: str = "resp-openai-1",
+    reasoning_output_item: Any = None,
 ) -> MagicMock:
     """Build a mock non-streaming Responses API response."""
     output = []
 
-    if reasoning_summary is not None:
-        reasoning_item = MagicMock()
-        reasoning_item.type = "reasoning"
-        reasoning_item.id = reasoning_id
+    if reasoning_output_item is not None:
+        output.append(reasoning_output_item)
+
+    elif reasoning_summary is not None:
         summary_texts = (
             reasoning_summary
             if isinstance(reasoning_summary, list)
@@ -55,11 +86,13 @@ def _mock_completion(
             if reasoning_summary is not None
             else []
         )
-        reasoning_item.summary = []
-        for summary_text in summary_texts:
-            summary_mock = MagicMock()
-            summary_mock.text = summary_text
-            reasoning_item.summary.append(summary_mock)
+        reasoning_item = _MockReasoningItem(
+            id=reasoning_id,
+            summary=[
+                _MockReasoningSummary(text=summary_text)
+                for summary_text in summary_texts
+            ],
+        )
         output.append(reasoning_item)
 
     if text:
@@ -109,6 +142,13 @@ class _MockAsyncEventStream:
     def __init__(self, events: list) -> None:
         self._events = events
         self._index = 0
+        self.exited = False
+
+    async def __aenter__(self) -> "_MockAsyncEventStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        self.exited = True
 
     def __aiter__(self) -> "_MockAsyncEventStream":
         return self
@@ -131,27 +171,29 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "resp-openai-1")
 
-    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Parsing a tool-call response stores call_id as ToolCallBlock.id."""
         mock_create = AsyncMock(
@@ -166,7 +208,7 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -175,8 +217,9 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="call-1",
+                        created_at=A,
                         name="get_weather",
                         input='{"city":"BJ"}',
                     ),
@@ -184,10 +227,68 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("openai.AsyncClient")
+    async def test_native_multimodal_tool_result_request(self) -> None:
+        """The model sends native multimodal function-call output."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="verified"),
+        )
+        self.mock_client.responses.create = mock_create
+        messages = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call-image",
+                        name="inspect_image",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call-image",
+                        name="inspect_image",
+                        output=[
+                            TextBlock(text="marker-before"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="aW1hZ2U=",
+                                    media_type="image/png",
+                                ),
+                            ),
+                            TextBlock(text="marker-after"),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        await self.model(messages)
+
+        self.assertListEqual(
+            mock_create.await_args.kwargs["input"],
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "call-image",
+                    "name": "inspect_image",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-image",
+                    "output": [
+                        {"type": "input_text", "text": "marker-before"},
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,aW1hZ2U=",
+                        },
+                        {"type": "input_text", "text": "marker-after"},
+                    ],
+                },
+            ],
+        )
+
     async def test_reasoning_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream reasoning summary plus text returns both block types."""
         mock_create = AsyncMock(
@@ -197,7 +298,7 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 reasoning_id="rs_abc999",
             ),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -208,18 +309,143 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Thinking step...",
                         reasoning_item_id="rs_abc999",
+                        reasoning_item_raw={
+                            "id": "rs_abc999",
+                            "summary": [
+                                {
+                                    "text": "Thinking step...",
+                                    "type": "summary_text",
+                                },
+                            ],
+                            "type": "reasoning",
+                        },
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
 
-    @patch("openai.AsyncClient")
+    async def test_reasoning_raw_item_round_trip(self) -> None:
+        """Encrypted reasoning metadata survives parsing and formatting."""
+        reasoning_item_raw = {
+            "id": "rs_encrypted",
+            "summary": [
+                {
+                    "text": "Thinking step...",
+                    "type": "summary_text",
+                },
+            ],
+            "type": "reasoning",
+            "content": [],
+            "encrypted_content": "encrypted_payload",
+            "status": "completed",
+        }
+        reasoning_item = _MockReasoningItem.model_validate(
+            reasoning_item_raw,
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                text="Answer",
+                reasoning_output_item=reasoning_item,
+            ),
+        )
+        self.mock_client.responses.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking="Thinking step...",
+                        reasoning_item_id="rs_encrypted",
+                        reasoning_item_raw=reasoning_item_raw,
+                    ),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
+                ],
+            ),
+        )
+
+        msg = AssistantMsg(
+            name="assistant",
+            content=result.content,
+        )
+        restored_msg = Msg.model_validate(msg.model_dump())
+        self.assertEqual(restored_msg.content, result.content)
+
+        formatted = await self.model.formatter.format(
+            [restored_msg],
+        )
+        self.assertListEqual(
+            formatted,
+            [
+                reasoning_item_raw,
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Answer",
+                        },
+                    ],
+                },
+            ],
+        )
+
+    async def test_reasoning_raw_item_excludes_none_fields(self) -> None:
+        """Optional null SDK fields are not stored for history replay."""
+        reasoning_item = _MockReasoningItem.model_validate(
+            {
+                "id": "rs_without_nulls",
+                "summary": [],
+                "type": "reasoning",
+                "encrypted_content": "encrypted_payload",
+            },
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                reasoning_output_item=reasoning_item,
+            ),
+        )
+        self.mock_client.responses.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            result.content,
+            [
+                ThinkingBlock.model_construct(
+                    id=A,
+                    created_at=A,
+                    thinking="",
+                    reasoning_item_id="rs_without_nulls",
+                    reasoning_item_raw={
+                        "id": "rs_without_nulls",
+                        "summary": [],
+                        "type": "reasoning",
+                        "encrypted_content": "encrypted_payload",
+                    },
+                ),
+            ],
+        )
+
     async def test_empty_reasoning_summary_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream empty reasoning summary still preserves its item id."""
         mock_create = AsyncMock(
@@ -229,7 +455,7 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 reasoning_id="rs_empty",
             ),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -240,10 +466,20 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="",
                         reasoning_item_id="rs_empty",
+                        reasoning_item_raw={
+                            "id": "rs_empty",
+                            "summary": [],
+                            "type": "reasoning",
+                        },
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
@@ -287,9 +523,10 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+    async def test_stream_text(self) -> None:
         """Stream text yields deltas then final with full content."""
         completed_resp = MagicMock()
         completed_resp.id = "resp-1"
@@ -311,33 +548,64 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ),
             _make_event("response.completed", response=completed_resp),
         ]
-        mock_create = AsyncMock(
-            return_value=_MockAsyncEventStream(events),
-        )
-        mock_client_cls.return_value.responses.create = mock_create
+        stream = _MockAsyncEventStream(events)
+        mock_create = AsyncMock(return_value=stream)
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
 
+        self.assertTrue(stream.exited)
+
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_reasoning_and_text(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream reasoning and text deltas then final with
         reasoning_item_id."""
-        reasoning_item = MagicMock()
-        reasoning_item.type = "reasoning"
-        reasoning_item.id = "rs_123"
+        reasoning_item_raw = {
+            "id": "rs_123",
+            "summary": [],
+            "type": "reasoning",
+        }
+        reasoning_item = _MockReasoningItem.model_validate(
+            reasoning_item_raw,
+        )
 
         completed_resp = MagicMock()
         completed_resp.id = "resp-2"
@@ -351,6 +619,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             _make_event(
                 "response.reasoning_summary_text.delta",
                 delta="Thinking",
+                item_id="rs_123",
                 response=MagicMock(id="resp-2"),
             ),
             _make_event(
@@ -362,7 +631,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -372,9 +641,24 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Thinking")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Thinking",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 # ``reasoning_item_id`` is only known at
                 # ``response.completed``; it is emitted as a dedicated
                 # carrier delta chunk (empty thinking text) that the base
@@ -384,8 +668,10 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             reasoning_item_id="rs_123",
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
                     ],
                 ),
@@ -394,24 +680,112 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Thinking",
                             reasoning_item_id="rs_123",
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                     ],
                 ),
             ],
         )
 
-    @patch("openai.AsyncClient")
+    async def test_stream_preserves_multiple_reasoning_items(self) -> None:
+        """Streaming keeps every reasoning item's encrypted payload."""
+        first_raw = {
+            "id": "rs_first",
+            "summary": [],
+            "type": "reasoning",
+            "encrypted_content": "encrypted_first",
+        }
+        second_raw = {
+            "id": "rs_second",
+            "summary": [],
+            "type": "reasoning",
+            "encrypted_content": "encrypted_second",
+        }
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-multiple-reasoning"
+        completed_resp.output = [
+            _MockReasoningItem.model_validate(first_raw),
+            _MockReasoningItem.model_validate(second_raw),
+        ]
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 10
+        completed_resp.usage.output_tokens = 5
+        completed_resp.usage.input_tokens_details = None
+
+        events = [
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="First",
+                item_id="rs_first",
+            ),
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                delta="Second",
+                item_id="rs_second",
+            ),
+            _make_event("response.completed", response=completed_resp),
+        ]
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+
+        self.assertEqual(
+            (responses[-1].is_last, responses[-1].content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking="First",
+                        reasoning_item_id="rs_first",
+                        reasoning_item_raw=first_raw,
+                    ),
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking="Second",
+                        reasoning_item_id="rs_second",
+                        reasoning_item_raw=second_raw,
+                    ),
+                ],
+            ),
+        )
+
+        formatted = await self.model.formatter.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=responses[-1].content,
+                ),
+            ],
+        )
+        self.assertListEqual(formatted, [first_raw, second_raw])
+
     async def test_stream_empty_reasoning_summary_keeps_reasoning_item_id(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream empty reasoning summary still preserves its item id."""
-        reasoning_item = MagicMock()
-        reasoning_item.type = "reasoning"
-        reasoning_item.id = "rs_empty"
+        reasoning_item_raw = {
+            "id": "rs_empty",
+            "summary": [],
+            "type": "reasoning",
+            "encrypted_content": "encrypted_stream_payload",
+        }
+        reasoning_item = _MockReasoningItem.model_validate(
+            reasoning_item_raw,
+        )
 
         msg_item = MagicMock()
         msg_item.type = "message"
@@ -435,7 +809,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -443,35 +817,50 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 (
                     False,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             reasoning_item_id="rs_empty",
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
                     ],
                 ),
                 (
                     True,
                     [
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             reasoning_item_id="rs_empty",
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
                     ],
                 ),
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_function_call(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream function-call events use call_id as ToolCallBlock.id."""
         fc_item = MagicMock()
@@ -509,7 +898,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -520,8 +909,9 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":',
                         ),
@@ -530,8 +920,9 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='"test"}',
                         ),
@@ -540,8 +931,9 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":"test"}',
                         ),

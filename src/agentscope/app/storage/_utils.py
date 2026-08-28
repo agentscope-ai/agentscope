@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The utils for storage."""
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, SecretStr
@@ -8,7 +9,7 @@ from ._model import TeamMember
 
 if TYPE_CHECKING:
     from ._base import StorageBase
-    from ._model import TeamRecord
+    from ._model import AgentRecord, TeamRecord
 
 
 def _dump_with_secrets(model: BaseModel) -> dict:
@@ -105,3 +106,63 @@ async def _ensure_team_members(
     team.data.member_ids = [m.agent_id for m in migrated]
     await storage.upsert_team(user_id, team)
     return migrated
+
+
+@dataclass(frozen=True)
+class _TeamLeader:
+    """A team's leader: its session id plus its agent record."""
+
+    session_id: str
+    agent: "AgentRecord"
+
+    @property
+    def name(self) -> str:
+        """The leader's current display name.
+
+        Returns:
+            `str`: The leader agent's name, as read this call.
+        """
+        return self.agent.data.name
+
+
+async def _resolve_team_leader(
+    storage: "StorageBase",
+    user_id: str,
+    team: "TeamRecord",
+) -> "_TeamLeader | None":
+    """Resolve *team*'s leader.
+
+    The single read path for the leader's identity, shared by the team
+    tools, the chat run context and the session router. Teams created
+    with :attr:`TeamRecord.leader_agent_id` go straight to the agent
+    record; older ones pay one extra session read every time, which
+    beats writing to the team record on what are mostly read paths
+    (including a GET endpoint) for one saved lookup. The name is always
+    read fresh — an agent can be renamed at any time and ``TeamSay``
+    routes by name.
+
+    Args:
+        storage (`StorageBase`):
+            Storage backend for the lookups.
+        user_id (`str`):
+            The team owner (also the leader agent's owner).
+        team (`TeamRecord`):
+            The team whose leader to resolve.
+
+    Returns:
+        `_TeamLeader | None`:
+            The leader's session id and agent record, or ``None`` when
+            either is missing — an inconsistent state, since deleting a
+            leader session or agent dissolves the team.
+    """
+    agent_id = team.leader_agent_id
+    if agent_id is None:
+        session = await storage.get_session(user_id, "", team.session_id)
+        if session is None:
+            return None
+        agent_id = session.agent_id
+
+    agent = await storage.get_agent(user_id, agent_id)
+    if agent is None:
+        return None
+    return _TeamLeader(session_id=team.session_id, agent=agent)

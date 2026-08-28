@@ -3,20 +3,28 @@
 and their lifecycles, and filesystem isolation."""
 
 from ._base import IsolationPolicy, WorkspaceManagerBase
+from ._prewarm import PrewarmConfig
 from ._local_workspace_manager import LocalWorkspaceManager
 from ._docker_workspace_manager import DockerWorkspaceManager
 from ._e2b_workspace_manager import E2BWorkspaceManager
 from ._daytona_workspace_manager import DaytonaWorkspaceManager
 from ._k8s_workspace_manager import K8sWorkspaceManager
 from ._opensandbox_workspace_manager import OpenSandboxWorkspaceManager
+from ._applecontainer_workspace_manager import (
+    AppleContainerWorkspaceManager,
+)
+from ._bubblewrap_workspace_manager import BubblewrapWorkspaceManager
 
 __all__ = [
     "IsolationPolicy",
+    "PrewarmConfig",
     "WorkspaceManagerBase",
     "LocalWorkspaceManager",
+    "BubblewrapWorkspaceManager",
     "DockerWorkspaceManager",
     "E2BWorkspaceManager",
     "DaytonaWorkspaceManager",
     "K8sWorkspaceManager",
     "OpenSandboxWorkspaceManager",
+    "AppleContainerWorkspaceManager",
 ]

@@ -12,7 +12,7 @@ from ._attributes import (
 )
 from ._converter import _convert_block_to_part
 from ._utils import _serialize_to_str
-from ...model import ChatResponse, ChatModelBase
+from ...model import ChatResponse, ChatModelBase, FinishedReason
 from ...event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
@@ -177,16 +177,18 @@ def _get_llm_request_attributes(
         instance (`ChatModelBase`):
             The chat model instance making the request.
         kwargs (`Dict[str, Any]`):
-            Keyword arguments including generation parameters such as
-            temperature, top_p, top_k, max_tokens, presence_penalty,
-            frequency_penalty, stop_sequences, seed, tools, and tool_choice.
+            Keyword arguments including input messages, tools, tool choice,
+            and generation parameters such as temperature, top_p, top_k,
+            max_tokens, presence_penalty, frequency_penalty, stop sequences,
+            and seed.
 
     Returns:
         `Dict[str, Any]`:
             OpenTelemetry GenAI attributes with mixed-type values (``str``,
             ``int``, ``float``, or ``list``), including operation name,
-            provider name, model name, generation parameters (e.g.
-            temperature, max_tokens, stop_sequences), and tool definitions.
+            provider name, model name, input messages, generation parameters
+            (e.g. temperature, max_tokens, stop sequences), and tool
+            definitions.
     """
 
     attributes = {
@@ -220,6 +222,14 @@ def _get_llm_request_attributes(
     )
     if tool_definitions:
         attributes[SpanAttributes.GEN_AI_TOOL_DEFINITIONS] = tool_definitions
+
+    messages = kwargs.get("messages")
+    if isinstance(messages, (Msg, list)):
+        input_messages = _get_agent_messages(messages)
+        if input_messages:
+            attributes[
+                SpanAttributes.GEN_AI_INPUT_MESSAGES
+            ] = _serialize_to_str(input_messages)
 
     return {k: v for k, v in attributes.items() if v is not None}
 
@@ -279,7 +289,7 @@ def _get_llm_output_messages(
             ]
 
         parts = []
-        finish_reason = "stop"  # Default finish reason
+        finish_reason = _get_chat_response_finish_reason(chat_response)
 
         for block in chat_response.content:
             part = _convert_block_to_part(block)
@@ -309,6 +319,19 @@ def _get_llm_output_messages(
         ]
 
 
+def _get_chat_response_finish_reason(
+    chat_response: ChatResponse | None,
+) -> str:
+    """Get the finish reason to record for a chat response."""
+    if not isinstance(chat_response, ChatResponse):
+        return "unknown"
+
+    if chat_response.finished_reason == FinishedReason.INTERRUPTED:
+        return "interrupted"
+
+    return "stop"
+
+
 def _get_llm_response_attributes(
     chat_response: ChatResponse | None,
 ) -> Dict[str, Any]:
@@ -334,8 +357,9 @@ def _get_llm_response_attributes(
             "id",
             "unknown_id",
         ),
-        # FIXME: finish reason should be capture in chat response
-        SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS: '["stop"]',
+        SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS: _serialize_to_str(
+            [_get_chat_response_finish_reason(chat_response)],
+        ),
     }
     if hasattr(chat_response, "usage") and chat_response.usage:
         usage = chat_response.usage

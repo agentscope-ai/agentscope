@@ -49,6 +49,12 @@
             alt="license"
         />
     </a>
+    <a href="https://deepwiki.com/agentscope-ai/agentscope">
+        <img
+            src="https://img.shields.io/badge/DeepWiki-Ask_Devin-navy.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)"
+            alt="Ask DeepWiki"
+        />
+    </a>
 </p>
 
 <p align="center">
@@ -57,13 +63,7 @@
 
 ## What is AgentScope 2.0?
 
-AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for .
-
-- [**Event System** →](https://docs.agentscope.io/latest/en/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
-- [**Permission System** →](https://docs.agentscope.io/latest/en/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
-- [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/latest/en/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
-- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/latest/en/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, E2B, OpenSandbox, and Daytona.
-- [**Extensible Middleware System** →](https://docs.agentscope.io/latest/en/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
+AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that keep up with rising model capability.
 
 We design for increasingly agentic LLMs.
 Our approach leverages the models' reasoning and tool use abilities
@@ -73,15 +73,16 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-08] `FEAT`:** Pipeline supported — run multiple agents by a fixed logic behind one event stream. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/overview)
+- **[2026-08] `INTE`:** DingTalk channel supported. [Docs](https://docs.agentscope.io/latest/en/deploy/channel/dingtalk)
+- **[2026-08] `FEAT`:** Console supported — test and debug agents in the terminal. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/console)
+- **[2026-08] `INTE`:** Feishu (Lark) and Discord channels supported. [Feishu](https://docs.agentscope.io/latest/en/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/en/deploy/channel/discord)
+- **[2026-08] `FEAT`:** Channels supported — connect agents to IM platforms in agent service. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/channel/overview)
+- **[2026-08] `INTE`:** GitHub MCP Registry and ClawHub supported as built-in hubs. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
+- **[2026-08] `FEAT`:** MCP & Skill Hub supported — browse a hub, install into your library, add to a workspace. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
 - **[2026-07] `INTE`:** Daytona-based workspace/sandbox supported. [Docs](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `INTE`:** K8s, OpenSandbox-based workspace/sandbox supported. [Docs](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `INTE`:** ReMe long-term memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
-- **[2026-06] `FEAT`:** Agentic Memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
-- **[2026-06] `FEAT`:** Distributed & Multi-Tenancy & Multi-Session RAG service supported. [Docs](https://docs.agentscope.io/latest/en/deploy/agent-team)
-- **[2026-06] `FEAT`:** RAG supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/rag) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/rag)
-- **[2026-06] `INTE`:** Mem0 supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory) | [Docs](https://docs.agentscope.io/latest/en)
-- **[2026-06] `FEAT`:** Agent Team supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/agent-team)
-- **[2026-05] `RELS`:** AgentScope 2.0 released! [Docs](https://docs.agentscope.io/)
 <!-- END NEWS -->
 
 [More news →](./docs/NEWS.md)
@@ -104,8 +105,6 @@ Welcome to join our community on
 
 ```bash
 uv pip install agentscope
-# or
-# pip install agentscope
 ```
 
 #### From source
@@ -118,21 +117,32 @@ git clone -b main https://github.com/agentscope-ai/agentscope.git
 cd agentscope
 
 uv pip install -e .
-# or
-# pip install -e .
 ```
 
-## Hello AgentScope!
+## Agent
 
-Start your first agent with AgentScope 2.0:
+The SDK layer — compose an agent from a rich set of building blocks:
+
+| Building block | What's inside |
+|---|---|
+| [**ReAct**](https://docs.agentscope.io/latest/en/building-blocks/agent/overview) | Reasoning-acting loop with structured output, realtime interruption & resume, and batched (sequential / concurrent) tool acting |
+| [**Toolkit**](https://docs.agentscope.io/latest/en/building-blocks/tool/overview) | Agentic tool management over Python tools, MCP servers, and skills; ships with built-in coding tools (shell, file edit, search) and task/plan tools |
+| [**Model**](https://docs.agentscope.io/latest/en/building-blocks/model/overview) | LLM, embedding, and TTS across major providers (OpenAI, Anthropic, Gemini, DashScope, DeepSeek, Moonshot, xAI, Ollama) |
+| [**Context**](https://docs.agentscope.io/latest/en/building-blocks/context/overview) | Automatic compaction, tool-result offload, and context injection (system prompt, RAG, memory) via built-in middleware |
+| [**Event System**](https://docs.agentscope.io/latest/en/building-blocks/message-and-event) | Unified event bus streaming reasoning, tool calls, and multimodal content (text, image, audio) to the frontend |
+| [**Permission & HITL**](https://docs.agentscope.io/latest/en/building-blocks/permission-system/overview) | Fine-grained control over tools and resources, confirmation, bypass mode |
+| [**Middleware**](https://docs.agentscope.io/latest/en/building-blocks/middleware) | Composable hooks across the loop — reply, reasoning, acting, model calling, permission checking, context compression, system prompt |
+| [**Memory**](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory) | Agentic memory with switchable backends (ReMe, Mem0) |
+| [**Workspace / Sandbox**](https://docs.agentscope.io/latest/en/building-blocks/workspace/overview) | Isolated tool & code execution — local, Docker, Apple Container, Bubblewrap, E2B, OpenSandbox, Daytona, K8s |
+
+Start your first agent with AgentScope 2.0 in console:
 
 ```python
 from agentscope.agent import Agent
+from agentscope.console import launch_console
 from agentscope.tool import Toolkit, Bash, Grep, Glob, Read, Write, Edit
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.message import UserMsg
-from agentscope.event import EventType
 
 import os, asyncio
 
@@ -159,28 +169,29 @@ async def main() -> None:
         ),
     )
 
-    async for evt in agent.reply_stream(UserMsg("Tony", "Hi, Friday!")):
-        # Handle the event stream, e.g., print the message, update UI, etc.
-        match evt.type:
-            case EventType.REPLY_START:
-                ...
-            case EventType.MODEL_CALL_START:
-                ...
-            case EventType.TEXT_BLOCK_START:
-                ...
-            case EventType.TEXT_BLOCK_DELTA:
-                ...
-            case EventType.TEXT_BLOCK_END:
-                ...
-
-            # Handle other event types
+    # Chat with the agent in the terminal — streamed output, tool-call
+    # confirmation and Ctrl+C interruption are all handled for you
+    await launch_console(agent)
 
 asyncio.run(main())
 ```
 
-## Hello Agent Service!
+## Agent Service — All You Need to Build Your App
 
-An extensible FastAPI based **multi-tenancy**, **multi-session** agent service with pre-built Web UI in `examples/web_ui`
+AgentScope ships a batteries-included **agent service** — a FastAPI backend with a pre-built Web UI (`examples/web_ui`) that turns your agents into a multi-tenant, multi-session application, with rich capabilities out of the box:
+
+| Capability | What you get |
+|---|---|
+| [**Serving**](https://docs.agentscope.io/latest/en/deploy/agent-service) | Multi-tenancy, multi-session isolation, FastAPI backend, pre-built Web UI |
+| [**Agent Team**](https://docs.agentscope.io/latest/en/deploy/agent-team) | Leader–worker orchestration, built-in team tools, task planning |
+| [**Channels**](https://docs.agentscope.io/latest/en/deploy/channel/overview) | Connect agents to IM platforms — Feishu (Lark), Discord, custom channels, message routing |
+| [**RAG Service**](https://docs.agentscope.io/latest/en/deploy/rag) | Blob storage, index worker, multi-tenant retrieval |
+| [**MCP & Skill Hub**](https://docs.agentscope.io/latest/en/deploy/hub/overview) | Browse hubs (GitHub MCP Registry, ClawHub), install into your library, add to a workspace |
+| [**Resource Sharing**](https://docs.agentscope.io/latest/en/deploy/sharing) | Group- and org-level management for sharing models, MCP servers, skills, and workspaces |
+| [**Persistence**](https://docs.agentscope.io/latest/en/deploy/agent-service#storage-backend) | SQL & NoSQL persistence of agent state and sessions |
+| [**Scheduling**](https://docs.agentscope.io/latest/en/deploy/agent-service) | Scheduled tasks, agent wakeup, background task offloading |
+
+Everything above is composable, so you can assemble your own application on top of the service with minimal glue code.
 
 <table>
   <tr>

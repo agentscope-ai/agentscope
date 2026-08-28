@@ -7,7 +7,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import MoonshotCredential
@@ -43,6 +43,16 @@ class MoonshotChatModel(ChatModelBase):
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
                 "enabled by default but can be disabled."
+            ),
+        )
+
+        reasoning_effort: Literal["low", "high", "max"] | None = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "The reasoning effort level for kimi-k3. "
+                "Supports 'low', 'high', and 'max' "
+                "(default 'max')."
             ),
         )
 
@@ -116,6 +126,14 @@ class MoonshotChatModel(ChatModelBase):
         self.formatter = formatter or MoonshotChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import openai
+
+        self.client: openai.AsyncClient = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import openai
@@ -126,6 +144,14 @@ class MoonshotChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
 
     async def _call_api(
         self,
@@ -155,16 +181,6 @@ class MoonshotChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import openai
-
-        client = openai.AsyncClient(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -173,8 +189,13 @@ class MoonshotChatModel(ChatModelBase):
             "stream": self.stream,
         }
 
+        is_k3 = model_name == "kimi-k3"
+
         if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
+            if is_k3:
+                kwargs["max_completion_tokens"] = self.parameters.max_tokens
+            else:
+                kwargs["max_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature
@@ -184,12 +205,19 @@ class MoonshotChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        thinking_type = (
-            "enabled" if self.parameters.thinking_enable else "disabled"
-        )
-        kwargs.setdefault("extra_body", {})
-        kwargs["extra_body"].setdefault("thinking", {})
-        kwargs["extra_body"]["thinking"].setdefault("type", thinking_type)
+        if is_k3:
+            if self.parameters.reasoning_effort is not None:
+                kwargs["reasoning_effort"] = self.parameters.reasoning_effort
+        else:
+            thinking_type = (
+                "enabled" if self.parameters.thinking_enable else "disabled"
+            )
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"].setdefault("thinking", {})
+            kwargs["extra_body"]["thinking"].setdefault(
+                "type",
+                thinking_type,
+            )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -203,7 +231,7 @@ class MoonshotChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
+        response = await self.client.chat.completions.create(**kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)
@@ -261,6 +289,14 @@ class MoonshotChatModel(ChatModelBase):
                     )
 
                 if not chunk.choices:
+                    # MoonShot emits a trailing usage-only chunk with no
+                    # choices; forward it as an empty-content delta so the
+                    # base class ``__call__`` can absorb ``usage`` into
+                    # ``acc_res``. The empty delta itself is filtered out
+                    # of the surfaced stream by ``_stream``.
+                    if usage is not None:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
@@ -404,49 +440,8 @@ class MoonshotChatModel(ChatModelBase):
 
         return tools, mode
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """Moonshot-specific override for structured output.
-
-        Moonshot rejects ``tool_choice="required"`` or an object-form
-        ``tool_choice`` when thinking mode is enabled. In that case we
-        default ``tool_choice`` to ``"auto"`` and rely on the base class's
-        injected system-reminder prompt to guide the model. When thinking
-        is disabled, this falls through to the base implementation.
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self.parameters.thinking_enable:
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Moonshot uses ``thinking.type=disabled`` in extra_body."""
+        return {
+            "extra_body": {"thinking": {"type": "disabled"}},
+        }

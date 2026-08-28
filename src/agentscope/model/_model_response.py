@@ -56,7 +56,7 @@ class ChatResponse(DictMixin):
     """The usage information of the chat response, if available."""
 
     finished_reason: FinishedReason = field(
-        default=FinishedReason.COMPLETED,
+        default_factory=lambda: FinishedReason.COMPLETED,
     )
     """The finished reason of the chat response, available when `is_last`
     is `True`."""

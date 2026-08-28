@@ -8,6 +8,7 @@ import {
 	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuPortal,
 	DropdownMenuSeparator,
 	DropdownMenuSub,
 	DropdownMenuSubContent,
@@ -15,6 +16,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { credentialLabel } from '@/utils/common';
 
 interface SelectedEmbedding {
 	type: string;
@@ -53,6 +55,7 @@ export function EmbeddingSelect({
 	// (provider type → credential → models).
 	const groups: Record<string, KbEmbeddingProvider[]> = {};
 	for (const provider of providers) {
+		if (provider.models.length === 0) continue;
 		const type = (provider.credential.data.type as string) ?? 'unknown';
 		if (!groups[type]) groups[type] = [];
 		groups[type].push(provider);
@@ -72,9 +75,9 @@ export function EmbeddingSelect({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="outline" size="sm" className="justify-between gap-1">
+				<Button variant="outline" size="sm" className="justify-between gap-1 font-normal">
 					<span className="truncate">{displayLabel}</span>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="min-w-48 max-h-72 overflow-y-auto">
@@ -103,15 +106,12 @@ export function EmbeddingSelect({
 												{m.label}
 											</DropdownMenuItem>
 										))
-									: items.map(({ credential, models }) => {
-											const credName =
-												(credential.data.name as string) ||
-												credential.id.slice(0, 8);
-											return (
-												<DropdownMenuSub key={credential.id}>
-													<DropdownMenuSubTrigger>
-														{credName}
-													</DropdownMenuSubTrigger>
+									: items.map(({ credential, models }) => (
+											<DropdownMenuSub key={credential.id}>
+												<DropdownMenuSubTrigger>
+													{credentialLabel(credential)}
+												</DropdownMenuSubTrigger>
+												<DropdownMenuPortal>
 													<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
 														{models.map((m) => (
 															<DropdownMenuItem
@@ -128,9 +128,9 @@ export function EmbeddingSelect({
 															</DropdownMenuItem>
 														))}
 													</DropdownMenuSubContent>
-												</DropdownMenuSub>
-											);
-										})}
+												</DropdownMenuPortal>
+											</DropdownMenuSub>
+										))}
 							</DropdownMenuGroup>
 						);
 					})

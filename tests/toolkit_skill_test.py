@@ -282,6 +282,8 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "# My Skill\nThis is the skill content.",
                     },
@@ -300,6 +302,8 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "# My Skill\nThis is the skill content.",
                     },
@@ -338,6 +342,8 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "SkillNotFoundError: "
                         "Skill 'non_existent_skill' not found.",
@@ -357,6 +363,8 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "SkillNotFoundError: "
                         "Skill 'non_existent_skill' not found.",

@@ -3,6 +3,7 @@ import { ChevronDownIcon, CircleAlert, Loader2, PlusCircle } from 'lucide-react'
 import * as React from 'react';
 
 import type { ChatModelConfig, PermissionMode } from '@/api';
+import { AgentSelect } from '@/components/select/AgentSelect';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect';
 import { TimezoneSelect } from '@/components/select/TimezoneSelect';
@@ -94,11 +95,10 @@ function DatePickerButton({
 				<Button
 					variant="outline"
 					disabled={disabled}
-					size="sm"
 					className="w-32 justify-between font-normal"
 				>
 					{date ? format(date, 'PPP') : placeholder}
-					<ChevronDownIcon className="text-muted-foreground opacity-50" />
+					<ChevronDownIcon className="size-3.5 text-muted-foreground" />
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent className="w-auto p-0" align="start">
@@ -184,7 +184,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('schedule.createSchedule.title')}</DialogTitle>
-					<DialogDescription className="tracking-tight">
+					<DialogDescription>
 						{t('schedule.createSchedule.description')}
 					</DialogDescription>
 				</DialogHeader>
@@ -194,7 +194,6 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 						<Field>
 							<FieldLabel>{t('common.name')}</FieldLabel>
 							<Input
-								className="text-sm h-8"
 								value={form.name}
 								onChange={(e) => set('name', e.target.value)}
 								placeholder={t('schedule.createSchedule.namePlaceholder')}
@@ -226,7 +225,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 									type="time"
 									value={form.time}
 									onChange={(e) => set('time', e.target.value)}
-									className="max-h-7 h-7 text-sm appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
+									className="appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
 								/>
 							</Field>
 						</div>
@@ -234,7 +233,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 						<Field orientation={'horizontal'}>
 							<FieldLabel>{t('schedule.timezone')}</FieldLabel>
 							<TimezoneSelect
-								className={''}
+								size="default"
 								value={form.timezone}
 								onChange={(v) => set('timezone', v)}
 							/>
@@ -246,7 +245,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 								value={form.freq}
 								onValueChange={(v) => set('freq', v as FreqType)}
 							>
-								<SelectTrigger size="sm">
+								<SelectTrigger>
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
@@ -278,23 +277,19 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 
 						<Field orientation={'horizontal'}>
 							<FieldLabel>{t('common.agent')}</FieldLabel>
-							<Select value={form.agentId} onValueChange={(v) => set('agentId', v)}>
-								<SelectTrigger className="w-full" size="sm">
-									<SelectValue placeholder={t('common.selectAgent')} />
-								</SelectTrigger>
-								<SelectContent>
-									{agents.map((agent) => (
-										<SelectItem key={agent.id} value={agent.id}>
-											{agent.data.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+							<AgentSelect
+								size="default"
+								agents={agents}
+								value={form.agentId || null}
+								onChange={(id) => set('agentId', id)}
+								placeholder={t('common.selectAgent')}
+							/>
 						</Field>
 
 						<Field orientation={'horizontal'}>
 							<FieldLabel>{t('common.model')}</FieldLabel>
 							<LlmSelect
+								size="default"
 								value={form.chatModelConfig}
 								onChange={(v) => set('chatModelConfig', v)}
 							/>
@@ -303,7 +298,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 						<Field orientation={'horizontal'}>
 							<FieldLabel>{t('schedule.permissionMode')}</FieldLabel>
 							<PermissionModeSelect
-								className="w-full"
+								size="default"
 								value={form.permissionMode}
 								onChange={(v) => set('permissionMode', v)}
 							/>
