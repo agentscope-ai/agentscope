@@ -1595,14 +1595,15 @@ class Agent:
             )
 
         # Send the model call ended event with usage if available
+        usage = completed_response.usage
         yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
-            input_tokens=completed_response.usage.input_tokens
-            if completed_response.usage
-            else 0,
-            output_tokens=completed_response.usage.output_tokens
-            if completed_response.usage
-            else 0,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            cache_input_tokens=(usage.cache_input_tokens or 0) if usage else 0,
+            cache_creation_input_tokens=(
+                (usage.cache_creation_input_tokens or 0) if usage else 0
+            ),
             finished_reason=completed_response.finished_reason,
         )
 
@@ -1633,6 +1634,12 @@ class Agent:
                 Usage(
                     input_tokens=last_ctx.usage.input_tokens,
                     output_tokens=last_ctx.usage.output_tokens,
+                    cache_input_tokens=(
+                        last_ctx.usage.cache_input_tokens or 0
+                    ),
+                    cache_creation_input_tokens=(
+                        last_ctx.usage.cache_creation_input_tokens or 0
+                    ),
                 )
                 if last_ctx is not None and last_ctx.usage is not None
                 else None
@@ -3189,6 +3196,10 @@ class Agent:
             Usage(
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
+                cache_input_tokens=usage.cache_input_tokens or 0,
+                cache_creation_input_tokens=(
+                    usage.cache_creation_input_tokens or 0
+                ),
             )
             if usage is not None
             else None
@@ -3220,6 +3231,10 @@ class Agent:
             else:
                 tail.usage.input_tokens += msg_usage.input_tokens
                 tail.usage.output_tokens += msg_usage.output_tokens
+                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
+                tail.usage.cache_creation_input_tokens += (
+                    msg_usage.cache_creation_input_tokens
+                )
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
@@ -3389,17 +3404,69 @@ class Agent:
 
         # The last reasoning produced a text-only final message
         if final_msg is not None:
+            # In the normal flow, ``cur_iter == max_iters + 1`` here means
+            # this text came from the one forced finalization call.
+            exceeded_max_iters = (
+                self.state.cur_iter > self.react_config.max_iters
+            )
+            finished_reason = (
+                ReplyFinishedReason.EXCEED_MAX_ITERS
+                if exceeded_max_iters
+                else ReplyFinishedReason.COMPLETED
+            )
+            exit_events: list[AgentEvent] = []
+
+            if exceeded_max_iters:
+                logger.warning(
+                    "Agent %s exceeds the max iteration numbers %d. "
+                    "Stop the react loop.",
+                    self.name,
+                    self.react_config.max_iters,
+                )
+                final_msg.finished_reason = finished_reason
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exit_events.append(
+                        ExceedMaxItersEvent(
+                            reply_id=self.state.reply_id,
+                            name=self.name,
+                        ),
+                    )
+
+            exit_events.append(
+                ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    finished_reason=finished_reason,
+                ),
+            )
             return Exit(
-                exit_events=[
-                    ReplyEndEvent(
-                        session_id=self.state.session_id,
-                        reply_id=self.state.reply_id,
-                        finished_reason=ReplyFinishedReason.COMPLETED,
-                    ),
-                ],
+                exit_events=exit_events,
                 exit_msg=final_msg,
             )
 
+        # At equality, the regular iteration budget is exhausted, but the
+        # one forced finalization call has not run yet.
+        if self.state.cur_iter == self.react_config.max_iters:
+            return Reasoning(
+                hint=HintBlock(
+                    hint=(
+                        f"<system-reminder>You have reached the maximum of "
+                        f"{self.react_config.max_iters} reasoning-acting "
+                        f"iterations. Summarize the work and findings so far "
+                        f"and return the final answer as text. Do not call "
+                        f"any tools.</system-reminder>"
+                    ),
+                    source='{"label": "System", "sublabel": '
+                    '"Max Iterations Reached"}',
+                ),
+                tool_choice=ToolChoice(mode="none"),
+            )
+
+        # Equality returned above, so reaching this check means the forced
+        # finalization call also failed to produce a final message.
         if self.state.cur_iter >= self.react_config.max_iters:
             logger.warning(
                 "Agent %s exceeds the max iteration numbers %d. "

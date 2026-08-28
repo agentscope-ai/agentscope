@@ -49,6 +49,8 @@ class _FakeClient:
     def __init__(self) -> None:
         self.indices = _FakeIndices()
         self.bulk = AsyncMock(return_value={"errors": False, "items": []})
+        self.open_point_in_time = AsyncMock()
+        self.close_point_in_time = AsyncMock()
         self.delete_by_query = AsyncMock()
         self.search = AsyncMock()
         self.close = AsyncMock()
@@ -247,3 +249,86 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             second_query["aggs"]["documents"]["composite"]["after"],
             {"document_id": "doc-1"},
         )
+
+    async def test_list_chunks_pages_through_pit(self) -> None:
+        chunks = [_record("doc-1", i).chunk for i in (2, 0, 3, 1)]
+        self.client.open_point_in_time.return_value = {"id": "pit-1"}
+        self.client.search.side_effect = [
+            {
+                "hits": {
+                    "hits": [
+                        {
+                            "_source": {
+                                "chunk": chunk.model_dump(mode="json"),
+                            },
+                            "sort": [index],
+                        }
+                        for index, chunk in enumerate(chunks[:2])
+                    ],
+                },
+                "pit_id": "pit-1",
+            },
+            {
+                "hits": {
+                    "hits": [
+                        {
+                            "_source": {
+                                "chunk": chunk.model_dump(mode="json"),
+                            },
+                            "sort": [2 + index],
+                        }
+                        for index, chunk in enumerate(chunks[2:])
+                    ],
+                },
+                "pit_id": "pit-1",
+            },
+            {"hits": {"hits": []}, "pit_id": "pit-1"},
+        ]
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=1,
+            limit=2,
+            metadata_filter={"tenant": "bank-a"},
+        )
+
+        self.client.open_point_in_time.assert_awaited_once_with(
+            index="kb-1",
+            keep_alive="1m",
+        )
+        first_call = self.client.search.await_args_list[0].kwargs
+        self.assertEqual(
+            first_call["query"],
+            {
+                "bool": {
+                    "filter": [
+                        {"term": {"document_id": "doc-1"}},
+                        {"term": {"metadata.tenant": "bank-a"}},
+                    ],
+                },
+            },
+        )
+        self.assertEqual(
+            first_call["pit"],
+            {"id": "pit-1", "keep_alive": "1m"},
+        )
+        self.assertEqual(first_call["sort"], [{"_shard_doc": "asc"}])
+        second_call = self.client.search.await_args_list[1].kwargs
+        self.assertEqual(second_call["search_after"], [1])
+        self.client.close_point_in_time.assert_awaited_once_with(id="pit-1")
+        self.assertEqual([c.chunk_index for c in page], [1, 2])
+
+    async def test_list_chunks_closes_pit_on_error(self) -> None:
+        self.client.open_point_in_time.return_value = {"id": "pit-1"}
+        self.client.search.side_effect = RuntimeError("boom")
+        with self.assertRaises(RuntimeError):
+            await self.store.list_chunks("kb-1", "doc-1")
+        self.client.close_point_in_time.assert_awaited_once_with(id="pit-1")
+
+    async def test_list_chunks_zero_limit_short_circuits(self) -> None:
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", limit=0),
+            [],
+        )
+        self.client.search.assert_not_awaited()

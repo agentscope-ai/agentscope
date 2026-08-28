@@ -32,9 +32,6 @@ from agentscope.message import (
 )
 
 
-_FIXED_ID = "TESTID1234567"
-
-
 class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
     """Comprehensive tests for OpenAI Responses API formatters."""
 
@@ -433,6 +430,98 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_replays_raw_reasoning_item(self) -> None:
+        """A valid raw reasoning item is replayed without reconstruction."""
+        reasoning_item_raw = {
+            "type": "reasoning",
+            "id": "rs_encrypted",
+            "summary": [
+                {"type": "summary_text", "text": "summary"},
+            ],
+            "content": [
+                {"type": "reasoning_text", "text": "reasoning"},
+            ],
+            "encrypted_content": "encrypted_payload",
+            "status": "completed",
+        }
+        thinking = ThinkingBlock(
+            thinking="",
+            reasoning_item_id="rs_encrypted",
+            reasoning_item_raw=reasoning_item_raw,
+        )
+        fmt = OpenAIResponseFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[thinking, TextBlock(text="reply")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [
+                reasoning_item_raw,
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "reply"},
+                    ],
+                },
+            ],
+        )
+        self.assertIsNot(res[0], reasoning_item_raw)
+        self.assertIsNot(res[0]["summary"], reasoning_item_raw["summary"])
+        self.assertIsNot(res[0]["content"], reasoning_item_raw["content"])
+
+    async def test_chat_formatter_invalid_raw_reasoning_uses_fallback(
+        self,
+    ) -> None:
+        """Malformed raw items cannot bypass the reconstructed fallback."""
+        fmt = OpenAIResponseFormatter()
+        invalid_raw_items = [
+            None,
+            [],
+            {
+                "type": "message",
+                "id": "rs_expected",
+            },
+            {
+                "type": "reasoning",
+                "id": "rs_other",
+                "summary": [],
+            },
+        ]
+
+        for reasoning_item_raw in invalid_raw_items:
+            with self.subTest(reasoning_item_raw=reasoning_item_raw):
+                thinking = ThinkingBlock(
+                    thinking="summary",
+                    reasoning_item_id="rs_expected",
+                    reasoning_item_raw=reasoning_item_raw,
+                )
+                res = await fmt.format(
+                    [AssistantMsg(name="assistant", content=[thinking])],
+                )
+                self.assertListEqual(
+                    res,
+                    [
+                        {
+                            "type": "reasoning",
+                            "id": "rs_expected",
+                            "summary": [
+                                {
+                                    "type": "summary_text",
+                                    "text": "summary",
+                                },
+                            ],
+                            "content": [],
+                        },
+                    ],
+                )
+
     async def test_chat_formatter_empty_thinking_echoed_with_reasoning_item_id(
         self,
     ) -> None:
@@ -597,99 +686,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    async def test_chat_formatter_url_image_in_tool_result(
-        self,
-    ) -> None:
-        """URL images in tool results are promoted to a follow-up user
-        message."""
-        fmt = OpenAIResponseFormatter()
-        msgs = [
-            AssistantMsg(
-                name="assistant",
-                content=[
-                    ToolCallBlock(
-                        id="call_img",
-                        name="get_map",
-                        input='{"city": "Tokyo"}',
-                    ),
-                    ToolResultBlock(
-                        id="call_img",
-                        name="get_map",
-                        output=[
-                            TextBlock(text="Here is the map."),
-                            DataBlock(
-                                id=_FIXED_ID,
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
-                            ),
-                        ],
-                        state=ToolResultState.SUCCESS,
-                    ),
-                    TextBlock(text="Here is the map of Tokyo."),
-                ],
-            ),
-        ]
-        res = await fmt.format(msgs)
-
-        expected_tool_content = (
-            "Here is the map.\n"
-            f"<system-reminder>A(n) image file is returned "
-            f"and will be presented to you with the identifier "
-            f"[{_FIXED_ID}].</system-reminder>"
-        )
-        self.assertListEqual(
-            [
-                {
-                    "type": "function_call",
-                    "call_id": "call_img",
-                    "name": "get_map",
-                    "arguments": '{"city": "Tokyo"}',
-                },
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_img",
-                    "output": expected_tool_content,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "<system-reminder>The multimodal data "
-                                "and their identifiers are listed as "
-                                "follows:"
-                            ),
-                        },
-                        {
-                            "type": "input_text",
-                            "text": f"- {_FIXED_ID} (image file): ",
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": self.image_url,
-                        },
-                        {
-                            "type": "input_text",
-                            "text": "</system-reminder>",
-                        },
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": "Here is the map of Tokyo.",
-                        },
-                    ],
-                },
-            ],
-            res,
-        )
-
     # -------------------------------------------------------------------
     # OpenAIResponseMultiAgentFormatter tests
     # -------------------------------------------------------------------
@@ -770,7 +766,15 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     ToolResultBlock(
                         id="call_1",
                         name="func_1",
-                        output=[TextBlock(text="result_1")],
+                        output=[
+                            TextBlock(text="result_1"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
                         state=ToolResultState.SUCCESS,
                     ),
                     ToolResultBlock(
@@ -832,7 +836,13 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": "result_1",
+                    "output": [
+                        {"type": "input_text", "text": "result_1"},
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_data_uri,
+                        },
+                    ],
                 },
                 {
                     "type": "function_call_output",

@@ -4,7 +4,7 @@ from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
 from .channel import (
-    ChannelLifecycleDispatcher,
+    ChannelClients,
     ChannelTypeRegistry,
 )
 from ._manager import (
@@ -419,19 +419,21 @@ async def get_channel_service(request: Request) -> ChannelService:
     return request.app.state.channel_service
 
 
-async def get_channel_dispatcher(
+async def get_channel_clients(
     request: Request,
-) -> ChannelLifecycleDispatcher:
-    """Return this node's channel lifecycle dispatcher.
+) -> ChannelClients:
+    """Return the factory for unconnected channel instances.
+
+    Present in every process, whether or not this one holds the
+    channels' long connections.
 
     Args:
         request (`Request`): The incoming FastAPI request.
 
     Returns:
-        `ChannelLifecycleDispatcher`: The dispatcher stored in
-        ``app.state``, source of per-channel runtime status.
+        `ChannelClients`: The factory stored in ``app.state``.
     """
-    return request.app.state.channel_dispatcher
+    return request.app.state.channel_clients
 
 
 async def get_channel_type_registry(

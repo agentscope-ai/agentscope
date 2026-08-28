@@ -7,7 +7,11 @@ from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
-from agentscope.app.channel import DiscordChannel, FeishuChannel
+from agentscope.app.channel import (
+    DingTalkChannel,
+    DiscordChannel,
+    FeishuChannel,
+)
 from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
@@ -153,6 +157,7 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
         ),
     ],
     channels=[
+        DingTalkChannel,
         DiscordChannel,
         FeishuChannel,
     ],

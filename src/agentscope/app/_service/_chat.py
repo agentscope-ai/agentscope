@@ -13,13 +13,15 @@ that wants them subscribes through the
 """
 import asyncio
 import inspect
-from typing import TYPE_CHECKING
+import json
+from dataclasses import dataclass
+from typing import Literal, TYPE_CHECKING
 
 from fastapi import HTTPException
 
 from .._bus_ops import (
     abandon_inbox_consumer,
-    enqueue_channel_output,
+    deliver_to_inbox,
     enqueue_run_trigger,
     has_pending_inbox_or_release,
     publish_session_event,
@@ -29,12 +31,14 @@ from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..storage import StorageBase, AgentRecord, SessionRecord, SessionSource
+from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
     StateChangeMiddleware,
     ToolOffloadMiddleware,
+    TeamMemberLoopMiddleware,
 )
 from ...middleware import TTSMiddleware, RAGMiddleware
 from ...rag import KnowledgeBase
@@ -64,11 +68,31 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, Msg, ToolCallState
+from ...message import AssistantMsg, HintBlock, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
-    from ..channel import ChannelLifecycleDispatcher
+    from ..channel import ChannelClients
+
+
+@dataclass(frozen=True)
+class _LeaderContext:
+    """This session leads its team."""
+
+    role: Literal["leader"] = "leader"
+
+
+@dataclass(frozen=True)
+class _WorkerContext:
+    """This session is a worker; its leader is fully resolved."""
+
+    leader_session_id: str
+    leader_agent_id: str
+    leader_name: str
+    role: Literal["worker"] = "worker"
+
+
+_TeamContext = _LeaderContext | _WorkerContext
 
 
 class ChatService:
@@ -100,7 +124,7 @@ class ChatService:
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
-        channel_dispatcher: "ChannelLifecycleDispatcher | None" = None,
+        channel_clients: "ChannelClients | None" = None,
     ) -> None:
         """Initialize chat service.
 
@@ -162,11 +186,11 @@ class ChatService:
                 injection style). Each is invoked once per produced
                 event to mirror a UI feed onto another session; see
                 :class:`~agentscope.app._types.EventProjector`.
-            channel_dispatcher (`ChannelLifecycleDispatcher | None`, \
-optional):
-                The node's channel dispatcher, forwarded to
-                :func:`get_toolkit` so a channel-originated session's
-                agent gets that channel's platform tools.
+            channel_clients (`ChannelClients | None`, optional):
+                Factory for unconnected channel instances, used to give
+                a channel-originated session's agent that channel's
+                platform tools and chat context. Neither needs the long
+                connection, so the run gets them wherever it lands.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -191,7 +215,7 @@ optional):
             except (TypeError, ValueError):
                 pass
         self._extra_agent_tools = extra_agent_tools
-        self._channel_dispatcher = channel_dispatcher
+        self._channel_clients = channel_clients
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -315,12 +339,102 @@ optional):
             end_event.error.type if end_event.error else "error",
         )
 
+    async def _notify_leader_of_failure(
+        self,
+        user_id: str,
+        team_ctx: "_TeamContext | None",
+        worker_name: str,
+        finished_reason: ReplyFinishedReason,
+        detail: str,
+    ) -> None:
+        """Tell a worker's team leader that the worker stopped early.
+
+        A member reports through ``TeamSay``; a member that failed or
+        was interrupted never got there, so without this the leader
+        waits forever for an answer that is not coming. Delivered as a
+        system reminder in the leader's inbox — not as a team message,
+        because the member did not say this, the framework did — waking
+        the leader when it is idle.
+
+        Best-effort: a failure to notify is logged and dropped rather
+        than replacing the failure being reported.
+
+        Args:
+            user_id (`str`):
+                The owner of both sessions.
+            team_ctx (`_TeamContext | None`):
+                The run's team identity. Anything but a
+                :class:`_WorkerContext` is a no-op — a leader or a
+                team-less session has nobody to report to.
+            worker_name (`str`):
+                The failing member's display name, as the leader knows
+                it from the roster.
+            finished_reason (`ReplyFinishedReason`):
+                How the reply ended, which decides what the leader is
+                asked to consider.
+            detail (`str`):
+                One-line, already-sanitized explanation of the error.
+        """
+        if not isinstance(team_ctx, _WorkerContext):
+            return
+
+        # Error messages come from several sources and only some end in
+        # punctuation; the reminder reads as prose either way.
+        detail = detail.strip()
+        if detail and detail[-1] not in ".!?":
+            detail += "."
+
+        if finished_reason == ReplyFinishedReason.INTERRUPTED:
+            reminder = (
+                f"Team member {worker_name!r} was interrupted mid-task and "
+                f"has stopped. Someone cancelled that run deliberately — "
+                f"possibly the user, who may be working with this member "
+                f"directly. Do not silently re-dispatch it: ask the user "
+                f"what should happen to the task, or ask the member how "
+                f"far it got. Left unresolved, the member is stranded with "
+                f"work nobody is tracking."
+            )
+        else:
+            reminder = (
+                f"Team member {worker_name!r} hit an error while running, "
+                f"so it never called TeamSay to report. Error: {detail} "
+                f"Judge from the error type whether to retry — with this "
+                f"member or a fresh one — or to raise it with the user: "
+                f"invalid credentials or an exhausted quota will fail the "
+                f"same way again. Assume no usable output unless the "
+                f"member reported partial results earlier."
+            )
+
+        try:
+            hint = HintBlock(
+                hint=f"<system-reminder>{reminder}</system-reminder>",
+                source=json.dumps(
+                    {"label": "System", "sublabel": "Reminder"},
+                    ensure_ascii=False,
+                ),
+            )
+            await deliver_to_inbox(
+                self._message_bus,
+                user_id=user_id,
+                session_id=team_ctx.leader_session_id,
+                agent_id=team_ctx.leader_agent_id,
+                payload=hint.model_dump(mode="json"),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to notify team leader %r that member %r stopped.",
+                team_ctx.leader_name,
+                worker_name,
+            )
+
     async def _report_failure(
         self,
         user_id: str,
         session_id: str,
         agent_id: str,
         error: Exception,
+        team_ctx: "_TeamContext | None" = None,
+        worker_name: str | None = None,
     ) -> None:
         """Tell the client about a failure that reached no reply.
 
@@ -349,6 +463,12 @@ optional):
                 The agent that was being assembled.
             error (`Exception`):
                 What went wrong while setting the run up.
+            team_ctx (`_TeamContext | None`, optional):
+                The run's team identity; a worker's leader is told the
+                run never happened.
+            worker_name (`str | None`, optional):
+                Display name used in that notification. Defaults to
+                ``agent_id`` when the agent record never loaded.
         """
         try:
             reply_id = _generate_id()
@@ -387,6 +507,14 @@ optional):
                 "error is logged above.",
                 session_id,
             )
+
+        await self._notify_leader_of_failure(
+            user_id,
+            team_ctx,
+            worker_name or agent_id,
+            ReplyFinishedReason.ERROR,
+            _classify_setup_error(error).message,
+        )
 
     async def interrupt(
         self,
@@ -529,6 +657,11 @@ optional):
             MessageBusKeys.session_lock(session_id),
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
+            # Bound before the try: an assembly failure reports through
+            # them, and may happen before either is resolved.
+            team_ctx: _TeamContext | None = None
+            worker_name: str = agent_id
+
             # Steps 1-6 assemble the run; step 7 performs it. A failure
             # here has no reply to attach to, so one is synthesized —
             # otherwise the client sees a stream that simply stops and is
@@ -567,6 +700,52 @@ optional):
                             f"agent {agent_id!r}."
                         ),
                     )
+                worker_name = agent_record.data.name
+
+                # -------------------------------------------------------------
+                # 1b. Resolve the team identity ONCE, before anything that
+                # can fail: a worker whose assembly dies still has to reach
+                # its leader. Downstream consumers reuse this.
+                # -------------------------------------------------------------
+                if session_record.team_id is not None:
+                    team = await self._storage.get_team(
+                        user_id,
+                        session_record.team_id,
+                    )
+                    if team is None:
+                        # Dissolved concurrently, or a stale team_id:
+                        # nothing to be a member of, so run teamless.
+                        logger.warning(
+                            "Session %r points at team %r which no longer "
+                            "exists; running teamless.",
+                            session_id,
+                            session_record.team_id,
+                        )
+                    elif team.session_id == session_record.id:
+                        team_ctx = _LeaderContext()
+                    else:
+                        leader = await _resolve_team_leader(
+                            self._storage,
+                            user_id,
+                            team,
+                        )
+                        if leader is None:
+                            # Unreachable while the data is consistent:
+                            # deleting a leader dissolves the team.
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    f"Team {team.id!r} has no resolvable "
+                                    f"leader; worker session "
+                                    f"{session_id!r} cannot run."
+                                ),
+                            )
+                        team_ctx = _WorkerContext(
+                            leader_session_id=leader.session_id,
+                            leader_agent_id=leader.agent.id,
+                            leader_name=leader.name,
+                        )
+
                 workspace = await self._workspace_manager.get_workspace(
                     user_id,
                     agent_id,
@@ -585,6 +764,24 @@ optional):
                         path=workspace.workdir,
                         source="session",
                     )
+
+                # -------------------------------------------------------------
+                # 1c. Resolve the channel binding ONCE; the toolkit and the
+                # system-prompt attachment share it.
+                # -------------------------------------------------------------
+                channel = (
+                    await self._channel_clients.get(
+                        session_record.source_channel_id,
+                    )
+                    if session_record.source_channel_id
+                    and self._channel_clients is not None
+                    else None
+                )
+                channel_tools = (
+                    await channel.list_tools(workspace)
+                    if channel is not None
+                    else []
+                )
 
                 # -------------------------------------------------------------
                 # 2. Middlewares — framework-supplied first, then caller
@@ -606,6 +803,14 @@ optional):
                         agent_id=agent_id,
                     ),
                 ]
+                # Equip the member middleware for loop control
+                if isinstance(team_ctx, _WorkerContext):
+                    middlewares.append(
+                        TeamMemberLoopMiddleware(
+                            leader_name=team_ctx.leader_name,
+                        ),
+                    )
+
                 if self._extra_agent_middlewares is not None:
                     factory_args: tuple = (user_id, agent_id, session_id)
                     if self._middlewares_take_workspace:
@@ -701,7 +906,8 @@ optional):
                     resource_access_service=self._access,
                     extra_factory=self._extra_agent_tools,
                     sub_agent_templates=self._sub_agent_templates,
-                    channel_dispatcher=self._channel_dispatcher,
+                    team_role=team_ctx.role if team_ctx else None,
+                    channel_tools=channel_tools,
                 )
 
                 # -------------------------------------------------------------
@@ -731,44 +937,39 @@ optional):
                 attachment = f"You're within a session (id={session_id})."
 
                 # Channel-bound sessions: tell the agent which chat it serves.
-                if (
-                    session_record.source_channel_id
-                    and self._channel_dispatcher is not None
-                ):
-                    channel = self._channel_dispatcher.get_local_channel(
-                        session_record.source_channel_id,
+                if channel is not None:
+                    tools = ", ".join(t.name for t in channel_tools)
+                    chat_id = session_record.source_chat_id or ""
+                    kind = await channel.chat_kind(chat_id)
+                    name = (
+                        session_record.source_chat_name
+                        or await channel.chat_name(chat_id)
                     )
-                    if channel is not None:
-                        tools = ", ".join(
-                            t.name for t in await channel.list_tools(workspace)
-                        )
-                        chat_id = session_record.source_chat_id or ""
-                        kind = await channel.chat_kind(chat_id)
-                        name = await channel.chat_name(chat_id)
-                        where = f' named "{name}"' if name else ""
+                    where = f' named "{name}"' if name else ""
+                    attachment += (
+                        f" This session is bound to a chat{where} (id "
+                        f"{chat_id!r}) on the {channel.display_name} "
+                        f"platform: the messages, images and files people "
+                        f"send there are relayed to you here, and your "
+                        f"replies are delivered back to that same chat."
+                    )
+                    if kind is ChatKind.GROUP:
                         attachment += (
-                            f" This session is bound to a chat{where} on the "
-                            f"{channel.display_name} platform: the messages, "
-                            f"images and files people send there are relayed "
-                            f"to you here, and your replies are delivered "
-                            f"back to that same chat."
+                            " It is a group chat, so messages may come "
+                            "from several different people; each incoming "
+                            "user turn is labelled with its sender."
                         )
-                        if kind is ChatKind.GROUP:
-                            attachment += (
-                                " It is a group chat, so messages may come "
-                                "from several different people; each incoming "
-                                "user turn is labelled with its sender."
-                            )
-                        elif kind is ChatKind.PRIVATE:
-                            attachment += (
-                                " It is a one-to-one private chat with a "
-                                "single user."
-                            )
-                        if tools:
-                            attachment += (
-                                f" You also have these {channel.display_name} "
-                                f"tools available: {tools}."
-                            )
+                    elif kind is ChatKind.PRIVATE:
+                        attachment += (
+                            " It is a one-to-one private chat with a "
+                            "single user."
+                        )
+                    if tools:
+                        attachment += (
+                            f" You also have these {channel.display_name} "
+                            f"tools available: {tools}. Pass this chat's id "
+                            f"as their target to act on this chat."
+                        )
 
                 attachment = (
                     f"<system-notification>{attachment}</system-notification>"
@@ -799,27 +1000,35 @@ optional):
                 # to make: these events share a channel with a live reply's,
                 # so publishing them unserialised would drop a "reply failed"
                 # into the middle of an answer another run is streaming.
-                await self._report_failure(user_id, session_id, agent_id, e)
+                await self._report_failure(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    e,
+                    team_ctx,
+                    worker_name,
+                )
                 return
 
             # ----------------------------------------------------------------
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
             events_key = MessageBusKeys.session_events(session_id)
-            # Channel-bound run: signal the output forwarder so the reply
-            # is streamed back to the platform chat. Covers scheduled /
-            # background wakes, not just inbound channel messages.
+            # Channel-bound run: start streaming the reply back to the
+            # platform chat. Delivery is plain REST, so this node does it
+            # rather than handing the run to whichever one holds the
+            # channel's connection. Covers scheduled / background wakes,
+            # not just inbound channel messages.
             if (
                 session_record.source == SessionSource.CHANNEL
                 and session_record.source_channel_id
                 and session_record.source_chat_id
+                and self._channel_clients is not None
             ):
-                await enqueue_channel_output(
-                    self._message_bus,
+                await self._channel_clients.deliver(
                     session_id=session_id,
                     channel_id=session_record.source_channel_id,
                     chat_id=session_record.source_chat_id,
-                    user_id=user_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None
@@ -985,6 +1194,8 @@ optional):
                                 session_id,
                                 agent_id,
                                 e,
+                                team_ctx,
+                                worker_name,
                             )
                         else:
                             await self._close_failed_reply(
@@ -1044,19 +1255,45 @@ optional):
                 # acquire the lock and load a stale state from storage
                 # before this write lands.
                 async def _persist() -> None:
-                    for msg in reply_msgs:
-                        await self._storage.upsert_message(
-                            user_id,
-                            session_id,
-                            msg,
+                    try:
+                        for msg in reply_msgs:
+                            await self._storage.upsert_message(
+                                user_id,
+                                session_id,
+                                msg,
+                            )
+                        await self._storage.update_session_state(
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            session_id=session_id,
+                            state=agent.state,
                         )
-                    await self._storage.update_session_state(
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        state=agent.state,
-                    )
-                    await self._message_bus.log_trim(events_key)
+                        await self._message_bus.log_trim(events_key)
+                    finally:
+                        # A worker whose turn died never reached
+                        # ``TeamSay``. Sent from inside the shielded
+                        # write so an interrupt cannot drop it, and from
+                        # a ``finally`` so a storage failure cannot
+                        # either — the leader has to learn about the
+                        # dead turn even when recording it went wrong.
+                        # COMPLETED / EXCEED_MAX_ITERS stay silent:
+                        # those only escape the member middleware after
+                        # a successful report.
+                        for msg in reply_msgs:
+                            if msg.finished_reason in (
+                                ReplyFinishedReason.ERROR,
+                                ReplyFinishedReason.INTERRUPTED,
+                            ):
+                                await self._notify_leader_of_failure(
+                                    user_id,
+                                    team_ctx,
+                                    worker_name,
+                                    msg.finished_reason,
+                                    msg.error.message
+                                    if msg.error
+                                    else "The turn stopped before it "
+                                    "finished.",
+                                )
 
                 persist_task = asyncio.create_task(_persist())
                 try:
