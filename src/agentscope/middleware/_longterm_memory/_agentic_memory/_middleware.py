@@ -479,7 +479,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         # In-flight asynchronous retrieval tasks started in ``on_reply`` and
         # consumed in ``on_reasoning``. Keyed per session/agent so a shared
         # middleware instance never lets one concurrent reply clobber another.
-        self._retrieval_tasks: dict[object, asyncio.Task] = {}
+        self._retrieval_tasks: dict[tuple[str | None, int], asyncio.Task] = {}
 
     @staticmethod
     def _truncate_if_needed(content: str, max_length: int) -> str:
@@ -683,10 +683,10 @@ class AgenticMemoryMiddleware(MiddlewareBase):
     # ========================================================================
 
     @staticmethod
-    def _retrieval_key_of(agent: "Agent") -> object:
+    def _retrieval_key_of(agent: "Agent") -> tuple[str | None, int]:
         """Return the key used to isolate one in-flight retrieval task."""
         session_id = getattr(getattr(agent, "state", None), "session_id", None)
-        return session_id if session_id is not None else id(agent)
+        return (session_id, id(agent))
 
     @staticmethod
     def _format_manifest(headers: list[_MemoryFileHeader]) -> str:
