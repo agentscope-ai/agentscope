@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access,unused-argument
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
+import asyncio
 import os
 import shutil
 import tempfile
-from typing import Any, Type
+from typing import Any, AsyncGenerator, Type
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel
@@ -772,5 +774,113 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 },
                 "hints": [],
                 "structured_call_count": 0,
+            },
+        )
+
+    async def test_concurrent_replies_isolate_retrieval_per_session(
+        self,
+    ) -> None:
+        """A reply finishing in one session must not cancel another
+        session's in-flight retrieval task."""
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        agent_a = self._make_agent(_RecordingMockModel(), middleware)
+        agent_b = self._make_agent(_RecordingMockModel(), middleware)
+        session_a = agent_a.state.session_id
+        session_b = agent_b.state.session_id
+        self.assertNotEqual(session_a, session_b)
+
+        started = {session_a: asyncio.Event(), session_b: asyncio.Event()}
+        gate = {session_a: asyncio.Event(), session_b: asyncio.Event()}
+        release = asyncio.Event()
+        cancelled = {session_a: False, session_b: False}
+        hints = {
+            session_a: "hint for session a",
+            session_b: "hint for session b",
+        }
+        session_of = {id(agent_a): session_a, id(agent_b): session_b}
+
+        async def fake_retrieve(agent: Agent, query: str) -> str:
+            """Block on ``release`` so the task lifetime is deterministic.
+
+            Args:
+                agent (`Agent`):
+                    The agent whose session owns the retrieval.
+                query (`str`):
+                    The cached user input (unused).
+
+            Returns:
+                `str`:
+                    A per-session sentinel hint.
+            """
+            session = session_of[id(agent)]
+            started[session].set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled[session] = True
+                raise
+            return hints[session]
+
+        middleware._retrieve_relevant_files = fake_retrieve
+
+        async def drive_on_reply(agent: Agent) -> None:
+            """Drive ``on_reply`` with a handler blocked on the gate."""
+
+            async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                await gate[session_of[id(agent)]].wait()
+                yield "event"
+
+            async for _ in middleware.on_reply(
+                agent,
+                {"inputs": UserMsg("user", "hello")},
+                next_handler,
+            ):
+                pass
+
+        reply_a = asyncio.create_task(drive_on_reply(agent_a))
+        await started[session_a].wait()
+        reply_b = asyncio.create_task(drive_on_reply(agent_b))
+        await started[session_b].wait()
+
+        # Session A finishes its reply while session B's retrieval is still
+        # in flight: A's cleanup must cancel only A's own task.
+        gate[session_a].set()
+        await reply_a
+        task_b = middleware._retrieval_tasks.get(session_b)
+        b_task_alive_after_a_exit = task_b is not None and not task_b.done()
+        a_entry_left_after_a_exit = session_a in middleware._retrieval_tasks
+
+        # Session B's retrieval completes and is consumed by its own
+        # reasoning hook — not cancelled by A's cleanup.
+        release.set()
+        await task_b
+
+        async def passthrough(**kwargs: Any) -> AsyncGenerator:
+            yield "reasoning-event"
+
+        async for _ in middleware.on_reasoning(agent_b, {}, passthrough):
+            pass
+
+        gate[session_b].set()
+        await reply_b
+
+        self.assertDictEqual(
+            {
+                "a_retrieval_cancelled": cancelled[session_a],
+                "b_retrieval_cancelled": cancelled[session_b],
+                "b_task_alive_after_a_exit": b_task_alive_after_a_exit,
+                "a_entry_left_after_a_exit": a_entry_left_after_a_exit,
+                "b_hints": _hint_texts(agent_b),
+                "tasks_left_after_both_replies": len(
+                    middleware._retrieval_tasks,
+                ),
+            },
+            {
+                "a_retrieval_cancelled": True,
+                "b_retrieval_cancelled": False,
+                "b_task_alive_after_a_exit": True,
+                "a_entry_left_after_a_exit": False,
+                "b_hints": ["hint for session b"],
+                "tasks_left_after_both_replies": 0,
             },
         )

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, AsyncGenerator, Callable
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
 
 from pydantic import BaseModel, Field
 
@@ -476,11 +476,12 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         self._parameters = parameters or self.Parameters()
         self._backend = backend or LocalBackend()
 
-        self._cached_input: str | None = None
-        # The in-flight asynchronous retrieval task started in ``on_reply``
-        # and consumed in ``on_reasoning``. Kept on the instance so the
-        # reasoning hook can poll for completion across iterations.
-        self._retrieval_task: asyncio.Task | None = None
+        # In-flight background retrieval per session (started in ``on_reply``,
+        # consumed/injected in ``on_reasoning``, cleaned up in ``on_reply``'s
+        # finally). Keyed by ``session_id`` so one middleware shared across
+        # agents keeps each session's retrieval isolated — a concurrent reply
+        # in another session never clobbers this one's task.
+        self._retrieval_tasks: dict[Any, asyncio.Task] = {}
 
     @staticmethod
     def _truncate_if_needed(content: str, max_length: int) -> str:
@@ -565,14 +566,25 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         return f"{current_prompt}\n\n{content}"
 
+    @staticmethod
+    def _session_id_of(agent: "Agent") -> str | None:
+        """Read the ``session_id`` live from the agent.
+
+        The retrieval task is keyed by ``session_id``, read from
+        ``agent.state.session_id`` at hook time and threaded through per
+        call — **never** stored on the middleware — so a single instance
+        shared across agents keeps each session's retrieval isolated.
+        """
+        return getattr(getattr(agent, "state", None), "session_id", None)
+
     async def on_reply(
         self,
         agent: "Agent",
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        """Cache the user input and kick off an asynchronous retrieval task
-        that runs concurrently with the agent reply.
+        """Kick off an asynchronous retrieval task that runs concurrently
+        with the agent reply.
 
         Args:
             agent (`Agent`):
@@ -586,6 +598,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             `Any`:
                 Items yielded by ``next_handler``.
         """
+        session_id = self._session_id_of(agent)
 
         if self._parameters.retrieval_async:
             inputs = input_kwargs.get("inputs")
@@ -598,8 +611,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             elif isinstance(inputs, Msg):
                 msgs = [inputs]
 
+            cached_input = None
             if msgs is not None:
-                self._cached_input = "\n".join(
+                cached_input = "\n".join(
                     [
                         f"{_.name}: " + _.get_text_content()
                         for _ in msgs
@@ -607,30 +621,35 @@ class AgenticMemoryMiddleware(MiddlewareBase):
                     ],
                 )
 
+            # Discard any stale task left for this session (a previous turn
+            # that never reached its finally is unexpected, but never leak
+            # one).
+            stale = self._retrieval_tasks.pop(session_id, None)
+            if stale is not None and not stale.done():
+                stale.cancel()
+
             # Start an asynchronous retrieval task that uses an LLM to decide
             # which memory files are relevant to the current user input. The
             # result is consumed by ``on_reasoning``.
-            if self._cached_input:
-                self._retrieval_task = asyncio.create_task(
-                    self._retrieve_relevant_files(agent, self._cached_input),
+            if cached_input:
+                self._retrieval_tasks[session_id] = asyncio.create_task(
+                    self._retrieve_relevant_files(agent, cached_input),
                 )
 
         try:
             async for _ in next_handler(**input_kwargs):
                 yield _
         finally:
-            # Ensure the retrieval task does not outlive the reply.
-            if (
-                self._retrieval_task is not None
-                and not self._retrieval_task.done()
-            ):
-                self._retrieval_task.cancel()
+            # Consume this session's retrieval task so it does not outlive
+            # the reply; tasks of other in-flight sessions are untouched.
+            task = self._retrieval_tasks.pop(session_id, None)
+            if task is not None:
+                if not task.done():
+                    task.cancel()
                 try:
-                    await self._retrieval_task
+                    await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-            self._retrieval_task = None
-            self._cached_input = None
 
     async def on_reasoning(
         self,
@@ -653,11 +672,13 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             `Any`:
                 Items yielded by ``next_handler``.
         """
-        # Poll the in-flight retrieval task; if it has finished, consume its
-        # result and inject it into the agent context exactly once.
-        if self._retrieval_task is not None and self._retrieval_task.done():
-            task = self._retrieval_task
-            self._retrieval_task = None
+        # Poll this session's in-flight retrieval task; if it has finished,
+        # consume its result and inject it into the agent context exactly
+        # once. Tasks of other in-flight sessions are left untouched.
+        session_id = self._session_id_of(agent)
+        task = self._retrieval_tasks.get(session_id)
+        if task is not None and task.done():
+            self._retrieval_tasks.pop(session_id, None)
             try:
                 retrieval_result = task.result()
             except (asyncio.CancelledError, Exception):
