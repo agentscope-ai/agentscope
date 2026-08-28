@@ -54,23 +54,35 @@ class ToolContext(BaseModel):
         """
 
         # Find the cache entry
-        for idx, entry in enumerate(self.read_file_cache):
+        for entry in self.read_file_cache:
             if entry.file_path == file_path:
                 # Check if cache is still valid
                 try:
                     updated_at = await aiofiles.os.path.getmtime(file_path)
-                    if updated_at == entry.updated_at:
-                        self.read_file_cache.pop(idx)
-                        self.read_file_cache.append(entry)
-                        return entry
-                    else:
-                        # Cache is outdated, remove it
-                        self.read_file_cache.remove(entry)
-                        return None
                 except Exception:
-                    # File might not exist anymore
-                    self.read_file_cache.remove(entry)
+                    updated_at = None
+
+                current_idx = next(
+                    (
+                        idx
+                        for idx, cached_entry in enumerate(
+                            self.read_file_cache,
+                        )
+                        if cached_entry is entry
+                    ),
+                    None,
+                )
+                if current_idx is None:
                     return None
+
+                if updated_at == entry.updated_at:
+                    self.read_file_cache.pop(current_idx)
+                    self.read_file_cache.append(entry)
+                    return entry
+
+                # Cache is outdated or the file no longer exists
+                self.read_file_cache.pop(current_idx)
+                return None
         return None
 
     async def cache_file(self, file_path: str, lines: list[str]) -> None:
