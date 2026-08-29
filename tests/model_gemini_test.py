@@ -5,6 +5,7 @@
 Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
+import base64
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -14,7 +15,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.formatter import GeminiChatFormatter
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ThinkingBlock,
+)
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
@@ -222,6 +230,51 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         )
         self.assertIsInstance(result.content[0].id, str)
         self.assertTrue(result.content[0].id)
+
+    async def test_tool_call_thought_signature_round_trip(self) -> None:
+        """Gemini thought signatures survive parsing and formatting."""
+        signature = bytes(range(32))
+        signature_b64 = base64.b64encode(signature).decode("utf-8")
+        parts = [
+            _make_part(
+                function_call={
+                    "name": "get_weather",
+                    "args": {"city": "Tokyo"},
+                    "id": None,
+                },
+                thought_signature=signature,
+            ),
+        ]
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion(parts),
+        )
+
+        result = await self.model([])
+        history_msg = AssistantMsg(
+            name="assistant",
+            content=result.content,
+        )
+        restored_msg = Msg.model_validate(history_msg.model_dump())
+        formatted = await GeminiChatFormatter().format(
+            [restored_msg],
+        )
+
+        self.assertEqual(result.content[0].id, signature_b64)
+        self.assertEqual(
+            getattr(result.content[0], "thought_signature", None),
+            signature_b64,
+        )
+        self.assertEqual(
+            formatted[0]["parts"][0],
+            {
+                "function_call": {
+                    "id": signature_b64,
+                    "name": "get_weather",
+                    "args": {"city": "Tokyo"},
+                },
+                "thought_signature": signature,
+            },
+        )
 
     async def test_thinking_response(self) -> None:
         """Non-stream response with reasoning creates ThinkingBlock."""
@@ -547,6 +600,50 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 json.dumps({"q": "a"}, ensure_ascii=False),
                 json.dumps({"q": "b"}, ensure_ascii=False),
             ],
+        )
+
+    async def test_stream_tool_call_thought_signature_round_trip(self) -> None:
+        """Streaming keeps the signature on the accumulated tool call."""
+        signature = b"streaming-thought-signature"
+        signature_b64 = base64.b64encode(signature).decode("utf-8")
+        chunks = [
+            _make_stream_chunk(
+                [
+                    _make_part(
+                        function_call={
+                            "name": "search",
+                            "args": {"q": "test"},
+                            "id": None,
+                        },
+                        thought_signature=signature,
+                    ),
+                ],
+            ),
+        ]
+        self.mock_client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_MockAsyncStream(chunks),
+        )
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+        final_block = responses[-1].content[0]
+        formatted = await GeminiChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=responses[-1].content,
+                ),
+            ],
+        )
+
+        self.assertEqual(final_block.id, signature_b64)
+        self.assertEqual(
+            getattr(final_block, "thought_signature", None),
+            signature_b64,
+        )
+        self.assertEqual(
+            formatted[0]["parts"][0]["thought_signature"],
+            signature,
         )
 
 

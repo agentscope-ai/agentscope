@@ -202,21 +202,29 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         parts.append(formatted)
 
                 elif isinstance(block, ToolCallBlock):
-                    parts.append(
-                        {
-                            "function_call": {
-                                "id": block.id,
-                                "name": block.name,
-                                # Use the repair helper so a truncated input
-                                # (from interrupted streaming or context
-                                # compression) degrades to {} instead of
-                                # raising JSONDecodeError.
-                                "args": _json_loads_with_repair(
-                                    block.input or "{}",
-                                ),
-                            },
+                    function_call_part: dict[str, Any] = {
+                        "function_call": {
+                            "id": block.id,
+                            "name": block.name,
+                            # Use the repair helper so a truncated input
+                            # (from interrupted streaming or context
+                            # compression) degrades to {} instead of raising
+                            # JSONDecodeError.
+                            "args": _json_loads_with_repair(
+                                block.input or "{}",
+                            ),
                         },
+                    }
+                    thought_signature = getattr(
+                        block,
+                        "thought_signature",
+                        None,
                     )
+                    if thought_signature:
+                        function_call_part[
+                            "thought_signature"
+                        ] = base64.b64decode(thought_signature)
+                    parts.append(function_call_part)
 
                 elif isinstance(block, ToolResultBlock):
                     if parts:
