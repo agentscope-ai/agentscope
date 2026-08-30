@@ -399,9 +399,11 @@ class GeminiChatModel(ChatModelBase):
                             thought_signature = base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
-                            call_id = thought_signature
-                        else:
-                            call_id = part.function_call.id or _generate_id()
+                        call_id = (
+                            part.function_call.id
+                            or thought_signature
+                            or _generate_id()
+                        )
 
                         delta_res.append_tool_call(
                             block_id=call_id,
@@ -459,9 +461,11 @@ class GeminiChatModel(ChatModelBase):
                         thought_signature = base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
-                        call_id = thought_signature
-                    else:
-                        call_id = part.function_call.id or _generate_id()
+                    call_id = (
+                        part.function_call.id
+                        or thought_signature
+                        or _generate_id()
+                    )
                     tool_call = ToolCallBlock(
                         id=call_id,
                         name=part.function_call.name,

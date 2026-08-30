@@ -21,6 +21,7 @@ from agentscope.message import (
     Msg,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
     ThinkingBlock,
 )
 from agentscope.model import GeminiChatModel
@@ -240,7 +241,7 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 function_call={
                     "name": "get_weather",
                     "args": {"city": "Tokyo"},
-                    "id": None,
+                    "id": "gemini-call-1",
                 },
                 thought_signature=signature,
             ),
@@ -252,14 +253,21 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         result = await self.model([])
         history_msg = AssistantMsg(
             name="assistant",
-            content=result.content,
+            content=[
+                *result.content,
+                ToolResultBlock(
+                    id=result.content[0].id,
+                    name="get_weather",
+                    output="sunny",
+                ),
+            ],
         )
         restored_msg = Msg.model_validate(history_msg.model_dump())
         formatted = await GeminiChatFormatter().format(
             [restored_msg],
         )
 
-        self.assertEqual(result.content[0].id, signature_b64)
+        self.assertEqual(result.content[0].id, "gemini-call-1")
         self.assertEqual(
             getattr(result.content[0], "thought_signature", None),
             signature_b64,
@@ -268,12 +276,42 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             formatted[0]["parts"][0],
             {
                 "function_call": {
-                    "id": signature_b64,
+                    "id": "gemini-call-1",
                     "name": "get_weather",
                     "args": {"city": "Tokyo"},
                 },
                 "thought_signature": signature,
             },
+        )
+        self.assertEqual(
+            formatted[1]["parts"][0]["function_response"]["id"],
+            "gemini-call-1",
+        )
+
+    async def test_thought_signature_remains_the_id_fallback(self) -> None:
+        """A signature remains the fallback when Gemini omits a call id."""
+        signature = b"signature-without-call-id"
+        signature_b64 = base64.b64encode(signature).decode("utf-8")
+        parts = [
+            _make_part(
+                function_call={
+                    "name": "get_weather",
+                    "args": {"city": "Tokyo"},
+                    "id": None,
+                },
+                thought_signature=signature,
+            ),
+        ]
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion(parts),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.content[0].id, signature_b64)
+        self.assertEqual(
+            getattr(result.content[0], "thought_signature", None),
+            signature_b64,
         )
 
     async def test_thinking_response(self) -> None:
@@ -613,7 +651,7 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                         function_call={
                             "name": "search",
                             "args": {"q": "test"},
-                            "id": None,
+                            "id": "gemini-stream-call-1",
                         },
                         thought_signature=signature,
                     ),
@@ -636,14 +674,50 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
             ],
         )
 
-        self.assertEqual(final_block.id, signature_b64)
+        self.assertEqual(final_block.id, "gemini-stream-call-1")
         self.assertEqual(
             getattr(final_block, "thought_signature", None),
             signature_b64,
         )
         self.assertEqual(
+            formatted[0]["parts"][0]["function_call"]["id"],
+            "gemini-stream-call-1",
+        )
+        self.assertEqual(
             formatted[0]["parts"][0]["thought_signature"],
             signature,
+        )
+
+    async def test_stream_signature_remains_the_id_fallback(self) -> None:
+        """Streaming keeps the signature fallback for an id-less call."""
+        signature = b"stream-signature-without-call-id"
+        signature_b64 = base64.b64encode(signature).decode("utf-8")
+        chunks = [
+            _make_stream_chunk(
+                [
+                    _make_part(
+                        function_call={
+                            "name": "search",
+                            "args": {"q": "test"},
+                            "id": None,
+                        },
+                        thought_signature=signature,
+                    ),
+                ],
+            ),
+        ]
+        self.mock_client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_MockAsyncStream(chunks),
+        )
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+        final_block = responses[-1].content[0]
+
+        self.assertEqual(final_block.id, signature_b64)
+        self.assertEqual(
+            getattr(final_block, "thought_signature", None),
+            signature_b64,
         )
 
 
