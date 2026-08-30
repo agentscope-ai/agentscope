@@ -516,7 +516,6 @@ class DingTalkChannel(ChannelBase):
         Args:
             workspace (`WorkspaceBase`): Calling session workspace whose
                 backend is used for file reads.
-
         Returns:
             `list[ToolBase]`: DingTalk agent tools.
         """
@@ -537,6 +536,40 @@ class DingTalkChannel(ChannelBase):
             SendImage(self, backend),
         ]
 
+    async def list_tools_for_user(
+        self,
+        workspace: "WorkspaceBase",
+        channel_user_id: str = "",
+    ) -> list["ToolBase"]:
+        """Add permission-scoped knowledge tools for a channel sender.
+
+        Args:
+            workspace (`WorkspaceBase`): Calling session workspace.
+            channel_user_id (`str`): Trusted DingTalk staff id supplied by
+                the channel gateway.
+
+        Returns:
+            `list[ToolBase]`: Standard DingTalk tools plus knowledge tools
+            when a trusted current user is available.
+        """
+        tools = await self.list_tools(workspace)
+        if channel_user_id:
+            from ._tools import (
+                ListKnowledgeBases,
+                ListKnowledgeNodes,
+                ReadKnowledgeDocument,
+            )
+
+            backend = workspace.get_backend()
+            tools.extend(
+                [
+                    ListKnowledgeBases(self, backend, channel_user_id),
+                    ListKnowledgeNodes(self, backend, channel_user_id),
+                    ReadKnowledgeDocument(self, backend, channel_user_id),
+                ],
+            )
+        return tools
+
     async def search_users(
         self,
         query: str,
@@ -552,6 +585,104 @@ class DingTalkChannel(ChannelBase):
             `list[dict[str, Any]]`: Basic visible user profiles.
         """
         return await self._api().search_users(query, limit)
+
+    async def list_knowledge_bases(
+        self,
+        channel_user_id: str,
+        limit: int,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        """List knowledge bases visible to the current DingTalk user.
+
+        Args:
+            channel_user_id (`str`): Trusted staff id from the channel event.
+            limit (`int`): Maximum number of knowledge bases to return.
+            next_token (`str`): Optional DingTalk pagination token.
+
+        Returns:
+            `dict[str, Any]`: Knowledge bases and the next pagination token.
+
+        Raises:
+            `RuntimeError`: If the staff id cannot be resolved to a union id
+            or DingTalk rejects the request.
+        """
+        operator_id = await self._knowledge_operator_id(channel_user_id)
+        return await self._api().list_knowledge_bases(
+            operator_id,
+            limit,
+            next_token,
+        )
+
+    async def list_knowledge_nodes(
+        self,
+        channel_user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        """List children visible below one DingTalk knowledge node.
+
+        Args:
+            channel_user_id (`str`): Trusted staff id from the channel event.
+            parent_node_id (`str`): Knowledge-base root or folder node id.
+            limit (`int`): Maximum number of nodes to return.
+            next_token (`str`): Optional DingTalk pagination token.
+
+        Returns:
+            `dict[str, Any]`: Child nodes and the next pagination token.
+
+        Raises:
+            `RuntimeError`: If identity resolution or the API request fails.
+        """
+        operator_id = await self._knowledge_operator_id(channel_user_id)
+        return await self._api().list_knowledge_nodes(
+            operator_id,
+            parent_node_id,
+            limit,
+            next_token,
+        )
+
+    async def read_knowledge_document(
+        self,
+        channel_user_id: str,
+        node_id: str,
+        start_index: int,
+        end_index: int,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Read metadata and a bounded block range from a knowledge document.
+
+        Args:
+            channel_user_id (`str`): Trusted staff id from the channel event.
+            node_id (`str`): DingTalk Wiki node id, also used as the doc key.
+            start_index (`int`): First block index, inclusive.
+            end_index (`int`): Last block index, inclusive.
+
+        Returns:
+            `tuple[dict[str, Any], list[dict[str, Any]]]`: Node metadata and
+            raw document blocks.
+
+        Raises:
+            `RuntimeError`: If identity resolution or the API request fails.
+        """
+        operator_id = await self._knowledge_operator_id(channel_user_id)
+        node = await self._api().get_knowledge_node(operator_id, node_id)
+        blocks = await self._api().read_document_blocks(
+            operator_id,
+            node_id,
+            start_index,
+            end_index,
+        )
+        return node, blocks
+
+    async def _knowledge_operator_id(self, channel_user_id: str) -> str:
+        """Resolve a trusted channel staff id for permission-scoped reads."""
+        operator_id = await self._api().resolve_union_id(channel_user_id)
+        if not operator_id:
+            raise RuntimeError(
+                "DingTalk could not resolve the current user's unionId. "
+                "Check the application's contact permission.",
+            )
+        return operator_id
 
     async def send_message_to(self, target: str, text: str) -> bool:
         """Send Markdown text to an encoded DingTalk target.

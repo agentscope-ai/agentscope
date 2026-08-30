@@ -11,6 +11,7 @@ Events produced by the agent are not exposed back through this method
 that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
+
 import asyncio
 import inspect
 import json
@@ -229,12 +230,15 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | None = None,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+            | None
+        ) = None,
+        channel_user_id: str = "",
     ) -> None:
         """Drive a chat run to completion.
 
@@ -274,9 +278,18 @@ class ChatService:
                 - ``UserInterruptEvent``: abort a parked reply — the
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
+            channel_user_id (`str`): Trusted platform user that originated
+                an inbound channel message. Retained across continuation of
+                that reply and unavailable to unrelated/background runs.
         """
         try:
-            await self._run_impl(user_id, session_id, agent_id, input_msg)
+            await self._run_impl(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+                channel_user_id,
+            )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -637,12 +650,15 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | None,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+            | None
+        ),
+        channel_user_id: str = "",
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -701,6 +717,24 @@ class ChatService:
                         ),
                     )
                 worker_name = agent_record.data.name
+
+                # A channel user's platform identity is server supplied,
+                # never a model argument. Keep it only for the reply it
+                # started: HITL continuations reuse it, while a new direct
+                # message or background wake clears it.
+                if channel_user_id:
+                    session_record.state.tool_context.channel_user_id = (
+                        channel_user_id
+                    )
+                elif not isinstance(
+                    input_msg,
+                    (
+                        UserConfirmResultEvent,
+                        ExternalExecutionResultEvent,
+                        UserInterruptEvent,
+                    ),
+                ):
+                    session_record.state.tool_context.channel_user_id = ""
 
                 # -------------------------------------------------------------
                 # 1b. Resolve the team identity ONCE, before anything that
@@ -778,7 +812,10 @@ class ChatService:
                     else None
                 )
                 channel_tools = (
-                    await channel.list_tools(workspace)
+                    await channel.list_tools_for_user(
+                        workspace,
+                        session_record.state.tool_context.channel_user_id,
+                    )
                     if channel is not None
                     else []
                 )
@@ -1289,10 +1326,12 @@ class ChatService:
                                     team_ctx,
                                     worker_name,
                                     msg.finished_reason,
-                                    msg.error.message
-                                    if msg.error
-                                    else "The turn stopped before it "
-                                    "finished.",
+                                    (
+                                        msg.error.message
+                                        if msg.error
+                                        else "The turn stopped before it "
+                                        "finished."
+                                    ),
                                 )
 
                 persist_task = asyncio.create_task(_persist())

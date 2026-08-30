@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -42,6 +43,13 @@ class ToolContext(BaseModel):
     activated_groups: list[str] = Field(default_factory=list)
     """The names of the activated tool groups, each group contains a set of
     tools."""
+
+    channel_user_id: str = ""
+    """The trusted platform user for channel tools in the current reply.
+
+    It is set by the channel gateway for a genuine inbound message, retained
+    while that reply is resumed, and cleared for unrelated/background runs.
+    """
 
     async def get_cache(self, file_path: str) -> ReadCacheEntry | None:
         """Get cached file content if still valid.

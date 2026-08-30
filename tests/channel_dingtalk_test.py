@@ -39,6 +39,7 @@ from agentscope.message import (
     DataBlock,
     TextBlock,
     ToolCallBlock,
+    ToolResultState,
 )
 from agentscope.permission import PermissionBehavior, PermissionContext
 from agentscope.workspace import WorkspaceBase
@@ -121,6 +122,18 @@ class _FakeMediaOpenAPI:
         self.streaming_card_calls: list[tuple[str, str, str]] = []
         self.streaming_updates: list[tuple[str, str, str, bool, bool]] = []
         self.streaming_update_success = True
+        self.union_id: str | None = "union-1"
+        self.knowledge_bases: dict[str, Any] = {
+            "knowledge_bases": [],
+            "next_token": "",
+        }
+        self.knowledge_nodes: dict[str, Any] = {
+            "nodes": [],
+            "next_token": "",
+        }
+        self.knowledge_node: dict[str, Any] = {}
+        self.document_blocks: list[dict[str, Any]] = []
+        self.knowledge_calls: list[tuple[Any, ...]] = []
 
     async def download_media(
         self,
@@ -151,6 +164,67 @@ class _FakeMediaOpenAPI:
     ) -> list[dict[str, Any]]:
         del query
         return self.search_result[:limit]
+
+    async def resolve_union_id(self, user_id: str) -> str | None:
+        self.knowledge_calls.append(("resolve_union_id", user_id))
+        return self.union_id
+
+    async def list_knowledge_bases(
+        self,
+        operator_id: str,
+        limit: int,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        self.knowledge_calls.append(
+            ("list_knowledge_bases", operator_id, limit, next_token),
+        )
+        return self.knowledge_bases
+
+    async def list_knowledge_nodes(
+        self,
+        operator_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        self.knowledge_calls.append(
+            (
+                "list_knowledge_nodes",
+                operator_id,
+                parent_node_id,
+                limit,
+                next_token,
+            ),
+        )
+        return self.knowledge_nodes
+
+    async def get_knowledge_node(
+        self,
+        operator_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        self.knowledge_calls.append(
+            ("get_knowledge_node", operator_id, node_id),
+        )
+        return self.knowledge_node
+
+    async def read_document_blocks(
+        self,
+        operator_id: str,
+        doc_key: str,
+        start_index: int,
+        end_index: int,
+    ) -> list[dict[str, Any]]:
+        self.knowledge_calls.append(
+            (
+                "read_document_blocks",
+                operator_id,
+                doc_key,
+                start_index,
+                end_index,
+            ),
+        )
+        return self.document_blocks
 
     async def create_approval_card(
         self,
@@ -262,6 +336,7 @@ class _OpenAPIHTTP(_FakeHTTP):
         self._stream_response = stream_response
         self.streams: list[tuple[str, str, dict[str, Any]]] = []
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
+        self.gets: list[tuple[str, dict[str, Any]]] = []
 
     async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
         self.posts.append((url, kwargs))
@@ -274,6 +349,10 @@ class _OpenAPIHTTP(_FakeHTTP):
         **kwargs: Any,
     ) -> _FakeResponse:
         self.requests.append((method, url, kwargs))
+        return self._responses.pop(0)
+
+    async def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+        self.gets.append((url, kwargs))
         return self._responses.pop(0)
 
     def stream(
@@ -1044,7 +1123,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
 
 class DingTalkToolTest(IsolatedAsyncioTestCase):
-    """DingTalk discovery and target-send tool tests."""
+    """DingTalk discovery, knowledge, and target-send tool tests."""
 
     async def test_channel_target_operations_reuse_openapi(self) -> None:
         media_api = _FakeMediaOpenAPI()
@@ -1160,6 +1239,149 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(read_decision.behavior, PermissionBehavior.ALLOW)
         self.assertEqual(send_decision.behavior, PermissionBehavior.ASK)
+
+    async def test_knowledge_tools_are_bound_to_current_sender(self) -> None:
+        from agentscope.app.channel._dingtalk._tools import (
+            ListKnowledgeBases,
+            ListKnowledgeNodes,
+            ReadKnowledgeDocument,
+        )
+
+        media_api = _FakeMediaOpenAPI()
+        media_api.knowledge_bases = {
+            "knowledge_bases": [
+                {
+                    "workspaceId": "space-1",
+                    "name": "Engineering",
+                    "rootNodeId": "root-1",
+                    "permissionRole": "VIEWER",
+                },
+            ],
+            "next_token": "spaces-next",
+        }
+        media_api.knowledge_nodes = {
+            "nodes": [
+                {
+                    "nodeId": "doc-1",
+                    "workspaceId": "space-1",
+                    "name": "Runbook",
+                    "type": "FILE",
+                    "category": "ALIDOC",
+                },
+            ],
+            "next_token": "",
+        }
+        media_api.knowledge_node = {
+            "nodeId": "doc-1",
+            "workspaceId": "space-1",
+            "name": "Runbook",
+            "type": "FILE",
+            "category": "ALIDOC",
+            "statisticalInfo": {"wordCount": 12},
+        }
+        media_api.document_blocks = [
+            {
+                "blockType": "heading",
+                "heading": {"level": "heading-2", "text": "Deploy"},
+                "index": 0,
+            },
+            {
+                "blockType": "paragraph",
+                "paragraph": {"text": "Run the release command."},
+                "index": 1,
+            },
+            {
+                "blockType": "table",
+                "table": {"rowSize": 2, "colSize": 3},
+                "index": 2,
+            },
+        ]
+        channel, _ = _channel_with_openapi(media_api)
+        workspace = cast(
+            WorkspaceBase,
+            _FakeWorkspace(_FakeBackend()),
+        )
+
+        tools = await channel.list_tools_for_user(workspace, "staff-1")
+
+        self.assertListEqual(
+            [tool.name for tool in tools],
+            [
+                "ListConversations",
+                "ListUsers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+                "ListKnowledgeBases",
+                "ListKnowledgeNodes",
+                "ReadKnowledgeDocument",
+            ],
+        )
+        for tool in tools[5:]:
+            self.assertNotIn(
+                "channel_user_id",
+                tool.input_schema["properties"],
+            )
+            decision = await tool.check_permissions({}, PermissionContext())
+            self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+        spaces = await cast(ListKnowledgeBases, tools[5])(10, "")
+        nodes = await cast(ListKnowledgeNodes, tools[6])("root-1", 25, "")
+        document = await cast(ReadKnowledgeDocument, tools[7])("doc-1", 0, 3)
+
+        self.assertEqual(
+            json.loads(spaces.content[0].text)["knowledge_bases"][0]["name"],
+            "Engineering",
+        )
+        self.assertEqual(
+            json.loads(nodes.content[0].text)["nodes"][0]["node_id"],
+            "doc-1",
+        )
+        document_result = json.loads(document.content[0].text)
+        self.assertIn("## Deploy", document_result["markdown"])
+        self.assertIn("Run the release command.", document_result["markdown"])
+        self.assertEqual(document_result["unsupported_block_types"], ["table"])
+        self.assertEqual(document_result["next_start_index"], 3)
+        self.assertListEqual(
+            media_api.knowledge_calls,
+            [
+                ("resolve_union_id", "staff-1"),
+                ("list_knowledge_bases", "union-1", 10, ""),
+                ("resolve_union_id", "staff-1"),
+                ("list_knowledge_nodes", "union-1", "root-1", 25, ""),
+                ("resolve_union_id", "staff-1"),
+                ("get_knowledge_node", "union-1", "doc-1"),
+                ("read_document_blocks", "union-1", "doc-1", 0, 2),
+            ],
+        )
+
+    async def test_knowledge_tools_hidden_without_channel_sender(self) -> None:
+        channel = _channel()
+        workspace = cast(
+            WorkspaceBase,
+            _FakeWorkspace(_FakeBackend()),
+        )
+
+        tools = await channel.list_tools(workspace)
+
+        self.assertNotIn(
+            "ListKnowledgeBases",
+            [tool.name for tool in tools],
+        )
+
+    async def test_knowledge_identity_failure_is_visible(self) -> None:
+        media_api = _FakeMediaOpenAPI()
+        media_api.union_id = None
+        channel, _ = _channel_with_openapi(media_api)
+        tools = await channel.list_tools_for_user(
+            cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            "staff-without-contact-access",
+        )
+
+        result = await tools[5](limit=20, next_token="")
+
+        self.assertEqual(result.state, ToolResultState.ERROR)
+        self.assertIn("contact permission", result.content[0].text)
 
     async def test_send_tools_do_not_depend_on_card_configuration(
         self,
@@ -1463,6 +1685,147 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         self.assertEqual(users[0]["department_ids"], [1, 2])
         self.assertEqual(users[1]["user_id"], "user-2")
         self.assertEqual(users[1]["name"], "")
+
+    async def test_resolve_union_id_uses_profile_and_cache(self) -> None:
+        api, http = _openapi(
+            {
+                "errcode": 0,
+                "result": {
+                    "userid": "staff-1",
+                    "unionid": "union-1",
+                    "name": "Alice",
+                },
+            },
+        )
+
+        first = await api.resolve_union_id("staff-1")
+        second = await api.resolve_union_id("staff-1")
+
+        self.assertEqual(first, "union-1")
+        self.assertEqual(second, "union-1")
+        self.assertEqual(len(http.posts), 2)
+        self.assertEqual(
+            http.posts[1][1]["json"],
+            {"userid": "staff-1", "language": "zh_CN"},
+        )
+
+    async def test_knowledge_openapi_uses_operator_scoped_gets(self) -> None:
+        api, http = _openapi(
+            {
+                "workspaces": [
+                    {
+                        "workspaceId": "space/1",
+                        "name": "Engineering",
+                    },
+                ],
+                "nextToken": "space-next",
+            },
+            {
+                "nodes": [
+                    {
+                        "nodeId": "doc/1",
+                        "type": "FILE",
+                        "category": "ALIDOC",
+                    },
+                ],
+            },
+            {
+                "node": {
+                    "nodeId": "doc/1",
+                    "type": "FILE",
+                    "category": "ALIDOC",
+                },
+            },
+            {
+                "success": True,
+                "result": {
+                    "data": [
+                        {
+                            "blockType": "paragraph",
+                            "paragraph": {"text": "hello"},
+                            "index": 0,
+                        },
+                    ],
+                },
+            },
+        )
+
+        spaces = await api.list_knowledge_bases("union-1", 20)
+        nodes = await api.list_knowledge_nodes(
+            "union-1",
+            "root-1",
+            50,
+            "node-next",
+        )
+        node = await api.get_knowledge_node("union-1", "doc/1")
+        blocks = await api.read_document_blocks(
+            "union-1",
+            "doc/1",
+            0,
+            49,
+        )
+
+        self.assertEqual(spaces["next_token"], "space-next")
+        self.assertEqual(nodes["nodes"][0]["nodeId"], "doc/1")
+        self.assertEqual(node["nodeId"], "doc/1")
+        self.assertEqual(blocks[0]["paragraph"]["text"], "hello")
+        self.assertEqual(
+            http.gets[0],
+            (
+                "https://api.dingtalk.com/v2.0/wiki/workspaces",
+                {
+                    "headers": {
+                        "x-acs-dingtalk-access-token": "token",
+                        "Content-Type": "application/json",
+                    },
+                    "params": {
+                        "operatorId": "union-1",
+                        "maxResults": 20,
+                        "withPermissionRole": True,
+                    },
+                },
+            ),
+        )
+        self.assertEqual(
+            http.gets[1][1]["params"]["parentNodeId"],
+            "root-1",
+        )
+        self.assertIn("nextToken", http.gets[1][1]["params"])
+        self.assertTrue(http.gets[2][0].endswith("/nodes/doc%2F1"))
+        self.assertTrue(
+            http.gets[3][0].endswith("/documents/doc%2F1/blocks"),
+        )
+        self.assertEqual(
+            http.gets[3][1]["params"],
+            {
+                "operatorId": "union-1",
+                "startIndex": 0,
+                "endIndex": 49,
+            },
+        )
+
+    async def test_knowledge_openapi_surfaces_permission_error(self) -> None:
+        http = _OpenAPIHTTP(
+            [
+                _FakeResponse(
+                    {"accessToken": "token", "expireIn": 7200},
+                ),
+                _FakeResponse(
+                    {
+                        "code": "Forbidden.AccessDenied",
+                        "message": "missing Wiki permission",
+                    },
+                    status_code=403,
+                ),
+            ],
+        )
+        api = _DingTalkOpenAPI("client", "secret", http)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "missing Wiki permission",
+        ):
+            await api.list_knowledge_bases("union-1", 20)
 
     async def test_create_deliver_and_update_group_approval_card(self) -> None:
         api, http = _openapi({}, {}, {}, {})

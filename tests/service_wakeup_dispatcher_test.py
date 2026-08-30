@@ -14,6 +14,7 @@ Verifies the four behaviours that callers rely on:
 - Sessions that are already running are skipped (no duplicate run).
 - Malformed entries are logged and skipped, not raised.
 """
+
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable
@@ -205,16 +206,18 @@ class _FakeChatService:
         session_id: str,
         agent_id: str,
         input_msg: Any = None,
+        channel_user_id: str = "",
     ) -> None:
         """Record the call and signal a waiter."""
-        self.calls.append(
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "agent_id": agent_id,
-                "input_msg": input_msg,
-            },
-        )
+        call = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "input_msg": input_msg,
+        }
+        if channel_user_id:
+            call["channel_user_id"] = channel_user_id
+        self.calls.append(call)
         self.notify.set()
 
 
@@ -287,6 +290,37 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_channel_message_carries_trusted_sender(self) -> None:
+        """The platform sender survives the queue boundary into the run."""
+        from agentscope.message import Msg, UserMsg
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        message = UserMsg(name="staff-1", content="hello")
+        await bus.queue_push(
+            MessageBusKeys.wakeup_queue(),
+            {
+                "user_id": "u",
+                "session_id": "channel-session",
+                "agent_id": "a",
+                "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                "input": message.model_dump(mode="json"),
+                "channel_user_id": "staff-1",
+            },
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["channel_user_id"], "staff-1")
+        self.assertIsInstance(chat.calls[0]["input_msg"], Msg)
 
     async def test_active_session_not_spawned_while_locked(self) -> None:
         """While the target session holds its run lock, no chat run is

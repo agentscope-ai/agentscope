@@ -16,6 +16,7 @@ hosting the channel) subscribes to the run's event stream and streams
 the reply back — so scheduled / background runs reach the channel too,
 not just inbound messages.
 """
+
 import json
 
 from ..._logging import logger
@@ -231,6 +232,7 @@ class ChannelGateway:
             agent_id=agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
             inputs=UserMsg(name=event.channel_user_id, content=content),
+            channel_user_id=event.channel_user_id,
         )
 
     async def _aggregate_media(

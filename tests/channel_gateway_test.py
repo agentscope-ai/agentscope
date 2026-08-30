@@ -6,6 +6,7 @@ seeded event list via a fake channel), the gateway's media aggregation,
 and the text-confirmation reply parser. Full two-phase orchestration
 needs a running agent and is exercised end-to-end against a real bot.
 """
+
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
 # pylint: disable=attribute-defined-outside-init
 from types import SimpleNamespace
@@ -319,6 +320,18 @@ class _RecordingStorage:
         self.upserts.append(kwargs)
 
 
+class _InboundStorage(_RecordingStorage):
+    """Storage stub for one normal inbound channel message."""
+
+    def __init__(self, record: ChannelRecord) -> None:
+        super().__init__()
+        self.record = record
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Return the configured channel by id."""
+        return self.record if channel_id == self.record.id else None
+
+
 def _channel_record(user_id: str) -> ChannelRecord:
     return ChannelRecord(
         id="chan-1",
@@ -376,6 +389,37 @@ class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
             storage.workspace_ids[0],
             storage.workspace_ids[1],
         )
+
+
+class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
+    """The gateway carries the real sender beside the model input."""
+
+    async def test_message_trigger_contains_trusted_platform_user(
+        self,
+    ) -> None:
+        record = _channel_record("owner-1")
+        storage = _InboundStorage(record)
+        bus = InMemoryMessageBus()
+        gateway = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await gateway.process(
+            ChannelEvent(
+                channel_id=record.id,
+                channel_user_id="staff-1",
+                chat_id="group:cid-1",
+                content=[TextBlock(text="hello")],
+            ),
+        )
+
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(queued), 1)
+        payload = queued[0][1]
+        self.assertEqual(payload["channel_user_id"], "staff-1")
+        self.assertEqual(payload["input"]["name"], "staff-1")
 
 
 class FeishuPostParseTest(IsolatedAsyncioTestCase):
