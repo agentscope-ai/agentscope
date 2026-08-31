@@ -40,7 +40,7 @@ svg.lucide {
 
 	/*font: 18px/145% var(--sans);*/
 	/* letter-spacing: 0.18px; */
-	color-scheme: light dark;
+	color-scheme: light;
 	color: var(--text);
 	background: var(--bg);
 	font-synthesis: none;
@@ -122,25 +122,14 @@ svg.lucide {
 	--sidebar-border: transparent;
 
 	--sidebar-ring: oklch(0.708 0 0);
-}
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--text: #9ca3af;
-		--text-h: #f3f4f6;
-		--bg: #16171d;
-		--border: #2e303a;
-		--code-bg: #1f2028;
-		--accent: #c084fc;
-		--accent-bg: rgba(192, 132, 252, 0.15);
-		--accent-border: rgba(192, 132, 252, 0.5);
-		--social-bg: rgba(47, 48, 58, 0.5);
-		--shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-	}
-
-	#social .button-icon {
-		filter: invert(1) brightness(2);
-	}
+	--text-secondary: #41454b;
+	--text-tertiary: #a7abb2;
+	--text-data: #8e939a;
+	--surface-muted: #f1f2f4;
+	--row-hover: rgba(24, 25, 28, 0.02);
+	--panel-shadow: 0 1px 2px rgba(24, 25, 28, 0.05), 0 18px 40px -30px rgba(24, 25, 28, 0.28);
+	--tab-shadow: 0 1px 2px rgba(24, 25, 28, 0.07);
 }
 
 @theme inline {
@@ -151,11 +140,11 @@ svg.lucide {
 	/* Menu-item inset, tied to the corner radius: a rounder item eats more
 	   horizontal room at the text's edge, so the padding has to grow with it. */
 	--spacing-menu-item: calc(var(--radius) * 0.625);
-	--color-text-secondary: #41454b; /* → text-text-secondary */
-	--color-text-tertiary: #a7abb2; /* → text-text-tertiary */
-	--color-text-data: #8e939a; /* → text-text-data */
-	--color-surface-muted: #f1f2f4; /* → bg-surface-muted (inline badges) */
-	--color-row-hover: rgba(24, 25, 28, 0.02); /* → hover:bg-row-hover */
+	--color-text-secondary: var(--text-secondary); /* → text-text-secondary */
+	--color-text-tertiary: var(--text-tertiary); /* → text-text-tertiary */
+	--color-text-data: var(--text-data); /* → text-text-data */
+	--color-surface-muted: var(--surface-muted); /* → bg-surface-muted (inline badges) */
+	--color-row-hover: var(--row-hover); /* → hover:bg-row-hover */
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -194,12 +183,14 @@ svg.lucide {
 	--radius-2xl: calc(var(--radius) * 1.8);
 	--radius-3xl: calc(var(--radius) * 2.2);
 	--radius-4xl: calc(var(--radius) * 2.6);
-	--shadow-panel: 0 1px 2px rgba(24, 25, 28, 0.05), 0 18px 40px -30px rgba(24, 25, 28, 0.28);
-	--shadow-tab: 0 1px 2px rgba(24, 25, 28, 0.07); /* → shadow-tab (active tab) */
+	--shadow-panel: var(--panel-shadow);
+	--shadow-tab: var(--tab-shadow); /* → shadow-tab (active tab) */
 }
 
 .dark {
 	color-scheme: dark;
+	--text: #9ca3af;
+	--bg: #16171d;
 	--background: oklch(0.145 0 0);
 	--foreground: oklch(0.985 0 0);
 	--card: oklch(0.205 0 0);
@@ -231,6 +222,14 @@ svg.lucide {
 	--sidebar-accent-foreground: oklch(0.985 0 0);
 	--sidebar-border: oklch(1 0 0 / 10%);
 	--sidebar-ring: oklch(0.556 0 0);
+
+	--text-secondary: #c3c7cd;
+	--text-tertiary: #868b93;
+	--text-data: #8b9099;
+	--surface-muted: #24262d;
+	--row-hover: rgba(255, 255, 255, 0.04);
+	--panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 18px 40px -30px rgba(0, 0, 0, 0.8);
+	--tab-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 @layer base {
