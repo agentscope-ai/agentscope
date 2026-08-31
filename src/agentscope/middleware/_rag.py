@@ -81,7 +81,7 @@ _MAX_CANDIDATE_K = 50
 # Upper bound on the candidates handed to the reranker, both as the
 # ``rerank_candidate_k`` field bound and as the cap on its default.
 
-_DEFAULT_RERANK_TEMPLATE = (
+_DEFAULT_RERANK_PROMPT = (
     "<rerank-task>\nRank the candidates below by their relevance to the "
     "user query, and return the ids of the {top_k} most relevant one(s) "
     "in descending relevance order.\nA candidate whose content you "
@@ -152,7 +152,7 @@ class _SearchKnowledgeTool(ToolBase):
         score_threshold: float | None,
         rerank_model: "ChatModelBase | None" = None,
         rerank_candidate_k: int | None = None,
-        rerank_template: str = _DEFAULT_RERANK_TEMPLATE,
+        rerank_prompt: str = _DEFAULT_RERANK_PROMPT,
     ) -> None:
         """Initialize the search tool.
 
@@ -170,8 +170,8 @@ class _SearchKnowledgeTool(ToolBase):
                 chunks.
             rerank_candidate_k (`int | None`, optional):
                 Number of chunks retrieved for the reranker to judge.
-            rerank_template (`str`, defaults to \
-            ``_DEFAULT_RERANK_TEMPLATE``):
+            rerank_prompt (`str`, defaults to \
+            ``_DEFAULT_RERANK_PROMPT``):
                 The instruction part of the reranker prompt.
         """
         # ``ToolBase`` expects a list of *tool* middlewares; this tool
@@ -183,7 +183,7 @@ class _SearchKnowledgeTool(ToolBase):
         self._score_threshold = score_threshold
         self._rerank_model = rerank_model
         self._rerank_candidate_k = rerank_candidate_k
-        self._rerank_template = rerank_template
+        self._rerank_prompt = rerank_prompt
         self.description = self._build_description()
         self.input_schema = self._build_input_schema()
 
@@ -318,7 +318,7 @@ class _SearchKnowledgeTool(ToolBase):
                 score_threshold=self._score_threshold,
                 rerank_model=self._rerank_model,
                 rerank_candidate_k=self._rerank_candidate_k,
-                rerank_template=self._rerank_template,
+                rerank_prompt=self._rerank_prompt,
             )
         except Exception as e:  # pylint: disable=broad-except
             logger.exception("search_knowledge failed.")
@@ -355,7 +355,7 @@ async def _search_across(
     score_threshold: float | None,
     rerank_model: "ChatModelBase | None" = None,
     rerank_candidate_k: int | None = None,
-    rerank_template: str = _DEFAULT_RERANK_TEMPLATE,
+    rerank_prompt: str = _DEFAULT_RERANK_PROMPT,
 ) -> list["VectorSearchResult"]:
     """Search every knowledge base concurrently and merge the results.
 
@@ -390,7 +390,7 @@ async def _search_across(
             Number of hits retrieved for the reranker to judge, at least
             ``top_k``.  Defaults to ``2 * top_k``, capped at
             ``_MAX_CANDIDATE_K``.
-        rerank_template (`str`, defaults to ``_DEFAULT_RERANK_TEMPLATE``):
+        rerank_prompt (`str`, defaults to ``_DEFAULT_RERANK_PROMPT``):
             The instruction part of the reranker prompt.
 
     Returns:
@@ -434,7 +434,7 @@ async def _search_across(
             queries=queries_list,
             candidates=results,
             top_k=top_k,
-            template=rerank_template,
+            prompt=rerank_prompt,
         )
     except Exception as e:  # pylint: disable=broad-except
         logger.warning(
@@ -461,7 +461,7 @@ async def _rerank_results(
     queries: Sequence[str | TextBlock | DataBlock],
     candidates: list["VectorSearchResult"],
     top_k: int,
-    template: str,
+    prompt: str,
 ) -> list["VectorSearchResult"]:
     """Pick the ``top_k`` most relevant candidates with a chat model.
 
@@ -487,7 +487,7 @@ async def _rerank_results(
     query_blocks = [q for q in queries if isinstance(q, DataBlock)]
     content: list[TextBlock | DataBlock] = [
         TextBlock(
-            text=template.format(
+            text=prompt.format(
                 query="\n".join(
                     q if isinstance(q, str) else q.text
                     for q in queries
@@ -735,11 +735,11 @@ class RAGMiddleware(MiddlewareBase):
         # invites session-by-session prompt drift.  It is still accepted
         # for programmatic use.
 
-        rerank_template: SkipJsonSchema[str] = Field(
-            default=_DEFAULT_RERANK_TEMPLATE,
-            title="Rerank template",
+        rerank_prompt: SkipJsonSchema[str] = Field(
+            default=_DEFAULT_RERANK_PROMPT,
+            title="Rerank prompt",
             description=(
-                "Instruction template of the rerank prompt, with a "
+                "Instruction part of the rerank prompt, with a "
                 "`{query}` and an optional `{top_k}` placeholder. The "
                 "candidates are appended to it by the middleware."
             ),
@@ -749,22 +749,22 @@ class RAGMiddleware(MiddlewareBase):
         # ``hint_template`` — it is part of the middleware's prompt
         # contract, not a per-session knob.
 
-        @field_validator("rerank_template")
+        @field_validator("rerank_prompt")
         @classmethod
-        def _validate_rerank_template(cls, value: str) -> str:
+        def _validate_rerank_prompt(cls, value: str) -> str:
             """Reject templates the reranker cannot render — a missing
             ``{query}`` leaves the model with nothing to rank against,
             and an unknown placeholder breaks the prompt at search
             time."""
             if "{query}" not in value:
                 raise ValueError(
-                    "rerank_template must contain a '{query}' placeholder.",
+                    "rerank_prompt must contain a '{query}' placeholder.",
                 )
             try:
                 value.format(query="", top_k=1)
             except (IndexError, KeyError) as e:
                 raise ValueError(
-                    f"rerank_template has an unknown placeholder: {e}.",
+                    f"rerank_prompt has an unknown placeholder: {e}.",
                 ) from e
             return value
 
@@ -847,7 +847,7 @@ class RAGMiddleware(MiddlewareBase):
                     score_threshold=self._parameters.score_threshold,
                     rerank_model=self._rerank_model,
                     rerank_candidate_k=self._parameters.rerank_candidate_k,
-                    rerank_template=self._parameters.rerank_template,
+                    rerank_prompt=self._parameters.rerank_prompt,
                 ),
             ]
         return []
@@ -975,7 +975,7 @@ class RAGMiddleware(MiddlewareBase):
                     score_threshold=self._parameters.score_threshold,
                     rerank_model=self._rerank_model,
                     rerank_candidate_k=self._parameters.rerank_candidate_k,
-                    rerank_template=self._parameters.rerank_template,
+                    rerank_prompt=self._parameters.rerank_prompt,
                 )
             except Exception:  # pylint: disable=broad-except
                 logger.exception(

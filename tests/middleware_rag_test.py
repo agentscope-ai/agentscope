@@ -932,7 +932,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             {"type": "integer", "minimum": 1, "maximum": 50},
         )
         # The prompt template stays out of the dock UI, like the hint one.
-        self.assertNotIn("rerank_template", schema["properties"])
+        self.assertNotIn("rerank_prompt", schema["properties"])
 
         # A candidate window smaller than the final result count would
         # only shrink the results.
@@ -941,10 +941,10 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         RAGMiddleware.Parameters(top_k=5, rerank_candidate_k=5)
 
         with self.assertRaises(ValueError):
-            RAGMiddleware.Parameters(rerank_template="Rank them.")
+            RAGMiddleware.Parameters(rerank_prompt="Rank them.")
         with self.assertRaises(ValueError):
-            RAGMiddleware.Parameters(rerank_template="{query} {unknown}")
-        RAGMiddleware.Parameters(rerank_template="Rank for {query}.")
+            RAGMiddleware.Parameters(rerank_prompt="{query} {unknown}")
+        RAGMiddleware.Parameters(rerank_prompt="Rank for {query}.")
 
 
 class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
