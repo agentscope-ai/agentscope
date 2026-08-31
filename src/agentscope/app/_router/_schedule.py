@@ -91,7 +91,8 @@ async def create_schedule(
     Raises:
         `HTTPException`: 404 if the specified agent or the credential
             referenced by ``chat_model_config`` is not visible to the
-            caller.
+            caller; 422 if the cron expression, timezone or activation
+            window is invalid.
     """
     # Visibility checks — raise 404 when neither owned nor shared. The
     # schedule fires under the owner's user_id, so re-validating the
@@ -166,7 +167,9 @@ async def update_schedule(
             The updated schedule record.
 
     Raises:
-        `HTTPException`: 404 if the schedule does not exist.
+        `HTTPException`: 404 if the schedule does not exist; 422 if the
+            update leaves an invalid cron expression, timezone or
+            activation window.
     """
     existing = await storage.get_schedule(user_id, schedule_id)
     if existing is None:

@@ -4,8 +4,9 @@ import asyncio
 import json
 from collections.abc import Callable, Coroutine
 from datetime import datetime
+from zoneinfo import ZoneInfoNotFoundError
 
-from typing import Self
+from typing import Self, TYPE_CHECKING
 
 from ....message import HintBlock
 from ....permission import PermissionContext
@@ -24,6 +25,9 @@ from ...storage import (
     SessionConfig,
     SessionSource,
 )
+
+if TYPE_CHECKING:
+    from apscheduler.triggers.cron import CronTrigger
 
 
 class SchedulerManager:
@@ -327,10 +331,32 @@ class SchedulerManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def validate_schedule(record: ScheduleRecord) -> tuple[str, ...]:
-        """Validate a schedule record without constructing its trigger."""
+    def validate_schedule(record: ScheduleRecord) -> "CronTrigger":
+        """Build the record's cron trigger, rejecting a bad schedule.
+
+        Writers call this before persisting so an invalid schedule never
+        reaches storage, and :meth:`_add_job` reuses what it returns
+        rather than parsing the expression a second time.
+
+        ``CronTrigger.from_crontab`` is not usable here: it forwards only
+        the 5 parsed fields and ``timezone``, with no parameter for
+        ``start_date`` / ``end_date``, so the configured activation
+        window would be dropped.
+
+        Args:
+            record (`ScheduleRecord`):
+                The schedule to check.
+
+        Returns:
+            `CronTrigger`:
+                The trigger the job would fire on.
+
+        Raises:
+            `ValueError`:
+                The cron expression, the timezone, or the activation
+                window is invalid.
+        """
         from apscheduler.triggers.cron import CronTrigger
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
         fields = record.data.cron_expression.split()
         if len(fields) != 5:
@@ -338,34 +364,33 @@ class SchedulerManager:
                 "Expected a 5-field cron expression, got "
                 f"{record.data.cron_expression!r}",
             )
-
-        field_names = ("minute", "hour", "day", "month", "day_of_week")
-        for field_name, expression in zip(field_names, fields, strict=True):
-            field_class = CronTrigger.FIELDS_MAP[field_name]
-            field_class(field_name, expression, is_default=False)
+        minute, hour, day, month, day_of_week = fields
 
         try:
-            timezone = ZoneInfo(record.data.timezone)
+            trigger = CronTrigger(
+                minute=minute,
+                hour=hour,
+                day=day,
+                month=month,
+                day_of_week=day_of_week,
+                timezone=record.data.timezone,
+                start_date=record.data.started_at,
+                end_date=record.data.ended_at,
+            )
         except (ValueError, ZoneInfoNotFoundError) as exc:
-            raise ValueError(
-                f"Unknown timezone {record.data.timezone!r}",
-            ) from exc
+            # Field ranges, expression syntax and the timezone are all
+            # checked by the constructor.
+            raise ValueError(str(exc)) from exc
 
-        if record.data.ended_at is not None:
-            started_at = record.data.started_at
-            ended_at = record.data.ended_at
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=timezone)
-            else:
-                started_at = started_at.astimezone(timezone)
-            if ended_at.tzinfo is None:
-                ended_at = ended_at.replace(tzinfo=timezone)
-            else:
-                ended_at = ended_at.astimezone(timezone)
-            if ended_at <= started_at:
-                raise ValueError("ended_at must be later than started_at")
+        # The window is the one thing it does not check: an inverted one
+        # is accepted and simply never fires.
+        if (
+            trigger.end_date is not None
+            and trigger.end_date <= trigger.start_date
+        ):
+            raise ValueError("ended_at must be later than started_at")
 
-        return tuple(fields)
+        return trigger
 
     async def notify_changed(self, schedule_id: str) -> None:
         """Tell the timer-owning node that a schedule was written.
@@ -466,9 +491,6 @@ class SchedulerManager:
             record (`ScheduleRecord`):
                 An enabled schedule record.
         """
-
-        from apscheduler.triggers.cron import CronTrigger
-
         logger.info(
             "Registering schedule %s(%s) cron=%s tz=%s",
             record.id,
@@ -476,26 +498,9 @@ class SchedulerManager:
             record.data.cron_expression,
             record.data.timezone,
         )
-
-        # ``CronTrigger.from_crontab`` is a thin helper that only forwards
-        # the 5 parsed fields and ``timezone`` — it has no parameter for
-        # ``start_date`` / ``end_date``.  Parse the expression ourselves so
-        # the configured activation window is honoured.
-        minute, hour, day, month, day_of_week = self.validate_schedule(record)
-
-        trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
-            trigger,
-            trigger=CronTrigger(
-                minute=minute,
-                hour=hour,
-                day=day,
-                month=month,
-                day_of_week=day_of_week,
-                timezone=record.data.timezone,
-                start_date=record.data.started_at,
-                end_date=record.data.ended_at,
-            ),
+            self._build_trigger(record),
+            trigger=self.validate_schedule(record),
             id=record.id,
             name=record.data.name,
             misfire_grace_time=300,
