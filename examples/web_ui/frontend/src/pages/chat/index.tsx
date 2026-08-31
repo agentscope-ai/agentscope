@@ -132,7 +132,9 @@ const ChatPageInner = () => {
 	const effectiveSessionId =
 		focusedMember && focusedMember.session_id
 			? focusedMember.session_id
-			: (urlSessionId ?? null);
+			: currentView
+				? (urlSessionId ?? null)
+				: null;
 
 	// Redirect: URL is missing an agent → pick the first one and rewrite
 	// the URL in-place (replace so we don't pollute history).

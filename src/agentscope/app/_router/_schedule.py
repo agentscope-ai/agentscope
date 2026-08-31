@@ -71,7 +71,7 @@ async def create_schedule(
     access: ResourceAccessService = Depends(get_resource_access_service),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> CreateScheduleResponse:
-    """Create a new schedule and register it with the scheduler.
+    """Create a new schedule and hand it to the scheduler.
 
     The referenced agent may be either the viewer's own or one shared
     to them through :class:`ResourceAccessPolicyBase`; the schedule
@@ -130,9 +130,7 @@ async def create_schedule(
         ) from exc
 
     await storage.upsert_schedule(user_id, record)
-
-    if record.data.enabled:
-        await scheduler.register_schedule(record)
+    await scheduler.notify_changed(record.id)
 
     return CreateScheduleResponse(schedule_id=record.id)
 
@@ -152,9 +150,9 @@ async def update_schedule(
     """Partially update a schedule.
 
     Fields omitted from the request body keep their current values.
-    Changing ``cron_expression`` or ``timezone`` immediately reschedules the
-    APScheduler job.  Setting ``enable=False`` removes the job from the
-    scheduler without deleting the record.
+    Changing ``cron_expression`` or ``timezone`` reschedules the job, and
+    ``enable=False`` stops it firing without deleting the record — both
+    take effect once the timer-owning node reconciles.
 
     Args:
         schedule_id (`str`): ID of the schedule to update.
@@ -192,11 +190,7 @@ async def update_schedule(
         ) from exc
 
     await storage.upsert_schedule(user_id, updated_record)
-
-    # Always remove the existing job first; re-register only if still enabled.
-    await scheduler.remove_schedule(schedule_id)
-    if updated_record.data.enabled:
-        await scheduler.register_schedule(updated_record)
+    await scheduler.notify_changed(schedule_id)
 
     return updated_record
 
@@ -215,8 +209,8 @@ async def delete_schedule(
     """Permanently delete a schedule.
 
     Cancels any in-flight chat run for sessions this schedule has
-    triggered, removes their records via the session service, and
-    finally unregisters the APScheduler job.
+    triggered, removes their records via the session service, and tells
+    the timer-owning node to drop the job.
 
     Args:
         schedule_id (`str`): ID of the schedule to delete.
@@ -233,7 +227,7 @@ async def delete_schedule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Schedule '{schedule_id}' not found.",
         )
-    await scheduler.remove_schedule(schedule_id)
+    await scheduler.notify_changed(schedule_id)
 
 
 @schedule_router.get(

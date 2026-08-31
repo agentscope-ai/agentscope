@@ -65,7 +65,7 @@ class _Storage:
 
 
 class _Scheduler(SchedulerManager):
-    """Track scheduler mutations while retaining real validation."""
+    """Track what the owner would be told, keeping real validation."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -73,17 +73,11 @@ class _Scheduler(SchedulerManager):
             message_bus=None,
             workspace_manager=None,
         )
-        self.removed: list[str] = []
-        self.registered: list[ScheduleRecord] = []
+        self.notified: list[str] = []
 
-    async def remove_schedule(self, job_id: str) -> None:
-        """Record removal without touching APScheduler."""
-        self.removed.append(job_id)
-
-    async def register_schedule(self, record: ScheduleRecord) -> str:
-        """Record registration without touching APScheduler."""
-        self.registered.append(record)
-        return record.id
+    async def notify_changed(self, schedule_id: str) -> None:
+        """Record the nudge without touching the message bus."""
+        self.notified.append(schedule_id)
 
 
 def _request(
@@ -146,7 +140,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(storage.upserted, [])
-        self.assertEqual(scheduler.registered, [])
+        self.assertEqual(scheduler.notified, [])
 
     async def test_create_out_of_range_cron_does_not_persist(self) -> None:
         """Cron field ranges are checked without constructing a trigger."""
@@ -164,7 +158,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(storage.upserted, [])
-        self.assertEqual(scheduler.registered, [])
+        self.assertEqual(scheduler.notified, [])
 
     async def test_create_invalid_timezone_does_not_persist(self) -> None:
         """Create rejects an unknown timezone before writing the schedule."""
@@ -182,10 +176,10 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(storage.upserted, [])
-        self.assertEqual(scheduler.registered, [])
+        self.assertEqual(scheduler.notified, [])
 
     async def test_update_invalid_cron_keeps_existing_state(self) -> None:
-        """Update rejects invalid cron before persistence or job removal."""
+        """Update rejects invalid cron before persisting or notifying."""
         existing = _record()
         storage = _Storage(existing)
         scheduler = _Scheduler()
@@ -201,8 +195,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(storage.upserted, [])
-        self.assertEqual(scheduler.removed, [])
-        self.assertEqual(scheduler.registered, [])
+        self.assertEqual(scheduler.notified, [])
 
     async def test_update_invalid_timezone_keeps_existing_state(self) -> None:
         """Update rejects an unknown timezone before changing state."""
@@ -221,8 +214,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(storage.upserted, [])
-        self.assertEqual(scheduler.removed, [])
-        self.assertEqual(scheduler.registered, [])
+        self.assertEqual(scheduler.notified, [])
 
     async def test_tool_invalid_cron_does_not_persist(self) -> None:
         """The agent-facing create tool validates before writing too."""

@@ -88,6 +88,7 @@ def create_app(
     skill_hubs: list[SkillHubBase] | None = None,
     *,
     enable_channel_worker: bool = True,
+    enable_scheduler: bool = True,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
@@ -199,6 +200,13 @@ def create_app(
             connections or duplicate messages. The channel API, the
             client factory and webhook delivery stay available either
             way — only the connections move.
+        enable_scheduler (`bool`, defaults to ``True``):
+            Whether this process owns the schedule timers. APScheduler's
+            jobstore is in-memory, so every process holding them fires
+            every cron tick and a schedule runs once per replica — set
+            ``False`` on all but one. The schedule API and the agent's
+            schedule tools stay available either way; those processes
+            persist the record and notify the owner over the bus.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -359,6 +367,7 @@ def create_app(
         enable_index_worker and knowledge_base_manager is not None
     )
     app.state.enable_channel_worker = enable_channel_worker
+    app.state.enable_scheduler = enable_scheduler
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state

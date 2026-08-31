@@ -178,7 +178,8 @@ dev = [
     "pytest-forked",
     "myst_parser",
     "matplotlib",
-    "fakeredis",
+    # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
+    "fakeredis[lua]",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3

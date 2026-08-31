@@ -256,6 +256,7 @@ export function useMessages(
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
+		setLoadedKey(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
 		setMsgs([]);
@@ -527,23 +528,19 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
-	// True from the very first render after `sessionId` changes, because
-	// it compares props against what was fetched rather than tracking a
-	// flag an effect has yet to flip. `msgs` is still the previous
-	// session's until the effect clears it, so consumers must render the
-	// loading state in preference to `msgs`.
-	const loading =
-		agentId !== null && sessionId !== null && loadedKey !== `${agentId}:${sessionId}`;
+	const currentKey = agentId !== null && sessionId !== null ? `${agentId}:${sessionId}` : null;
+	const ownsConversation = currentKey !== null && loadedKey === currentKey;
+	const loading = currentKey !== null && !ownsConversation;
 
 	return {
-		msgs,
+		msgs: ownsConversation ? msgs : [],
 		loading,
-		phase,
-		error,
+		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
+		error: ownsConversation ? error : null,
 		send,
 		onUserConfirm,
 		onSubagentConfirm,
-		subagentHitl,
+		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,
 		interrupt,
 	};

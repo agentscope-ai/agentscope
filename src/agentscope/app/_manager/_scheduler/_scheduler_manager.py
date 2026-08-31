@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The cron scheduler manager class."""
+import asyncio
 import json
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 
 from typing import Self
 
@@ -12,7 +14,7 @@ from ....tool import ToolBase
 from ...._logging import logger
 from ...._utils._common import _generate_id
 from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
-from ...message_bus import MessageBus
+from ...message_bus import MessageBus, MessageBusKeys
 from ...workspace_manager import WorkspaceManagerBase
 from ..._bus_ops import deliver_to_inbox
 from ...storage import (
@@ -35,13 +37,27 @@ class SchedulerManager:
     :class:`WakeupDispatcher` (running on any process) picks up the work.
     This keeps the scheduler decoupled from ``ChatService`` and makes the
     fire path consistent with team / background-tool result delivery.
+
+    The timers themselves are held by **one** node — APScheduler's
+    jobstore is in-memory, so every node holding them fires every cron
+    tick, and a schedule runs once per replica. Which node owns them is
+    a deployment choice (``create_app(enable_scheduler=...)``), so
+    writers cannot register a job in-process: they persist the record
+    and call :meth:`notify_changed`, and the owner reconciles its jobs
+    against storage. Storage is the source of truth; the notification
+    only makes the owner look sooner than its periodic reconcile would.
     """
+
+    RECONCILE_INTERVAL_SECS = 60
+    """How often the owner re-reads storage regardless of
+    notifications, so a dropped one costs at most one interval."""
 
     def __init__(
         self,
         storage: StorageBase,
         message_bus: MessageBus,
         workspace_manager: WorkspaceManagerBase,
+        enabled: bool = True,
     ) -> None:
         """Initialize the scheduler manager.
 
@@ -56,42 +72,71 @@ class SchedulerManager:
             workspace_manager (`WorkspaceManagerBase`):
                 Binds a workspace to the sessions this manager creates,
                 under the application's isolation policy.
+            enabled (`bool`, defaults to ``True``):
+                Whether this node owns the timers. Exactly one node in a
+                deployment should enable them; the rest still create,
+                edit and delete schedules — they just do not fire them.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         self._storage = storage
         self._message_bus = message_bus
         self._workspace_manager = workspace_manager
+        self._enabled = enabled
         self._scheduler = AsyncIOScheduler()
+        # ``updated_at`` of each registered job, so a reconcile can tell
+        # an edited schedule from an unchanged one.
+        self._versions: dict[str, datetime] = {}
+        self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def __aenter__(self) -> Self:
-        """Start APScheduler and re-register persisted schedules.
+        """Take ownership of the timers, unless this node is disabled.
 
-        Reading all schedules from storage and restoring them is the
-        only thing a caller would ever do right after starting this
-        manager, so the work lives inside the context entry — the
-        lifespan does not need to remember to call :meth:`restore`.
+        A disabled manager holds no jobs and runs no loops; it stays
+        usable for :meth:`notify_changed` and :meth:`list_tools`, which
+        every node needs.
 
         Returns:
             `Self`: This manager instance.
         """
+        if not self._enabled:
+            logger.info(
+                "SchedulerManager disabled on this node; schedules are "
+                "owned elsewhere.",
+            )
+            return self
+
         logger.info("SchedulerManager starting APScheduler")
         self._scheduler.start()
+        # Subscribe before the first reconcile, and wait for it: a
+        # notification published in between would otherwise be lost, and
+        # the schedule behind it would wait for the periodic pass.
+        ready = asyncio.Event()
+        self._tasks = [
+            asyncio.create_task(
+                self._listen(ready),
+                name="schedule-lifecycle",
+            ),
+            asyncio.create_task(self._periodic(), name="schedule-reconcile"),
+        ]
+        await ready.wait()
+        await self.reconcile()
         logger.info("SchedulerManager APScheduler started")
-
-        records = await self._storage.list_all_schedules()
-        if records:
-            await self.restore(records)
-
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Shut down the underlying APScheduler on context exit."""
+        """Stop the loops and shut down APScheduler, if it was started."""
+        if not self._enabled:
+            return
+
         logger.info("SchedulerManager shutting down APScheduler")
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         self._scheduler.shutdown()
         logger.info("SchedulerManager APScheduler shut down")
 
@@ -322,20 +367,104 @@ class SchedulerManager:
 
         return tuple(fields)
 
-    async def register_schedule(self, record: ScheduleRecord) -> str:
-        """Persist-and-register a schedule record with APScheduler.
+    async def notify_changed(self, schedule_id: str) -> None:
+        """Tell the timer-owning node that a schedule was written.
 
-        Builds the trigger coroutine via :meth:`_build_trigger` and adds the
-        job to APScheduler.  This is the single entry point used by both the
-        HTTP API and the :class:`ScheduleCreate` agent tool.
+        Call after persisting a create / update / delete. Best-effort:
+        reconcile re-reads storage, so the payload is only a nudge and a
+        lost notification costs at most one reconcile interval.
+
+        Args:
+            schedule_id (`str`):
+                The changed schedule, for logging on the owner's side.
+        """
+        try:
+            await self._message_bus.publish(
+                MessageBusKeys.schedule_lifecycle(),
+                {"schedule_id": schedule_id},
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to publish schedule change %s; the periodic "
+                "reconcile will pick it up.",
+                schedule_id,
+            )
+
+    async def reconcile(self) -> None:
+        """Drive the local job set to match the enabled records.
+
+        Adds jobs that are missing, drops jobs whose record is gone or
+        no longer enabled, and re-registers those whose ``updated_at``
+        moved. Safe to call repeatedly — that is how a dropped
+        notification heals.
+        """
+        try:
+            records = await self._storage.list_all_schedules()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Schedule reconcile: failed to list schedules")
+            return
+
+        desired = {r.id: r for r in records if r.data.enabled}
+
+        for schedule_id in set(self._versions) - set(desired):
+            self._remove_job(schedule_id)
+
+        for schedule_id, record in desired.items():
+            if self._versions.get(schedule_id) == record.updated_at:
+                continue
+            if schedule_id in self._versions:
+                self._remove_job(schedule_id)
+            try:
+                self._add_job(record)
+            except Exception:  # pylint: disable=broad-except
+                # A record with an unparseable cron would otherwise take
+                # every schedule after it down with it.
+                logger.exception(
+                    "Schedule reconcile: cannot register %s",
+                    schedule_id,
+                )
+
+    # -- Loops --
+
+    async def _listen(self, ready: asyncio.Event) -> None:
+        """Reconcile on each lifecycle notification (reconnect on drop).
+
+        Args:
+            ready (`asyncio.Event`):
+                Signalled once the SUBSCRIBE has landed, so
+                :meth:`__aenter__` can order its first reconcile after
+                it.
+        """
+        backoff = 1.0
+        while True:
+            try:
+                async for _ in self._message_bus.subscribe(
+                    MessageBusKeys.schedule_lifecycle(),
+                    on_ready=ready.set,
+                ):
+                    backoff = 1.0
+                    await self.reconcile()
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.warning("schedule lifecycle subscription lost")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+
+    async def _periodic(self) -> None:
+        """Reconcile on a fixed interval, self-healing lost events."""
+        while True:
+            await asyncio.sleep(self.RECONCILE_INTERVAL_SECS)
+            await self.reconcile()
+
+    # -- Job set --
+
+    def _add_job(self, record: ScheduleRecord) -> None:
+        """Add one APScheduler job from its record.
 
         Args:
             record (`ScheduleRecord`):
-                The fully-populated record (already persisted to storage).
-
-        Returns:
-            `str`:
-                The APScheduler job ID (equal to ``record.id``).
+                An enabled schedule record.
         """
 
         from apscheduler.triggers.cron import CronTrigger
@@ -371,48 +500,33 @@ class SchedulerManager:
             name=record.data.name,
             misfire_grace_time=300,
         )
+        self._versions[record.id] = record.updated_at
         logger.info(
             "Schedule %s(%s) registered, next_run=%s",
             record.id,
             record.data.name,
             job.next_run_time,
         )
-        return job.id
 
-    async def remove_schedule(self, job_id: str) -> None:
-        """Remove a job from APScheduler.
+    def _remove_job(self, schedule_id: str) -> None:
+        """Drop one APScheduler job.
 
         Args:
-            job_id (`str`):
-                The APScheduler job ID to remove.
+            schedule_id (`str`):
+                The schedule whose job should go; it doubles as the
+                APScheduler job id.
         """
         from apscheduler.jobstores.base import JobLookupError
 
-        logger.info("Removing schedule job %s", job_id)
+        self._versions.pop(schedule_id, None)
         try:
-            self._scheduler.remove_job(job_id)
-            logger.info("Schedule job %s removed", job_id)
+            self._scheduler.remove_job(schedule_id)
+            logger.info("Schedule job %s removed", schedule_id)
         except JobLookupError:
-            logger.warning("Schedule job %s not found in APScheduler", job_id)
-
-    async def restore(self, records: list[ScheduleRecord]) -> None:
-        """Re-register persisted schedules on service startup.
-
-        Only enabled schedules are restored.
-
-        Args:
-            records (`list[ScheduleRecord]`):
-                All schedule records loaded from storage on startup.
-        """
-        enabled = [r for r in records if r.data.enabled]
-        logger.info(
-            "Restoring schedules: %d total, %d enabled",
-            len(records),
-            len(enabled),
-        )
-        for record in enabled:
-            await self.register_schedule(record)
-        logger.info("Schedule restore complete")
+            logger.warning(
+                "Schedule job %s not found in APScheduler",
+                schedule_id,
+            )
 
     async def list_tasks(self) -> list[dict]:
         """Return a summary of all currently registered APScheduler jobs.
