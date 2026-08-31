@@ -399,11 +399,7 @@ class GeminiChatModel(ChatModelBase):
                             thought_signature = base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
-                        call_id = (
-                            part.function_call.id
-                            or thought_signature
-                            or _generate_id()
-                        )
+                        call_id = part.function_call.id or _generate_id()
 
                         delta_res.append_tool_call(
                             block_id=call_id,
@@ -461,19 +457,22 @@ class GeminiChatModel(ChatModelBase):
                         thought_signature = base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
-                    call_id = (
-                        part.function_call.id
-                        or thought_signature
-                        or _generate_id()
+                    call_id = part.function_call.id or _generate_id()
+                    content_blocks.append(
+                        ToolCallBlock(
+                            id=call_id,
+                            name=part.function_call.name,
+                            input=json.dumps(
+                                keyword_args,
+                                ensure_ascii=False,
+                            ),
+                            **(
+                                {"thought_signature": thought_signature}
+                                if thought_signature
+                                else {}
+                            ),
+                        ),
                     )
-                    tool_call = ToolCallBlock(
-                        id=call_id,
-                        name=part.function_call.name,
-                        input=json.dumps(keyword_args, ensure_ascii=False),
-                    )
-                    if thought_signature:
-                        tool_call.thought_signature = thought_signature
-                    content_blocks.append(tool_call)
 
         usage = self._extract_usage(response.usage_metadata, start_datetime)
 
