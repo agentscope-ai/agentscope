@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The edit tool in agentscope."""
-
 import difflib
 import fnmatch
 from typing import Any, List
@@ -302,8 +301,8 @@ Usage:
 
         content = None
         if _agent_state is not None:
-            # Use the backend's own mtime so cache validity matches the
-            # filesystem Read used (host mtime cannot stat workspace paths).
+            # Take the mtime from the backend that reads the file, so the
+            # cache also works for sandbox-only paths.
             mtime = await self._backend.stat_mtime(file_path)
             cache = await _agent_state.tool_context.get_cache(
                 file_path,

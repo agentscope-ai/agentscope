@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Backend-aware read cache tests for Read/Write/Edit tools.
-
-Reproduces #2084: when a file lives only inside a workspace sandbox (e.g.
-``DockerWorkspace``), the host filesystem cannot stat the path. Before the
-fix, ``ToolContext.cache_file``/``get_cache`` used
-``aiofiles.os.path.getmtime`` on the host, which raised for sandbox-only
-paths and silently skipped
-caching, so a successful ``Read`` was never recorded and the following
-``Edit``/``Write`` failed with "you must first read the file".
-"""
-
+"""Read cache tests for files that only exist inside a workspace backend."""
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -21,13 +11,12 @@ from agentscope.tool._builtin._backend import BackendBase, ExecResult
 class _MemoryBackend(BackendBase):
     """A backend whose paths do NOT exist on the host filesystem.
 
-    Mirrors a sandbox backend (DockerWorkspace/E2B): files live only in
-    the backend's in-memory store, so ``aiofiles.os.path.getmtime`` on the
-    host raises. ``stat_mtime`` is the backend-aware source of truth.
+    Mirrors a sandbox backend such as ``DockerWorkspace``: files live only
+    in the backend, so the host cannot stat them.
     """
 
     def __init__(self) -> None:
-        """Store file contents keyed by absolute path."""
+        """Initialize the in-memory file store."""
         self._files: dict[str, bytes] = {}
         self._mtimes: dict[str, float] = {}
 
@@ -38,7 +27,7 @@ class _MemoryBackend(BackendBase):
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Pretend any command succeeds (e.g. ``mkdir -p`` for parents)."""
+        """Pretend any command succeeds, e.g. ``mkdir -p`` for parents."""
         return ExecResult(exit_code=0, stdout=b"", stderr=b"")
 
     async def read_file(self, path: str) -> bytes:
@@ -48,7 +37,7 @@ class _MemoryBackend(BackendBase):
     async def write_file(self, path: str, data: bytes) -> None:
         """Store ``data`` under ``path`` and bump its mtime."""
         self._files[path] = data
-        self._mtimes[path] = (self._mtimes.get(path, 0.0) or 0.0) + 1.0
+        self._mtimes[path] = self._mtimes.get(path, 1000.0) + 0.001
 
     async def stat_mtime(self, path: str) -> float | None:
         """Return the backend's own mtime, or None if unknown."""
@@ -81,75 +70,79 @@ class BackendAwareCacheTest(IsolatedAsyncioTestCase):
         self.write_tool = Write(backend=self.backend)
         self.edit_tool = Edit(backend=self.backend)
         self.state = AgentState()
-        # A path that does NOT exist on the host filesystem, only in the
-        # backend (mirrors a DockerWorkspace path like /workspace/test.txt).
-        self.sandbox_path = "/workspace/test.txt"
-        await self.backend.write_file(
-            self.sandbox_path,
-            b"alpha\n",
+        # A path that exists only in the backend, mirroring a
+        # DockerWorkspace path like /workspace/test.txt.
+        self.path = "/workspace/test.txt"
+        await self.backend.write_file(self.path, b"alpha\n")
+
+    async def test_read_caches_backend_only_path(self) -> None:
+        """Read must cache a path the host filesystem cannot stat."""
+        await self.read_tool(file_path=self.path, _agent_state=self.state)
+
+        self.assertListEqual(
+            [
+                entry.model_dump()
+                for entry in self.state.tool_context.read_file_cache
+            ],
+            [
+                {
+                    "lines": ["alpha\n"],
+                    "updated_at": 1000.001,
+                    "bytes": 6 / 1024,
+                    "file_path": "/workspace/test.txt",
+                },
+            ],
         )
 
-    async def test_host_cannot_stat_sandbox_path(self) -> None:
-        """Sanity: the host filesystem knows nothing about this path."""
-        self.assertFalse(os.path.exists(self.sandbox_path))
-
-    async def test_read_populates_cache_for_sandbox_path(self) -> None:
-        """Read must cache a file the host cannot stat (#2084)."""
-        chunk = await self.read_tool(
-            file_path=self.sandbox_path,
-            _agent_state=self.state,
-        )
-        self.assertEqual(chunk.state.value, "running")
-        self.assertEqual(len(self.state.tool_context.read_file_cache), 1)
-        self.assertEqual(
-            self.state.tool_context.read_file_cache[0].file_path,
-            self.sandbox_path,
-        )
-
-    async def test_edit_after_read_succeeds_for_sandbox_path(self) -> None:
-        """The Read->Edit loop from #2084 must complete without retry."""
-        await self.read_tool(
-            file_path=self.sandbox_path,
-            _agent_state=self.state,
-        )
+    async def test_edit_after_read(self) -> None:
+        """Read then Edit must succeed instead of looping, see #2084."""
+        await self.read_tool(file_path=self.path, _agent_state=self.state)
         chunk = await self.edit_tool(
-            file_path=self.sandbox_path,
+            file_path=self.path,
             old_string="alpha",
             new_string="beta",
             _agent_state=self.state,
         )
-        self.assertEqual(chunk.state.value, "running")
-        self.assertEqual(
-            await self.backend.read_file(self.sandbox_path),
-            b"beta\n",
-        )
 
-    async def test_write_after_read_succeeds_for_sandbox_path(self) -> None:
-        """Write to a read sandbox file must not demand a host-side read."""
-        await self.read_tool(
-            file_path=self.sandbox_path,
-            _agent_state=self.state,
-        )
+        self.assertEqual(chunk.state, "running")
+        self.assertEqual(await self.backend.read_file(self.path), b"beta\n")
+
+    async def test_write_after_read(self) -> None:
+        """Read then Write must not demand a host-side read."""
+        await self.read_tool(file_path=self.path, _agent_state=self.state)
         chunk = await self.write_tool(
-            file_path=self.sandbox_path,
+            file_path=self.path,
             content="gamma\n",
             _agent_state=self.state,
         )
-        self.assertEqual(chunk.state.value, "running")
-        self.assertEqual(
-            await self.backend.read_file(self.sandbox_path),
-            b"gamma\n",
-        )
 
-    async def test_edit_without_read_still_fails_for_sandbox_path(
-        self,
-    ) -> None:
-        """The 'must read first' guard still fires when nothing is cached."""
+        self.assertEqual(chunk.state, "running")
+        self.assertEqual(await self.backend.read_file(self.path), b"gamma\n")
+
+    async def test_edit_without_read(self) -> None:
+        """The "must read first" guard still fires with nothing cached."""
         chunk = await self.edit_tool(
-            file_path=self.sandbox_path,
+            file_path=self.path,
             old_string="alpha",
             new_string="beta",
             _agent_state=self.state,
         )
-        self.assertEqual(chunk.state.value, "error")
+
+        self.assertEqual(chunk.state, "error")
         self.assertIn("must first read", chunk.content[0].text)
+
+    async def test_edit_after_backend_side_change(self) -> None:
+        """A change made inside the backend must invalidate the cache."""
+        await self.read_tool(file_path=self.path, _agent_state=self.state)
+        await self.backend.write_file(self.path, b"changed\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.path,
+            old_string="alpha",
+            new_string="beta",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("must first read", chunk.content[0].text)
+        self.assertListEqual(self.state.tool_context.read_file_cache, [])

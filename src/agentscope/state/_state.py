@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -55,14 +54,9 @@ class ToolContext(BaseModel):
             file_path (`str`):
                 The absolute path of the file.
             mtime (`float | None`, optional):
-                The file's modification time according to the same
-                filesystem the Read/Edit tool used (e.g. a workspace
-                backend's ``stat_mtime``). When provided, it is trusted
-                over the host filesystem so caches for files that only
-                exist inside a sandbox stay valid. When ``None``, the
-                host filesystem mtime is read as a fallback. A ``None``
-                value (backend could not stat the file) skips the
-                staleness check and the cached entry is returned as-is.
+                The file's modification time, obtained from the same
+                filesystem that read the file, e.g. a workspace backend.
+                Falls back to the host filesystem when not provided.
 
         Returns:
             `ReadCacheEntry | None`:
@@ -72,15 +66,23 @@ class ToolContext(BaseModel):
         # Find the cache entry
         for entry in self.read_file_cache:
             if entry.file_path == file_path:
-                # A None mtime means the backend could not stat the file;
-                # keep the cached entry without a staleness check so that
-                # Read followed by Edit still works for such paths.
-                if mtime is not None and mtime != entry.updated_at:
-                    # Cache is outdated, remove it
-                    self.read_file_cache.remove(entry)
+                if mtime is None:
+                    try:
+                        mtime = await aiofiles.os.path.getmtime(file_path)
+                    except Exception:
+                        mtime = None
+
+                # Concurrent calls may have reordered or dropped the entry
+                # while awaiting, so locate it again by the object itself.
+                if entry not in self.read_file_cache:
                     return None
 
-                self.read_file_cache.pop(idx)
+                self.read_file_cache.remove(entry)
+                if mtime != entry.updated_at:
+                    # Cache is outdated, or the file no longer exists
+                    return None
+
+                # Move the entry to the most recent position
                 self.read_file_cache.append(entry)
                 return entry
         return None
@@ -99,13 +101,9 @@ class ToolContext(BaseModel):
             lines (`list[str]`):
                 The lines of the file content.
             mtime (`float | None`, optional):
-                The file's modification time from the same filesystem
-                the Read/Edit tool used (e.g. a workspace backend's
-                ``stat_mtime``). When ``None``, the host filesystem mtime
-                is read as a fallback; if that also fails caching is
-                skipped. Passing the backend mtime is what allows files
-                that live only inside a sandbox (e.g. ``DockerWorkspace``)
-                to be cached at all.
+                The file's modification time, obtained from the same
+                filesystem that read the file, e.g. a workspace backend.
+                Falls back to the host filesystem when not provided.
         """
         if mtime is None:
             try:

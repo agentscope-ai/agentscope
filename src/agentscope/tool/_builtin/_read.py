@@ -500,10 +500,8 @@ Usage:
             # Read file content via backend
             lines = None
             if _agent_state is not None:
-                # Use the backend's own mtime so the cache stays valid for
-                # files that only exist inside a workspace sandbox (e.g.
-                # DockerWorkspace), where the host filesystem cannot stat
-                # the path. Falls back to None if the backend cannot stat.
+                # Take the mtime from the backend that reads the file, so
+                # the cache also works for sandbox-only paths.
                 mtime = await self._backend.stat_mtime(file_path)
                 cache = await _agent_state.tool_context.get_cache(
                     file_path,
