@@ -454,7 +454,8 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         )
 
     async def test_fan_out_errors_do_not_trigger_injection(self) -> None:
-        """Multiple failing calls within one iteration are not retries."""
+        """Failing calls with different arguments are not retries, even when
+        they repeat across iterations."""
         self.agent.state.cur_iter = 1
         self._add_injection("2026-07-01T12:00:00")
 
@@ -462,6 +463,20 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             self._add_tool_batch(
                 ("read", '{"path": "a.py"}', ToolResultState.ERROR),
                 ("read", '{"path": "b.py"}', ToolResultState.ERROR),
+            )
+
+        self.assertEqual([], await self._run_injection())
+
+    async def test_interleaved_results_break_the_streak(self) -> None:
+        """The streak is counted over the trailing tool results, so another
+        tool succeeding in between breaks it."""
+        self.agent.state.cur_iter = 1
+        self._add_injection("2026-07-01T12:00:00")
+
+        for _ in range(3):
+            self._add_tool_batch(
+                ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+                ("TaskUpdate", "{}", ToolResultState.SUCCESS),
             )
 
         self.assertEqual([], await self._run_injection())
