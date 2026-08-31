@@ -302,6 +302,11 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
             "ls\r\nrm -rf /tmp/pwn",
             "ls &\nrm -rf /tmp/pwn",
             "cat file.txt\nchmod 777 /etc/passwd",
+            # Statements that are not plain commands, e.g. poisoning the
+            # PATH that the following read-only command resolves through
+            "ls\nexport PATH=/tmp/evil\nls",
+            "ls\nPATH=/tmp/evil\nls",
+            "ls\nunset PATH",
         ]
         for cmd in test_cases:
             with self.subTest(cmd=cmd):
