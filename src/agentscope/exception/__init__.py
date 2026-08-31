@@ -5,6 +5,7 @@ from ._base import (
     AgentOrientedException,
     DeveloperOrientedException,
 )
+from ._model import StructuredOutputError
 from ._tool import (
     ToolInterruptedError,
     ToolNotFoundError,
@@ -15,6 +16,7 @@ from ._tool import (
 __all__ = [
     "AgentOrientedException",
     "DeveloperOrientedException",
+    "StructuredOutputError",
     "ToolInterruptedError",
     "ToolNotFoundError",
     "ToolJSONDecodeError",

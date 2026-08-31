@@ -253,6 +253,21 @@ class S3BlobStore(BlobStoreBase):
             # no special handling needed for the "already gone" case.
             await s3.delete_object(Bucket=self._bucket, Key=key)
 
+    async def size(self, uri: str) -> int | None:
+        """Return the object's ``ContentLength``, or ``None`` if gone.
+
+        One ``HEAD`` — the same call :meth:`exists` makes, so a caller
+        that needs both can ask for the size and treat a number as
+        proof of existence.
+        """
+        key = self._key_from_uri(uri, self._bucket)
+        async with self._client() as s3:
+            try:
+                head = await s3.head_object(Bucket=self._bucket, Key=key)
+            except Exception:  # noqa: BLE001 — see ``exists``
+                return None
+        return head.get("ContentLength")
+
     async def exists(self, uri: str) -> bool:
         """Return whether the object at ``uri`` is present."""
         key = self._key_from_uri(uri, self._bucket)

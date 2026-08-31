@@ -45,7 +45,11 @@ def _extract_table_rows(table: Any) -> list[list[str]]:
         cells: list[str] = []
         for cell in row.cells:
             text = cell.text.strip()
-            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            text = (
+                text.replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .replace("\v", "\n")
+            )
             cells.append(text)
         rows.append(cells)
     return rows
@@ -133,9 +137,10 @@ class PPTParser(ParserBase):
             table_format (`Literal["markdown", "json"]`, defaults to
                 ``"markdown"``):
                 How to render tables.  ``"markdown"`` uses pipe-table
-                syntax; ``"json"`` emits a JSON array prefixed with a
-                ``<system-info>`` marker — choose JSON when cells
-                contain newlines that would corrupt Markdown layout.
+                syntax, escaping pipes and rendering cell line breaks
+                as ``<br>``; ``"json"`` emits a JSON array prefixed with
+                a ``<system-info>`` marker and preserves extracted cell
+                strings without Markdown rendering.
             slide_prefix (`str | None`, defaults to
                 ``"<slide index={index}>"``):
                 Prepended to the first text section of each slide.

@@ -381,7 +381,7 @@ class XAIChatModel(ChatModelBase):
             u = last_response.usage
             trailing.usage = ChatUsage(
                 input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                output_tokens=u.completion_tokens + u.reasoning_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,
@@ -433,7 +433,7 @@ class XAIChatModel(ChatModelBase):
             u = response.usage
             usage = ChatUsage(
                 input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                output_tokens=u.completion_tokens + u.reasoning_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,

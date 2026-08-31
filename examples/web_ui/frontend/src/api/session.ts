@@ -16,13 +16,54 @@ export interface MessagesResponse {
 	has_more: boolean;
 }
 
+/**
+ * Sessions this tab created and has not opened yet.
+ *
+ * A session created here cannot have any history, so asking the server
+ * for it is a guaranteed-empty round trip — and one that paints a
+ * loading state over a conversation the user is about to start.
+ *
+ * Entries are consumed on first read: once the session has been opened,
+ * anything written to it afterwards (a scheduled run, a team member)
+ * must be fetched normally.
+ */
+const freshlyCreated = new Set<string>();
+
+/**
+ * Whether `sessionId` was created by this tab and not yet opened.
+ * Consumes the flag, so a second call for the same id returns false.
+ *
+ * @param sessionId - The session about to be opened.
+ * @returns True when its history can safely be assumed empty.
+ */
+export function takeFreshlyCreated(sessionId: string): boolean {
+	return freshlyCreated.delete(sessionId);
+}
+
 export const sessionApi = {
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
 
-	create: (body: CreateSessionRequest) => client.post<CreateSessionResponse>('/sessions/', body),
+	create: async (body: CreateSessionRequest) => {
+		const res = await client.post<CreateSessionResponse>('/sessions/', body);
+		freshlyCreated.add(res.session_id);
+		return res;
+	},
 
-	update: (sessionId: string, agentId: string, body: UpdateSessionRequest) =>
-		client.patch<SessionRecord>(`/sessions/${sessionId}`, body, { agent_id: agentId }),
+	/**
+	 * Update a session's configuration.
+	 *
+	 * Returns 409 while a chat run holds the session — the agent
+	 * snapshots its configuration at run start, so the change could not
+	 * apply to the reply in flight. Pass `silent` for automatic writes
+	 * the user did not initiate, where a toast would be noise.
+	 */
+	update: (
+		sessionId: string,
+		agentId: string,
+		body: UpdateSessionRequest,
+		options?: { silent?: boolean },
+	) =>
+		client.patch<SessionRecord>(`/sessions/${sessionId}`, body, { agent_id: agentId }, options),
 
 	delete: (sessionId: string, agentId: string) =>
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),

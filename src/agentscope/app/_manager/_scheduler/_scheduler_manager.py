@@ -10,9 +10,11 @@ from ....permission import PermissionContext
 from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
+from ...._utils._common import _generate_id
 from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
-from ...message_bus import MessageBus, MessageBusKeys
-from ..._bus_ops import enqueue_run_trigger
+from ...message_bus import MessageBus
+from ...workspace_manager import WorkspaceManagerBase
+from ..._bus_ops import deliver_to_inbox
 from ...storage import (
     StorageBase,
     ScheduleRecord,
@@ -39,6 +41,7 @@ class SchedulerManager:
         self,
         storage: StorageBase,
         message_bus: MessageBus,
+        workspace_manager: WorkspaceManagerBase,
     ) -> None:
         """Initialize the scheduler manager.
 
@@ -50,11 +53,15 @@ class SchedulerManager:
                 The application message bus. Each scheduled fire pushes
                 a :class:`HintBlock` to the target session's inbox and
                 enqueues a wakeup via this bus.
+            workspace_manager (`WorkspaceManagerBase`):
+                Binds a workspace to the sessions this manager creates,
+                under the application's isolation policy.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         self._storage = storage
         self._message_bus = message_bus
+        self._workspace_manager = workspace_manager
         self._scheduler = AsyncIOScheduler()
 
     # ------------------------------------------------------------------
@@ -121,6 +128,7 @@ class SchedulerManager:
         # re-look these up on every fire.
         storage = self._storage
         message_bus = self._message_bus
+        workspace_manager = self._workspace_manager
 
         async def _trigger() -> None:
             logger.info(
@@ -164,7 +172,13 @@ class SchedulerManager:
                             mode=record.data.permission_mode,
                         )
                         session_config = SessionConfig(
-                            workspace_id="",
+                            workspace_id=(
+                                await workspace_manager.assign_workspace_id(
+                                    user_id=record.user_id,
+                                    agent_id=record.agent_id,
+                                    session_id=stateful_session_id,
+                                )
+                            ),
                             chat_model_config=record.data.chat_model_config,
                         )
                         session = await storage.upsert_session(
@@ -199,7 +213,13 @@ class SchedulerManager:
                         user_id=record.user_id,
                         agent_id=record.agent_id,
                         config=SessionConfig(
-                            workspace_id="",
+                            workspace_id=(
+                                await workspace_manager.assign_workspace_id(
+                                    user_id=record.user_id,
+                                    agent_id=record.agent_id,
+                                    session_id=_generate_id(),
+                                )
+                            ),
                             chat_model_config=record.data.chat_model_config,
                         ),
                         state=state,
@@ -233,15 +253,12 @@ class SchedulerManager:
                         ensure_ascii=False,
                     ),
                 )
-                await message_bus.queue_push(
-                    MessageBusKeys.inbox(session.id),
-                    hint.model_dump(mode="json"),
-                )
-                await enqueue_run_trigger(
+                await deliver_to_inbox(
                     message_bus,
                     user_id=record.user_id,
                     session_id=session.id,
                     agent_id=record.agent_id,
+                    payload=hint.model_dump(mode="json"),
                 )
 
                 logger.info(

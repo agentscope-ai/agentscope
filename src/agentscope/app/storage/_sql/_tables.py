@@ -34,12 +34,17 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import DATETIME as _MySQLDateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 # Every id column is sized uniformly
 _ID_LEN = 255
+
+# User-chosen names. Bounded because MySQL cannot index a TEXT column.
+_NAME_LEN = 255
 
 
 class _Base(DeclarativeBase):
@@ -284,6 +289,99 @@ class KnowledgeDocumentRow(_JsonRecordMixin):
         "status",
         "lease_expires_at",
     )
+
+
+class MCPRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.MCPRecord`.
+
+    ``name`` is unique per user because the workspace relation joins on
+    it — two records sharing one would make that join ambiguous.
+    """
+
+    __tablename__ = "mcps"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(_NAME_LEN), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_mcps_user_name"),
+    )
+
+    _indexed_fields = ("user_id", "name")
+
+
+class SkillRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.SkillRecord`.
+
+    Same ``(user_id, name)`` uniqueness as :class:`MCPRow`.
+    """
+
+    __tablename__ = "skills"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(_NAME_LEN), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_skills_user_name"),
+    )
+
+    _indexed_fields = ("user_id", "name")
+
+
+class ChannelRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.ChannelRecord`.
+
+    ``platform_bot_id`` is globally unique — no two channels may drive
+    the same platform bot — but it is deliberately NOT a record field
+    (it is extracted from ``credentials`` on write and passed alongside
+    the record), so it is not listed in ``_indexed_fields``; the write
+    path sets this column explicitly.
+
+    ``updated_at`` is this record's configuration version: the client
+    cache and the lifecycle dispatcher both compare it for equality to
+    decide whether a running instance still matches its record. MySQL's
+    ``DATETIME`` keeps whole seconds unless a precision is asked for, so
+    two edits within one second would persist the same version and the
+    second one would never be picked up. Both timestamps therefore
+    override the mixin's to carry microseconds.
+    """
+
+    __tablename__ = "channels"
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime().with_variant(_MySQLDateTime(fsp=6), "mysql", "mariadb"),
+        index=True,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime().with_variant(_MySQLDateTime(fsp=6), "mysql", "mariadb"),
+        index=True,
+        nullable=False,
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    platform_bot_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("platform_bot_id", name="uq_channels_bot"),
+    )
+
+    _indexed_fields = ("user_id",)
 
 
 class MessageRow(_Base):

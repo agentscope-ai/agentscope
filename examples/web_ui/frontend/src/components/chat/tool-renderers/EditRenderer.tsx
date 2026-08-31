@@ -48,7 +48,7 @@ export const EditRenderer: ToolRenderer = {
 	getDisplayName: (call) => call.name,
 
 	renderConfirmBody: (call) => (
-		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
+		<div className="w-full max-w-full overflow-hidden break-words">
 			<div className="text-secondary-foreground">{tryGetFilePath(call.input)}</div>
 		</div>
 	),

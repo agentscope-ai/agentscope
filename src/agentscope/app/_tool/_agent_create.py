@@ -10,10 +10,9 @@ from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
-from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox
 from ..storage import AgentData, AgentRecord, SessionConfig, TeamMember
-from ..storage._utils import _ensure_team_members
+from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
 from ...state import AgentState
@@ -185,12 +184,10 @@ overall communication topology unnecessarily complex.
         agent_id: str,
         sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     ) -> None:
-        """Bind request-scoped identifiers plus sub-agent templates.
+        """Bind the base dependencies plus the sub-agent templates.
 
-        Extends :meth:`_TeamToolBase.__init__` with the optional
-        template registry. The built-in ``"default"`` template is
-        always injected; extra templates unlock a ``subagent_type``
-        enum in the tool's input schema.
+        The built-in ``"default"`` template is always injected; extra
+        templates unlock a ``subagent_type`` enum in the input schema.
 
         Args:
             storage (`StorageBase`):
@@ -198,8 +195,8 @@ overall communication topology unnecessarily complex.
             message_bus (`MessageBus`):
                 Application message bus.
             workspace_manager (`WorkspaceManagerBase`):
-                Workspace manager (forwarded to base for uniform
-                team-tool wiring; currently unused here).
+                Forwarded to the base for uniform team-tool wiring;
+                unused here — a worker inherits the leader's workspace.
             user_id (`str`):
                 The owner user id.
             session_id (`str`):
@@ -292,52 +289,7 @@ optional):
                 error chunk on failure.
         """
         try:
-            session = await self._storage.get_session(
-                self._user_id,
-                self._agent_id,
-                self._session_id,
-            )
-            if session is None or session.team_id is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "AgentCreate: this session is not in "
-                                "any team — call TeamCreate first."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
-                )
-            team = await self._storage.get_team(
-                self._user_id,
-                session.team_id,
-            )
-            if team is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "AgentCreate: team "
-                                f"{session.team_id} no longer exists."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
-                )
-            if team.session_id != self._session_id:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "AgentCreate: only the team leader "
-                                "can add members; this session is a "
-                                "worker."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
-                )
+            team = await self._require_leader_team("add members")
 
             # Look up leader session for chat-model inheritance + name.
             leader_session = await self._storage.get_session(
@@ -399,13 +351,15 @@ optional):
                     state=ToolResultState.ERROR,
                 )
 
-            leader_agent_record = await self._storage.get_agent(
+            leader = await _resolve_team_leader(
+                self._storage,
                 self._user_id,
-                leader_session.agent_id,
+                team,
             )
-            existing_names: set[str] = set()
-            if leader_agent_record is not None:
-                existing_names.add(leader_agent_record.data.name)
+            # Fall back to the id so a missing leader agent record does
+            # not block member creation.
+            leader_name = leader.name if leader else leader_session.agent_id
+            existing_names: set[str] = {leader_name}
             members = await _ensure_team_members(
                 self._storage,
                 self._user_id,
@@ -433,14 +387,6 @@ optional):
                     ],
                     state=ToolResultState.ERROR,
                 )
-
-            # Resolve leader name early — needed both for the system
-            # prompt template and for the initial team-message hint.
-            leader_name = (
-                leader_agent_record.data.name
-                if leader_agent_record is not None
-                else leader_session.agent_id
-            )
 
             # 1. Build worker AgentRecord (source="team" so it's hidden
             #    from the global agent list).
@@ -546,15 +492,12 @@ optional):
                     ensure_ascii=False,
                 ),
             )
-            await self._message_bus.queue_push(
-                MessageBusKeys.inbox(worker_session.id),
-                hint.model_dump(mode="json"),
-            )
-            await enqueue_run_trigger(
+            await deliver_to_inbox(
                 self._message_bus,
                 user_id=self._user_id,
                 session_id=worker_session.id,
                 agent_id=worker_agent.id,
+                payload=hint.model_dump(mode="json"),
             )
 
             return ToolChunk(

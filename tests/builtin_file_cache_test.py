@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """File cache test case for Read/Write/Edit tools."""
+import asyncio
 import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
-from agentscope.state import AgentState
+from agentscope.state import AgentState, ToolContext
+from agentscope.state._state import ReadCacheEntry
 from agentscope.tool import Read, Write, Edit
 
 
@@ -244,6 +247,116 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         self.assertIn(files[1], cached_paths)
         self.assertIn(files[2], cached_paths)
         self.assertIn(files[3], cached_paths)
+
+    async def test_cache_hit_refreshes_lru_recency(self) -> None:
+        """Test cache hits keep recently used files from being evicted."""
+        self.state.tool_context.max_cache_files = 3
+
+        files = []
+        for i in range(4):
+            file_path = os.path.join(self.temp_dir, f"file{i}.txt")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"Content {i}\n")
+            files.append(file_path)
+
+        for file_path in files[:3]:
+            await self.read_tool(
+                file_path=file_path,
+                _agent_state=self.state,
+            )
+
+        cache = await self.state.tool_context.get_cache(files[0])
+        self.assertIsNotNone(cache)
+
+        await self.read_tool(
+            file_path=files[3],
+            _agent_state=self.state,
+        )
+
+        cached_paths = [
+            entry.file_path
+            for entry in self.state.tool_context.read_file_cache
+        ]
+
+        self.assertIn(files[0], cached_paths)
+        self.assertNotIn(files[1], cached_paths)
+        self.assertIn(files[2], cached_paths)
+        self.assertIn(files[3], cached_paths)
+
+    async def test_concurrent_cache_hits_preserve_lru_entries(self) -> None:
+        """Concurrent hits must not duplicate or evict cache entries."""
+        context = ToolContext(
+            read_file_cache=[
+                {
+                    "lines": ["a"],
+                    "updated_at": 1.0,
+                    "bytes": 1.0,
+                    "file_path": "a",
+                },
+                {
+                    "lines": ["b"],
+                    "updated_at": 1.0,
+                    "bytes": 1.0,
+                    "file_path": "b",
+                },
+            ],
+        )
+        both_started = asyncio.Event()
+        calls = 0
+
+        async def synchronized_getmtime(_: str) -> float:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                both_started.set()
+            await both_started.wait()
+            return 1.0
+
+        with patch(
+            "agentscope.state._state.aiofiles.os.path.getmtime",
+            side_effect=synchronized_getmtime,
+        ):
+            results = list(
+                await asyncio.gather(
+                    context.get_cache("a"),
+                    context.get_cache("a"),
+                ),
+            )
+
+        self.assertListEqual(
+            results,
+            [
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
+        )
+        self.assertListEqual(
+            context.read_file_cache,
+            [
+                ReadCacheEntry(
+                    lines=["b"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="b",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
+        )
 
     async def test_cache_without_state(self) -> None:
         """Test tools work without state (fallback mode)."""

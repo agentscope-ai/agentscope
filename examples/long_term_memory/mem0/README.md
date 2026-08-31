@@ -20,7 +20,7 @@ the alternative shown inline (look for the
 
 ```bash
 # mem0 is an optional AgentScope dependency — pull it via the extra:
-pip install "agentscope[mem0]"      # resolves to mem0ai>=2.0.0,<3.0.0
+pip install "agentscope[memory-mem0]"      # resolves to mem0ai>=2.0.0,<3.0.0
 # (equivalent to `pip install agentscope mem0ai>=2.0.0,<3.0.0`)
 
 export DASHSCOPE_API_KEY=sk-...     # OSS path
@@ -305,7 +305,7 @@ yourself and pass `Mem0Middleware` into its `middlewares=[...]`. For
 production deployments via `agentscope.app` (the FastAPI service
 layer), the `user_id` already flows through the framework from the
 `X-User-ID` HTTP header. Hook in through the
-[`extra_agent_middlewares`](../../../../src/agentscope/app/_types.py)
+[`extra_agent_middlewares`](../../../src/agentscope/app/_types.py)
 factory:
 
 ```python

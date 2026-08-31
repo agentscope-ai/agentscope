@@ -72,6 +72,21 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 		? `${knowledgeBase.embedding_model_config.model} · ${knowledgeBase.embedding_model_config.dimensions}d`
 		: '';
 
+	const chunkerLabel = (() => {
+		if (!knowledgeBase?.chunker_config) return null;
+		const cfg = knowledgeBase.chunker_config;
+		const typeLabel = t(`chunker-types.${cfg.type}.label`, { defaultValue: cfg.type });
+		const paramStr = Object.entries(cfg.parameters)
+			.map(([k, v]) => {
+				const paramLabel = t(`chunker-types.${cfg.type}.params.${k}.label`, {
+					defaultValue: k,
+				});
+				return `${paramLabel}=${v}`;
+			})
+			.join(', ');
+		return paramStr ? `${typeLabel} (${paramStr})` : typeLabel;
+	})();
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="!w-[500px] !max-w-[500px]">
@@ -113,6 +128,14 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 							{embeddingModelLabel}
 						</Badge>
 					</Field>
+					{chunkerLabel && (
+						<Field orientation="horizontal">
+							<FieldLabel>{t('dialog-knowledge-base-edit.chunker.label')}</FieldLabel>
+							<Badge variant="secondary" className="font-mono">
+								{chunkerLabel}
+							</Badge>
+						</Field>
+					)}
 					{errorKey && <p className="text-destructive text-sm">{t(errorKey)}</p>}
 				</FieldGroup>
 				<DialogFooter>
