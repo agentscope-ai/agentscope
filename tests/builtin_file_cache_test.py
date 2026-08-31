@@ -7,6 +7,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 from agentscope.state import AgentState, ToolContext
+from agentscope.state._state import ReadCacheEntry
 from agentscope.tool import Read, Write, Edit
 
 
@@ -315,18 +316,46 @@ class FileCacheTest(IsolatedAsyncioTestCase):
             "agentscope.state._state.aiofiles.os.path.getmtime",
             side_effect=synchronized_getmtime,
         ):
-            results = await asyncio.gather(
-                context.get_cache("a"),
-                context.get_cache("a"),
+            results = list(
+                await asyncio.gather(
+                    context.get_cache("a"),
+                    context.get_cache("a"),
+                ),
             )
 
-        self.assertEqual(
-            [entry.file_path for entry in results if entry],
-            ["a", "a"],
+        self.assertListEqual(
+            results,
+            [
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
         )
-        self.assertEqual(
-            [entry.file_path for entry in context.read_file_cache],
-            ["b", "a"],
+        self.assertListEqual(
+            context.read_file_cache,
+            [
+                ReadCacheEntry(
+                    lines=["b"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="b",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
         )
 
     async def test_cache_without_state(self) -> None:

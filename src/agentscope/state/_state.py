@@ -62,27 +62,19 @@ class ToolContext(BaseModel):
                 except Exception:
                     updated_at = None
 
-                current_idx = next(
-                    (
-                        idx
-                        for idx, cached_entry in enumerate(
-                            self.read_file_cache,
-                        )
-                        if cached_entry is entry
-                    ),
-                    None,
-                )
-                if current_idx is None:
+                # Concurrent calls may have reordered or dropped the entry
+                # while awaiting, so locate it again by the object itself.
+                if entry not in self.read_file_cache:
                     return None
 
-                if updated_at == entry.updated_at:
-                    self.read_file_cache.pop(current_idx)
-                    self.read_file_cache.append(entry)
-                    return entry
+                self.read_file_cache.remove(entry)
+                if updated_at != entry.updated_at:
+                    # Cache is outdated, or the file no longer exists
+                    return None
 
-                # Cache is outdated or the file no longer exists
-                self.read_file_cache.pop(current_idx)
-                return None
+                # Move the entry to the most recent position
+                self.read_file_cache.append(entry)
+                return entry
         return None
 
     async def cache_file(self, file_path: str, lines: list[str]) -> None:
