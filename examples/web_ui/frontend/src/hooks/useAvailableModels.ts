@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { credentialApi, modelApi } from '@/api';
-import type { CredentialRecord, ModelCard } from '@/api';
+import type { CredentialView, ModelCard } from '@/api';
 
 export interface CredentialWithModels {
-	credential: CredentialRecord;
+	credential: CredentialView;
 	models: ModelCard[];
 }
 

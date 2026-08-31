@@ -11,7 +11,6 @@ Key differences from OpenAI Chat formatter:
   - ThinkingBlock: only echoed when it has a "reasoning_item_id" attribute.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import (
     OpenAIResponseFormatter,
@@ -31,9 +30,6 @@ from agentscope.message import (
     ThinkingBlock,
     HintBlock,
 )
-
-
-_FIXED_ID = "TESTID1234567"
 
 
 class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
@@ -145,7 +141,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "output_text",
                         "text": "The capital of France is Paris.",
                     },
                 ],
@@ -163,7 +159,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "output_text",
                         "text": "The capital of Germany is Berlin.",
                     },
                 ],
@@ -179,7 +175,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "type": "function_call",
-                "id": "call_1",
                 "call_id": "call_1",
                 "name": "get_capital",
                 "arguments": '{"country": "Japan"}',
@@ -193,7 +188,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "output_text",
                         "text": "The capital of Japan is Tokyo.",
                     },
                 ],
@@ -223,7 +218,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             "role": "assistant",
             "content": [
                 {
-                    "type": "input_text",
+                    "type": "output_text",
                     "text": "The capital of Japan is Tokyo.",
                 },
             ],
@@ -231,7 +226,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
 
         self._gt_tool_call = {
             "type": "function_call",
-            "id": "call_1",
             "call_id": "call_1",
             "name": "get_capital",
             "arguments": '{"country": "Japan"}',
@@ -338,6 +332,42 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF becomes an ``input_file`` item."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Summarize this."},
+                        {
+                            "type": "input_file",
+                            "filename": "document.pdf",
+                            "file_data": "data:application/pdf;"
+                            "base64,JVBERi0xLjQgZmFrZQ==",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_dropped_without_reasoning_item_id(
         self,
     ) -> None:
@@ -358,7 +388,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "reply"},
+                        {"type": "output_text", "text": "reply"},
                     ],
                 },
             ],
@@ -393,105 +423,263 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "reply"},
+                        {"type": "output_text", "text": "reply"},
                     ],
                 },
             ],
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
-    async def test_chat_formatter_url_image_in_tool_result(
-        self,
-        _mock_uuid: object,
-    ) -> None:
-        """URL images in tool results are promoted to a follow-up user
-        message."""
+    async def test_chat_formatter_replays_raw_reasoning_item(self) -> None:
+        """A valid raw reasoning item is replayed without reconstruction."""
+        reasoning_item_raw = {
+            "type": "reasoning",
+            "id": "rs_encrypted",
+            "summary": [
+                {"type": "summary_text", "text": "summary"},
+            ],
+            "content": [
+                {"type": "reasoning_text", "text": "reasoning"},
+            ],
+            "encrypted_content": "encrypted_payload",
+            "status": "completed",
+        }
+        thinking = ThinkingBlock(
+            thinking="",
+            reasoning_item_id="rs_encrypted",
+            reasoning_item_raw=reasoning_item_raw,
+        )
         fmt = OpenAIResponseFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[thinking, TextBlock(text="reply")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [
+                reasoning_item_raw,
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "reply"},
+                    ],
+                },
+            ],
+        )
+        self.assertIsNot(res[0], reasoning_item_raw)
+        self.assertIsNot(res[0]["summary"], reasoning_item_raw["summary"])
+        self.assertIsNot(res[0]["content"], reasoning_item_raw["content"])
+
+    async def test_chat_formatter_invalid_raw_reasoning_uses_fallback(
+        self,
+    ) -> None:
+        """Malformed raw items cannot bypass the reconstructed fallback."""
+        fmt = OpenAIResponseFormatter()
+        invalid_raw_items = [
+            None,
+            [],
+            {
+                "type": "message",
+                "id": "rs_expected",
+            },
+            {
+                "type": "reasoning",
+                "id": "rs_other",
+                "summary": [],
+            },
+        ]
+
+        for reasoning_item_raw in invalid_raw_items:
+            with self.subTest(reasoning_item_raw=reasoning_item_raw):
+                thinking = ThinkingBlock(
+                    thinking="summary",
+                    reasoning_item_id="rs_expected",
+                    reasoning_item_raw=reasoning_item_raw,
+                )
+                res = await fmt.format(
+                    [AssistantMsg(name="assistant", content=[thinking])],
+                )
+                self.assertListEqual(
+                    res,
+                    [
+                        {
+                            "type": "reasoning",
+                            "id": "rs_expected",
+                            "summary": [
+                                {
+                                    "type": "summary_text",
+                                    "text": "summary",
+                                },
+                            ],
+                            "content": [],
+                        },
+                    ],
+                )
+
+    async def test_chat_formatter_empty_thinking_echoed_with_reasoning_item_id(
+        self,
+    ) -> None:
+        """Empty ThinkingBlock with reasoning_item_id is echoed first."""
+        fmt = OpenAIResponseFormatter()
+        thinking = ThinkingBlock(thinking="")
+        thinking.reasoning_item_id = "rs_empty"
         msgs = [
             AssistantMsg(
                 name="assistant",
-                content=[
-                    ToolCallBlock(
-                        id="call_img",
-                        name="get_map",
-                        input='{"city": "Tokyo"}',
-                    ),
-                    ToolResultBlock(
-                        id="call_img",
-                        name="get_map",
-                        output=[
-                            TextBlock(text="Here is the map."),
-                            DataBlock(
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
-                            ),
-                        ],
-                        state=ToolResultState.SUCCESS,
-                    ),
-                    TextBlock(text="Here is the map of Tokyo."),
-                ],
+                content=[TextBlock(text="reply"), thinking],
             ),
         ]
         res = await fmt.format(msgs)
-
-        expected_tool_content = (
-            "Here is the map.\n"
-            f"<system-reminder>A(n) image file is returned "
-            f"and will be presented to you with the identifier "
-            f"[{_FIXED_ID}].</system-reminder>"
-        )
         self.assertListEqual(
             [
                 {
-                    "type": "function_call",
-                    "id": "call_img",
-                    "call_id": "call_img",
-                    "name": "get_map",
-                    "arguments": '{"city": "Tokyo"}',
-                },
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_img",
-                    "output": expected_tool_content,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "<system-reminder>The multimodal data "
-                                "and their identifiers are listed as "
-                                "follows:"
-                            ),
-                        },
-                        {
-                            "type": "input_text",
-                            "text": f"- {_FIXED_ID} (image file): ",
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": self.image_url,
-                        },
-                        {
-                            "type": "input_text",
-                            "text": "</system-reminder>",
-                        },
-                    ],
+                    "type": "reasoning",
+                    "id": "rs_empty",
+                    "summary": [],
+                    "content": [],
                 },
                 {
                     "role": "assistant",
                     "content": [
-                        {
-                            "type": "input_text",
-                            "text": "Here is the map of Tokyo.",
-                        },
+                        {"type": "output_text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_reasoning_not_globally_sorted(
+        self,
+    ) -> None:
+        """Reasoning replay keeps existing tool/result boundaries."""
+        fmt = OpenAIResponseFormatter()
+        thinking_1 = ThinkingBlock(thinking="thinking_1")
+        thinking_1.reasoning_item_id = "rs_1"
+        thinking_2 = ThinkingBlock(thinking="thinking_2")
+        thinking_2.reasoning_item_id = "rs_2"
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    thinking_1,
+                    TextBlock(text="text_1"),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="func_1",
+                        input='{"arg": "value1"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="func_1",
+                        output=[TextBlock(text="result_1")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    thinking_2,
+                    TextBlock(text="text_2"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [
+                        {"type": "summary_text", "text": "thinking_1"},
+                    ],
+                    "content": [],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "text_1"},
+                    ],
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "func_1",
+                    "arguments": '{"arg": "value1"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "result_1",
+                },
+                {
+                    "type": "reasoning",
+                    "id": "rs_2",
+                    "summary": [
+                        {"type": "summary_text", "text": "thinking_2"},
+                    ],
+                    "content": [],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "text_2"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_reasoning_splits_text_segments(
+        self,
+    ) -> None:
+        """Non-empty reasoning starts a new assistant text segment."""
+        fmt = OpenAIResponseFormatter()
+        thinking_1 = ThinkingBlock(thinking="thinking_1")
+        thinking_1.reasoning_item_id = "rs_1"
+        thinking_2 = ThinkingBlock(thinking="thinking_2")
+        thinking_2.reasoning_item_id = "rs_2"
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    thinking_1,
+                    TextBlock(text="text_1"),
+                    thinking_2,
+                    TextBlock(text="text_2"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [
+                        {"type": "summary_text", "text": "thinking_1"},
+                    ],
+                    "content": [],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "text_1"},
+                    ],
+                },
+                {
+                    "type": "reasoning",
+                    "id": "rs_2",
+                    "summary": [
+                        {"type": "summary_text", "text": "thinking_2"},
+                    ],
+                    "content": [],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "text_2"},
                     ],
                 },
             ],
@@ -578,7 +766,15 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     ToolResultBlock(
                         id="call_1",
                         name="func_1",
-                        output=[TextBlock(text="result_1")],
+                        output=[
+                            TextBlock(text="result_1"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
                         state=ToolResultState.SUCCESS,
                     ),
                     ToolResultBlock(
@@ -622,19 +818,17 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "text_1"},
+                        {"type": "output_text", "text": "text_1"},
                     ],
                 },
                 {
                     "type": "function_call",
-                    "id": "call_1",
                     "call_id": "call_1",
                     "name": "func_1",
                     "arguments": '{"arg": "value1"}',
                 },
                 {
                     "type": "function_call",
-                    "id": "call_2",
                     "call_id": "call_2",
                     "name": "func_2",
                     "arguments": '{"arg": "value2"}',
@@ -642,7 +836,13 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": "result_1",
+                    "output": [
+                        {"type": "input_text", "text": "result_1"},
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_data_uri,
+                        },
+                    ],
                 },
                 {
                     "type": "function_call_output",
@@ -652,12 +852,11 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "text_2"},
+                        {"type": "output_text", "text": "text_2"},
                     ],
                 },
                 {
                     "type": "function_call",
-                    "id": "call_3",
                     "call_id": "call_3",
                     "name": "func_3",
                     "arguments": '{"arg": "value3"}',
@@ -669,7 +868,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 },
                 {
                     "type": "function_call",
-                    "id": "call_4",
                     "call_id": "call_4",
                     "name": "func_4",
                     "arguments": '{"arg": "value4"}',
@@ -682,7 +880,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "text_3"},
+                        {"type": "output_text", "text": "text_3"},
                     ],
                 },
             ],
@@ -709,7 +907,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "output_text",
                             "text": "Let me think about that.",
                         },
                     ],
@@ -727,7 +925,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "output_text",
                             "text": "Here is my answer.",
                         },
                     ],
@@ -773,6 +971,46 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                             "image_url": self.image_data_uri,
                         },
                     ],
+                },
+            ],
+            res,
+        )
+
+    async def test_tool_call_id_used_as_call_id(self) -> None:
+        """The formatter uses ToolCallBlock.id as function_call.call_id
+        and ToolResultBlock.id as function_call_output.call_id."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call-1",
+                        name="search",
+                        input='{"q": "test"}',
+                    ),
+                    ToolResultBlock(
+                        id="call-1",
+                        name="search",
+                        output=[TextBlock(text="result")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "search",
+                    "arguments": '{"q": "test"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "result",
                 },
             ],
             res,

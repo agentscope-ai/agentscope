@@ -139,13 +139,19 @@ Usage:
                 bypass_immune=True,
             )
 
-        # 2. Check ACCEPT_EDITS mode for files in working directories
-        if context.mode == PermissionMode.ACCEPT_EDITS:
+        # 2. Auto-allow edits within a working directory. This applies to
+        # ACCEPT_EDITS (interactive) and DONT_ASK (its unattended
+        # counterpart), which trusts in-working-directory edits without a
+        # prompt because no user is available to grant one.
+        if context.mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
             if self._path_in_allowed_working_path(file_path, context):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
                     message=f"Permission granted for writing {file_path} "
-                    f"(accept edits mode - in working directory)",
+                    f"(in working directory)",
                     decision_reason="File is in working directory and not "
                     "a dangerous path",
                 )
@@ -248,7 +254,13 @@ Usage:
             await self._backend.file_exists(file_path)
             and _agent_state is not None
         ):
-            cache = await _agent_state.tool_context.get_cache(file_path)
+            # Take the mtime from the backend that reads the file, so the
+            # cache also works for sandbox-only paths.
+            mtime = await self._backend.stat_mtime(file_path)
+            cache = await _agent_state.tool_context.get_cache(
+                file_path,
+                mtime=mtime,
+            )
             if cache is None:
                 return ToolChunk(
                     content=[

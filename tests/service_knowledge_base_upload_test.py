@@ -35,7 +35,9 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
 )
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
+    KnowledgeBaseData,
     KnowledgeBaseRecord,
     RedisStorage,
 )
@@ -104,6 +106,26 @@ class _FakeVectorStore(VectorStoreBase):
     ) -> list[DocumentSummary]:
         return []
 
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list:
+        del metadata_filter  # single-tenant fake — nothing to scope
+        matched = sorted(
+            (
+                record.chunk
+                for record in self._collections.get(collection, [])
+                if record.document_id == document_id
+            ),
+            key=lambda chunk: chunk.chunk_index,
+        )
+        return matched[offset : offset + limit]
+
 
 class _FakeKnowledge:
     """Minimal stand-in for :class:`KnowledgeBase` used by the worker.
@@ -169,6 +191,34 @@ class _FakeKnowledge:
         """
         await self._vector_store.delete(self._collection_name, document_id)
 
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list:
+        """Delegate chunk listing to the bound fake vector store.
+
+        Args:
+            document_id (`str`):
+                The document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+
+        Returns:
+            `list`:
+                The requested page of chunks.
+        """
+        return await self._vector_store.list_chunks(
+            self._collection_name,
+            document_id,
+            offset=offset,
+            limit=limit,
+        )
+
     async def search(self, queries: list, top_k: int = 5) -> list:
         """Return an empty result list — search is out of scope here.
 
@@ -205,17 +255,20 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         name: str,
         description: str,
         embedding_model_config: EmbeddingModelConfig,
+        chunker_config: ChunkerConfig | None = None,
     ) -> KnowledgeBaseRecord:
         record = KnowledgeBaseRecord(
             user_id=user_id,
-            name=name,
-            description=description,
-            embedding_model_config=embedding_model_config,
-            collection_name="",
+            data=KnowledgeBaseData(
+                name=name,
+                description=description,
+                embedding_model_config=embedding_model_config,
+                collection_name="",
+            ),
         )
-        record.collection_name = f"kb_{record.id}"
+        record.data.collection_name = f"kb_{record.id}"
         await self._vector_store.create_collection(
-            name=record.collection_name,
+            name=record.data.collection_name,
             dimensions=embedding_model_config.dimensions,
         )
         return await self._storage.upsert_knowledge_base(user_id, record)
@@ -231,7 +284,9 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         )
         if record is None:
             return False
-        await self._vector_store.delete_collection(record.collection_name)
+        await self._vector_store.delete_collection(
+            record.data.collection_name,
+        )
         return await self._storage.delete_knowledge_base(
             user_id,
             knowledge_base_id,
@@ -252,7 +307,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
             )
         return _FakeKnowledge(
             vector_store=self._vector_store,
-            collection_name=record.collection_name,
+            collection_name=record.data.collection_name,
         )
 
 
@@ -261,15 +316,15 @@ class _NoopWorkspaceManager(WorkspaceManagerBase):
     touches it, but ``create_app`` requires one to be wired in."""
 
     async def get_workspace(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-    async def create_workspace(self, *args: Any, **kwargs: Any) -> Any:
+        """Fake implementation."""
         raise NotImplementedError
 
     async def close(self, workspace_id: str) -> None:
+        """Fake implementation."""
         return None
 
     async def close_all(self) -> None:
+        """Fake implementation."""
         return None
 
 
@@ -335,19 +390,21 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
         # have to mock the manager's create flow over HTTP.
         kb_record = KnowledgeBaseRecord(
             user_id="user-1",
-            name="kb",
-            description="",
-            embedding_model_config=EmbeddingModelConfig(
-                type="openai_credential",
-                credential_id="cred-1",
-                model="text-embedding-3-small",
-                dimensions=1,
+            data=KnowledgeBaseData(
+                name="kb",
+                description="",
+                embedding_model_config=EmbeddingModelConfig(
+                    type="openai_credential",
+                    credential_id="cred-1",
+                    model="text-embedding-3-small",
+                    dimensions=1,
+                ),
+                collection_name="",
             ),
-            collection_name="",
         )
-        kb_record.collection_name = f"kb_{kb_record.id}"
+        kb_record.data.collection_name = f"kb_{kb_record.id}"
         await self._vector_store.create_collection(
-            kb_record.collection_name,
+            kb_record.data.collection_name,
             1,
         )
 

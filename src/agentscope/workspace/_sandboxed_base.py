@@ -1,81 +1,115 @@
 # -*- coding: utf-8 -*-
 """SandboxedWorkspaceBase — shared implementation for gateway-backed
-sandbox workspaces (Docker, E2B, and future K8s / Daytona etc.).
+sandbox workspaces (Docker, E2B, K8s, …).
 
-Extends :class:`WorkspaceBase` with a full template-method lifecycle
-around an in-sandbox MCP gateway. Concrete subclasses only need to
-provide:
+Extends :class:`WorkspaceBase` with a template-method lifecycle around
+an in-sandbox MCP gateway. Subclasses only need to provide:
 
-- :meth:`_provision_backend` — create / attach the sandbox and bind
-  ``self._backend`` (a :class:`BackendBase` implementation).
-- :meth:`_teardown_backend` — destroy / pause the sandbox and release
-  backend-specific resources.
-- five gateway-path class attributes (see below) pinned to whatever
-  paths the subclass's bootstrap places files at.
+- :meth:`_provision_backend` — attach/create the sandbox, bind
+  ``self._backend``.
+- :meth:`_teardown_backend` — destroy/pause the sandbox.
+- :meth:`_bootstrap_commands` — shell commands to install the gateway
+  venv on first use (Docker skips this — the image already has it).
+- gateway-path class attributes (see below).
 
-Every gateway concern — writing config, launching the process,
-polling ``/health``, dispatching :meth:`add_mcp` / :meth:`remove_mcp`
-through :class:`GatewayClient`, restoring / persisting the ``.mcp``
-file, wiping state on :meth:`reset` — lives here so it is written
-exactly once.
+Everything gateway-related — bootstrap, launch, health poll, MCP
+add/remove routing, ``.mcp`` persistence, reset — lives here.
 """
 
 import asyncio
-import json
 import shlex
-import uuid
+import time
 from abc import abstractmethod
-from typing import TYPE_CHECKING
 
 from .._logging import logger
 from ..mcp import MCPClient
 from ._base import WorkspaceBase
 from ._gateway_client import GatewayClient
-
-if TYPE_CHECKING:
-    from ._gateway_client import GatewayMCPClient
+from ._utils import (
+    DEFAULT_GATEWAY_LOG,
+    DEFAULT_GATEWAY_SCRIPT,
+    DEFAULT_GATEWAY_VENV,
+    DEFAULT_GLOB_HELPER_SCRIPT,
+    _read_gateway_script_bytes,
+    _read_glob_helper_bytes,
+)
 
 
 class SandboxedWorkspaceBase(WorkspaceBase):
     """Base class for workspaces backed by an in-sandbox MCP gateway.
 
-    Subclasses set the following class attributes (usually to module
-    constants defined by the backend's bootstrap):
+    Subclasses only need to set:
 
+    - :attr:`workdir` — agent-visible root inside the sandbox.
+    - :attr:`_gateway_home` — directory holding the venv, script, log.
     - :attr:`gateway_port` — TCP port the gateway listens on.
-    - :attr:`_gateway_home` — directory that holds gateway files.
-    - :attr:`_gateway_config` — path to ``gateway.config.json``.
-    - :attr:`_gateway_log` — path to the gateway log.
-    - :attr:`_gateway_script` — path to the gateway entry script.
-    - :attr:`_gateway_python` — path to the gateway venv's python.
+
+    Every other gateway path (venv, python, script, log, glob helper)
+    is derived from :attr:`_gateway_home` via
+    :meth:`BackendBase.join_path`.
     """
+
+    workdir: str
+    """Agent-visible root directory for workspace file operations."""
 
     gateway_port: int
     """TCP port the in-sandbox gateway listens on."""
 
     _gateway_home: str
-    """Sandbox-side directory holding the gateway config and log."""
-
-    _gateway_config: str
-    """Sandbox-side path of ``gateway.config.json``."""
-
-    _gateway_log: str
-    """Sandbox-side path of the gateway stdout/stderr log."""
-
-    _gateway_script: str
-    """Sandbox-side path of the gateway entry script."""
-
-    _gateway_python: str
-    """Sandbox-side path of the gateway venv python interpreter."""
+    """Sandbox-side directory holding the gateway venv, script, log."""
 
     _gateway: GatewayClient | None
     """Workspace-side gateway facade. ``None`` before init / after close."""
 
-    _gateway_clients: "dict[str, GatewayMCPClient]"
-    """Gateway-wrapped MCP handles keyed by ``MCPClient.name``."""
+    is_alive: bool
+    """Inherited lifecycle flag, repeated for file-scoped type checks."""
 
-    _gateway_token: str
-    """Bearer token minted per :meth:`initialize`; never persisted."""
+    _bootstrap_cmd_timeout: float = 1800.0
+    """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
+    bootstrap step. Subclasses lower this for lighter base images
+    (E2B uses 600 s; K8s inherits the wider default for apt-get).
+    """
+
+    @property
+    def _gateway_venv(self) -> str:
+        """Sandbox-side path of the gateway venv root."""
+        return self.get_backend().join_path(
+            self._gateway_home,
+            DEFAULT_GATEWAY_VENV,
+        )
+
+    @property
+    def _gateway_python(self) -> str:
+        """Sandbox-side path of the gateway venv python interpreter."""
+        return self.get_backend().join_path(
+            self._gateway_venv,
+            "bin",
+            "python",
+        )
+
+    @property
+    def _gateway_script(self) -> str:
+        """Sandbox-side path of the gateway entry script."""
+        return self.get_backend().join_path(
+            self._gateway_home,
+            DEFAULT_GATEWAY_SCRIPT,
+        )
+
+    @property
+    def _gateway_log(self) -> str:
+        """Sandbox-side path of the gateway stdout/stderr log."""
+        return self.get_backend().join_path(
+            self._gateway_home,
+            DEFAULT_GATEWAY_LOG,
+        )
+
+    @property
+    def _glob_helper_path(self) -> str:
+        """Standalone glob helper script used by the builtin Glob tool."""
+        return self.get_backend().join_path(
+            self._gateway_home,
+            DEFAULT_GLOB_HELPER_SCRIPT,
+        )
 
     def __init__(
         self,
@@ -83,6 +117,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        max_live_stateful_mcps: int | None = None,
     ) -> None:
         """Initialise sandbox-workspace state.
 
@@ -90,18 +125,21 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             workspace_id (`str | None`, optional):
                 Existing identifier; ``None`` mints a fresh UUID.
             default_mcps (`list[MCPClient] | None`, optional):
-                MCPs registered when no persisted ``.mcp`` exists.
+                MCPs seeded into every agent/session that has not
+                declared its own.
             skill_paths (`list[str] | None`, optional):
                 Local skill dirs seeded on first start.
+            max_live_stateful_mcps (`int | None`, optional):
+                Cap on concurrently live stateful MCP instances
+                across all agents and sessions.
         """
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
             skill_paths=skill_paths,
+            max_live_stateful_mcps=max_live_stateful_mcps,
         )
         self._gateway = None
-        self._gateway_clients = {}
-        self._gateway_token = ""
 
     # ── subclass hooks ────────────────────────────────────────────
 
@@ -109,21 +147,27 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     async def _provision_backend(self) -> None:
         """Provision the sandbox and bind ``self._backend``.
 
-        Called once per :meth:`initialize`. Implementations must
-        leave ``self._backend`` as a live :class:`BackendBase`
-        instance ready to accept ``exec_shell`` / ``write_file`` /
-        ``read_file`` calls. Any first-time bootstrap (installing the
-        gateway venv, uploading scripts) should happen here.
+        Called once per :meth:`initialize`. Must leave ``self._backend``
+        as a live :class:`BackendBase` ready for
+        ``exec_shell`` / ``write_file`` / ``read_file``.
         """
 
     @abstractmethod
     async def _teardown_backend(self) -> None:
-        """Destroy or pause the sandbox and release resources.
+        """Destroy or pause the sandbox.
 
-        Called once per :meth:`close`, *after* the gateway facade has
-        been closed. Implementations should be idempotent and swallow
-        exceptions so ``close`` never raises.
+        Called once per :meth:`close`, after the gateway facade has
+        been closed. Must be idempotent and swallow exceptions.
         """
+
+    def _bootstrap_commands(self) -> list[str]:
+        """Shell commands that provision the gateway venv on first use.
+
+        Runs only when :attr:`_gateway_script` is missing. Subclasses
+        whose image already ships the venv (e.g. Docker) leave this
+        empty; the base's fast-path skips the whole bootstrap block.
+        """
+        return []
 
     # ── lifecycle template methods ────────────────────────────────
 
@@ -132,47 +176,42 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Idempotent — a no-op when already alive.
         """
+        logger.info(
+            "Initialize workspace (id=%s) from %s ...",
+            self.workspace_id,
+            self.__class__.__name__,
+        )
+
         if self.is_alive:
             return
 
+        # Set up the backend connection
         await self._provision_backend()
         assert (
             self._backend is not None
         ), "_provision_backend must set self._backend before returning"
 
-        self._mcps = await self._restore_or_seed_mcps()
-        self._gateway_token = uuid.uuid4().hex
+        # Restore MCP declarations from .mcp
+        self._mcp_specs = await self._restore_mcp_specs()
 
-        # Kill any leftover gateway from a previous resume. Each init
-        # mints a fresh bearer token, so a stale gateway would accept
-        # old-token requests but reject new ones. Idempotent (``|| true``).
-        await self._backend.exec_shell(
-            ["sh", "-c", "pkill -f _mcp_gateway_app.py || true"],
-        )
+        # Set up the workspace layout
+        await self._ensure_workspace_layout()
 
-        await self._write_gateway_config()
-        await self._start_gateway_process()
+        # The gateway starts empty; each session registers its own
+        # MCPs on its first list_mcps.
+        await self._setup_mcp_gateway()
 
-        self._gateway = GatewayClient(
-            backend=self._backend,
-            gateway_port=self.gateway_port,
-            token=self._gateway_token,
-            timeout=30.0,
-        )
-        await self._wait_for_gateway()
-
-        # The gateway loaded the same set we just wrote — name-for-name.
-        self._gateway_clients = {
-            c.name: c for c in await self._gateway.list_mcps()
-        }
-
-        # ``_save_mcp_file`` is a persistence-gated no-op when the
-        # workspace is ephemeral; ``_seed_skills`` short-circuits when
-        # ``skills/`` already has entries.
-        await self._save_mcp_file()
-        await self._seed_skills()
+        # Set up the skills if not exists
+        await self._migrate_skill_layout()
+        await self._setup_skills()
 
         self.is_alive = True
+
+        logger.info(
+            "Finished initializing workspace (id=%s) from %s.",
+            self.workspace_id,
+            self.__class__.__name__,
+        )
 
     async def close(self) -> None:
         """Close the gateway facade, then tear down the sandbox.
@@ -186,7 +225,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             except Exception:
                 pass
             self._gateway = None
-        self._gateway_clients.clear()
+        # The gateway process dies with the sandbox, so the proxies
+        # need no individual close — just drop them.
+        self._mcp_instances.clear()
+        self._mcp_last_used.clear()
 
         try:
             await self._teardown_backend()
@@ -199,73 +241,145 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Deregisters every MCP from the gateway, clears local handles,
         and wipes ``.mcp``, ``skills/``, ``sessions/``, and ``data/``.
-        ``default_mcps`` / ``skill_paths`` are not re-seeded.
+        ``skill_paths`` are not re-seeded, but ``default_mcps`` are:
+        with ``.mcp`` gone, every agent/session is "never configured"
+        again and inherits the defaults on its next ``list_mcps``.
         """
         backend = self.get_backend()
         async with self._mcp_lock, self._skill_lock:
-            for gw_client in list(self._gateway_clients.values()):
-                try:
-                    await gw_client.close()
-                except Exception as e:
-                    logger.warning(
-                        "MCP %r close failed during reset: %s",
-                        gw_client.name,
-                        e,
-                    )
-            self._gateway_clients.clear()
-            self._mcps = []
+            await self._close_all_mcp_instances()
+            self._mcp_specs.clear()
+            self._equipped_partitions.clear()
 
             for path in (
                 self._sessions_dir,
                 self._data_dir,
                 self._skills_dir,
+                self._mcp_file,
             ):
                 await backend.delete_path(path)
 
-            # Empty out .mcp so a restart won't fall back to default_mcps.
-            await self._save_mcp_file()
-
     # ── MCP management (gateway-routed) ───────────────────────────
 
-    async def list_mcps(self) -> list[MCPClient]:
-        """Gateway-wrapped MCP handles, one per registered MCP."""
-        return list(self._gateway_clients.values())
+    async def list_mcps(
+        self,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[MCPClient]:
+        """Gateway-wrapped MCP handles for one agent/session.
 
-    async def add_mcp(self, mcp_client: MCPClient) -> None:
+        Same contract as :meth:`WorkspaceBase.list_mcps`, but every
+        handle is a :class:`GatewayMCPClient` proxy tagged with the two
+        ids, so the gateway keeps one upstream session per agent,
+        session and MCP name.
+
+        Args:
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
+        """
+        if self._gateway is None:
+            return []
+        agent_id, session_id = agent_id or "", session_id or ""
+        async with self._mcp_lock:
+            self._mcp_last_used[(agent_id, session_id)] = time.monotonic()
+            live = self._mcp_instances.setdefault((agent_id, session_id), {})
+            specs = self._declared_specs(agent_id, session_id)
+            for spec in specs:
+                if spec.name in live:
+                    continue
+                await self._enforce_mcp_capacity(agent_id, session_id, spec)
+                try:
+                    client = self._gateway.make_client(
+                        spec.model_dump(mode="json"),
+                        agent_id=agent_id,
+                        session_id=session_id,
+                    )
+                    await client.connect()
+                    live[spec.name] = client
+                except Exception as e:
+                    logger.warning(
+                        "Failed to start MCP %r for agent=%r session=%r: "
+                        "%s, skipping.",
+                        spec.name,
+                        agent_id,
+                        session_id,
+                        e,
+                    )
+            # Declaration order: an MCP rebuilt after eviction must
+            # not jump to the end.
+            return [live[s.name] for s in specs if s.name in live]
+
+    async def add_mcp(
+        self,
+        mcp_client: MCPClient,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
         """Register a new MCP server through the in-sandbox gateway.
 
         Args:
             mcp_client (`MCPClient`):
                 The MCP to register.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
 
         Raises:
             `ValueError`:
-                If an MCP with the same name already exists.
+                If the name already exists for this agent/session.
             `RuntimeError`:
                 If the gateway is not attached or rejects the
                 registration.
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
+        agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
-            if mcp_client.name in self._gateway_clients:
+            specs = self._declared_specs(agent_id, session_id)
+            if any(m.name == mcp_client.name for m in specs):
                 raise ValueError(
-                    f"MCP {mcp_client.name!r} already exists in workspace.",
+                    f"MCP {mcp_client.name!r} already exists for "
+                    f"agent={agent_id!r} session={session_id!r}.",
                 )
-            spec = mcp_client.model_dump(mode="json")
-            gw_client = self._gateway.make_client(spec)
-            await gw_client.connect()
-            self._mcps.append(mcp_client)
-            self._gateway_clients[gw_client.name] = gw_client
+            live = self._mcp_instances.setdefault(
+                (agent_id, session_id),
+                {},
+            )
+            await self._enforce_mcp_capacity(agent_id, session_id, mcp_client)
+            client = self._gateway.make_client(
+                mcp_client.model_dump(mode="json"),
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            await client.connect()
+            live[client.name] = client
+            # Materialise the full list on first divergence so the
+            # persisted copy is self-contained.
+            self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
 
-    async def remove_mcp(self, name: str) -> None:
-        """Deregister an MCP server by name.
+    async def remove_mcp(
+        self,
+        name: str,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Deregister an MCP by name, closing it on the gateway.
 
         Args:
             name (`str`):
                 MCP name to remove. Unknown names log a warning and
                 return silently.
+            agent_id (`str | None`, optional):
+                The owning agent. ``None`` means the legacy ``""``.
+            session_id (`str | None`, optional):
+                The owning session. ``None`` means the legacy ``""``.
 
         Raises:
             `RuntimeError`:
@@ -273,78 +387,142 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
+        agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
-            gw_client = self._gateway_clients.pop(name, None)
-            if gw_client is None:
-                logger.warning("MCP %r not found in workspace", name)
+            specs = self._declared_specs(agent_id, session_id)
+            if not any(m.name == name for m in specs):
+                logger.warning(
+                    "MCP %r not found for agent=%r session=%r",
+                    name,
+                    agent_id,
+                    session_id,
+                )
                 return
-            try:
-                await gw_client.close()
-            except Exception as e:
-                logger.warning("MCP %r close failed: %s", name, e)
-            self._mcps = [m for m in self._mcps if m.name != name]
+            instance = self._mcp_instances.get(
+                (agent_id, session_id),
+                {},
+            ).pop(name, None)
+            if instance is not None:
+                await self._close_mcp_instance(instance)
+            self._mcp_specs[(agent_id, session_id)] = [
+                m for m in specs if m.name != name
+            ]
             await self._save_mcp_file()
+
+    # ── workspace layout helpers ──────────────────────────────────
+
+    async def _ensure_workspace_layout(self) -> None:
+        """Create the standard workspace directories inside the sandbox."""
+        backend = self.get_backend()
+        await backend.exec_shell(
+            [
+                "mkdir",
+                "-p",
+                self.workdir,
+                self._data_dir,
+                self._skills_dir,
+                self._sessions_dir,
+                self._gateway_home,
+            ],
+            cwd="/",
+        )
+
+        # ``.mcp`` is not seeded: an absent file means no session
+        # has diverged from default_mcps yet.
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
-    async def _write_gateway_config(self) -> None:
-        """Drop ``gateway.config.json`` into the sandbox.
+    async def _setup_mcp_gateway(self) -> None:
+        """Bootstrap (once) and launch the in-sandbox gateway.
 
-        Carries the freshly minted bearer token plus the MCP server
-        specs the gateway should bring up at startup.
+        Steps:
+
+        1. Bootstrap the venv + script if :attr:`_gateway_script` is
+           missing (Docker's image already has it → fast-path).
+        2. Kill any leftover gateway from a previous resume.
+        3. Launch a fresh gateway pointed at ``.mcp``.
+        4. Bind :attr:`_gateway` and poll ``/health``.
         """
         backend = self.get_backend()
-        cfg = {
-            "token": self._gateway_token,
-            "servers": [m.model_dump(mode="json") for m in self._mcps],
-        }
-        await backend.exec_shell(["mkdir", "-p", self._gateway_home])
-        await backend.write_file(
-            self._gateway_config,
-            json.dumps(cfg, indent=2, ensure_ascii=False).encode("utf-8"),
+
+        # Provision the venv + script on first use. Fast-path skips
+        # when the script already exists (Docker image build, E2B
+        # resume, K8s PVC remount).
+        if not await backend.file_exists(self._gateway_script):
+            logger.info(
+                "%s: bootstrapping workspace_id=%r",
+                type(self).__name__,
+                self.workspace_id,
+            )
+            for cmd in self._bootstrap_commands():
+                r = await backend.exec_shell(
+                    ["sh", "-c", cmd],
+                    timeout=self._bootstrap_cmd_timeout,
+                )
+                if not r.ok():
+                    raise RuntimeError(
+                        f"{type(self).__name__} bootstrap failed "
+                        f"(exit {r.exit_code}) for: {cmd!r}\n"
+                        f"stderr: {r.stderr.decode(errors='replace')}\n"
+                        f"stdout: {r.stdout.decode(errors='replace')}",
+                    )
+            # Glob helper first, gateway script last — a partial
+            # bootstrap leaves _gateway_script absent so the next
+            # initialize retries cleanly.
+            if self._glob_helper_path is not None:
+                await backend.write_file(
+                    self._glob_helper_path,
+                    _read_glob_helper_bytes(),
+                )
+            await backend.write_file(
+                self._gateway_script,
+                _read_gateway_script_bytes(),
+            )
+
+        # Clear any gateway left running by a previous resume so the
+        # new one can bind the port cleanly. Keep this in a separate
+        # shell command from launch: some providers expose the full
+        # launch shell command line to ``pkill -f``, which would also
+        # contain the gateway script path and terminate the launch
+        # before ``nohup`` starts.
+        await backend.exec_shell(
+            ["sh", "-c", "pkill -f '[_]mcp_gateway_app.py' || true"],
         )
 
-    async def _start_gateway_process(self) -> None:
-        """Launch the gateway inside the sandbox as a detached process."""
-        backend = self.get_backend()
-        cmd = (
+        # Launch. The gateway starts with an empty registry — it never
+        # reads ``.mcp``; every MCP is registered through it on demand.
+        launch_cmd = (
             f"nohup {shlex.quote(self._gateway_python)} -u "
             f"{shlex.quote(self._gateway_script)} "
-            f"--config {shlex.quote(self._gateway_config)} "
             f"--port {self.gateway_port} "
             f"> {shlex.quote(self._gateway_log)} 2>&1 &"
         )
-        await backend.exec_shell(["sh", "-c", cmd])
+        await backend.exec_shell(["sh", "-c", launch_cmd])
 
-    async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
-        """Block until the gateway answers ``/health`` with 200.
-
-        On timeout, dump the tail of the gateway log so startup
-        failures are visible in the raised error.
-
-        Args:
-            timeout (`float`, defaults to 30.0):
-                Maximum seconds to wait for readiness.
-
-        Raises:
-            RuntimeError: If the gateway does not become healthy
-                before the deadline.
-        """
-        assert self._gateway is not None
-        backend = self.get_backend()
-        deadline = asyncio.get_event_loop().time() + timeout
+        # Wait for ``/health``; on timeout, tail the gateway log.
+        self._gateway = GatewayClient(
+            backend=backend,
+            gateway_port=self.gateway_port,
+            timeout=30.0,
+            gateway_log_path=self._gateway_log,
+        )
+        health_timeout = 30.0
+        deadline = asyncio.get_event_loop().time() + health_timeout
         delay = 0.1
         while asyncio.get_event_loop().time() < deadline:
             if await self._gateway.health():
-                return
+                break
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
-        try:
-            log = await backend.read_file(self._gateway_log)
-            tail = log[-2000:].decode(errors="replace")
-        except Exception:
-            tail = "<no gateway log available>"
-        raise RuntimeError(
-            f"gateway did not become healthy within {timeout}s. "
-            f"Tail of {self._gateway_log}:\n{tail}",
-        )
+        else:
+            try:
+                log = await backend.read_file(self._gateway_log)
+                tail = log[-2000:].decode(errors="replace")
+            except Exception:
+                tail = "<no gateway log available>"
+            raise RuntimeError(
+                f"gateway did not become healthy within {health_timeout}s. "
+                f"Tail of {self._gateway_log}:\n{tail}",
+            )
+
+        # Nothing is registered here — sessions register on demand.

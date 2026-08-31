@@ -13,12 +13,15 @@ from ._manager import (
     WakeupDispatcher,
 )
 from ._service import (
+    ChannelService,
     ChatService,
     IndexSweeper,
     IndexTaskConsumer,
     IndexWorker,
     KnowledgeBaseService,
+    ResourceAccessService,
     SessionService,
+    WorkspaceService,
 )
 
 if TYPE_CHECKING:
@@ -46,6 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     knowledge_base_manager = app.state.knowledge_base_manager
     blob_store = app.state.blob_store
     enable_index_worker = app.state.enable_index_worker
+    enable_channel_worker = app.state.enable_channel_worker
+    enable_scheduler = app.state.enable_scheduler
+    resource_access_policy = app.state.resource_access_policy
 
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(storage)
@@ -57,6 +63,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await stack.enter_async_context(knowledge_base_manager)
         if blob_store is not None:
             await stack.enter_async_context(blob_store)
+
+        # Hubs live as long as the process so each can hold one client
+        # to its registry, instead of re-handshaking per catalog page.
+        for hub in (
+            *app.state.mcp_hubs.values(),
+            *app.state.skill_hubs.values(),
+        ):
+            await stack.enter_async_context(hub)
 
         bg_manager = await stack.enter_async_context(
             BackgroundTaskManager(message_bus=message_bus),
@@ -77,9 +91,68 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             SchedulerManager(
                 storage=storage,
                 message_bus=message_bus,
+                workspace_manager=workspace_manager,
+                enabled=enable_scheduler,
             ),
         )
         app.state.scheduler_manager = scheduler
+
+        # Resource access service — combines owner-scoped storage reads
+        # with the injected policy so both routers and runtime services
+        # go through a single choke point when resolving credentials /
+        # agents / knowledge bases.
+        resource_access_service = ResourceAccessService(
+            storage=storage,
+            policy=resource_access_policy,
+        )
+        app.state.resource_access_service = resource_access_service
+
+        # Channel wiring is built here (before ChatService) so the chat
+        # service can hand the client factory to get_toolkit: a session
+        # that came from a channel gets that channel's platform tools.
+        # The clients hold no connection, so they exist in every process
+        # regardless of who runs the dispatcher.
+        from .channel import (
+            ChannelClients,
+            ChannelGateway,
+            ChannelLifecycleDispatcher,
+        )
+
+        # Only wire the channel subsystem when channel types are
+        # registered — otherwise the dispatcher's reconcile would hit
+        # storage backends that don't implement channel methods.
+        channel_type_registry = app.state.channel_type_registry
+        channel_clients = None
+        channel_dispatcher = None
+        if channel_type_registry:
+            channel_clients = await stack.enter_async_context(
+                ChannelClients(
+                    storage=storage,
+                    message_bus=message_bus,
+                    type_registry=channel_type_registry,
+                ),
+            )
+            app.state.channel_service = ChannelService(
+                storage=storage,
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+            )
+            # The dispatcher is what holds the long connections, so a
+            # deployment that runs dedicated channel workers turns it
+            # off here and every replica stays connection-free.
+            if enable_channel_worker:
+                channel_dispatcher = ChannelLifecycleDispatcher(
+                    storage=storage,
+                    message_bus=message_bus,
+                    type_registry=channel_type_registry,
+                    gateway=ChannelGateway(
+                        storage=storage,
+                        message_bus=message_bus,
+                        workspace_manager=workspace_manager,
+                    ),
+                )
+        app.state.channel_clients = channel_clients
+        app.state.channel_dispatcher = channel_dispatcher
 
         chat_service = ChatService(
             storage=storage,
@@ -87,17 +160,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scheduler_manager=scheduler,
             background_task_manager=bg_manager,
             message_bus=message_bus,
+            resource_access_service=resource_access_service,
             knowledge_base_manager=knowledge_base_manager,
             extra_agent_middlewares=app.state.extra_agent_middlewares,
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
+            channel_clients=channel_clients,
         )
         app.state.chat_service = chat_service
 
         app.state.session_service = SessionService(
             storage=storage,
             message_bus=message_bus,
+            workspace_manager=workspace_manager,
+        )
+
+        app.state.workspace_service = WorkspaceService(
+            storage=storage,
+            workspace_manager=workspace_manager,
+            download_secret=app.state.download_secret,
         )
 
         # ---------------- Knowledge-base wiring ----------------
@@ -132,7 +214,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     blob_store=blob_store,
                     knowledge_base_manager=knowledge_base_manager,
                     parsers=app.state.knowledge_parsers,
-                    chunker=app.state.knowledge_chunker,
+                    chunkers=app.state.knowledge_chunkers,
                     node_id=node_id,
                 )
                 await stack.enter_async_context(
@@ -154,6 +236,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 knowledge_base_manager=knowledge_base_manager,
                 blob_store=blob_store,
                 message_bus=message_bus,
+                resource_access_service=resource_access_service,
+                chunkers=app.state.knowledge_chunkers,
             )
 
         app.state.knowledge_base_service = knowledge_base_service
@@ -176,5 +260,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 bg_manager=bg_manager,
             ),
         )
+
+        # Start the channel reconcile/heartbeat/outbound loops (the
+        # dispatcher itself was built above, before ChatService) — only
+        # when the channel subsystem is enabled.
+        if channel_dispatcher is not None:
+            await stack.enter_async_context(channel_dispatcher.lifespan())
 
         yield

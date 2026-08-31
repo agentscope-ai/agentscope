@@ -3,18 +3,30 @@
 from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
+from .channel import (
+    ChannelClients,
+    ChannelTypeRegistry,
+)
 from ._manager import (
     BackgroundTaskManager,
     ChatRunRegistry,
     SchedulerManager,
 )
-from ._service import ChatService, KnowledgeBaseService, SessionService
+from ._service import (
+    ChannelService,
+    ChatService,
+    KnowledgeBaseService,
+    ResourceAccessService,
+    SessionService,
+    WorkspaceService,
+)
 from ._types import AgentMiddlewareFactory, AgentToolFactory
+from .hub import MCPHubBase, SkillHubBase
 from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .storage import StorageBase
-from ..rag import ParserBase
+from ..rag import ChunkerBase, ParserBase
 
 
 async def get_current_user_id(
@@ -78,6 +90,23 @@ async def get_chat_service(request: Request) -> ChatService:
     return request.app.state.chat_service
 
 
+async def get_resource_access_service(
+    request: Request,
+) -> ResourceAccessService:
+    """Return the application-wide resource access service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ResourceAccessService`:
+            The access service stored in ``app.state`` — the single
+            entry point routers should use to resolve
+            credential / agent / knowledge base records.
+    """
+    return request.app.state.resource_access_service
+
+
 async def get_session_service(request: Request) -> SessionService:
     """Return the application-wide session service.
 
@@ -89,6 +118,18 @@ async def get_session_service(request: Request) -> SessionService:
         ``app.state``.
     """
     return request.app.state.session_service
+
+
+async def get_workspace_service(request: Request) -> WorkspaceService:
+    """Return the application-wide workspace service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `WorkspaceService`: The instance stored in ``app.state``.
+    """
+    return request.app.state.workspace_service
 
 
 async def get_chat_run_registry(request: Request) -> ChatRunRegistry:
@@ -140,6 +181,18 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
         `WorkspaceManagerBase`: The workspace manager stored in ``app.state``.
     """
     return request.app.state.workspace_manager
+
+
+async def get_download_secret(request: Request) -> str:
+    """Return the secret that signs file-download tokens.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `str`: The signing secret stored in ``app.state``.
+    """
+    return request.app.state.download_secret
 
 
 async def get_extra_agent_middlewares(
@@ -291,3 +344,108 @@ async def get_knowledge_parsers(
             ),
         )
     return parsers
+
+
+async def get_knowledge_chunkers(
+    request: Request,
+) -> list[type[ChunkerBase]]:
+    """Return the chunker classes configured on the app.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `list[type[ChunkerBase]]`:
+            The chunker classes stored in ``app.state.knowledge_chunkers``
+            — the same value the index worker uses to rebuild chunkers.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when the KB feature is disabled (no chunkers
+            configured).
+    """
+    chunkers = getattr(request.app.state, "knowledge_chunkers", None)
+    if not chunkers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Knowledge base feature is disabled — pass a "
+                "knowledge_base_manager to create_app() to enable it."
+            ),
+        )
+    return chunkers
+
+
+async def get_mcp_hubs(request: Request) -> dict[str, MCPHubBase]:
+    """Return the registered MCP hubs, keyed by hub id.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `dict[str, MCPHubBase]`:
+            The hubs stored in ``app.state.mcp_hubs``, empty when none
+            were passed to ``create_app``.
+    """
+    return getattr(request.app.state, "mcp_hubs", {})
+
+
+async def get_skill_hubs(request: Request) -> dict[str, SkillHubBase]:
+    """Return the registered skill hubs, keyed by hub id.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `dict[str, SkillHubBase]`:
+            The hubs stored in ``app.state.skill_hubs``, empty when none
+            were passed to ``create_app``.
+    """
+    return getattr(request.app.state, "skill_hubs", {})
+
+
+async def get_channel_service(request: Request) -> ChannelService:
+    """Return the application-wide channel CRUD service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelService`: The service stored in ``app.state``.
+    """
+    return request.app.state.channel_service
+
+
+async def get_channel_clients(
+    request: Request,
+) -> ChannelClients:
+    """Return the factory for unconnected channel instances.
+
+    Present in every process, whether or not this one holds the
+    channels' long connections.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelClients`: The factory stored in ``app.state``.
+    """
+    return request.app.state.channel_clients
+
+
+async def get_channel_type_registry(
+    request: Request,
+) -> ChannelTypeRegistry:
+    """Return the registry of channel types allowed by this service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelTypeRegistry`: The registry built in ``create_app`` from
+        the ``channels`` list (empty when none were passed).
+    """
+    return request.app.state.channel_type_registry

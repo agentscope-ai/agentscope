@@ -89,7 +89,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Release underlying transport resources. Default is a no-op."""
 
     # ------------------------------------------------------------------
-    # Mode A — drain queue (single consumer, ack-on-read)
+    # Mode A — drain queue (competing consumers, ack-on-read)
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -102,10 +102,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> str:
         """Append ``payload`` to the drain queue at ``key``.
 
-        Drain queues are single-consumer, ack-on-read: a subsequent
-        :meth:`queue_drain` returns each entry exactly once and then
-        deletes it. ``ttl_secs`` bounds the queue's lifetime so a key
-        whose consumer disappears does not accumulate entries forever.
+        Drain queues are ack-on-read: :meth:`queue_drain` returns each
+        entry to exactly one caller and then deletes it. ``ttl_secs``
+        bounds the queue's lifetime so a key whose consumer disappears
+        does not accumulate entries forever.
 
         Args:
             key (`str`):
@@ -135,10 +135,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> list[tuple[str, dict]]:
         """Drain up to ``max_count`` entries from the queue at ``key``.
 
-        Returned entries are removed from the queue in the same
-        operation, so a subsequent call returns only entries that
-        arrived after this one. Safe under the single-consumer-per-key
-        invariant.
+        Reading and removing are one atomic operation, so concurrent
+        callers on the same key get disjoint entries and each entry is
+        delivered once. Delivery is at-most-once: an entry is gone from
+        the queue as soon as it is returned, so a caller that dies
+        before acting on it loses it.
 
         Args:
             key (`str`):
@@ -368,6 +369,32 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if some process holds the lock right now.
         """
 
+    @abstractmethod
+    async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
+        """Claim ``key`` without blocking (non-blocking mutex).
+
+        Unlike :meth:`acquire_lock` (which waits until free), this
+        returns immediately: ``True`` if acquired, ``False`` if already
+        held. Release with :meth:`unlock`. Used to make an at-least-once
+        queue drain effectively once — the node that wins the claim for
+        a key does the work; the others skip.
+
+        Args:
+            key (`str`):
+                Lock identifier.
+            ttl_secs (`int`, defaults to ``600``):
+                Lease duration; the claim expires automatically so a
+                crashed holder cannot block the key forever.
+
+        Returns:
+            `bool`:
+                ``True`` if the lock was acquired.
+        """
+
+    @abstractmethod
+    async def unlock(self, key: str) -> None:
+        """Release a lock claimed via :meth:`try_lock` (best-effort)."""
+
     # ------------------------------------------------------------------
     # Mode F — registry map (hash-keyed namespace)
     # ------------------------------------------------------------------
@@ -442,6 +469,26 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         Returns:
             `dict[str, str]`:
                 All entries. Empty dict when the namespace is absent.
+        """
+
+    @abstractmethod
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return the value of a single ``field`` in the registry at
+        ``namespace``, or ``None`` if absent.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to retrieve.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` if missing.
         """
 
     @abstractmethod

@@ -3,8 +3,9 @@
 
 Exercises the three abstract primitives (``exec_shell``, ``read_file``,
 ``write_file``) plus the derived filesystem helpers (``file_exists``,
-``is_dir``, ``list_dir``, ``stat_mtime``, ``delete_path``) of the
-host-local backend, and the module-level ``normalize_newlines`` helper.
+``is_dir``, ``list_dir``, ``scandir``, ``read_stream``, ``stat_mtime``,
+``delete_path``) of the host-local backend, and the module-level
+``normalize_newlines`` helper.
 
 ``LocalBackend`` is designed to run on every platform (it spawns
 programs from an argv list without a shell and implements the
@@ -264,6 +265,72 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
                 os.path.join(self.temp_dir.name, "missing"),
             ),
         )
+
+    async def test_scandir_returns_metadata_per_entry(self) -> None:
+        """``scandir`` carries type, size and mtime with each name."""
+        await self.backend.write_file(
+            os.path.join(self.temp_dir.name, "f.txt"),
+            b"payload",
+        )
+        os.makedirs(os.path.join(self.temp_dir.name, "d"))
+        entries = {
+            e.name: e
+            for e in await self.backend.scandir(
+                self.temp_dir.name,
+            )
+        }
+        self.assertEqual(sorted(entries), ["d", "f.txt"])
+        self.assertFalse(entries["f.txt"].is_dir)
+        self.assertEqual(entries["f.txt"].size_bytes, 7)
+        self.assertIsNotNone(entries["f.txt"].mtime)
+        self.assertTrue(entries["d"].is_dir)
+        # A directory's own size is noise; the contract pins it to None.
+        self.assertIsNone(entries["d"].size_bytes)
+
+    async def test_stat_reports_file_and_directory(self) -> None:
+        """``stat`` answers type, size and mtime in one call."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"payload")
+        entry = await self.backend.stat(path)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.name, "f.txt")
+        self.assertFalse(entry.is_dir)
+        self.assertEqual(entry.size_bytes, 7)
+        self.assertIsNotNone(entry.mtime)
+
+        directory = await self.backend.stat(self.temp_dir.name)
+        self.assertTrue(directory.is_dir)
+        self.assertIsNone(directory.size_bytes)
+
+    async def test_stat_missing_path_returns_none(self) -> None:
+        """A path with nothing behind it stats to None, not an error."""
+        self.assertIsNone(
+            await self.backend.stat(
+                os.path.join(self.temp_dir.name, "missing"),
+            ),
+        )
+
+    async def test_scandir_missing_dir_returns_empty(self) -> None:
+        """An unlistable path yields no entries rather than raising."""
+        self.assertEqual(
+            await self.backend.scandir(
+                os.path.join(self.temp_dir.name, "missing"),
+            ),
+            [],
+        )
+
+    async def test_read_stream_chunks_without_buffering(self) -> None:
+        """``read_stream`` yields the file in ``chunk_size`` pieces."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"abcdefg")
+        chunks = [c async for c in self.backend.read_stream(path, 3)]
+        self.assertEqual(chunks, [b"abc", b"def", b"g"])
+
+    async def test_read_stream_empty_file_yields_nothing(self) -> None:
+        """An empty file produces no chunks, not one empty chunk."""
+        path = os.path.join(self.temp_dir.name, "empty.txt")
+        await self.backend.write_file(path, b"")
+        self.assertEqual([c async for c in self.backend.read_stream(path)], [])
 
     async def test_delete_path_file(self) -> None:
         """``delete_path`` removes a single file."""

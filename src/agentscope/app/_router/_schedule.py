@@ -4,9 +4,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ..access import ResourceKind
 from .._manager import SchedulerManager
 from ..deps import (
     get_current_user_id,
+    get_resource_access_service,
     get_scheduler_manager,
     get_session_service,
     get_storage,
@@ -18,7 +20,7 @@ from ._schema import (
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
-from .._service import SessionService
+from .._service import ResourceAccessService, SessionService
 from ..storage import (
     StorageBase,
     ScheduleData,
@@ -66,14 +68,20 @@ async def create_schedule(
     body: CreateScheduleRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> CreateScheduleResponse:
-    """Create a new schedule and register it with the scheduler.
+    """Create a new schedule and hand it to the scheduler.
+
+    The referenced agent may be either the viewer's own or one shared
+    to them through :class:`ResourceAccessPolicyBase`; the schedule
+    record itself is always owned by the caller.
 
     Args:
         body (`CreateScheduleRequest`): Schedule configuration.
         user_id (`str`): Authenticated user ID.
         storage (`StorageBase`): Storage instance.
+        access (`ResourceAccessService`): Access service.
         scheduler (`SchedulerManager`): Scheduler manager.
 
     Returns:
@@ -81,14 +89,20 @@ async def create_schedule(
             The ID of the newly created schedule.
 
     Raises:
-        `HTTPException`: 404 if the specified agent does not exist.
+        `HTTPException`: 404 if the specified agent or the credential
+            referenced by ``chat_model_config`` is not visible to the
+            caller.
     """
-    agent = await storage.get_agent(user_id, body.agent_id)
-    if agent is None or agent.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{body.agent_id}' not found.",
-        )
+    # Visibility checks — raise 404 when neither owned nor shared. The
+    # schedule fires under the owner's user_id, so re-validating the
+    # credential here surfaces the error at creation time rather than
+    # silently at the first (possibly much later) scheduled run.
+    await access.resolve_agent(user_id, body.agent_id)
+    await access.get_resource(
+        user_id,
+        ResourceKind.CREDENTIAL,
+        body.chat_model_config.credential_id,
+    )
 
     record = ScheduleRecord(
         user_id=user_id,
@@ -107,9 +121,7 @@ async def create_schedule(
         ),
     )
     await storage.upsert_schedule(user_id, record)
-
-    if record.data.enabled:
-        await scheduler.register_schedule(record)
+    await scheduler.notify_changed(record.id)
 
     return CreateScheduleResponse(schedule_id=record.id)
 
@@ -129,9 +141,9 @@ async def update_schedule(
     """Partially update a schedule.
 
     Fields omitted from the request body keep their current values.
-    Changing ``cron_expression`` or ``timezone`` immediately reschedules the
-    APScheduler job.  Setting ``enable=False`` removes the job from the
-    scheduler without deleting the record.
+    Changing ``cron_expression`` or ``timezone`` reschedules the job, and
+    ``enable=False`` stops it firing without deleting the record — both
+    take effect once the timer-owning node reconciles.
 
     Args:
         schedule_id (`str`): ID of the schedule to update.
@@ -160,11 +172,7 @@ async def update_schedule(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
     await storage.upsert_schedule(user_id, updated_record)
-
-    # Always remove the existing job first; re-register only if still enabled.
-    await scheduler.remove_schedule(schedule_id)
-    if updated_record.data.enabled:
-        await scheduler.register_schedule(updated_record)
+    await scheduler.notify_changed(schedule_id)
 
     return updated_record
 
@@ -183,8 +191,8 @@ async def delete_schedule(
     """Permanently delete a schedule.
 
     Cancels any in-flight chat run for sessions this schedule has
-    triggered, removes their records via the session service, and
-    finally unregisters the APScheduler job.
+    triggered, removes their records via the session service, and tells
+    the timer-owning node to drop the job.
 
     Args:
         schedule_id (`str`): ID of the schedule to delete.
@@ -201,7 +209,7 @@ async def delete_schedule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Schedule '{schedule_id}' not found.",
         )
-    await scheduler.remove_schedule(schedule_id)
+    await scheduler.notify_changed(schedule_id)
 
 
 @schedule_router.get(
