@@ -898,6 +898,8 @@ class RAGMiddleware(MiddlewareBase):
             # Deepcopy because we are about to mutate the first text block of
             # each message to prepend the speaker name — never touch the
             # caller's message objects.
+            # TODO: one message should embed into one vector; the
+            # embedding API only does one vector per block for now.
             blocks: list[TextBlock | DataBlock] = []
             for msg in deepcopy(msgs):
                 # Blank text is not a query.  Dropping it — instead of
