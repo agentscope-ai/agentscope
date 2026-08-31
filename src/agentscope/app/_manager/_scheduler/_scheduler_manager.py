@@ -366,6 +366,11 @@ class SchedulerManager:
             )
         minute, hour, day, month, day_of_week = fields
 
+        if not record.data.timezone:
+            # An empty one resolves to the server's local zone rather
+            # than raising, which is not what the caller asked for.
+            raise ValueError("timezone must be a non-empty IANA name")
+
         try:
             trigger = CronTrigger(
                 minute=minute,

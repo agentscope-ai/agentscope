@@ -124,6 +124,41 @@ def _record() -> ScheduleRecord:
 class ScheduleValidationTest(IsolatedAsyncioTestCase):
     """Invalid schedules must fail before any state mutation."""
 
+    async def test_create_valid_schedule_persists_and_notifies(self) -> None:
+        """The rejections below only mean something if this passes."""
+        storage = _Storage()
+        scheduler = _Scheduler()
+
+        response = await create_schedule(
+            _request("0 9 * * *"),
+            user_id="user-1",
+            storage=storage,
+            access=_Access(),
+            scheduler=scheduler,
+        )
+
+        self.assertEqual(len(storage.upserted), 1)
+        self.assertEqual(storage.upserted[0].id, response.schedule_id)
+        self.assertListEqual(scheduler.notified, [response.schedule_id])
+
+    async def test_create_empty_timezone_does_not_persist(self) -> None:
+        """An empty timezone must not silently mean server-local."""
+        storage = _Storage()
+        scheduler = _Scheduler()
+
+        with self.assertRaises(HTTPException) as ctx:
+            await create_schedule(
+                _request("0 9 * * *", timezone=""),
+                user_id="user-1",
+                storage=storage,
+                access=_Access(),
+                scheduler=scheduler,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(storage.upserted, [])
+        self.assertEqual(scheduler.notified, [])
+
     async def test_create_invalid_cron_does_not_persist(self) -> None:
         """Create rejects invalid cron before writing the schedule."""
         storage = _Storage()
