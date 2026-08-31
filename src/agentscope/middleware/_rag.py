@@ -77,6 +77,10 @@ _DEFAULT_HINT_TEMPLATE = (
 # Wrapper around the formatted search results.  Must contain a single
 # ``{context}`` placeholder — :func:`_wrap_hint` splits on it.
 
+_MAX_CANDIDATE_K = 50
+# Upper bound on the candidates handed to the reranker, both as the
+# ``candidate_k`` field bound and as the cap on its ``2 * top_k`` default.
+
 _DEFAULT_RERANK_TEMPLATE = (
     "<rerank-task>\nRank the candidates below by their relevance to the "
     "user query, and return the ids of the {top_k} most relevant one(s) "
@@ -147,7 +151,7 @@ class _SearchKnowledgeTool(ToolBase):
         top_k: int,
         score_threshold: float | None,
         rerank_model: "ChatModelBase | None" = None,
-        rerank_top_k: int | None = None,
+        candidate_k: int | None = None,
         rerank_template: str = _DEFAULT_RERANK_TEMPLATE,
     ) -> None:
         """Initialize the search tool.
@@ -164,7 +168,7 @@ class _SearchKnowledgeTool(ToolBase):
             rerank_model (`ChatModelBase | None`, optional):
                 Optional chat model used to rerank the retrieved text
                 chunks.
-            rerank_top_k (`int | None`, optional):
+            candidate_k (`int | None`, optional):
                 Number of chunks retrieved for the reranker to judge.
             rerank_template (`str`, defaults to \
             ``_DEFAULT_RERANK_TEMPLATE``):
@@ -178,7 +182,7 @@ class _SearchKnowledgeTool(ToolBase):
         self._top_k = top_k
         self._score_threshold = score_threshold
         self._rerank_model = rerank_model
-        self._rerank_top_k = rerank_top_k
+        self._candidate_k = candidate_k
         self._rerank_template = rerank_template
         self.description = self._build_description()
         self.input_schema = self._build_input_schema()
@@ -313,7 +317,7 @@ class _SearchKnowledgeTool(ToolBase):
                 top_k=self._top_k,
                 score_threshold=self._score_threshold,
                 rerank_model=self._rerank_model,
-                rerank_top_k=self._rerank_top_k,
+                candidate_k=self._candidate_k,
                 rerank_template=self._rerank_template,
             )
         except Exception as e:  # pylint: disable=broad-except
@@ -350,7 +354,7 @@ async def _search_across(
     top_k: int,
     score_threshold: float | None,
     rerank_model: "ChatModelBase | None" = None,
-    rerank_top_k: int | None = None,
+    candidate_k: int | None = None,
     rerank_template: str = _DEFAULT_RERANK_TEMPLATE,
 ) -> list["VectorSearchResult"]:
     """Search every knowledge base concurrently and merge the results.
@@ -360,7 +364,7 @@ async def _search_across(
     multimodal — so callers can pass the same query list to every
     knowledge base without per-KB pre-filtering.  Per-KB hits are
     flattened, sorted by descending score, and truncated to ``top_k``.
-    With a ``rerank_model``, retrieval widens to ``rerank_top_k`` hits
+    With a ``rerank_model``, retrieval widens to ``candidate_k`` hits
     and :func:`_rerank_results` picks the final ``top_k`` out of them.
     Rerank is best-effort — a failing model keeps the vector order.
 
@@ -382,9 +386,10 @@ async def _search_across(
             Forwarded to each :meth:`KnowledgeBase.search` call.
         rerank_model (`ChatModelBase | None`, optional):
             Optional chat model used to rerank the retrieved hits.
-        rerank_top_k (`int | None`, optional):
+        candidate_k (`int | None`, optional):
             Number of hits retrieved for the reranker to judge, at least
-            ``top_k``.  Defaults to ``top_k``, i.e. no widening.
+            ``top_k``.  Defaults to ``2 * top_k``, capped at
+            ``_MAX_CANDIDATE_K``.
         rerank_template (`str`, defaults to ``_DEFAULT_RERANK_TEMPLATE``):
             The instruction part of the reranker prompt.
 
@@ -395,9 +400,12 @@ async def _search_across(
     if not queries or not knowledge_bases:
         return []
 
-    # The reranker judges more candidates than the caller asked for, and
-    # narrows them back down to ``top_k``.
-    candidate_k = max(rerank_top_k or top_k, top_k) if rerank_model else top_k
+    # The reranker needs more candidates than the caller asked for,
+    # otherwise it can only reorder what vector search already returned.
+    if rerank_model:
+        candidate_k = min(candidate_k or top_k * 2, _MAX_CANDIDATE_K)
+    else:
+        candidate_k = top_k
 
     queries_list = list(queries)
     per_kb = await asyncio.gather(
@@ -512,7 +520,7 @@ async def _rerank_results(
     ids = [i for i in dict.fromkeys(response.content["ids"]) if i in ranked]
     ids += [i for i in ranked if i not in ids]
     ids = ids[:final_count]
-    logger.info(
+    logger.debug(
         "Reranked chunk order: %s.",
         [ranked[i].chunk.source for i in ids],
     )
@@ -677,16 +685,16 @@ class RAGMiddleware(MiddlewareBase):
             ),
         )
 
-        rerank_top_k: int | None = Field(
+        candidate_k: int | None = Field(
             default=None,
             ge=1,
-            le=50,
-            title="Rerank Top K",
+            le=_MAX_CANDIDATE_K,
+            title="Candidate K",
             description=(
                 "Number of chunks retrieved for the rerank model to "
                 "judge, from which top_k are kept. Must be at least "
-                "top_k, and defaults to it. Ignored when no rerank "
-                "model is configured."
+                "top_k, and defaults to twice it. Ignored when no "
+                "rerank model is configured."
             ),
         )
 
@@ -758,15 +766,12 @@ class RAGMiddleware(MiddlewareBase):
             return value
 
         @model_validator(mode="after")
-        def _validate_rerank_top_k(self) -> "RAGMiddleware.Parameters":
+        def _validate_candidate_k(self) -> "RAGMiddleware.Parameters":
             """The reranker narrows its candidates down to ``top_k``, so
-            a smaller candidate window would only shrink the results."""
-            if (
-                self.rerank_top_k is not None
-                and self.rerank_top_k < self.top_k
-            ):
+            a smaller candidate set would only shrink the results."""
+            if self.candidate_k is not None and self.candidate_k < self.top_k:
                 raise ValueError(
-                    f"rerank_top_k ({self.rerank_top_k}) must be greater "
+                    f"candidate_k ({self.candidate_k}) must be greater "
                     f"than or equal to top_k ({self.top_k}).",
                 )
             return self
@@ -803,7 +808,7 @@ class RAGMiddleware(MiddlewareBase):
                 :class:`SearchConfig`.
             rerank_model (`ChatModelBase | None`, optional):
                 Optional chat model that picks the final ``top_k``
-                chunks out of the ``rerank_top_k`` retrieved ones.
+                chunks out of the ``candidate_k`` retrieved ones.
                 Best-effort: when it fails, the vector order is kept.
         """
         self._knowledge_bases = knowledge_bases
@@ -835,7 +840,7 @@ class RAGMiddleware(MiddlewareBase):
                     top_k=self._parameters.top_k,
                     score_threshold=self._parameters.score_threshold,
                     rerank_model=self._rerank_model,
-                    rerank_top_k=self._parameters.rerank_top_k,
+                    candidate_k=self._parameters.candidate_k,
                     rerank_template=self._parameters.rerank_template,
                 ),
             ]
@@ -887,16 +892,16 @@ class RAGMiddleware(MiddlewareBase):
             # Deepcopy because we are about to mutate the first text block of
             # each message to prepend the speaker name — never touch the
             # caller's message objects.
+            msgs = deepcopy(msgs)
             blocks: list[TextBlock | DataBlock] = []
-            for msg in deepcopy(msgs):
-                first_text = next(
-                    (b for b in msg.content if isinstance(b, TextBlock)),
-                    None,
-                )
-                # A message without text gets no speaker label — a bare
-                # "{name}:" is not a query worth embedding.
-                if first_text:
-                    first_text.text = f"{msg.name}: {first_text.text}"
+            for msg in msgs:
+                if not msg.content:
+                    continue
+                speaker = f"{msg.name}: "
+                if isinstance(msg.content[0], TextBlock):
+                    msg.content[0].text = speaker + msg.content[0].text
+                else:
+                    blocks.append(TextBlock(text=speaker))
                 blocks.extend(msg.content)
 
             self._cached_inputs = blocks
@@ -955,7 +960,7 @@ class RAGMiddleware(MiddlewareBase):
                     top_k=self._parameters.top_k,
                     score_threshold=self._parameters.score_threshold,
                     rerank_model=self._rerank_model,
-                    rerank_top_k=self._parameters.rerank_top_k,
+                    candidate_k=self._parameters.candidate_k,
                     rerank_template=self._parameters.rerank_template,
                 )
             except Exception:  # pylint: disable=broad-except

@@ -145,25 +145,24 @@ class _StubKnowledgeBase:
                 "score_threshold": score_threshold,
             },
         )
-        del score_threshold
         return self.results[:top_k]
 
 
 class _RecordingRerankModel(MockModel):
-    """Mock chat model that records structured-output rerank requests."""
+    """Mock chat model that records the rerank prompts it receives."""
 
     def __init__(
         self,
         ids: list[str] | None = None,
-        *,
-        content: dict | None = None,
         error: Exception | None = None,
     ) -> None:
-        super().__init__()
-        self.ids = ids or []
-        self.content = content
+        super().__init__(
+            mock_structured_response=StructuredResponse(
+                content={"ids": ids or []},
+            ),
+        )
         self.error = error
-        self.structured_calls: list[dict[str, Any]] = []
+        self.structured_calls: list[list[Msg]] = []
 
     async def _call_api_with_structured_output(
         self,
@@ -172,18 +171,16 @@ class _RecordingRerankModel(MockModel):
         structured_model: type | dict,
         **kwargs: Any,
     ) -> StructuredResponse:
-        self.structured_calls.append(
-            {
-                "model_name": model_name,
-                "messages": messages,
-                "structured_model": structured_model,
-                "kwargs": kwargs,
-            },
-        )
+        """Record the prompt, then answer with the mock response."""
+        self.structured_calls.append(messages)
         if self.error is not None:
             raise self.error
-        content = self.content or {"ids": self.ids}
-        return StructuredResponse(content=content)
+        return await super()._call_api_with_structured_output(
+            model_name,
+            messages,
+            structured_model,
+            **kwargs,
+        )
 
 
 def _make_agent(
@@ -553,7 +550,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             rerank_model=reranker,
             mode="static",
             top_k=1,
-            rerank_top_k=3,
+            candidate_k=3,
             emit_hint_event=False,
         )
         agent = _make_agent()
@@ -574,11 +571,11 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             "<content>[1] (source: doc-direct.txt)\n"
             "Paris is in France.</content></system-reminder>",
         )
-        # Retrieval widens to ``rerank_top_k``; the model narrows it back.
+        # Retrieval widens to ``candidate_k``; the model narrows it back.
         self.assertEqual(knowledge.search_calls[0]["top_k"], 3)
         # The reranker sees the query and every candidate, but no scores.
         self.assertEqual(
-            reranker.structured_calls[0]["messages"][0].get_text_content(),
+            reranker.structured_calls[0][0].get_text_content(),
             "<rerank-task>\n"
             "Rank the candidates below by their relevance to the user "
             "query, and return the ids of the 1 most relevant one(s) in "
@@ -621,7 +618,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             rerank_model=reranker,
             mode="static",
             top_k=1,
-            rerank_top_k=2,
+            candidate_k=2,
             emit_hint_event=False,
         )
         agent = _make_agent()
@@ -642,14 +639,12 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             "<content>[1] (source: doc-direct.txt)\n"
             "Paris is in France.</content></system-reminder>",
         )
-        # The image is the query — a text-less message carries no bare
-        # "user:" label into retrieval or rerank either.
+        # The image reaches the reranker as the query, right after the
+        # rendered instruction.
         self.assertListEqual(
             [
                 block.model_dump()
-                for block in reranker.structured_calls[0]["messages"][
-                    0
-                ].content
+                for block in reranker.structured_calls[0][0].content
             ],
             [
                 {
@@ -682,10 +677,6 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                 },
             ],
-        )
-        self.assertNotIsInstance(
-            knowledge.search_calls[0]["queries"][0],
-            TextBlock,
         )
 
     # ------------------------------------------------------------------
@@ -764,7 +755,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             rerank_model=reranker,
             mode="agentic",
             top_k=2,
-            rerank_top_k=3,
+            candidate_k=3,
         )
         tool = (await middleware.list_tools())[0]
 
@@ -793,7 +784,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(knowledge.search_calls[0]["top_k"], 3)
         self.assertIn(
             "<user-query>\nWhere is Paris?\n</user-query>",
-            reranker.structured_calls[0]["messages"][0].get_text_content(),
+            reranker.structured_calls[0][0].get_text_content(),
         )
 
     async def test_search_knowledge_tool_input_schema_enum(self) -> None:
@@ -844,11 +835,11 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         RAGMiddleware.Parameters(hint_template="wrapped: {context}.")
 
     async def test_rerank_parameters_validation(self) -> None:
-        """``rerank_top_k`` widens retrieval; the template needs a query."""
+        """``candidate_k`` widens retrieval; the template needs a query."""
         schema = RAGMiddleware.Parameters.model_json_schema()
         integer_schema = next(
             option
-            for option in schema["properties"]["rerank_top_k"]["anyOf"]
+            for option in schema["properties"]["candidate_k"]["anyOf"]
             if option.get("type") == "integer"
         )
 
@@ -862,8 +853,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         # A candidate window smaller than the final result count would
         # only shrink the results.
         with self.assertRaises(ValueError):
-            RAGMiddleware.Parameters(top_k=5, rerank_top_k=4)
-        RAGMiddleware.Parameters(top_k=5, rerank_top_k=5)
+            RAGMiddleware.Parameters(top_k=5, candidate_k=4)
+        RAGMiddleware.Parameters(top_k=5, candidate_k=5)
 
         with self.assertRaises(ValueError):
             RAGMiddleware.Parameters(rerank_template="Rank them.")
@@ -896,7 +887,7 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             top_k=1,
             score_threshold=None,
             rerank_model=reranker,
-            rerank_top_k=3,
+            candidate_k=3,
         )
 
         self.assertListEqual(
@@ -906,9 +897,7 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [
                 block.model_dump()
-                for block in reranker.structured_calls[0]["messages"][
-                    0
-                ].content
+                for block in reranker.structured_calls[0][0].content
             ],
             [
                 {
@@ -951,6 +940,32 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                 },
             ],
+        )
+
+    async def test_candidate_k_defaults_to_twice_top_k(self) -> None:
+        """Without an explicit candidate_k, retrieval doubles top_k."""
+        knowledge = _StubKnowledgeBase(
+            [
+                _make_result("Broad Paris trivia.", "doc-broad", 0.99),
+                _make_result("Paris has many bridges.", "doc-extra", 0.50),
+                _make_result("Paris is in France.", "doc-direct", 0.10),
+                _make_result("Paris weather.", "doc-weather", 0.05),
+            ],
+        )
+
+        results = await _search_across(
+            [knowledge],
+            ["Where is Paris?"],
+            top_k=2,
+            score_threshold=None,
+            rerank_model=_RecordingRerankModel(["c3"]),
+        )
+
+        self.assertEqual(knowledge.search_calls[0]["top_k"], 4)
+        # The picked candidate first, the rest in vector order, cut to top_k.
+        self.assertListEqual(
+            [result.document_id for result in results],
+            ["doc-direct", "doc-broad"],
         )
 
     async def test_rerank_skipped_without_candidates(self) -> None:
@@ -1006,7 +1021,7 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             top_k=1,
             score_threshold=None,
             rerank_model=_RecordingRerankModel(error=RuntimeError("boom")),
-            rerank_top_k=2,
+            candidate_k=2,
         )
 
         self.assertListEqual(
