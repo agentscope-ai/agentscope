@@ -1,0 +1,16 @@
+name: multimodal-embedding-v1
+label: Multimodal Embedding v1
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/bmp
+
+output_types:
+  - application/x-embedding
+
+context_size: 512
+
+dimensions: 1024

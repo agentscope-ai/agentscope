@@ -1,0 +1,20 @@
+name: qwen3-vl-embedding
+label: Qwen3 VL Embedding
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/webp
+  - image/bmp
+  - image/tiff
+  - video/mp4
+
+output_types:
+  - application/x-embedding
+
+context_size: 32000
+
+dimensions: 2560
+supported_dimensions: [2560, 2048, 1536, 1024, 768, 512, 256]

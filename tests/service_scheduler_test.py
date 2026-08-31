@@ -21,7 +21,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, FakeWorkspaceManager
 
 from agentscope.app._manager import SchedulerManager
 from agentscope.app.message_bus import RedisMessageBus
@@ -115,6 +115,7 @@ class _SchedulerFireTestBase(IsolatedAsyncioTestCase):
         self.manager = SchedulerManager(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
         )
 
     async def asyncTearDown(self) -> None:
@@ -159,6 +160,8 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "hint": AnyString(),
                 "source": json.dumps(
                     {"label": "schedule", "sublabel": record.data.name},
@@ -177,6 +180,8 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
                 "session_id": session.id,
                 "agent_id": record.agent_id,
                 "user_id": record.user_id,
+                "kind": "wake",
+                "input": None,
             },
         )
 
@@ -231,11 +236,15 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
                     "session_id": sessions[0].id,
                     "agent_id": record.agent_id,
                     "user_id": record.user_id,
+                    "kind": "wake",
+                    "input": None,
                 },
                 {
                     "session_id": sessions[0].id,
                     "agent_id": record.agent_id,
                     "user_id": record.user_id,
+                    "kind": "wake",
+                    "input": None,
                 },
             ],
         )
@@ -259,3 +268,41 @@ class TestSchedulerFireNonStatefulMode(_SchedulerFireTestBase):
         )
         self.assertEqual(len(sessions), 2)
         self.assertNotEqual(sessions[0].id, sessions[1].id)
+
+
+class TestSchedulerFireWorkspaceBinding(_SchedulerFireTestBase):
+    """A fired session binds a workspace under the isolation policy.
+
+    The ids below are the PER_AGENT BLAKE2b digests of ``<user>::a``.
+    """
+
+    async def test_two_users_do_not_share_one_workspace(self) -> None:
+        """Two users scheduling the same agent land on distinct
+        workspaces — an unbound session would pool them into one."""
+        await self.manager._build_trigger(_make_record(user_id="alice"))()
+        await self.manager._build_trigger(_make_record(user_id="bob"))()
+
+        self.assertListEqual(
+            [
+                *(
+                    s.config.workspace_id
+                    for s in await self.storage.list_sessions("alice", "a")
+                ),
+                *(
+                    s.config.workspace_id
+                    for s in await self.storage.list_sessions("bob", "a")
+                ),
+            ],
+            ["ca79105d522eba6f", "ecbe3dbe754c96ee"],
+        )
+
+    async def test_both_trigger_branches_bind_a_workspace(self) -> None:
+        """The stateful and the fresh-session branch both resolve an id."""
+        await self.manager._build_trigger(_make_record(stateful=True))()
+        await self.manager._build_trigger(_make_record(stateful=False))()
+
+        sessions = await self.storage.list_sessions("u", "a")
+        self.assertListEqual(
+            [s.config.workspace_id for s in sessions],
+            ["77377d7bd2f7a1fc", "77377d7bd2f7a1fc"],
+        )

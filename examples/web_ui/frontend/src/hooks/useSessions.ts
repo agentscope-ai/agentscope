@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { sessionApi } from '../api';
 import type { SessionView, CreateSessionRequest, UpdateSessionRequest } from '../api';
@@ -16,30 +16,74 @@ import type { SessionView, CreateSessionRequest, UpdateSessionRequest } from '..
  *   helpers that all keep the local list in sync.
  */
 export function useSessions(agentId: string | null) {
-	const [sessions, setSessions] = useState<SessionView[]>([]);
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<Error | null>(null);
+	const [state, setState] = useState<{
+		agentId: string | null;
+		sessions: SessionView[];
+		loading: boolean;
+		error: Error | null;
+	}>({ agentId: null, sessions: [], loading: false, error: null });
+	const currentAgentIdRef = useRef(agentId);
+	const requestIdRef = useRef(0);
+	const ownsState = state.agentId === agentId;
+	const sessions = ownsState ? state.sessions : [];
+	const loading = agentId !== null && (!ownsState || state.loading);
+	const error = ownsState ? state.error : null;
 
-	const refetch = useCallback(async () => {
-		if (!agentId) {
-			setSessions([]);
-			return;
+	/**
+	 * Reload the session list.
+	 *
+	 * Also returns the fresh list, so a caller reacting to an event can
+	 * act on it immediately — reading the `sessions` state right after
+	 * awaiting would still see the pre-update value from its closure.
+	 *
+	 * @returns The reloaded views, or an empty array when there is no
+	 *   agent or the request failed.
+	 */
+	const refetch = useCallback(async (): Promise<SessionView[]> => {
+		const requestedAgentId = agentId;
+		if (currentAgentIdRef.current !== requestedAgentId) return [];
+
+		const requestId = ++requestIdRef.current;
+		const isCurrent = () =>
+			requestId === requestIdRef.current && requestedAgentId === currentAgentIdRef.current;
+
+		if (!requestedAgentId) {
+			setState({ agentId: null, sessions: [], loading: false, error: null });
+			return [];
 		}
-		setLoading(true);
-		setError(null);
+		setState((prev) => ({
+			agentId: requestedAgentId,
+			sessions: prev.agentId === requestedAgentId ? prev.sessions : [],
+			loading: true,
+			error: null,
+		}));
 		try {
-			const res = await sessionApi.list(agentId);
-			setSessions(res.sessions);
+			const res = await sessionApi.list(requestedAgentId);
+			if (!isCurrent()) return [];
+			setState({
+				agentId: requestedAgentId,
+				sessions: res.sessions,
+				loading: false,
+				error: null,
+			});
+			return res.sessions;
 		} catch (e) {
-			setError(e as Error);
-		} finally {
-			setLoading(false);
+			if (isCurrent()) {
+				setState((prev) => ({
+					agentId: requestedAgentId,
+					sessions: prev.agentId === requestedAgentId ? prev.sessions : [],
+					loading: false,
+					error: e as Error,
+				}));
+			}
+			return [];
 		}
 	}, [agentId]);
 
 	useEffect(() => {
+		currentAgentIdRef.current = agentId;
 		refetch();
-	}, [refetch]);
+	}, [agentId, refetch]);
 
 	/** Creates a new session and refreshes the list. */
 	const create = useCallback(

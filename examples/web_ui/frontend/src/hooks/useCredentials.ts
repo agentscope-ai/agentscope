@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { credentialApi } from '../api';
-import type { CredentialRecord, CreateCredentialRequest, UpdateCredentialRequest } from '../api';
+import type { CredentialView, CreateCredentialRequest, UpdateCredentialRequest } from '../api';
 
 /**
  * Manages API key credentials with CRUD operations.
  * Fetches on mount and automatically re-fetches after each mutation.
  */
 export function useCredentials() {
-	const [credentials, setCredentials] = useState<CredentialRecord[]>([]);
+	const [credentials, setCredentials] = useState<CredentialView[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 

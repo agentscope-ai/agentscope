@@ -4,7 +4,6 @@ import base64
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from pydantic import Field
@@ -31,7 +30,6 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     def _format_openai_data_block(
         self,
         block: DataBlock,
-        role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the required format for OpenAI API.
 
@@ -42,10 +40,6 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
-            role (`str`, defaults to ``"user"``):
-                The role of the message that contains this block. Audio blocks
-                in assistant messages are skipped to avoid errors in subsequent
-                model calls.
 
         Returns:
             `dict[str, Any] | None`:
@@ -70,11 +64,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             return self._format_image_source(block.source)
 
         if main_type == "audio":
-            # Filter out audio content when the multimodal model outputs both
-            # text and audio, to prevent errors in subsequent model calls
-            if role == "assistant":
-                return None
             return self._format_audio_source(block.source)
+
+        if block.source.media_type == "application/pdf":
+            return self._format_file_source(block.source, block.name)
 
         logger.warning(
             "Unsupported main media type %s for OpenAI API. "
@@ -143,18 +136,25 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             `dict[str, Any]`:
                 A dictionary with ``"type": "input_audio"`` in OpenAI format.
         """
+        media_type_to_format = {
+            "audio/wav": "wav",
+            "audio/mp3": "mp3",
+            "audio/mpeg": "mp3",
+        }
+        media_type = source.media_type
+        if media_type not in media_type_to_format:
+            raise TypeError(
+                f"Unsupported audio media type: {media_type}, "
+                "only WAV and MP3 audio are supported.",
+            )
+        audio_format = media_type_to_format[media_type]
+
         if isinstance(source, Base64Source):
-            media_type = source.media_type
-            if media_type not in ["audio/wav", "audio/mp3"]:
-                raise TypeError(
-                    f"Unsupported audio media type: {media_type}, "
-                    "only audio/wav and audio/mp3 are supported.",
-                )
             return {
                 "type": "input_audio",
                 "input_audio": {
                     "data": source.data,
-                    "format": media_type.split("/")[-1],
+                    "format": audio_format,
                 },
             }
 
@@ -163,23 +163,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             if url_str.startswith("file://"):
                 # Local file
                 local_path = url_str.removeprefix("file://")
-                extension = local_path.rsplit(".", 1)[-1].lower()
-                if extension not in ["wav", "mp3"]:
-                    raise TypeError(
-                        f"Unsupported audio file extension: {extension}, "
-                        "wav and mp3 are supported.",
-                    )
                 with open(local_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 # Remote URL — download and encode
-                parsed = urlparse(url_str)
-                extension = parsed.path.rsplit(".", 1)[-1].lower()
-                if extension not in ["wav", "mp3"]:
-                    raise TypeError(
-                        f"Unsupported audio file extension: {extension}, "
-                        "wav and mp3 are supported.",
-                    )
                 response = requests.get(url_str, timeout=30)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
@@ -188,11 +175,55 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 "type": "input_audio",
                 "input_audio": {
                     "data": data,
-                    "format": extension,
+                    "format": audio_format,
                 },
             }
 
         raise TypeError(f"Unsupported audio source type: {type(source)}.")
+
+    @staticmethod
+    def _format_file_source(
+        source: URLSource | Base64Source,
+        name: str | None,
+    ) -> dict[str, Any]:
+        """Convert a PDF source to the OpenAI ``file`` content part.
+
+        Files are always inlined as base64 data URIs: local ``file://`` URLs
+        are read from disk and remote URLs are downloaded, since the Chat
+        Completions API has no URL form for files.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The file source to convert.
+            name (`str | None`):
+                The file name presented to the API, falls back to
+                ``"document.pdf"``.
+
+        Returns:
+            `dict[str, Any]`:
+                A dictionary with ``"type": "file"`` in OpenAI format.
+        """
+        if isinstance(source, Base64Source):
+            data = source.data
+        elif isinstance(source, URLSource):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
+                with open(url_str.removeprefix("file://"), "rb") as f:
+                    data = base64.b64encode(f.read()).decode("utf-8")
+            else:
+                response = requests.get(url_str, timeout=30)
+                response.raise_for_status()
+                data = base64.b64encode(response.content).decode("utf-8")
+        else:
+            raise ValueError(f"Unsupported file source type: {type(source)}")
+
+        return {
+            "type": "file",
+            "file": {
+                "filename": name or "document.pdf",
+                "file_data": f"data:{source.media_type};base64,{data}",
+            },
+        }
 
 
 class OpenAIChatFormatter(_OpenAIFormatterBase):
@@ -202,10 +233,15 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "application/pdf",
+        ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
         ),
     )
 
@@ -240,7 +276,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted = self._format_openai_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted is not None:
                         content_blocks.append(formatted)
@@ -277,7 +312,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = self._format_openai_data_block(
                                     sub,
-                                    role="user",
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -335,7 +369,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_openai_data_block(
                                     item,
-                                    role="user",
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -397,10 +430,15 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
     )
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "application/pdf",
+        ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
         ),
     )
 
@@ -471,7 +509,6 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted = self._format_openai_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted is not None:
                         media_blocks.append(formatted)

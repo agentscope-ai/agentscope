@@ -4,16 +4,21 @@
 from ._types import ToolChoice, Function, RegisteredTool
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
-from ._base import ToolBase, ParamsBase
+from ._base import ToolBase, ParamsBase, ToolMiddlewareBase
 from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
     ResetTools,
     Bash,
+    PowerShell,
     Edit,
     Glob,
     Grep,
     Read,
     Write,
+    BackendBase,
+    DirEntry,
+    ExecResult,
+    LocalBackend,
 )
 from ._task import (
     TaskUpdate,
@@ -29,6 +34,7 @@ __all__ = [
     "Function",
     "ToolBase",
     "ParamsBase",
+    "ToolMiddlewareBase",
     "MCPTool",
     "FunctionTool",
     "ToolGroup",
@@ -37,8 +43,13 @@ __all__ = [
     "ToolResponse",
     "RegisteredTool",
     # Builtin tools
+    "BackendBase",
+    "LocalBackend",
+    "DirEntry",
+    "ExecResult",
     "ResetTools",
     "Bash",
+    "PowerShell",
     "Edit",
     "Glob",
     "Grep",

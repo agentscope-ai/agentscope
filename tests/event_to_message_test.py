@@ -35,6 +35,7 @@ from agentscope.event import (
     ExternalExecutionResultEvent,
     ModelCallEndEvent,
     ReplyEndEvent,
+    ReplyFinishedReason,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     TextBlockDeltaEvent,
@@ -58,6 +59,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
 )
+from agentscope.model import FinishedReason
 
 # ---------------------------------------------------------------------------
 # Fixed IDs used throughout – hard-coded so ground-truth dicts are readable.
@@ -85,37 +87,69 @@ _FIXED_END_TS = "2026-01-01T12:00:00"  # deterministic finished_at
 # ---------------------------------------------------------------------------
 
 
-def _tb(block_id: str, text: str) -> dict:
+def _tb(block_id: str, text: str, finished_at: Any = None) -> dict:
     """Text block dict."""
-    return {"type": "text", "id": block_id, "text": text}
+    return {
+        "type": "text",
+        "id": block_id,
+        "text": text,
+        "created_at": AnyString(),
+        "finished_at": finished_at,
+    }
 
 
-def _thb(block_id: str, thinking: str) -> dict:
+def _thb(block_id: str, thinking: str, finished_at: Any = None) -> dict:
     """Thinking block dict."""
-    return {"type": "thinking", "id": block_id, "thinking": thinking}
+    return {
+        "type": "thinking",
+        "id": block_id,
+        "thinking": thinking,
+        "created_at": AnyString(),
+        "finished_at": finished_at,
+    }
 
 
-def _db_b64(block_id: str, data: str, media_type: str) -> dict:
+def _db_b64(
+    block_id: str,
+    data: str,
+    media_type: str,
+    finished_at: Any = None,
+) -> dict:
     """DataBlock (base-64 source) dict."""
     return {
         "type": "data",
         "id": block_id,
         "source": {"type": "base64", "data": data, "media_type": media_type},
         "name": None,
+        "created_at": AnyString(),
+        "finished_at": finished_at,
     }
 
 
-def _db_url(block_id: str, url: str, media_type: str) -> dict:
+def _db_url(
+    block_id: str,
+    url: str,
+    media_type: str,
+    finished_at: Any = None,
+) -> dict:
     """DataBlock (URL source) dict."""
     return {
         "type": "data",
         "id": block_id,
         "source": {"type": "url", "url": url, "media_type": media_type},
         "name": None,
+        "created_at": AnyString(),
+        "finished_at": finished_at,
     }
 
 
-def _tcb(tc_id: str, name: str, inp: str, state: str) -> dict:
+def _tcb(
+    tc_id: str,
+    name: str,
+    inp: str,
+    state: str,
+    finished_at: Any = None,
+) -> dict:
     """ToolCallBlock dict."""
     return {
         "type": "tool_call",
@@ -124,10 +158,18 @@ def _tcb(tc_id: str, name: str, inp: str, state: str) -> dict:
         "input": inp,
         "state": state,
         "suggested_rules": [],
+        "created_at": AnyString(),
+        "finished_at": finished_at,
     }
 
 
-def _trb(tc_id: str, name: str, output: Any, state: str) -> dict:
+def _trb(
+    tc_id: str,
+    name: str,
+    output: Any,
+    state: str,
+    finished_at: Any = None,
+) -> dict:
     """ToolResultBlock dict."""
     return {
         "type": "tool_result",
@@ -135,6 +177,9 @@ def _trb(tc_id: str, name: str, output: Any, state: str) -> dict:
         "name": name,
         "output": output,
         "state": state,
+        "metadata": {},
+        "created_at": AnyString(),
+        "finished_at": finished_at,
     }
 
 
@@ -158,6 +203,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         def _base(
             content: list,
             finished_at: str | None = None,
+            finished_reason: str | None = None,
             usage: dict | None = None,
         ) -> dict:
             """Return the expected model_dump() of self.msg."""
@@ -168,6 +214,9 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": _created_at,
                 "finished_at": finished_at,
+                "finished_reason": finished_reason,
+                "structured_output": None,
+                "error": None,
                 "content": content,
                 "usage": usage,
             }
@@ -196,7 +245,9 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         gt_text_delta2 = _base([_tb(_B_TEXT, "Hello World")])
 
         ev_text_end = TextBlockEndEvent(reply_id=_REPLY_ID, block_id=_B_TEXT)
-        gt_text_end = _base([_tb(_B_TEXT, "Hello World")])  # unchanged
+        gt_text_end = _base(
+            [_tb(_B_TEXT, "Hello World", AnyString())],
+        )  # unchanged
 
         # ================================================================
         # Stage 2 – Thinking block streaming
@@ -207,7 +258,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         gt_think_start = _base(
             [
-                _tb(_B_TEXT, "Hello World"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
                 _thb(_B_THINK, ""),
             ],
         )
@@ -219,7 +270,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         gt_think_delta1 = _base(
             [
-                _tb(_B_TEXT, "Hello World"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
                 _thb(_B_THINK, "Let me"),
             ],
         )
@@ -231,7 +282,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         gt_think_delta2 = _base(
             [
-                _tb(_B_TEXT, "Hello World"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
                 _thb(_B_THINK, "Let me think"),
             ],
         )
@@ -242,8 +293,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         gt_think_end = _base(
             [  # unchanged
-                _tb(_B_TEXT, "Hello World"),
-                _thb(_B_THINK, "Let me think"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
+                _thb(_B_THINK, "Let me think", AnyString()),
             ],
         )
 
@@ -257,46 +308,50 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         gt_data_start = _base(
             [
-                _tb(_B_TEXT, "Hello World"),
-                _thb(_B_THINK, "Let me think"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
+                _thb(_B_THINK, "Let me think", AnyString()),
                 _db_b64(_B_DATA, "", "image/png"),
             ],
         )
 
+        # Each delta carries an independently base64-encoded chunk (with its
+        # own padding); ``append_event`` decodes -> concats bytes -> re-encodes
+        # so the message reflects the concatenated underlying bytes, not a
+        # string-concat of the chunks. Here: b"abc" + b"def" -> "YWJjZGVm".
         ev_data_delta1 = DataBlockDeltaEvent(
             reply_id=_REPLY_ID,
             block_id=_B_DATA,
-            data="abc",
+            data="YWJj",  # base64(b"abc")
             media_type="image/png",
         )
         gt_data_delta1 = _base(
             [
-                _tb(_B_TEXT, "Hello World"),
-                _thb(_B_THINK, "Let me think"),
-                _db_b64(_B_DATA, "abc", "image/png"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
+                _thb(_B_THINK, "Let me think", AnyString()),
+                _db_b64(_B_DATA, "YWJj", "image/png"),
             ],
         )
 
         ev_data_delta2 = DataBlockDeltaEvent(
             reply_id=_REPLY_ID,
             block_id=_B_DATA,
-            data="def",
+            data="ZGVm",  # base64(b"def")
             media_type="image/png",
         )
         gt_data_delta2 = _base(
             [
-                _tb(_B_TEXT, "Hello World"),
-                _thb(_B_THINK, "Let me think"),
-                _db_b64(_B_DATA, "abcdef", "image/png"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
+                _thb(_B_THINK, "Let me think", AnyString()),
+                _db_b64(_B_DATA, "YWJjZGVm", "image/png"),
             ],
         )
 
         ev_data_end = DataBlockEndEvent(reply_id=_REPLY_ID, block_id=_B_DATA)
         gt_data_end = _base(
             [  # unchanged
-                _tb(_B_TEXT, "Hello World"),
-                _thb(_B_THINK, "Let me think"),
-                _db_b64(_B_DATA, "abcdef", "image/png"),
+                _tb(_B_TEXT, "Hello World", AnyString()),
+                _thb(_B_THINK, "Let me think", AnyString()),
+                _db_b64(_B_DATA, "YWJjZGVm", "image/png", AnyString()),
             ],
         )
 
@@ -310,9 +365,9 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_name="search",
         )
         _s4_prefix = [
-            _tb(_B_TEXT, "Hello World"),
-            _thb(_B_THINK, "Let me think"),
-            _db_b64(_B_DATA, "abcdef", "image/png"),
+            _tb(_B_TEXT, "Hello World", AnyString()),
+            _thb(_B_THINK, "Let me think", AnyString()),
+            _db_b64(_B_DATA, "YWJjZGVm", "image/png", AnyString()),
         ]
         gt_tc_allow_start = _base(
             _s4_prefix + [_tcb(_TC_ALLOW, "search", "", "pending")],
@@ -341,7 +396,16 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_ALLOW,
         )
         gt_tc_allow_end = _base(  # unchanged
-            _s4_prefix + [_tcb(_TC_ALLOW, "search", '{"q": "hi"}', "pending")],
+            _s4_prefix
+            + [
+                _tcb(
+                    _TC_ALLOW,
+                    "search",
+                    '{"q": "hi"}',
+                    "pending",
+                    AnyString(),
+                ),
+            ],
         )
 
         # RequireUserConfirmEvent  → state: pending → asking
@@ -355,7 +419,16 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_calls=[_tc_allow_block],
         )
         gt_require_confirm = _base(
-            _s4_prefix + [_tcb(_TC_ALLOW, "search", '{"q": "hi"}', "asking")],
+            _s4_prefix
+            + [
+                _tcb(
+                    _TC_ALLOW,
+                    "search",
+                    '{"q": "hi"}',
+                    "asking",
+                    AnyString(),
+                ),
+            ],
         )
 
         # UserConfirmResultEvent (confirmed=True)  → state: asking → allowed
@@ -366,7 +439,16 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             ],
         )
         gt_user_confirmed = _base(
-            _s4_prefix + [_tcb(_TC_ALLOW, "search", '{"q": "hi"}', "allowed")],
+            _s4_prefix
+            + [
+                _tcb(
+                    _TC_ALLOW,
+                    "search",
+                    '{"q": "hi"}',
+                    "allowed",
+                    AnyString(),
+                ),
+            ],
         )
 
         # ToolResult for _TC_ALLOW – text output
@@ -376,7 +458,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_name="search",
         )
         _s4b_prefix = _s4_prefix + [
-            _tcb(_TC_ALLOW, "search", '{"q": "hi"}', "allowed"),
+            _tcb(_TC_ALLOW, "search", '{"q": "hi"}', "allowed", AnyString()),
         ]
         gt_result_start = _base(
             _s4b_prefix + [_trb(_TC_ALLOW, "search", [], "running")],
@@ -394,7 +476,15 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 _trb(
                     _TC_ALLOW,
                     "search",
-                    [{"type": "text", "id": AnyString(), "text": "Found:"}],
+                    [
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": "Found:",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
                     "running",
                 ),
             ],
@@ -417,6 +507,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                             "type": "text",
                             "id": AnyString(),
                             "text": "Found: 3 items",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "running",
@@ -433,7 +525,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         # tool_call state in the prefix changes from "allowed" to "finished"
         # from this point onward.
         _s4b_done_prefix = _s4_prefix + [
-            _tcb(_TC_ALLOW, "search", '{"q": "hi"}', "finished"),
+            _tcb(_TC_ALLOW, "search", '{"q": "hi"}', "finished", AnyString()),
         ]
         gt_result_end_ok = _base(
             _s4b_done_prefix
@@ -446,9 +538,12 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                             "type": "text",
                             "id": AnyString(),
                             "text": "Found: 3 items",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "success",
+                    AnyString(),
                 ),
             ],
         )
@@ -465,9 +560,12 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                         "type": "text",
                         "id": AnyString(),
                         "text": "Found: 3 items",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
                 "success",
+                AnyString(),
             ),
         ]
 
@@ -485,7 +583,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_DENY,
         )
         gt_tc_deny_end = _base(  # unchanged
-            _s5_prefix + [_tcb(_TC_DENY, "delete", "", "pending")],
+            _s5_prefix
+            + [_tcb(_TC_DENY, "delete", "", "pending", AnyString())],
         )
 
         _tc_deny_block = ToolCallBlock(id=_TC_DENY, name="delete", input="")
@@ -494,7 +593,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_calls=[_tc_deny_block],
         )
         gt_require_confirm_deny = _base(
-            _s5_prefix + [_tcb(_TC_DENY, "delete", "", "asking")],
+            _s5_prefix + [_tcb(_TC_DENY, "delete", "", "asking", AnyString())],
         )
 
         # UserConfirmResultEvent (confirmed=False)  → state: asking → finished
@@ -505,13 +604,16 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             ],
         )
         gt_user_denied = _base(
-            _s5_prefix + [_tcb(_TC_DENY, "delete", "", "finished")],
+            _s5_prefix
+            + [_tcb(_TC_DENY, "delete", "", "finished", AnyString())],
         )
 
         # ================================================================
         # Stage 6 – ToolCall (TC_EXT): external execution flow
         # ================================================================
-        _s6_prefix = _s5_prefix + [_tcb(_TC_DENY, "delete", "", "finished")]
+        _s6_prefix = _s5_prefix + [
+            _tcb(_TC_DENY, "delete", "", "finished", AnyString()),
+        ]
 
         ev_tc_ext_start = ToolCallStartEvent(
             reply_id=_REPLY_ID,
@@ -527,7 +629,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_EXT,
         )
         gt_tc_ext_end = _base(  # unchanged
-            _s6_prefix + [_tcb(_TC_EXT, "run_code", "", "pending")],
+            _s6_prefix
+            + [_tcb(_TC_EXT, "run_code", "", "pending", AnyString())],
         )
 
         _tc_ext_block = ToolCallBlock(id=_TC_EXT, name="run_code", input="")
@@ -536,7 +639,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_calls=[_tc_ext_block],
         )
         gt_require_ext = _base(
-            _s6_prefix + [_tcb(_TC_EXT, "run_code", "", "submitted")],
+            _s6_prefix
+            + [_tcb(_TC_EXT, "run_code", "", "submitted", AnyString())],
         )
 
         # ExternalExecutionResultEvent – appends a ToolResultBlock directly.
@@ -550,17 +654,27 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             reply_id=_REPLY_ID,
             execution_results=[_ext_result_block],
         )
-        _s6b_prefix = _s6_prefix + [_tcb(_TC_EXT, "run_code", "", "submitted")]
+        _s6b_prefix = _s6_prefix + [
+            _tcb(_TC_EXT, "run_code", "", "submitted", AnyString()),
+        ]
         gt_ext_result = _base(
             _s6b_prefix
-            + [_trb(_TC_EXT, "run_code", "output: hello", "success")],
+            + [
+                _trb(
+                    _TC_EXT,
+                    "run_code",
+                    "output: hello",
+                    "success",
+                    AnyString(),
+                ),
+            ],
         )
 
         # ================================================================
         # Stage 7 – ToolResult with data output: base-64 + URL blocks
         # ================================================================
         _s7_prefix = _s6b_prefix + [
-            _trb(_TC_EXT, "run_code", "output: hello", "success"),
+            _trb(_TC_EXT, "run_code", "output: hello", "success", AnyString()),
         ]
 
         ev_tc_img_start = ToolCallStartEvent(
@@ -577,7 +691,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_IMG,
         )
         gt_tc_img_end = _base(  # unchanged
-            _s7_prefix + [_tcb(_TC_IMG, "screenshot", "", "pending")],
+            _s7_prefix
+            + [_tcb(_TC_IMG, "screenshot", "", "pending", AnyString())],
         )
 
         ev_res_img_start = ToolResultStartEvent(
@@ -585,7 +700,9 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_IMG,
             tool_call_name="screenshot",
         )
-        _s7b_prefix = _s7_prefix + [_tcb(_TC_IMG, "screenshot", "", "pending")]
+        _s7b_prefix = _s7_prefix + [
+            _tcb(_TC_IMG, "screenshot", "", "pending", AnyString()),
+        ]
         gt_res_img_start = _base(
             _s7b_prefix + [_trb(_TC_IMG, "screenshot", [], "running")],
         )
@@ -644,7 +761,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         # TOOL_RESULT_END flips the paired ToolCallBlock to FINISHED.
         _s7b_done_prefix = _s7_prefix + [
-            _tcb(_TC_IMG, "screenshot", "", "finished"),
+            _tcb(_TC_IMG, "screenshot", "", "finished", AnyString()),
         ]
         gt_res_img_end = _base(
             _s7b_done_prefix
@@ -661,6 +778,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                         ),
                     ],
                     "error",
+                    AnyString(),
                 ),
             ],
         )
@@ -682,26 +800,43 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                     ),
                 ],
                 "error",
+                AnyString(),
             ),
         ]
         ev_model_call_end_1 = ModelCallEndEvent(
             reply_id=_REPLY_ID,
             input_tokens=10,
             output_tokens=20,
+            cache_input_tokens=60,
+            cache_creation_input_tokens=40,
+            finished_reason=FinishedReason.COMPLETED,
         )
         gt_model_call_end_1 = _base(
             _final_content,
-            usage={"input_tokens": 10, "output_tokens": 20},
+            usage={
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_input_tokens": 60,
+                "cache_creation_input_tokens": 40,
+            },
         )
 
         ev_model_call_end_2 = ModelCallEndEvent(
             reply_id=_REPLY_ID,
             input_tokens=5,
             output_tokens=8,
+            cache_input_tokens=12,
+            cache_creation_input_tokens=7,
+            finished_reason=FinishedReason.COMPLETED,
         )
         gt_model_call_end_2 = _base(
             _final_content,
-            usage={"input_tokens": 15, "output_tokens": 28},
+            usage={
+                "input_tokens": 15,
+                "output_tokens": 28,
+                "cache_input_tokens": 72,
+                "cache_creation_input_tokens": 47,
+            },
         )
 
         # ================================================================
@@ -711,11 +846,18 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             reply_id=_REPLY_ID,
             session_id=_SESSION_ID,
             created_at=_FIXED_END_TS,
+            finished_reason=ReplyFinishedReason.COMPLETED,
         )
         gt_reply_end = _base(
             _final_content,
             finished_at=_FIXED_END_TS,
-            usage={"input_tokens": 15, "output_tokens": 28},
+            finished_reason="completed",
+            usage={
+                "input_tokens": 15,
+                "output_tokens": 28,
+                "cache_input_tokens": 72,
+                "cache_creation_input_tokens": 47,
+            },
         )
 
         # ================================================================
