@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
+from typing import TYPE_CHECKING, AsyncGenerator, Callable
 
 from pydantic import BaseModel, Field
 
@@ -476,12 +476,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         self._parameters = parameters or self.Parameters()
         self._backend = backend or LocalBackend()
 
-        # In-flight background retrieval per session (started in ``on_reply``,
-        # consumed/injected in ``on_reasoning``, cleaned up in ``on_reply``'s
-        # finally). Keyed by ``session_id`` so one middleware shared across
-        # agents keeps each session's retrieval isolated — a concurrent reply
-        # in another session never clobbers this one's task.
-        self._retrieval_tasks: dict[Any, asyncio.Task] = {}
+        # In-flight retrieval per session, so a shared instance never
+        # clobbers another session's task.
+        self._retrieval_tasks: dict[str, asyncio.Task] = {}
 
     @staticmethod
     def _truncate_if_needed(content: str, max_length: int) -> str:
@@ -566,17 +563,6 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         return f"{current_prompt}\n\n{content}"
 
-    @staticmethod
-    def _session_id_of(agent: "Agent") -> str | None:
-        """Read the ``session_id`` live from the agent.
-
-        The retrieval task is keyed by ``session_id``, read from
-        ``agent.state.session_id`` at hook time and threaded through per
-        call — **never** stored on the middleware — so a single instance
-        shared across agents keeps each session's retrieval isolated.
-        """
-        return getattr(getattr(agent, "state", None), "session_id", None)
-
     async def on_reply(
         self,
         agent: "Agent",
@@ -598,7 +584,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             `Any`:
                 Items yielded by ``next_handler``.
         """
-        session_id = self._session_id_of(agent)
+        session_id = agent.state.session_id
 
         if self._parameters.retrieval_async:
             inputs = input_kwargs.get("inputs")
@@ -675,7 +661,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         # Poll this session's in-flight retrieval task; if it has finished,
         # consume its result and inject it into the agent context exactly
         # once. Tasks of other in-flight sessions are left untouched.
-        session_id = self._session_id_of(agent)
+        session_id = agent.state.session_id
         task = self._retrieval_tasks.get(session_id)
         if task is not None and task.done():
             self._retrieval_tasks.pop(session_id, None)

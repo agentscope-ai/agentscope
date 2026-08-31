@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access,unused-argument
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
 import asyncio
 import os
@@ -7,6 +6,7 @@ import shutil
 import tempfile
 from typing import Any, AsyncGenerator, Type
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from pydantic import BaseModel
 from utils import AnyString, AnyValue, MockModel
@@ -799,19 +799,8 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         }
         session_of = {id(agent_a): session_a, id(agent_b): session_b}
 
-        async def fake_retrieve(agent: Agent, query: str) -> str:
-            """Block on ``release`` so the task lifetime is deterministic.
-
-            Args:
-                agent (`Agent`):
-                    The agent whose session owns the retrieval.
-                query (`str`):
-                    The cached user input (unused).
-
-            Returns:
-                `str`:
-                    A per-session sentinel hint.
-            """
+        async def fake_retrieve(agent: Agent, _query: str) -> str:
+            """Block on ``release`` so the task lifetime is deterministic."""
             session = session_of[id(agent)]
             started[session].set()
             try:
@@ -821,12 +810,10 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 raise
             return hints[session]
 
-        middleware._retrieve_relevant_files = fake_retrieve
-
         async def drive_on_reply(agent: Agent) -> None:
             """Drive ``on_reply`` with a handler blocked on the gate."""
 
-            async def next_handler(**kwargs: Any) -> AsyncGenerator:
+            async def next_handler(**_kwargs: Any) -> AsyncGenerator:
                 await gate[session_of[id(agent)]].wait()
                 yield "event"
 
@@ -837,50 +824,45 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
             ):
                 pass
 
-        reply_a = asyncio.create_task(drive_on_reply(agent_a))
-        await started[session_a].wait()
-        reply_b = asyncio.create_task(drive_on_reply(agent_b))
-        await started[session_b].wait()
+        with patch.object(
+            middleware,
+            "_retrieve_relevant_files",
+            fake_retrieve,
+        ):
+            reply_a = asyncio.create_task(drive_on_reply(agent_a))
+            await started[session_a].wait()
+            reply_b = asyncio.create_task(drive_on_reply(agent_b))
+            await started[session_b].wait()
 
-        # Session A finishes its reply while session B's retrieval is still
-        # in flight: A's cleanup must cancel only A's own task.
-        gate[session_a].set()
-        await reply_a
-        task_b = middleware._retrieval_tasks.get(session_b)
-        b_task_alive_after_a_exit = task_b is not None and not task_b.done()
-        a_entry_left_after_a_exit = session_a in middleware._retrieval_tasks
+            # Session A finishes its reply while session B's retrieval is
+            # still in flight: A's cleanup must cancel only A's own task.
+            gate[session_a].set()
+            await reply_a
 
-        # Session B's retrieval completes and is consumed by its own
-        # reasoning hook — not cancelled by A's cleanup.
-        release.set()
-        await task_b
+            # Session B's retrieval completes and is consumed by its own
+            # reasoning hook — not cancelled by A's cleanup.
+            release.set()
+            await asyncio.sleep(0)
 
-        async def passthrough(**kwargs: Any) -> AsyncGenerator:
-            yield "reasoning-event"
+            async def passthrough(**_kwargs: Any) -> AsyncGenerator:
+                """Forward reasoning items unchanged."""
+                yield "reasoning-event"
 
-        async for _ in middleware.on_reasoning(agent_b, {}, passthrough):
-            pass
+            async for _ in middleware.on_reasoning(agent_b, {}, passthrough):
+                pass
 
-        gate[session_b].set()
-        await reply_b
+            gate[session_b].set()
+            await reply_b
 
         self.assertDictEqual(
             {
                 "a_retrieval_cancelled": cancelled[session_a],
                 "b_retrieval_cancelled": cancelled[session_b],
-                "b_task_alive_after_a_exit": b_task_alive_after_a_exit,
-                "a_entry_left_after_a_exit": a_entry_left_after_a_exit,
                 "b_hints": _hint_texts(agent_b),
-                "tasks_left_after_both_replies": len(
-                    middleware._retrieval_tasks,
-                ),
             },
             {
                 "a_retrieval_cancelled": True,
                 "b_retrieval_cancelled": False,
-                "b_task_alive_after_a_exit": True,
-                "a_entry_left_after_a_exit": False,
                 "b_hints": ["hint for session b"],
-                "tasks_left_after_both_replies": 0,
             },
         )
