@@ -288,6 +288,19 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._INDEX_TASKS_SIGNAL
 
     # ------------------------------------------------------------------
+    # Schedules. Only the node that owns the timers reconciles them;
+    # every node publishes here after writing a schedule to storage.
+    # ------------------------------------------------------------------
+
+    _SCHEDULE_LIFECYCLE = "agentscope:schedule:lifecycle"
+
+    @classmethod
+    def schedule_lifecycle(cls) -> str:
+        """Pub/sub channel that nudges the timer-owning node to
+        reconcile its schedule jobs against storage."""
+        return cls._SCHEDULE_LIFECYCLE
+
+    # ------------------------------------------------------------------
     # Channels. A reply never travels through the bus: delivery is plain
     # REST, so the node running the agent sends it directly. What does
     # cross nodes is coordination — reconcile nudges, the status
