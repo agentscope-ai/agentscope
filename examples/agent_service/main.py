@@ -166,20 +166,12 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
 
 
 if __name__ == "__main__":
-    # On Windows, uvicorn's reload mode forces a SelectorEventLoop, which
-    # cannot spawn subprocesses — built-in tools like exec_shell would fail
-    # with NotImplementedError. Disable hot reload on Windows so the server
-    # keeps the default subprocess-capable ProactorEventLoop.
-    is_windows = sys.platform == "win32"
-    if is_windows:
-        print(
-            "Note: hot reload is disabled on Windows because uvicorn's "
-            "reload mode cannot spawn subprocesses (SelectorEventLoop).",
-        )
     # Start the service
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=not is_windows,
+        # Hot reload forces a SelectorEventLoop on Windows, which cannot
+        # spawn the subprocesses that the builtin tools rely on
+        reload=sys.platform != "win32",
     )
