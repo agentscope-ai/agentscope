@@ -35,6 +35,7 @@ from ..credential import CredentialFactory, CredentialBase
 from ..rag import ApproxTokenChunker, ChunkerBase, ParserBase, TextParser
 
 from .._logging import logger
+from .._utils._asyncio import ensure_windows_proactor_event_loop_policy
 from .._version import __version__
 
 
@@ -275,6 +276,8 @@ def create_app(
     """
     from fastapi import FastAPI, Request, status
     from fastapi.responses import JSONResponse
+
+    ensure_windows_proactor_event_loop_policy()
 
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:

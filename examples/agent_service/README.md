@@ -62,6 +62,13 @@ pnpm dev
 
 After that, you can set the API endpoint `http://localhost:8000` in the Web UI and start experiencing the agent service.
 
+> **Windows note:** On Windows, Python's
+> [`SelectorEventLoop` does not support subprocesses](https://docs.python.org/3/library/asyncio-platforms.html#windows);
+> only `ProactorEventLoop` does. Uvicorn's `reload=True` forces the
+> selector loop, which breaks AgentScope's `LocalWorkspace` (skills, MCP
+> listing, shell tools, etc.). This example disables reload on Windows;
+> AgentScope also sets `WindowsProactorEventLoopPolicy` in `create_app()`.
+
 <img src="https://gw.alicdn.com/imgextra/i2/O1CN01Phmg1G1brIVC8WXyU_!!6000000003518-2-tps-2938-1736.png" alt="Web UI Screenshot" width="100%">
 
 ## What Next

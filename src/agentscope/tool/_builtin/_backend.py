@@ -46,6 +46,10 @@ from typing import Any, AsyncIterator
 
 import aiofiles
 
+from ..._utils._asyncio import ensure_windows_proactor_event_loop_policy
+
+ensure_windows_proactor_event_loop_policy()
+
 # Chunk size for streamed reads. Large enough that a big file does not
 # turn into thousands of awaits, small enough to stay off the heap.
 DEFAULT_READ_CHUNK_SIZE = 1024 * 1024
@@ -802,6 +806,16 @@ class LocalBackend(BackendBase):
                 stderr=asyncio.subprocess.PIPE,
                 **kwargs,
             )
+        except NotImplementedError as exc:
+            # Windows SelectorEventLoop does not implement subprocess
+            # transport (Python docs: asyncio platform support). Uvicorn
+            # reload=True forces that loop; use ProactorEventLoop instead.
+            raise RuntimeError(
+                "asyncio subprocesses are not supported by the current "
+                "event loop on Windows. Use WindowsProactorEventLoopPolicy "
+                "(the Python 3.8+ default) and avoid uvicorn reload=True, "
+                "which installs SelectorEventLoop and breaks LocalBackend.",
+            ) from exc
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             # The executable could not be found or spawned. A shell would
             # have returned 127 ("command not found"); mirror that so
