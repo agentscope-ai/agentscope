@@ -155,8 +155,10 @@ class BashCommandParser:
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
-        For compound commands (&&, ||, ;, |), ALL subcommands must be
-        read-only for the entire command to be considered read-only.
+        For compound commands, ALL subcommands must be read-only for the
+        entire command to be considered read-only. Subcommands are split
+        from the parsed AST, so every bash command separator counts — not
+        only ``&&``, ``||``, ``;`` and ``|`` but also ``&`` and newlines.
 
         Commands with output redirections (>, >>) are NOT considered read-only.
 
@@ -176,25 +178,23 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command
-        if any(op in cmd for op in ["&&", "||", ";", "|"]):
-            # Split into subcommands and check each one
-            try:
-                tree = self.parser.parse(bytes(cmd, "utf8"))
-                root = tree.root_node
-                subcommands = self.split_compound_command(root, cmd)
+        # Split into subcommands and check each one. The split always goes
+        # through the AST: a textual scan for "&&"/"||"/";"/"|" misses the
+        # remaining separators, and "ls & rm -rf /" or "ls\nrm -rf /" would
+        # then be judged by their read-only head alone.
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+            root = tree.root_node
+            subcommands = self.split_compound_command(root, cmd)
+        except Exception:
+            # If parsing fails, be conservative
+            return False
 
-                # All subcommands must be read-only
-                for subcmd in subcommands:
-                    if not self._is_single_command_read_only(subcmd.strip()):
-                        return False
-                return True
-            except Exception:
-                # If parsing fails, be conservative
+        # All subcommands must be read-only
+        for subcmd in subcommands:
+            if not self._is_single_command_read_only(subcmd.strip()):
                 return False
-
-        # Single command - check directly
-        return self._is_single_command_read_only(cmd)
+        return True
 
     def _is_single_command_read_only(self, cmd: str) -> bool:
         """Check if a single (non-compound) command is read-only.

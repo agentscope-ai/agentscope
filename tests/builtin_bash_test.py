@@ -291,6 +291,32 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
                     PermissionBehavior.ALLOW,
                 )
 
+    async def test_background_and_newline_compounds_not_auto_allowed(
+        self,
+    ) -> None:
+        """Test a read-only head does not auto-allow the whole command."""
+        test_cases = [
+            "ls & rm -rf /tmp/pwn",
+            "ls -la&rm -rf /tmp/pwn",
+            "ls\nrm -rf /tmp/pwn",
+            "ls\r\nrm -rf /tmp/pwn",
+            "ls &\nrm -rf /tmp/pwn",
+            "cat file.txt\nchmod 777 /etc/passwd",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertNotEqual(
+                    decision.behavior,
+                    PermissionBehavior.ALLOW,
+                )
+                self.assertFalse(
+                    await self.bash_tool.check_read_only({"command": cmd}),
+                )
+
     async def test_safe_commands_pass(self) -> None:
         """Test that safe commands pass injection check."""
 

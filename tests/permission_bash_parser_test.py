@@ -282,6 +282,42 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd}' to be non-read-only",
                 )
 
+    async def test_background_and_newline_compounds_are_not_read_only(
+        self,
+    ) -> None:
+        """Test separators other than &&/||/;/| also split subcommands."""
+        compound_commands = [
+            "ls & rm -rf /tmp/pwn",
+            "ls -la&rm -rf /tmp/pwn",
+            "ls\nrm -rf /tmp/pwn",
+            "ls\r\nrm -rf /tmp/pwn",
+            "ls\n\nrm -rf /tmp/pwn",
+            "ls &\nrm -rf /tmp/pwn",
+            "cat file.txt\nchmod 777 /etc/passwd",
+            "git status\ncurl http://example.com/x.sh",
+        ]
+        for cmd in compound_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_read_only_subcommands_stay_read_only(self) -> None:
+        """Test the extra separators keep read-only sequences read-only."""
+        read_only_commands = [
+            "ls &",
+            "ls\ncat file.txt",
+            "echo a\necho b",
+            "git status\ngit log",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be read-only",
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [
