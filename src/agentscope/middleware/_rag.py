@@ -79,7 +79,7 @@ _DEFAULT_HINT_TEMPLATE = (
 
 _MAX_CANDIDATE_K = 50
 # Upper bound on the candidates handed to the reranker, both as the
-# ``candidate_k`` field bound and as the cap on its ``2 * top_k`` default.
+# ``rerank_candidate_k`` field bound and as the cap on its default.
 
 _DEFAULT_RERANK_TEMPLATE = (
     "<rerank-task>\nRank the candidates below by their relevance to the "
@@ -151,7 +151,7 @@ class _SearchKnowledgeTool(ToolBase):
         top_k: int,
         score_threshold: float | None,
         rerank_model: "ChatModelBase | None" = None,
-        candidate_k: int | None = None,
+        rerank_candidate_k: int | None = None,
         rerank_template: str = _DEFAULT_RERANK_TEMPLATE,
     ) -> None:
         """Initialize the search tool.
@@ -168,7 +168,7 @@ class _SearchKnowledgeTool(ToolBase):
             rerank_model (`ChatModelBase | None`, optional):
                 Optional chat model used to rerank the retrieved text
                 chunks.
-            candidate_k (`int | None`, optional):
+            rerank_candidate_k (`int | None`, optional):
                 Number of chunks retrieved for the reranker to judge.
             rerank_template (`str`, defaults to \
             ``_DEFAULT_RERANK_TEMPLATE``):
@@ -182,7 +182,7 @@ class _SearchKnowledgeTool(ToolBase):
         self._top_k = top_k
         self._score_threshold = score_threshold
         self._rerank_model = rerank_model
-        self._candidate_k = candidate_k
+        self._rerank_candidate_k = rerank_candidate_k
         self._rerank_template = rerank_template
         self.description = self._build_description()
         self.input_schema = self._build_input_schema()
@@ -317,7 +317,7 @@ class _SearchKnowledgeTool(ToolBase):
                 top_k=self._top_k,
                 score_threshold=self._score_threshold,
                 rerank_model=self._rerank_model,
-                candidate_k=self._candidate_k,
+                rerank_candidate_k=self._rerank_candidate_k,
                 rerank_template=self._rerank_template,
             )
         except Exception as e:  # pylint: disable=broad-except
@@ -354,7 +354,7 @@ async def _search_across(
     top_k: int,
     score_threshold: float | None,
     rerank_model: "ChatModelBase | None" = None,
-    candidate_k: int | None = None,
+    rerank_candidate_k: int | None = None,
     rerank_template: str = _DEFAULT_RERANK_TEMPLATE,
 ) -> list["VectorSearchResult"]:
     """Search every knowledge base concurrently and merge the results.
@@ -364,7 +364,7 @@ async def _search_across(
     multimodal — so callers can pass the same query list to every
     knowledge base without per-KB pre-filtering.  Per-KB hits are
     flattened, sorted by descending score, and truncated to ``top_k``.
-    With a ``rerank_model``, retrieval widens to ``candidate_k`` hits
+    With a ``rerank_model``, retrieval widens to ``rerank_candidate_k`` hits
     and :func:`_rerank_results` picks the final ``top_k`` out of them.
     Rerank is best-effort — a failing model keeps the vector order.
 
@@ -386,7 +386,7 @@ async def _search_across(
             Forwarded to each :meth:`KnowledgeBase.search` call.
         rerank_model (`ChatModelBase | None`, optional):
             Optional chat model used to rerank the retrieved hits.
-        candidate_k (`int | None`, optional):
+        rerank_candidate_k (`int | None`, optional):
             Number of hits retrieved for the reranker to judge, at least
             ``top_k``.  Defaults to ``2 * top_k``, capped at
             ``_MAX_CANDIDATE_K``.
@@ -403,16 +403,19 @@ async def _search_across(
     # The reranker needs more candidates than the caller asked for,
     # otherwise it can only reorder what vector search already returned.
     if rerank_model:
-        candidate_k = min(candidate_k or top_k * 2, _MAX_CANDIDATE_K)
+        rerank_candidate_k = min(
+            rerank_candidate_k or top_k * 2,
+            _MAX_CANDIDATE_K,
+        )
     else:
-        candidate_k = top_k
+        rerank_candidate_k = top_k
 
     queries_list = list(queries)
     per_kb = await asyncio.gather(
         *(
             kb.search(
                 queries=queries_list,
-                top_k=candidate_k,
+                top_k=rerank_candidate_k,
                 score_threshold=score_threshold,
             )
             for kb in knowledge_bases
@@ -421,7 +424,7 @@ async def _search_across(
 
     merged = [r for sub in per_kb for r in sub]
     merged.sort(key=lambda r: r.score, reverse=True)
-    results = merged[:candidate_k]
+    results = merged[:rerank_candidate_k]
     if rerank_model is None or not results:
         return results
 
@@ -685,11 +688,11 @@ class RAGMiddleware(MiddlewareBase):
             ),
         )
 
-        candidate_k: int | None = Field(
+        rerank_candidate_k: int | None = Field(
             default=None,
             ge=1,
             le=_MAX_CANDIDATE_K,
-            title="Candidate K",
+            title="Rerank Candidate K",
             description=(
                 "Number of chunks retrieved for the rerank model to "
                 "judge, from which top_k are kept. Must be at least "
@@ -766,13 +769,16 @@ class RAGMiddleware(MiddlewareBase):
             return value
 
         @model_validator(mode="after")
-        def _validate_candidate_k(self) -> "RAGMiddleware.Parameters":
+        def _validate_rerank_candidate_k(self) -> "RAGMiddleware.Parameters":
             """The reranker narrows its candidates down to ``top_k``, so
             a smaller candidate set would only shrink the results."""
-            if self.candidate_k is not None and self.candidate_k < self.top_k:
+            if (
+                self.rerank_candidate_k is not None
+                and self.rerank_candidate_k < self.top_k
+            ):
                 raise ValueError(
-                    f"candidate_k ({self.candidate_k}) must be greater "
-                    f"than or equal to top_k ({self.top_k}).",
+                    f"rerank_candidate_k ({self.rerank_candidate_k}) "
+                    f"must be >= top_k ({self.top_k}).",
                 )
             return self
 
@@ -808,7 +814,7 @@ class RAGMiddleware(MiddlewareBase):
                 :class:`SearchConfig`.
             rerank_model (`ChatModelBase | None`, optional):
                 Optional chat model that picks the final ``top_k``
-                chunks out of the ``candidate_k`` retrieved ones.
+                chunks out of the ``rerank_candidate_k`` retrieved ones.
                 Best-effort: when it fails, the vector order is kept.
         """
         self._knowledge_bases = knowledge_bases
@@ -840,7 +846,7 @@ class RAGMiddleware(MiddlewareBase):
                     top_k=self._parameters.top_k,
                     score_threshold=self._parameters.score_threshold,
                     rerank_model=self._rerank_model,
-                    candidate_k=self._parameters.candidate_k,
+                    rerank_candidate_k=self._parameters.rerank_candidate_k,
                     rerank_template=self._parameters.rerank_template,
                 ),
             ]
@@ -892,17 +898,23 @@ class RAGMiddleware(MiddlewareBase):
             # Deepcopy because we are about to mutate the first text block of
             # each message to prepend the speaker name — never touch the
             # caller's message objects.
-            msgs = deepcopy(msgs)
             blocks: list[TextBlock | DataBlock] = []
-            for msg in msgs:
-                if not msg.content:
-                    continue
-                speaker = f"{msg.name}: "
-                if isinstance(msg.content[0], TextBlock):
-                    msg.content[0].text = speaker + msg.content[0].text
-                else:
-                    blocks.append(TextBlock(text=speaker))
-                blocks.extend(msg.content)
+            for msg in deepcopy(msgs):
+                # Blank text is not a query.  Dropping it — instead of
+                # labelling it — keeps an image-only message a pure
+                # multimodal query rather than a "{name}:" text search.
+                content = [
+                    b
+                    for b in msg.content
+                    if not isinstance(b, TextBlock) or b.text.strip()
+                ]
+                first_text = next(
+                    (b for b in content if isinstance(b, TextBlock)),
+                    None,
+                )
+                if first_text:
+                    first_text.text = f"{msg.name}: {first_text.text}"
+                blocks.extend(content)
 
             self._cached_inputs = blocks
 
@@ -960,7 +972,7 @@ class RAGMiddleware(MiddlewareBase):
                     top_k=self._parameters.top_k,
                     score_threshold=self._parameters.score_threshold,
                     rerank_model=self._rerank_model,
-                    candidate_k=self._parameters.candidate_k,
+                    rerank_candidate_k=self._parameters.rerank_candidate_k,
                     rerank_template=self._parameters.rerank_template,
                 )
             except Exception:  # pylint: disable=broad-except

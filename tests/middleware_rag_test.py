@@ -505,6 +505,73 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(query[0].text, "user: What is this?")
         self.assertEqual(query[1], data_block)
 
+    async def test_image_only_query_skips_the_search(self) -> None:
+        """A text-only model has nothing to search an image-only input
+        with — no embedding call, no injected hint."""
+        middleware = self._middleware(mode="static", top_k=1)
+        agent = _make_agent()
+
+        events = await self._run_with_inputs(
+            middleware,
+            agent,
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGk=",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        self.assertListEqual(events, ["reasoning-evt"])
+        self.assertListEqual(self.embedding_model.calls, [])
+        self.assertListEqual(agent.state.context, [])
+
+    async def test_speaker_label_goes_to_the_first_text_block(self) -> None:
+        """The label follows the text, so a leading DataBlock stays a
+        query of its own instead of getting a bare "{name}:" ahead."""
+        self.embedding_model.supports_multimodal = True
+        middleware = self._middleware(
+            mode="static",
+            top_k=1,
+            emit_hint_event=False,
+        )
+        agent = _make_agent()
+        data_block = DataBlock(
+            source=Base64Source(data="aGk=", media_type="image/png"),
+        )
+
+        await self._run_with_inputs(
+            middleware,
+            agent,
+            UserMsg(name="user", content=[data_block, TextBlock(text="Why?")]),
+        )
+
+        self.assertListEqual(
+            [block.model_dump() for block in self.embedding_model.calls[0]],
+            [
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "aGk=",
+                        "media_type": "image/png",
+                    },
+                    "name": None,
+                },
+                {
+                    "type": "text",
+                    "text": "user: Why?",
+                    "id": AnyString(),
+                },
+            ],
+        )
+
     async def test_multimodal_blocks_dropped_for_text_only_model(
         self,
     ) -> None:
@@ -550,7 +617,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             rerank_model=reranker,
             mode="static",
             top_k=1,
-            candidate_k=3,
+            rerank_candidate_k=3,
             emit_hint_event=False,
         )
         agent = _make_agent()
@@ -571,7 +638,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             "<content>[1] (source: doc-direct.txt)\n"
             "Paris is in France.</content></system-reminder>",
         )
-        # Retrieval widens to ``candidate_k``; the model narrows it back.
+        # Retrieval widens to the candidate set; the model narrows it.
         self.assertEqual(knowledge.search_calls[0]["top_k"], 3)
         # The reranker sees the query and every candidate, but no scores.
         self.assertEqual(
@@ -618,7 +685,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             rerank_model=reranker,
             mode="static",
             top_k=1,
-            candidate_k=2,
+            rerank_candidate_k=2,
             emit_hint_event=False,
         )
         agent = _make_agent()
@@ -755,7 +822,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             rerank_model=reranker,
             mode="agentic",
             top_k=2,
-            candidate_k=3,
+            rerank_candidate_k=3,
         )
         tool = (await middleware.list_tools())[0]
 
@@ -835,11 +902,12 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         RAGMiddleware.Parameters(hint_template="wrapped: {context}.")
 
     async def test_rerank_parameters_validation(self) -> None:
-        """``candidate_k`` widens retrieval; the template needs a query."""
+        """The candidate set widens retrieval, the template needs a
+        query."""
         schema = RAGMiddleware.Parameters.model_json_schema()
         integer_schema = next(
             option
-            for option in schema["properties"]["candidate_k"]["anyOf"]
+            for option in schema["properties"]["rerank_candidate_k"]["anyOf"]
             if option.get("type") == "integer"
         )
 
@@ -853,8 +921,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         # A candidate window smaller than the final result count would
         # only shrink the results.
         with self.assertRaises(ValueError):
-            RAGMiddleware.Parameters(top_k=5, candidate_k=4)
-        RAGMiddleware.Parameters(top_k=5, candidate_k=5)
+            RAGMiddleware.Parameters(top_k=5, rerank_candidate_k=4)
+        RAGMiddleware.Parameters(top_k=5, rerank_candidate_k=5)
 
         with self.assertRaises(ValueError):
             RAGMiddleware.Parameters(rerank_template="Rank them.")
@@ -887,7 +955,7 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             top_k=1,
             score_threshold=None,
             rerank_model=reranker,
-            candidate_k=3,
+            rerank_candidate_k=3,
         )
 
         self.assertListEqual(
@@ -942,8 +1010,8 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_candidate_k_defaults_to_twice_top_k(self) -> None:
-        """Without an explicit candidate_k, retrieval doubles top_k."""
+    async def test_rerank_candidate_k_defaults_to_twice_top_k(self) -> None:
+        """Without an explicit rerank_candidate_k, retrieval doubles top_k."""
         knowledge = _StubKnowledgeBase(
             [
                 _make_result("Broad Paris trivia.", "doc-broad", 0.99),
@@ -1021,7 +1089,7 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             top_k=1,
             score_threshold=None,
             rerank_model=_RecordingRerankModel(error=RuntimeError("boom")),
-            candidate_k=2,
+            rerank_candidate_k=2,
         )
 
         self.assertListEqual(
