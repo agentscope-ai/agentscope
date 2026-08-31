@@ -27,7 +27,6 @@ All bus keys live on the :class:`MessageBus` base class (see
 ``subscribe_wakeup_signal``, ``session_is_running``), so this file has
 no hard-coded key strings.
 """
-
 import asyncio
 from typing import TYPE_CHECKING, Self
 
@@ -207,7 +206,6 @@ class WakeupDispatcher:
                 agent_id=agent_id,
                 kind=kind,
                 raw_input=payload.get("input"),
-                channel_user_id=str(payload.get("channel_user_id") or ""),
             )
 
     async def _dispatch_one(
@@ -217,7 +215,6 @@ class WakeupDispatcher:
         agent_id: str,
         kind: str,
         raw_input: dict | None,
-        channel_user_id: str = "",
     ) -> None:
         """Dispatch a single trigger entry by its ``kind``.
 
@@ -233,8 +230,6 @@ class WakeupDispatcher:
             raw_input (`dict | None`):
                 Serialised input event for ``resume`` triggers, else
                 ``None``.
-            channel_user_id (`str`): Trusted platform user carried by an
-                inbound channel-message trigger.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
         is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
@@ -294,7 +289,6 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
-                channel_user_id,
             )
             return
 
@@ -341,7 +335,6 @@ class WakeupDispatcher:
                     session_id=session_id,
                     agent_id=agent_id,
                     input_msg=input_msg,
-                    channel_user_id=channel_user_id,
                 ),
                 session_id=session_id,
                 name=f"{kind}-run:{session_id}",
@@ -357,7 +350,6 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
-                channel_user_id,
             )
 
     def _schedule_retry(
@@ -366,14 +358,11 @@ class WakeupDispatcher:
         session_id: str,
         agent_id: str,
         kind: str,
-        input_msg: (
-            UserConfirmResultEvent
-            | ExternalExecutionResultEvent
-            | UserInterruptEvent
-            | Msg
-            | None
-        ),
-        channel_user_id: str = "",
+        input_msg: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | UserInterruptEvent
+        | Msg
+        | None,
     ) -> None:
         """Re-enqueue an input-carrying (``resume``/``message``) trigger
         after a short backoff.
@@ -394,8 +383,6 @@ class WakeupDispatcher:
                 The trigger kind to re-enqueue (``resume`` / ``message``).
             input_msg:
                 The parsed input to redeliver.
-            channel_user_id (`str`): Trusted platform user to preserve when
-                retrying an inbound channel message.
         """
 
         async def _retry() -> None:
@@ -408,7 +395,6 @@ class WakeupDispatcher:
                     agent_id=agent_id,
                     kind=kind,  # type: ignore[arg-type]  # resume | message
                     inputs=input_msg,
-                    channel_user_id=channel_user_id,
                 )
             except asyncio.CancelledError:
                 pass

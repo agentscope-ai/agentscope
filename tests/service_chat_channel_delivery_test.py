@@ -8,7 +8,6 @@ still sees the whole reply when the run finishes before the channel
 starts reading — which is the normal case, a platform call being slower
 than the agent's last event.
 """
-
 import asyncio
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, AsyncIterator
@@ -98,14 +97,14 @@ class _RecordingChannel(ChannelBase):
             self.seen.append(evt.get("type", ""))
         self.done.set()
 
-    async def list_tools_for_user(
+    async def list_tools(
         self,
         workspace: object,
-        channel_user_id: str = "",
+        channel_user_id: str | None = None,
     ) -> list:
         """Record the trusted user supplied to channel-bound tools."""
         del workspace
-        self.tool_user_ids.append(channel_user_id)
+        self.tool_user_ids.append(channel_user_id or "")
         return []
 
 
@@ -157,7 +156,11 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         _RecordingChannel.instances.clear()
         _RecordingChannel.tool_user_ids.clear()
 
-    def _fixture(self, source: SessionSource) -> tuple:
+    def _fixture(
+        self,
+        source: SessionSource,
+        channel_user_id: str = "",
+    ) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
         user_id = "user-1"
         agent = AgentRecord(
@@ -179,6 +182,11 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             ),
             source_chat_id=(
                 "chat-1" if source is SessionSource.CHANNEL else None
+            ),
+            source_channel_user_id=(
+                channel_user_id
+                if source is SessionSource.CHANNEL and channel_user_id
+                else None
             ),
             config=SessionConfig(
                 workspace_id="ws-1",
@@ -208,7 +216,10 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         channel_user_id: str = "",
     ) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
-        user_id, agent, session, channel = self._fixture(source)
+        user_id, agent, session, channel = self._fixture(
+            source,
+            channel_user_id,
+        )
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
         clients = ChannelClients(
@@ -276,7 +287,6 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                 session.id,
                 agent.id,
                 UserMsg(name="u", content=[TextBlock(text="hi")]),
-                channel_user_id,
             )
         return clients
 
@@ -321,7 +331,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             await clients.__aexit__(None, None, None)
 
     async def test_channel_tools_receive_trusted_current_sender(self) -> None:
-        """Tool assembly uses sideband identity, not a model argument."""
+        """Tool assembly uses identity stored on the session record."""
         clients = await self._run(
             SessionSource.CHANNEL,
             channel_user_id="staff-1",

@@ -510,12 +510,17 @@ class DingTalkChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
-        """Expose DingTalk discovery and target-send tools to the agent.
+        """Expose DingTalk tools to the agent.
 
         Args:
             workspace (`WorkspaceBase`): Calling session workspace whose
                 backend is used for file reads.
+            channel_user_id (`str | None`, optional): Trusted DingTalk staff
+                id associated with the channel session. Knowledge tools are
+                omitted when it is unavailable.
+
         Returns:
             `list[ToolBase]`: DingTalk agent tools.
         """
@@ -528,31 +533,13 @@ class DingTalkChannel(ChannelBase):
         )
 
         backend = workspace.get_backend()
-        return [
+        tools: list["ToolBase"] = [
             ListConversations(self, backend),
             ListUsers(self, backend),
             SendMessage(self, backend),
             SendFile(self, backend),
             SendImage(self, backend),
         ]
-
-    async def list_tools_for_user(
-        self,
-        workspace: "WorkspaceBase",
-        channel_user_id: str = "",
-    ) -> list["ToolBase"]:
-        """Add permission-scoped knowledge tools for a channel sender.
-
-        Args:
-            workspace (`WorkspaceBase`): Calling session workspace.
-            channel_user_id (`str`): Trusted DingTalk staff id supplied by
-                the channel gateway.
-
-        Returns:
-            `list[ToolBase]`: Standard DingTalk tools plus knowledge tools
-            when a trusted current user is available.
-        """
-        tools = await self.list_tools(workspace)
         if channel_user_id:
             from ._tools import (
                 ListKnowledgeBases,

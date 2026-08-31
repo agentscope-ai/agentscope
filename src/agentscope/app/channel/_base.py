@@ -12,7 +12,6 @@ turn, only feeds the channel a run's event stream via ``send_response``
 (the channel folds and renders it) plus ``send_reaction`` — never its
 connection loop.
 """
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -458,6 +457,7 @@ class ChannelBase(ABC):
     async def list_tools(  # pylint: disable=unused-argument
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Platform tools exposed to the agent — e.g. send a file to a
         different user/group than the conversation. Default: none.
@@ -465,29 +465,11 @@ class ChannelBase(ABC):
         Args:
             workspace (`WorkspaceBase`): The calling session's workspace,
                 so file-sending tools read from it, not the host.
+            channel_user_id (`str | None`, optional): Trusted platform user
+                associated with the channel session. Channels whose tools are
+                not user-scoped may ignore it.
         """
         return []
-
-    async def list_tools_for_user(
-        self,
-        workspace: "WorkspaceBase",
-        channel_user_id: str = "",
-    ) -> list["ToolBase"]:
-        """Return platform tools scoped to a trusted channel user.
-
-        The default delegates to :meth:`list_tools`, preserving compatibility
-        for channels whose tools are not user-sensitive.
-
-        Args:
-            workspace (`WorkspaceBase`): The calling session's workspace.
-            channel_user_id (`str`): Trusted platform user that started the
-                current reply. Empty for runs without an active channel user.
-
-        Returns:
-            `list[ToolBase]`: Platform tools available to the current run.
-        """
-        del channel_user_id
-        return await self.list_tools(workspace)
 
     def _split_long_message(self, text: str) -> list[str]:
         """Split text into chunks within the platform length limit.

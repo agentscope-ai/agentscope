@@ -375,6 +375,7 @@ class StorageBase(ABC):
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
         source_channel_id: str | None = None,
+        source_channel_user_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -399,6 +400,8 @@ class StorageBase(ABC):
             source_chat_name (`str | None`, optional): That chat's title, as
                 supplied by the inbound message.
             source_channel_id (`str | None`, optional): The owning channel.
+            source_channel_user_id (`str | None`, optional): The platform
+                user associated with the latest inbound channel turn.
 
         Returns:
             `SessionRecord`: The created or updated record.

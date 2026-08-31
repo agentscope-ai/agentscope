@@ -1302,7 +1302,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             _FakeWorkspace(_FakeBackend()),
         )
 
-        tools = await channel.list_tools_for_user(workspace, "staff-1")
+        tools = await channel.list_tools(workspace, "staff-1")
 
         self.assertListEqual(
             [tool.name for tool in tools],
@@ -1373,7 +1373,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         media_api = _FakeMediaOpenAPI()
         media_api.union_id = None
         channel, _ = _channel_with_openapi(media_api)
-        tools = await channel.list_tools_for_user(
+        tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
             "staff-without-contact-access",
         )

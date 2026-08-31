@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -44,13 +43,6 @@ class ToolContext(BaseModel):
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
-    channel_user_id: str = ""
-    """The trusted platform user for channel tools in the current reply.
-
-    It is set by the channel gateway for a genuine inbound message, retained
-    while that reply is resumed, and cleared for unrelated/background runs.
-    """
-
     async def get_cache(self, file_path: str) -> ReadCacheEntry | None:
         """Get cached file content if still valid.
 
@@ -62,23 +54,27 @@ class ToolContext(BaseModel):
         """
 
         # Find the cache entry
-        for idx, entry in enumerate(self.read_file_cache):
+        for entry in self.read_file_cache:
             if entry.file_path == file_path:
                 # Check if cache is still valid
                 try:
                     updated_at = await aiofiles.os.path.getmtime(file_path)
-                    if updated_at == entry.updated_at:
-                        self.read_file_cache.pop(idx)
-                        self.read_file_cache.append(entry)
-                        return entry
-                    else:
-                        # Cache is outdated, remove it
-                        self.read_file_cache.remove(entry)
-                        return None
                 except Exception:
-                    # File might not exist anymore
-                    self.read_file_cache.remove(entry)
+                    updated_at = None
+
+                # Concurrent calls may have reordered or dropped the entry
+                # while awaiting, so locate it again by the object itself.
+                if entry not in self.read_file_cache:
                     return None
+
+                self.read_file_cache.remove(entry)
+                if updated_at != entry.updated_at:
+                    # Cache is outdated, or the file no longer exists
+                    return None
+
+                # Move the entry to the most recent position
+                self.read_file_cache.append(entry)
+                return entry
         return None
 
     async def cache_file(self, file_path: str, lines: list[str]) -> None:

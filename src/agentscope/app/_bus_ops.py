@@ -17,7 +17,6 @@ other's internals.
    * - :func:`enqueue_index_task`
      - Enqueue a knowledge-document indexing task and signal consumers.
 """
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
@@ -81,14 +80,11 @@ async def enqueue_run_trigger(
         "resume",
         "message",
     ] = MessageBusKeys.WAKEUP_KIND_WAKE,
-    inputs: (
-        UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | Msg
-        | None
-    ) = None,
-    channel_user_id: str = "",
+    inputs: UserConfirmResultEvent
+    | ExternalExecutionResultEvent
+    | UserInterruptEvent
+    | Msg
+    | None = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
 
@@ -126,19 +122,17 @@ async def enqueue_run_trigger(
             should be ``None``) for ``wake``.  The function calls
             ``model_dump(mode="json")`` internally — callers pass the
             event object, not a pre-serialised dict.
-        channel_user_id (`str`): Trusted platform user that originated a
-            channel message. Empty for non-channel triggers.
     """
-    payload = {
-        "user_id": user_id,
-        "session_id": session_id,
-        "agent_id": agent_id,
-        "kind": kind,
-        "input": inputs.model_dump(mode="json") if inputs else None,
-    }
-    if channel_user_id:
-        payload["channel_user_id"] = channel_user_id
-    await bus.queue_push(MessageBusKeys.wakeup_queue(), payload)
+    await bus.queue_push(
+        MessageBusKeys.wakeup_queue(),
+        {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "kind": kind,
+            "input": inputs.model_dump(mode="json") if inputs else None,
+        },
+    )
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
 
