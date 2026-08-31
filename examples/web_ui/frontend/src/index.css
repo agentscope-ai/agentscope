@@ -190,20 +190,20 @@ svg.lucide {
 .dark {
 	color-scheme: dark;
 	--text: #9ca3af;
-	--bg: #16171d;
-	--background: oklch(0.145 0 0);
+	--bg: #0c0d10;
+	--background: #16171d;
 	--foreground: oklch(0.985 0 0);
-	--card: oklch(0.205 0 0);
+	--card: #16171d;
 	--card-foreground: oklch(0.985 0 0);
-	--popover: oklch(0.205 0 0);
+	--popover: #16171d;
 	--popover-foreground: oklch(0.985 0 0);
 	--primary: oklch(0.922 0 0);
 	--primary-foreground: oklch(0.205 0 0);
-	--secondary: oklch(0.269 0 0);
+	--secondary: #1e2027;
 	--secondary-foreground: oklch(0.985 0 0);
-	--muted: oklch(0.269 0 0);
+	--muted: #1e2027;
 	--muted-foreground: oklch(0.708 0 0);
-	--accent: oklch(0.269 0 0);
+	--accent: #1e2027;
 	--accent-foreground: oklch(0.985 0 0);
 	--destructive: oklch(0.704 0.191 22.216);
 	--border: oklch(1 0 0 / 10%);
@@ -214,13 +214,13 @@ svg.lucide {
 	--chart-3: oklch(0.439 0 0);
 	--chart-4: oklch(0.371 0 0);
 	--chart-5: oklch(0.269 0 0);
-	--sidebar: oklch(0.205 0 0);
+	--sidebar: rgba(22, 23, 29, 0.62);
 	--sidebar-foreground: oklch(0.985 0 0);
 	--sidebar-primary: oklch(0.488 0.243 264.376);
 	--sidebar-primary-foreground: oklch(0.985 0 0);
-	--sidebar-accent: oklch(0.269 0 0);
+	--sidebar-accent: rgba(255, 255, 255, 0.06);
 	--sidebar-accent-foreground: oklch(0.985 0 0);
-	--sidebar-border: oklch(1 0 0 / 10%);
+	--sidebar-border: transparent;
 	--sidebar-ring: oklch(0.556 0 0);
 
 	--text-secondary: #c3c7cd;
