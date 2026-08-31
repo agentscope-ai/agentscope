@@ -403,11 +403,17 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         self._add_injection("2026-07-01T12:00:00")
 
         # Two failures are still below the default threshold of three.
-        self._add_tool_batch(("read", '{"path": "a.py"}', ToolResultState.ERROR))
-        self._add_tool_batch(("read", '{"path": "a.py"}', ToolResultState.ERROR))
+        self._add_tool_batch(
+            ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+        )
+        self._add_tool_batch(
+            ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+        )
         self.assertEqual([], await self._run_injection())
 
-        self._add_tool_batch(("read", '{"path": "a.py"}', ToolResultState.ERROR))
+        self._add_tool_batch(
+            ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+        )
         self.assertEqual(
             [self._expected_event(expected_hint)],
             [evt.model_dump() for evt in await self._run_injection()],
@@ -433,11 +439,15 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             ("read", '{"path": "other.py"}', ToolResultState.ERROR),
         )
         # The same arguments in a different key order and spacing.
-        self._add_tool_batch(("read", '{"a": 1, "b": 2}', ToolResultState.ERROR))
+        self._add_tool_batch(
+            ("read", '{"a": 1, "b": 2}', ToolResultState.ERROR),
+        )
         self._add_tool_batch(("read", '{"b":2,"a":1}', ToolResultState.ERROR))
         self.assertEqual([], await self._run_injection())
 
-        self._add_tool_batch(("read", '{"a":  1, "b": 2}', ToolResultState.ERROR))
+        self._add_tool_batch(
+            ("read", '{"a":  1, "b": 2}', ToolResultState.ERROR),
+        )
         self.assertEqual(
             [self._expected_event(expected_hint)],
             [evt.model_dump() for evt in await self._run_injection()],

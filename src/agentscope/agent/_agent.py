@@ -1195,6 +1195,66 @@ class Agent:
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Detect the same tool call, i.e. the same tool name and arguments,
+        failing in the trailing consecutive iterations.
+
+        Returns:
+            `tuple[str, int] | None`:
+                The tool name and the number of consecutive failed iterations
+                when it reaches ``injection_config.max_tool_retries``, or
+                ``None`` when there is no such streak.
+        """
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        # Split the message into batches, where one batch holds the tool calls
+        # of one reasoning-acting iteration, and collect the signature, i.e.
+        # the tool name and arguments, of the failed ones within each batch.
+        batches: list[set[tuple[str, str]]] = [set()]
+        signatures: dict[str, tuple[str, str]] = {}
+        saw_result = False
+        for block in last_msg.get_content_blocks():
+            if isinstance(block, ToolCallBlock):
+                if saw_result:
+                    # A tool call after a result starts a new iteration
+                    batches.append(set())
+                    signatures, saw_result = {}, False
+
+                try:
+                    arguments = json.dumps(
+                        json.loads(block.input),
+                        sort_keys=True,
+                    )
+                except (TypeError, ValueError):
+                    arguments = block.input.strip()
+                signatures[block.id] = (block.name, arguments)
+
+            elif isinstance(block, ToolResultBlock):
+                saw_result = True
+                if (
+                    block.state == ToolResultState.ERROR
+                    and block.id in signatures
+                ):
+                    batches[-1].add(signatures[block.id])
+
+        # Only a single failing call in the latest batch counts as a retry, so
+        # that a fan-out or mixed failures aren't reported
+        if len(batches[-1]) != 1:
+            return None
+
+        (signature,) = batches[-1]
+        count = 0
+        for failures in reversed(batches):
+            if signature not in failures:
+                break
+            count += 1
+
+        if count < self.injection_config.max_tool_retries:
+            return None
+        return signature[0], count
+
     async def _inject_runtime_state(
         self,
     ) -> AsyncGenerator[HintBlockEvent, None]:
@@ -1417,54 +1477,16 @@ class Agent:
         # =====================================================================
         # Step 5: Check Repeated Tool Errors
         # =====================================================================
-        # Split the trailing message into batches, where one batch holds the
-        # tool calls of one reasoning-acting iteration, and collect the
-        # signature, i.e. the tool name and arguments, of the failed ones.
-        last_msg = self._get_last_msg()
-        batches: list[set[tuple[str, str]]] = [set()]
-        signatures: dict[str, tuple[str, str]] = {}
-        saw_result = False
-        for block in last_msg.get_content_blocks() if last_msg else []:
-            if isinstance(block, ToolCallBlock):
-                if saw_result:
-                    # A tool call after a result starts a new iteration
-                    batches.append(set())
-                    signatures, saw_result = {}, False
-
-                try:
-                    arguments = json.dumps(
-                        json.loads(block.input),
-                        sort_keys=True,
-                    )
-                except (TypeError, ValueError):
-                    arguments = block.input.strip()
-                signatures[block.id] = (block.name, arguments)
-
-            elif isinstance(block, ToolResultBlock):
-                saw_result = True
-                if (
-                    block.state == ToolResultState.ERROR
-                    and block.id in signatures
-                ):
-                    batches[-1].add(signatures[block.id])
-
-        # Only a single failing call in the latest batch counts as a retry, so
-        # that a fan-out or mixed failures don't trigger the injection
-        if len(batches[-1]) == 1:
-            signature = next(iter(batches[-1]))
-            count = 0
-            for failures in reversed(batches):
-                if signature not in failures:
-                    break
-                count += 1
-
-            if count >= self.injection_config.max_tool_retries:
-                injections["tool-error"] = (
-                    self.injection_config.tool_error_template.replace(
-                        "{tool_name}",
-                        signature[0],
-                    ).replace("{count}", str(count))
-                )
+        # The agent keeps retrying the same failing call, so remind it to try
+        # something else
+        repeated_error = self._get_repeated_tool_error()
+        if repeated_error is not None:
+            tool_name, count = repeated_error
+            template = self.injection_config.tool_error_template
+            injections["tool-error"] = template.replace(
+                "{tool_name}",
+                tool_name,
+            ).replace("{count}", str(count))
 
         if injections:
             # The user defined fields, which don't trigger an injection by
