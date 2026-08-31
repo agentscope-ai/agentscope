@@ -15,9 +15,9 @@ else:
     ConnectionPool = Any
     Redis = Any
 
-# Reads and removes a batch in one atomic step. As two round-trips,
-# competing consumers on the same key both read an entry before either
-# deletes it, and each dispatches it (#1868).
+# Reads and removes a batch in one atomic step. Doing so in two
+# round-trips lets competing consumers on the same key both read an
+# entry before either deletes it, and each dispatch it (#1868).
 _QUEUE_DRAIN_LUA = """
 local entries = redis.call('XRANGE', KEYS[1], '-', '+', 'COUNT', ARGV[1])
 for _, entry in ipairs(entries) do

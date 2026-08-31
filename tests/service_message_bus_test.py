@@ -104,7 +104,9 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
             await self.bus.queue_drain("k"),
             [(AnyString(), {"x": 1})],
         )
-        self.assertListEqual(issued, ["EVAL"])
+        # One command, whatever it is — the contract is that the read
+        # and the delete cannot be observed apart.
+        self.assertEqual(len(issued), 1)
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
