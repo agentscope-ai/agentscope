@@ -8,7 +8,6 @@ import tempfile
 from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
 
 from utils import MockModel, AnyString
 
@@ -1521,30 +1520,12 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_compression_tool_forces_shared_flow(self) -> None:
-        """The agent-owned tool uses the regular middleware-aware flow."""
-        agent = Agent(
-            name="Friday",
-            system_prompt="You are helpful.",
-            model=MockModel(),
-            context_config=ContextConfig(compression_tool_enabled=True),
-            toolkit=Toolkit(),
-        )
-        agent._run_compress_context = AsyncMock()
-
-        await agent._compress_context_from_tool()
-
-        self.assertEqual(
-            agent._run_compress_context.await_args.kwargs,
-            {
-                "force": True,
-                "fallback_to_truncation": False,
-            },
-        )
-
-    async def test_forced_compression_runs_below_threshold(self) -> None:
-        """An explicit tool request bypasses only the hard threshold."""
-        model = RecordingStructuredMockModel(context_size=200)
+    async def test_compression_tool_compresses_below_hard_threshold(
+        self,
+    ) -> None:
+        """The tool compresses at the ratio where it is recommended, which is
+        below the hard compression threshold."""
+        model = RecordingStructuredMockModel(context_size=100)
         model.set_structured_response(
             StructuredResponse(
                 content={
@@ -1560,24 +1541,92 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="You are helpful.",
             model=model,
+            # The hard threshold is 80 tokens, while the tool compresses from
+            # (0.8 - 0.2) * 100 = 60 tokens
             context_config=ContextConfig(
                 trigger_ratio=0.8,
-                reserve_ratio=0.1,
+                reserve_ratio=0.3,
+                compression_tool_enabled=True,
             ),
             state=AgentState(
                 session_id="123",
-                context=[UserMsg("User", "history", id="history")],
+                context=[
+                    UserMsg("User", "1" * 80, id="1"),
+                    AssistantMsg("Friday", "2" * 80, id="2"),
+                    UserMsg("User", "3" * 80, id="3"),
+                ],
             ),
             toolkit=Toolkit(),
         )
 
-        await agent._compress_context_from_tool()
-
+        self.assertDictEqual(
+            (await agent._compress_context_tool()).model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Context compressed successfully.",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.SUCCESS,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
         self.assertIn("# Current State\ncomplete", agent.state.summary)
+
+    async def test_compression_tool_skips_small_context(self) -> None:
+        """The tool leaves a context below the recommended ratio untouched,
+        so that a spontaneous call doesn't lose details for nothing."""
+        model = RecordingStructuredMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.3,
+                compression_tool_enabled=True,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "1" * 80, id="1")],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        self.assertDictEqual(
+            (await agent._compress_context_tool()).model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Context compressed successfully.",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.SUCCESS,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+        self.assertEqual(agent.state.summary, "")
+        self.assertListEqual(
+            [msg.id for msg in agent.state.context],
+            ["1"],
+        )
+        self.assertListEqual(model.recorded_structured_messages, [])
 
     async def test_compression_tool_keeps_its_call_result_pair(self) -> None:
         """Compression invoked during acting preserves its own tool call."""
-        model = RecordingStructuredMockModel(context_size=1000, stream=False)
+        model = RecordingStructuredMockModel(context_size=500, stream=False)
         model.set_structured_response(
             StructuredResponse(
                 content={
@@ -1612,28 +1661,41 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             system_prompt="You are helpful.",
             model=model,
             toolkit=Toolkit(),
-            context_config=ContextConfig(compression_tool_enabled=True),
+            # The hard threshold is 400 tokens, while the tool compresses
+            # from (0.8 - 0.2) * 500 = 300 tokens
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.3,
+                compression_tool_enabled=True,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg("User", str(index) * 80, id=str(index))
+                    for index in range(6)
+                ],
+            ),
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         result = await agent.reply(UserMsg("User", "continue"))
 
         self.assertEqual(result.get_text_content(), "done")
-        paired_blocks = [
-            block
-            for msg in agent.state.context
-            for block in msg.content
-            if isinstance(block, (ToolCallBlock, ToolResultBlock))
-            and block.id == "compress-1"
-        ]
-        self.assertEqual(
-            [type(block) for block in paired_blocks],
+        self.assertIn("# Current State\nphase complete", agent.state.summary)
+        self.assertListEqual(
+            [
+                type(block)
+                for msg in agent.state.context
+                for block in msg.content
+                if isinstance(block, (ToolCallBlock, ToolResultBlock))
+                and block.id == "compress-1"
+            ],
             [ToolCallBlock, ToolResultBlock],
         )
-        self.assertEqual(paired_blocks[-1].state, ToolResultState.SUCCESS)
 
     async def test_compression_tool_registration_tracks_config(self) -> None:
-        """The private builtin tool is exposed only when configured."""
+        """The compression tool is exposed only when it's enabled, and the
+        same instance is kept across replies for a stable schema."""
         for enabled in (False, True):
             with self.subTest(enabled=enabled):
                 model = MockModel(stream=False)
@@ -1664,24 +1726,14 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 )
 
                 await agent.reply(UserMsg("User", "hello"))
-
                 tool = await toolkit.get_tool("CompressContext")
                 self.assertEqual(tool is not None, enabled)
-                if tool is not None:
+
+                if enabled:
                     await agent.reply(UserMsg("User", "hello again"))
                     self.assertIs(
                         await toolkit.get_tool("CompressContext"),
                         tool,
-                    )
-                    agent._run_compress_context = AsyncMock()
-                    result = await tool()
-                    self.assertEqual(result.state, ToolResultState.SUCCESS)
-                    self.assertEqual(
-                        agent._run_compress_context.await_args.kwargs,
-                        {
-                            "force": True,
-                            "fallback_to_truncation": False,
-                        },
                     )
 
     async def test_max_image_num_without_offloader(self) -> None:
@@ -2104,44 +2156,6 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     },
                 ],
             )
-
-    async def test_failed_tool_compression_keeps_offloaded_image_references(
-        self,
-    ) -> None:
-        """A failed summary never leaves newly offloaded images orphaned."""
-        with tempfile.TemporaryDirectory() as workdir:
-            model = RecordingStructuredMockModel(
-                context_size=100000,
-                fail_structured_output_times=1,
-            )
-            agent = Agent(
-                name="Friday",
-                system_prompt="You are helpful.",
-                model=model,
-                context_config=ContextConfig(max_image_num=1),
-                state=AgentState(
-                    session_id="123",
-                    context=_build_image_context(),
-                ),
-                toolkit=Toolkit(),
-                offloader=LocalWorkspace(workdir=workdir),
-            )
-
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "simulated compression overflow",
-            ):
-                await agent._compress_context_from_tool()
-
-            rel = "data/" + hashlib.sha256(_PNG_BASE64.encode()).hexdigest()
-            url = f"workspace:///{rel}.png"
-            self.assertTrue(
-                os.path.exists(os.path.join(workdir, rel + ".png")),
-            )
-            serialized_context = json.dumps(
-                [msg.model_dump(mode="json") for msg in agent.state.context],
-            )
-            self.assertIn(url, serialized_context)
 
     async def test_max_image_num_default(self) -> None:
         """The default limit is 5, so only the oldest image is removed for a

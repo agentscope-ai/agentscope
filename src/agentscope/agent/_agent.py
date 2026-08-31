@@ -24,7 +24,6 @@ import jsonschema
 from pydantic import BaseModel
 
 from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
-from ._context_compression_tool import _CompressContext
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -95,6 +94,7 @@ from ..tool import (
     ToolChunk,
     ToolChoice,
     ToolResponse,
+    FunctionTool,
 )
 from ..permission import (
     PermissionBehavior,
@@ -186,8 +186,14 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
-        self._context_compression_tool = _CompressContext(
-            self._compress_context_from_tool,
+        self._compression_tool = FunctionTool(
+            self._compress_context_tool,
+            name="CompressContext",
+            is_concurrency_safe=False,
+            permission=PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="CompressContext is always allowed.",
+            ),
         )
 
         # ====================================================================
@@ -243,14 +249,17 @@ class Agent:
 
         if (
             self.injection_config.inject_runtime_state
-            and self.injection_config.context_buffer_ratio
+            or self.context_config.compression_tool_enabled
+        ) and (
+            self.injection_config.context_buffer_ratio
             >= self.context_config.trigger_ratio
         ):
             raise ValueError(
                 "The 'context_buffer_ratio' of the injection config must be "
                 "smaller than the 'trigger_ratio' of the context config, so "
-                "that the context length is injected before the compression, "
-                f"got {self.injection_config.context_buffer_ratio} and "
+                "that the context length is injected and the compression "
+                "tool takes effect before the hard compression, got "
+                f"{self.injection_config.context_buffer_ratio} and "
                 f"{self.context_config.trigger_ratio}.",
             )
 
@@ -373,26 +382,10 @@ class Agent:
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
         """
-        await self._run_compress_context(
-            context_config=context_config,
-            instructions=instructions,
-        )
-
-    async def _run_compress_context(
-        self,
-        context_config: ContextConfig | None = None,
-        instructions: HintBlock | None = None,
-        *,
-        force: bool = False,
-        fallback_to_truncation: bool = True,
-    ) -> None:
-        """Run context compression through its middleware chain."""
         if not self._compress_context_middlewares:
             await self._compress_context_impl(
                 context_config=context_config,
                 instructions=instructions,
-                force=force,
-                fallback_to_truncation=fallback_to_truncation,
             )
         else:
 
@@ -400,24 +393,18 @@ class Agent:
                 index: int = 0,
                 context_config: ContextConfig | None = context_config,
                 instructions: HintBlock | None = instructions,
-                force: bool = force,
-                fallback_to_truncation: bool = fallback_to_truncation,
             ) -> None:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
                     await self._compress_context_impl(
                         context_config=context_config,
                         instructions=instructions,
-                        force=force,
-                        fallback_to_truncation=fallback_to_truncation,
                     )
                 else:
                     mw = self._compress_context_middlewares[index]
                     input_kwargs = {
                         "context_config": context_config,
                         "instructions": instructions,
-                        "force": force,
-                        "fallback_to_truncation": fallback_to_truncation,
                     }
 
                     async def next_handler(**kwargs: Any) -> None:
@@ -434,55 +421,48 @@ class Agent:
 
             await execute_chain()
 
-    async def _compress_context_from_tool(self) -> None:
-        """Compress context explicitly at an agent-selected task boundary."""
-        await self._run_compress_context(
-            force=True,
-            fallback_to_truncation=False,
+    async def _compress_context_tool(self) -> ToolChunk:
+        """Compress older conversation context into a continuation summary
+        while preserving the recent context needed for upcoming work.
+
+        Call this tool only after a `<context-compression>` reminder
+        recommends it, which means the context is large enough to compress
+        and no task was in progress. Don't call it while a task is
+        `in_progress`, even if an older reminder is still in the context.
+        Pending tasks don't prevent compression when you're between tasks.
+
+        Keep the current context when the exact earlier details are still
+        needed. The conversation history is replaced only after the summary
+        is generated successfully.
+        """
+        # The agent decides when to compress, so lower the trigger to the
+        # ratio where the compression is recommended. A context below that
+        # ratio is left untouched.
+        context_config = self.context_config.model_copy(
+            update={
+                "trigger_ratio": self.context_config.trigger_ratio
+                - self.injection_config.context_buffer_ratio,
+            },
         )
 
-    async def _sync_context_compression_tool(self) -> None:
-        """Keep the agent-owned compression tool aligned with its config."""
-        registered = await self.toolkit.get_tool(
-            self._context_compression_tool.name,
-        )
-        if self.context_config.compression_tool_enabled:
-            if registered is not self._context_compression_tool:
-                await self.toolkit.add_tool(self._context_compression_tool)
-        elif registered is self._context_compression_tool:
-            await self.toolkit.remove_tool(
-                self._context_compression_tool.name,
+        try:
+            await self.compress_context(context_config=context_config)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return ToolChunk(
+                content=[TextBlock(text=f"Context compression failed: {e}")],
+                state=ToolResultState.ERROR,
             )
+
+        return ToolChunk(
+            content=[TextBlock(text="Context compressed successfully.")],
+            state=ToolResultState.SUCCESS,
+        )
 
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
-        *,
-        force: bool = False,
-        fallback_to_truncation: bool = True,
-    ) -> None:
-        """Limit images, then run the shared context-compression flow."""
-        cfg = context_config or self.context_config
-        # Image limiting is an independent context invariant. Keep its
-        # replacements even if summary generation later fails, so an image
-        # already offloaded to the workspace always retains a live reference
-        # from the context instead of becoming an orphaned file.
-        await self._limit_context_images(cfg)
-        await self._compress_context_impl_after_image_limit(
-            context_config=cfg,
-            instructions=instructions,
-            force=force,
-            fallback_to_truncation=fallback_to_truncation,
-        )
-
-    async def _compress_context_impl_after_image_limit(
-        self,
-        context_config: ContextConfig | None = None,
-        instructions: HintBlock | None = None,
-        *,
-        force: bool = False,
-        fallback_to_truncation: bool = True,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -498,18 +478,22 @@ class Agent:
         """
         cfg: ContextConfig = context_config or self.context_config
 
+        # Limit the number of images in the context first, so that the token
+        # counting below reflects the images that actually remain
+        await self._limit_context_images(cfg)
+
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
-        if not force and estimated_tokens < threshold:
+        if estimated_tokens < threshold:
             return
 
         logger.info(
-            "[AGENT %s]: Activating context compression at token count %d "
-            "with hard threshold %d.",
+            "[AGENT %s]: Current token count %d exceeds the threshold %d, "
+            "activating compression.",
             self.name,
             int(estimated_tokens),
             int(threshold),
@@ -665,8 +649,6 @@ class Agent:
                     error = retry_error
 
             if res is None:
-                if not fallback_to_truncation:
-                    raise error
                 logger.warning(
                     "[AGENT %s]: Summary generation failed: %s. "
                     "Falling back to context truncation.",
@@ -739,10 +721,7 @@ class Agent:
             await apply_task
             raise
 
-    async def _limit_context_images(
-        self,
-        cfg: ContextConfig,
-    ) -> None:
+    async def _limit_context_images(self, cfg: ContextConfig) -> None:
         """Limit the number of images in the context according to
         ``cfg.max_image_num``. The oldest images exceeding the limit are
         offloaded to the workspace (if an offloader is provided) and replaced
@@ -914,9 +893,9 @@ class Agent:
 
         self._receive_reply_end = False
         async for item in agen:
+            # Set before the yield: the suspended `_reply_impl` checks the
+            # flag once resumed by the next pull
             if isinstance(item, ReplyEndEvent):
-                # Set before the yield: the suspended `_reply_impl` checks the
-                # flag once resumed by the next pull.
                 self._receive_reply_end = True
             yield item
 
@@ -1084,12 +1063,12 @@ class Agent:
                     ),
                 )
 
-            # Register the agent-owned compression tool before the first model
-            # input. While the config remains enabled the same tool instance
-            # stays registered across replies, keeping its serialized schema
-            # stable for prompt caching. Runtime-state injection independently
-            # decides when to recommend calling it.
-            await self._sync_context_compression_tool()
+            # Register the compression tool, whose registration is kept
+            # across replies so that its schema is stable for prompt caching
+            if self.context_config.compression_tool_enabled and not (
+                await self.toolkit.get_tool(self._compression_tool.name)
+            ):
+                await self.toolkit.add_tool(self._compression_tool)
 
             # =================================================================
             # Step 3: Enter the reasoning-acting loop until reaching max_iters
@@ -1578,9 +1557,9 @@ class Agent:
                     "No task is currently in progress, so this is a suitable "
                     "boundary for reducing older context. If the completed "
                     "work can be preserved accurately in a continuation "
-                    f"summary, call `{_CompressContext.name}` before starting "
-                    "the next task. Keep the current context when exact "
-                    "earlier details are still needed."
+                    f"summary, call `{self._compression_tool.name}` before "
+                    "starting the next task. Keep the current context when "
+                    "exact earlier details are still needed."
                 )
 
         # =====================================================================
