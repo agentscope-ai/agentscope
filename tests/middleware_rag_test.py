@@ -563,11 +563,15 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                         "media_type": "image/png",
                     },
                     "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
                     "text": "user: Why?",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
         )
@@ -718,6 +722,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                     "type": "text",
                     "text": AnyString(),
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "data",
@@ -728,6 +734,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                         "media_type": "image/png",
                     },
                     "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
@@ -735,6 +743,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                     "Broad Paris trivia.\n"
                     "</candidate>",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
@@ -742,6 +752,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                     "Paris is in France.\n"
                     "</candidate>",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
         )
@@ -842,6 +854,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                         "[2] (source: doc-extra.txt)\n"
                         "Paris has many bridges.",
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
                 "state": "success",
@@ -974,6 +988,8 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
                     "type": "text",
                     "text": AnyString(),
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
@@ -981,11 +997,15 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
                     "Broad Paris trivia.\n"
                     "</candidate>",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
                     "text": '<candidate id="c2" source="doc-image.txt">',
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "data",
@@ -996,11 +1016,15 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
                         "media_type": "image/png",
                     },
                     "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
                     "text": "</candidate>",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
                 {
                     "type": "text",
@@ -1008,6 +1032,8 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
                     "Paris is in France.\n"
                     "</candidate>",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
         )
