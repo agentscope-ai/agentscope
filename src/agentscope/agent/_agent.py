@@ -29,6 +29,7 @@ from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
     _generate_id,
+    _json_dumps_with_repair,
     _json_loads_with_repair,
     _execute_async_or_sync_func,
 )
@@ -879,6 +880,9 @@ class Agent:
         for index in awaiting_tool_calls.values():
             call_block = last_msg.content[index]
             assert isinstance(call_block, ToolCallBlock)
+
+            # Repair partial arguments before persisting the interruption.
+            call_block.input = _json_dumps_with_repair(call_block.input)
 
             # ALLOWED calls are running and SUBMITTED external calls are
             # awaiting their result; both already emitted START.

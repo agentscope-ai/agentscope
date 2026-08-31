@@ -164,6 +164,35 @@ json.loads(your_tool_arguments)
     )
 
 
+def _json_dumps_with_repair(json_str: str) -> str:
+    """Return tool-call arguments as a valid JSON object string.
+
+    Valid JSON object strings are returned unchanged. Incomplete strings are
+    repaired when possible, while unrecoverable or non-object values degrade
+    to ``"{}"``.
+
+    Args:
+        json_str (`str`):
+            The tool-call arguments to validate and repair.
+
+    Returns:
+        `str`:
+            A valid JSON string whose top-level value is an object.
+    """
+    try:
+        parsed = json.loads(json_str)
+        if isinstance(parsed, dict):
+            return json_str
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        parsed = _json_loads_with_repair(json_str or "{}")
+    except ToolJSONDecodeError:
+        return "{}"
+    return json.dumps(parsed, ensure_ascii=False)
+
+
 def _get_timestamp(add_random_suffix: bool = False) -> str:
     """Get the current timestamp in the format YYYY-MM-DD HH:MM:SS.sss."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]

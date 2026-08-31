@@ -10,6 +10,7 @@ from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
+from .._utils._common import _json_dumps_with_repair
 from ..message import (
     Msg,
     URLSource,
@@ -327,7 +328,9 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             "type": "function",
                             "function": {
                                 "name": block.name,
-                                "arguments": block.input,
+                                "arguments": _json_dumps_with_repair(
+                                    block.input,
+                                ),
                             },
                         },
                     )
