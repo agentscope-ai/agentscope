@@ -1,5 +1,6 @@
 import { client } from './client';
 import type {
+	BindingView,
 	ChannelChatIdsResponse,
 	ChannelRecord,
 	ChannelSessionsResponse,
@@ -35,4 +36,13 @@ export const channelApi = {
 
 	listChatIds: (channelId: string) =>
 		client.get<ChannelChatIdsResponse>(`/channels/${channelId}/chat_ids`),
+
+	startBinding: (channelType: string) =>
+		client.post<BindingView>('/channels/bindings', { channel_type: channelType }),
+
+	/** Report the session; this call is also what advances it. */
+	pollBinding: (bindingId: string) => client.get<BindingView>(`/channels/bindings/${bindingId}`),
+
+	cancelBinding: (bindingId: string) =>
+		client.post<{ status: string }>(`/channels/bindings/${bindingId}/cancel`),
 };

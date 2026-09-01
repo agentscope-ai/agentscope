@@ -668,6 +668,15 @@
 		}
 	},
 	"channel": {
+		"credentialBinding": {
+			"tab": "扫码授权",
+			"manualTab": "手动填写",
+			"scanHint": "用平台 App 扫码并确认，凭据将自动生成。",
+			"authorized": "已确认，凭据已就绪。",
+			"failed": "授权未能完成。",
+			"unsafeUrl": "平台返回的链接无法安全展示。",
+			"retry": "重新生成"
+		},
 		"title": "频道",
 		"subtitle": "接入飞书、Discord 等外部平台，让智能体在群聊里工作",
 		"status": "状态",

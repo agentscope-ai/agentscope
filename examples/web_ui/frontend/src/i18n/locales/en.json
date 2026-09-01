@@ -668,6 +668,15 @@
 		}
 	},
 	"channel": {
+		"credentialBinding": {
+			"tab": "Scan QR code",
+			"manualTab": "Enter manually",
+			"scanHint": "Scan with the platform app and approve to create the credentials.",
+			"authorized": "Approved. Credentials are ready.",
+			"failed": "The binding could not be completed.",
+			"unsafeUrl": "The platform returned a link that cannot be shown safely.",
+			"retry": "Try again"
+		},
 		"title": "Channels",
 		"subtitle": "Connect external platforms like Feishu and Discord so agents work in group chats",
 		"status": "Status",

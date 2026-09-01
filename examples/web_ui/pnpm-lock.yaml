@@ -123,6 +123,9 @@ importers:
       onborda:
         specifier: ^1.2.5
         version: 1.2.5(@radix-ui/react-portal@1.1.9(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(framer-motion@12.40.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(next@16.2.6(@babel/core@7.29.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      qrcode.react:
+        specifier: ^4.2.0
+        version: 4.2.0(react@19.2.6)
       radix-ui:
         specifier: ^1.4.3
         version: 1.4.3(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -4214,6 +4217,11 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  qrcode.react@4.2.0:
+    resolution: {integrity: sha512-QpgqWi8rD9DsS9EP3z7BT+5lY5SFhsqGjpgW5DY/i3mK4M9DTBNz3ErMi8BWYEfI3L0d8GIbGmcdFAS1uIRGjA==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   qs@6.15.1:
     resolution: {integrity: sha512-6YHEFRL9mfgcAvql/XhwTvf5jKcOiiupt2FiJxHkiX1z4j7WL8J/jRHYLluORvc1XxB5rV20KoeK00gVJamspg==}
@@ -9415,6 +9423,10 @@ snapshots:
   pstree.remy@1.1.8: {}
 
   punycode@2.3.1: {}
+
+  qrcode.react@4.2.0(react@19.2.6):
+    dependencies:
+      react: 19.2.6
 
   qs@6.15.1:
     dependencies:
