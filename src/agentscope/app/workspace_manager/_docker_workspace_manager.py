@@ -30,14 +30,16 @@ import os
 import time
 from typing import Self
 
-from agentscope._logging import logger
-from agentscope.mcp import MCPClient
-from agentscope.workspace._docker import DockerWorkspace
-from agentscope.workspace._docker._make_dockerfile import (
+from typing_extensions import deprecated
+
+from ..._logging import logger
+from ...mcp import MCPClient
+from ...workspace import DockerWorkspace
+from ...workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
 )
-from ._base import WorkspaceManagerBase
+from ._base import WorkspaceManagerBase, IsolationPolicy
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -59,6 +61,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self,
         basedir: str,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         base_image: str = DEFAULT_BASE_IMAGE,
         node_version: str = "20",
         extra_pip: list[str] | None = None,
@@ -77,6 +80,13 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 created (``<basedir>/<user_id>/<agent_id>``). Each
                 workdir is bind-mounted to ``/workspace`` inside its
                 container.
+            isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
+                Isolation grain for :meth:`assign_workspace_id`.
+                ``PER_SESSION`` → fresh UUID (one workspace per
+                session); ``PER_AGENT`` / ``PER_USER`` → deterministic
+                hash so sessions of the same (user, agent) or same
+                user share a workspace. Explicit ``workspace_id`` on
+                session creation always wins over this policy.
             base_image (`str`, defaults to `DEFAULT_BASE_IMAGE`):
                 Base Docker image; must provide ``python3``.
             node_version (`str`, defaults to `"20"`):
@@ -112,6 +122,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self._env = dict(env or {})
         self._default_mcps = list(default_mcps or [])
         self._skill_paths = list(skill_paths or [])
+        super().__init__(isolation=isolation)
         self._ttl = ttl
         self._sweep_interval = sweep_interval
 
@@ -169,7 +180,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None = None,
     ) -> DockerWorkspace:
         """Return an initialised workspace, building one on cache miss.
 
@@ -190,15 +201,25 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 Session identifier (unused for isolation; sessions
                 share a workdir and partition under
                 ``sessions/<session_id>/``).
-            workspace_id (`str`):
+            workspace_id (`str | None`, optional):
                 Stable workspace identifier — used both as the cache
-                key and the container name suffix.
+                key and the container name suffix. When ``None`` the
+                manager falls back to :meth:`assign_workspace_id`;
+                the session flow should pre-resolve this so container
+                names stay stable across restarts.
 
         Returns:
             `DockerWorkspace`:
                 A live, initialised workspace.
         """
         del session_id  # accepted for interface parity; not used here
+
+        if workspace_id is None:
+            workspace_id = self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id="",
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)
@@ -225,6 +246,11 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
+    @deprecated(
+        "DockerWorkspaceManager.create_workspace is deprecated; "
+        "use get_workspace(workspace_id=None) instead.",
+        category=None,
+    )
     async def create_workspace(
         self,
         user_id: str,
@@ -233,10 +259,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
     ) -> DockerWorkspace:
         """Build a brand-new workspace and track it.
 
-        A fresh ``workspace_id`` is allocated by
-        :class:`DockerWorkspace` itself; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
+        .. deprecated::
+            Use :meth:`get_workspace` with ``workspace_id=None`` — it
+            falls back to :meth:`assign_workspace_id` under the
+            manager's isolation policy and reuses the cache path.
 
         Args:
             user_id (`str`):
@@ -256,7 +282,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         workdir = self._workdir_for(user_id, agent_id)
         os.makedirs(workdir, exist_ok=True)
         ws = DockerWorkspace(
-            workdir=workdir,
+            host_workdir=workdir,
             base_image=self._base_image,
             node_version=self._node_version,
             extra_pip=self._extra_pip,

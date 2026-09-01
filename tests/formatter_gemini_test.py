@@ -281,6 +281,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is passed through as ``inline_data``."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this."},
+                        {
+                            "inline_data": {
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock becomes a part with thought=True in Gemini format."""
         fmt = GeminiChatFormatter()
@@ -306,6 +342,36 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_empty_thinking_block_is_dropped(self) -> None:
+        """An empty ``ThinkingBlock`` must be skipped, not forwarded.
+
+        Gemini rejects a thought part whose text is empty with a 400
+        ("contents.parts must not be empty"). Empty thinking blocks occur
+        when a reasoning model returns no summary, so the formatter must
+        drop them rather than emit ``{"thought": True, "text": ""}``.
+        """
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking=""),
+                    TextBlock(text="reply"),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        # Only the text part remains — no empty thought part.
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["role"], "model")
+        thought_parts = [
+            p for p in res[0]["parts"] if p.get("thought") is True
+        ]
+        self.assertEqual(thought_parts, [])
+        self.assertEqual(res[0]["parts"], [{"text": "reply"}])
 
     @patch(
         "agentscope.formatter._formatter_base.shortuuid.uuid",
@@ -716,3 +782,37 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_tool_call_with_incomplete_input_does_not_crash(
+        self,
+    ) -> None:
+        """A truncated ``block.input`` must not crash the formatter.
+
+        Context compression or interrupted streaming can leave a
+        ``ToolCallBlock.input`` as an incomplete JSON fragment. The
+        formatter must repair it into a dict instead of raising
+        ``JSONDecodeError``.
+        """
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tok',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        function_call = [
+            part
+            for m in res
+            for part in m.get("parts", [])
+            if "function_call" in part
+        ][0]["function_call"]
+        self.assertIsInstance(function_call["args"], dict)

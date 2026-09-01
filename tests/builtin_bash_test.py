@@ -15,6 +15,9 @@ from agentscope.permission import (
 )
 from agentscope.tool import Bash, ToolChunk
 from agentscope.tool._builtin._backend import (
+    BackendBase,
+    ExecResult,
+    LocalBackend,
     _subprocess_creation_kwargs,
 )
 
@@ -72,6 +75,49 @@ class BashCwdTest(IsolatedAsyncioTestCase):
             expected_argv,
         )
         self.assertEqual(chunks[0].state, "running")
+
+
+class _PosixSandboxBackend(BackendBase):
+    """A minimal non-local backend whose environment is POSIX."""
+
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+
+    async def exec_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        timeout: float | None = None,
+    ) -> ExecResult:
+        self.commands.append(command)
+        return ExecResult(0, b"ok\n", b"")
+
+    async def read_file(self, path: str) -> bytes:
+        raise NotImplementedError
+
+    async def write_file(self, path: str, data: bytes) -> None:
+        raise NotImplementedError
+
+
+class BashShellSelectionTest(IsolatedAsyncioTestCase):
+    """The shell wrapper must follow the backend OS, not the host OS."""
+
+    async def test_posix_backend_on_windows_host_uses_sh(self) -> None:
+        """A Linux sandbox driven from a Windows host still gets /bin/sh."""
+        backend = _PosixSandboxBackend()
+        with patch("agentscope.tool._builtin._backend.os.name", "nt"):
+            chunks = []
+            async for chunk in await Bash(backend=backend)(command="pwd"):
+                chunks.append(chunk)
+
+        self.assertEqual(backend.commands, [["/bin/sh", "-c", "pwd"]])
+        self.assertEqual(chunks[-1].content[0].text, "ok\n")
+
+    def test_local_backend_os_name_follows_host(self) -> None:
+        """LocalBackend reports the host OS; the base default is posix."""
+        self.assertEqual(LocalBackend().os_name, os.name)
+        self.assertEqual(_PosixSandboxBackend().os_name, "posix")
 
 
 @unittest.skipIf(
@@ -217,12 +263,43 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         self.assertIn("command_substitution", decision.message)
 
+    async def test_mutating_find_commands_not_auto_allowed(self) -> None:
+        """Test mutating find commands are not auto-allowed as read-only."""
+        test_cases = [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -daystart -delete",
+            "find . -nogroup -delete",
+            "find . -nouser -delete",
+            "find . -exec rm {} \\;",
+            "find . -execdir rm {} \\;",
+            "find . -fls results.txt",
+            "find . -fprint results.txt",
+            "find . -fprint0 results.txt",
+            "find . -fprintf results.txt '%p\\n'",
+            "find . -ok rm {} \\;",
+            "find . -okdir rm {} \\;",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertNotEqual(
+                    decision.behavior,
+                    PermissionBehavior.ALLOW,
+                )
+
     async def test_safe_commands_pass(self) -> None:
         """Test that safe commands pass injection check."""
 
         safe_commands = [
             "ls -la",
             "cat file.txt",
+            "find . -name '-delete'",
+            "find . -path './-fprint'",
+            "find . -regex '.*-exec.*'",
             "git status",
             "echo 'hello world'",
         ]
@@ -261,7 +338,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
         """Test match_rule with prefix patterns (e.g., git:*)."""
         # Test exact command match
         self.assertTrue(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "git:*",
                 {"command": "git"},
             ),
@@ -269,7 +346,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
         # Test command with arguments
         self.assertTrue(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "git:*",
                 {"command": "git status"},
             ),
@@ -277,7 +354,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
         # Test non-matching command
         self.assertFalse(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "git:*",
                 {"command": "npm install"},
             ),
@@ -287,7 +364,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
         """Test match_rule with wildcard patterns."""
         # Test wildcard matching
         self.assertTrue(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "git * -m *",
                 {"command": "git commit -m 'test'"},
             ),
@@ -295,7 +372,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
         # Test non-matching wildcard
         self.assertFalse(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "git * -m *",
                 {"command": "git status"},
             ),
@@ -305,7 +382,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
         """Test match_rule with substring patterns."""
         # Test substring matching
         self.assertTrue(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "install",
                 {"command": "npm install package"},
             ),
@@ -313,7 +390,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
         # Test non-matching substring
         self.assertFalse(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 "install",
                 {"command": "npm run build"},
             ),
@@ -323,7 +400,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
         """Test match_rule with escaped characters."""
         # Test escaped asterisk
         self.assertTrue(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 r"echo \*",
                 {"command": "echo *"},
             ),
@@ -331,7 +408,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
         # Test escaped backslash
         self.assertTrue(
-            self.bash_tool.match_rule(
+            await self.bash_tool.match_rule(
                 r"echo \\",
                 {"command": "echo \\"},
             ),
@@ -341,7 +418,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
         """Test generate_suggestions for bash commands."""
 
         # Test two-word command
-        suggestions = self.bash_tool.generate_suggestions(
+        suggestions = await self.bash_tool.generate_suggestions(
             {"command": "git commit -m 'test'"},
         )
 
@@ -355,7 +432,7 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions_single_word(self) -> None:
         """Test generate_suggestions for single-word commands."""
-        suggestions = self.bash_tool.generate_suggestions(
+        suggestions = await self.bash_tool.generate_suggestions(
             {"command": "npm install"},
         )
 

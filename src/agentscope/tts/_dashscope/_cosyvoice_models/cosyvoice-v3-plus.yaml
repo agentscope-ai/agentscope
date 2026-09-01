@@ -1,7 +1,6 @@
 name: cosyvoice-v3-plus
 label: CosyVoice-v3-Plus
 status: active
-realtime: true
 
 input_types:
   - text/plain
@@ -13,13 +12,5 @@ voices:
   # Source: https://help.aliyun.com/en/model-studio/cosyvoice-voice-list
   - longanyang
   - longanhuan
-  - longhuhu_v3
-  - longyingmu_v3
-  - longxiaochun
-  - longxiaoxia
-  - longlaotie
-  - longshuo
-  - longjing
-  - longshu
 
 parameter_overrides: {}

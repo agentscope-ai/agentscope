@@ -183,6 +183,25 @@ class TestSubagentHitlProjectorRequire(IsolatedAsyncioTestCase):
             "require_external_execution",
         )
 
+    async def test_invited_agent_source_user_still_projects(self) -> None:
+        """An ``AgentInvite``-borrowed session runs on a
+        ``source='user'`` agent record but is still a team worker — its
+        HITL request must project onto the leader like any other
+        team-member session."""
+        projection = _FakeProjection()
+        await _projector().maybe_project(
+            "u",
+            _session(_WORKER_SID),
+            _agent(source="user"),  # invited agents keep source='user'
+            RequireUserConfirmEvent.model_construct(
+                reply_id="r1",
+                tool_calls=[],
+            ),
+            projection,
+        )
+        card = projection.store[(_LEADER_SID, SubagentHitlProjector.KIND)]
+        self.assertIn(_entry_id(), card)
+
 
 class TestSubagentHitlProjectorClear(IsolatedAsyncioTestCase):
     """The result / reply-end → delete + publish path."""
@@ -287,10 +306,6 @@ class TestSubagentHitlProjectorNoOp(IsolatedAsyncioTestCase):
         )
         self.assertEqual(projection.store, {})
         self.assertEqual(projection.published, [])
-
-    async def test_non_team_agent_is_noop(self) -> None:
-        """A ``source="user"`` agent never projects."""
-        await self._assert_noop(agent_source="user")
 
     async def test_session_without_team_id_is_noop(self) -> None:
         """A session with no ``team_id`` never projects."""

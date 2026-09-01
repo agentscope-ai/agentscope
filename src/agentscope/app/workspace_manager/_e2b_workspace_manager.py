@@ -36,15 +36,17 @@ import asyncio
 import time
 from typing import Self
 
-from agentscope._logging import logger
-from agentscope.mcp import MCPClient
-from agentscope.workspace import E2BWorkspace
-from agentscope.workspace._e2b._bootstrap import (
+from typing_extensions import deprecated
+
+from ..._logging import logger
+from ...mcp import MCPClient
+from ...workspace import E2BWorkspace
+from ...workspace._e2b._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
 )
-from ._base import WorkspaceManagerBase
+from ._base import WorkspaceManagerBase, IsolationPolicy
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -60,6 +62,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
@@ -76,6 +79,9 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         """Initialize the E2B workspace manager.
 
         Args:
+            isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
+                Isolation grain for :meth:`assign_workspace_id`. See
+                :class:`DockerWorkspaceManager` for semantics.
             template (`str`, defaults to `DEFAULT_TEMPLATE`):
                 E2B template id passed to every workspace this
                 manager produces. Defaults to ``"base"``.
@@ -125,6 +131,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        super().__init__(isolation=isolation)
 
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[E2BWorkspace, float]] = {}
@@ -189,7 +196,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None = None,
     ) -> E2BWorkspace:
         """Return an initialised workspace, reattaching on cache miss.
 
@@ -213,16 +220,25 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 Session identifier (unused; sandboxes are
                 per-workspace, sessions partition under
                 ``sessions/<session_id>/``).
-            workspace_id (`str`):
+            workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key and the
                 value stored in the sandbox's
-                ``agentscope.workspace.id`` metadata.
+                ``agentscope.workspace.id`` metadata. When ``None``
+                the manager falls back to
+                :meth:`assign_workspace_id`.
 
         Returns:
             `E2BWorkspace`:
                 A live, initialised workspace.
         """
         del session_id  # accepted for interface parity; not used here
+
+        if workspace_id is None:
+            workspace_id = self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id="",
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)
@@ -249,6 +265,11 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
+    @deprecated(
+        "E2BWorkspaceManager.create_workspace is deprecated; "
+        "use get_workspace(workspace_id=None) instead.",
+        category=None,
+    )
     async def create_workspace(
         self,
         user_id: str,
@@ -257,10 +278,10 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
     ) -> E2BWorkspace:
         """Build a brand-new workspace and track it.
 
-        A fresh ``workspace_id`` is allocated by
-        :class:`WorkspaceBase`; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
+        .. deprecated::
+            Use :meth:`get_workspace` with ``workspace_id=None`` — it
+            falls back to :meth:`assign_workspace_id` under the
+            manager's isolation policy and reuses the cache path.
 
         Args:
             user_id (`str`):

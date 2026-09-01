@@ -5,9 +5,11 @@ import asyncio
 import os
 import time
 
+from typing_extensions import deprecated
+
 from ..._logging import logger
 from ...workspace import LocalWorkspace
-from ._base import WorkspaceManagerBase
+from ._base import WorkspaceManagerBase, IsolationPolicy
 
 
 class LocalWorkspaceManager(WorkspaceManagerBase):
@@ -22,6 +24,8 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         basedir: str,
+        *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         default_mcps: list | None = None,
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
@@ -32,6 +36,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             basedir (`str`):
                 Root directory under which per-agent workdir are
                 created.
+            isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
+                Isolation grain for :meth:`assign_workspace_id`. See
+                :class:`DockerWorkspaceManager` for semantics.
             default_mcps (`list | None`, optional):
                 MCP clients seeded into brand-new workspaces.
             skill_paths (`list[str] | None`, optional):
@@ -46,6 +53,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[LocalWorkspace, float]] = {}
         self._lock = asyncio.Lock()
+        super().__init__(isolation=isolation)
 
     def _pop_expired(self, now: float) -> list[LocalWorkspace]:
         """Pop every cache entry whose last-access exceeds ``ttl``.
@@ -64,7 +72,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None = None,
     ) -> LocalWorkspace:
         """Return an initialized workspace, reconstructing from
         disk on cache miss.
@@ -78,6 +86,13 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         workspaces.
         """
         del user_id  # accepted for interface parity; not used here
+
+        if workspace_id is None:
+            workspace_id = self.assign_workspace_id(
+                user_id="",
+                agent_id=agent_id,
+                session_id="",
+            )
 
         # Phase 1: cache hit + collect expired.
         async with self._lock:
@@ -124,13 +139,24 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
+    @deprecated(
+        "LocalWorkspaceManager.create_workspace is deprecated; "
+        "use get_workspace(workspace_id=None) instead.",
+        category=None,
+    )
     async def create_workspace(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
     ) -> LocalWorkspace:
-        """Create a new workspace for the given agent and return it."""
+        """Create a new workspace for the given agent and return it.
+
+        .. deprecated::
+            Use :meth:`get_workspace` with ``workspace_id=None`` — it
+            falls back to :meth:`assign_workspace_id` under the
+            manager's isolation policy and reuses the cache path.
+        """
         del user_id, session_id  # accepted for interface parity
 
         workdir = os.path.join(self._basedir, agent_id)

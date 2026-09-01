@@ -55,11 +55,11 @@ export function DimensionSelect({ value, options, onChange, disabled }: Props) {
 				<Button
 					variant="outline"
 					size="sm"
-					className="justify-between gap-1"
+					className="justify-between gap-1 font-normal"
 					disabled={disabled}
 				>
 					<span className="truncate font-mono">{display}</span>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="min-w-32">

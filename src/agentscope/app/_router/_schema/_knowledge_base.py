@@ -5,11 +5,12 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from ...storage import (
-    CredentialRecord,
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
 )
+from ..._service import CredentialView, KnowledgeBaseView
 from ....embedding import EmbeddingModelCard
 from ....rag import VectorSearchResult
 from ...rag.knowledge_base_manager._dimension_policy import DimensionPolicy
@@ -28,6 +29,15 @@ class CreateKnowledgeBaseRequest(BaseModel):
             "Embedding model used both at indexing and at query time. "
             "Cannot be changed after creation — switching would "
             "invalidate every previously inserted vector."
+        ),
+    )
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "Chunker configuration determining how uploaded documents "
+            "are split into chunks.  Pinned at creation time and "
+            "cannot be changed afterwards.  Defaults to the first "
+            "configured chunker with its default parameters."
         ),
     )
 
@@ -56,24 +66,6 @@ class UpdateKnowledgeBaseRequest(BaseModel):
         default=None,
         description="New free-form description; omit to leave unchanged.",
     )
-
-
-class KnowledgeBaseView(BaseModel):
-    """A knowledge base record as exposed to API clients.
-
-    Mirrors :class:`KnowledgeBaseRecord` with the internal
-    ``user_id`` / ``collection_name`` fields stripped — clients have
-    no business introspecting either.
-    """
-
-    id: str = Field(description="The knowledge base identifier.")
-    name: str = Field(description="Display name of the knowledge base.")
-    description: str = Field(description="Free-form description.")
-    embedding_model_config: EmbeddingModelConfig = Field(
-        description="Embedding model configuration pinned at creation.",
-    )
-    created_at: datetime = Field(description="Creation timestamp.")
-    updated_at: datetime = Field(description="Last-update timestamp.")
 
 
 class ListKnowledgeBasesResponse(BaseModel):
@@ -136,7 +128,7 @@ class KnowledgeDocumentView(BaseModel):
             filename=record.data.filename,
             size=record.data.size,
             content_type=record.data.content_type,
-            status=record.data.status,
+            status=record.status,
             error=record.data.error,
             chunk_count=record.data.chunk_count,
             created_at=record.created_at,
@@ -212,7 +204,7 @@ class KbEmbeddingProvider(BaseModel):
     cards are narrowed to the locked dimension when applicable.
     """
 
-    credential: CredentialRecord = Field(
+    credential: CredentialView = Field(
         description="The credential record exposing these models.",
     )
     models: list[EmbeddingModelCard] = Field(
@@ -289,4 +281,24 @@ class ListSupportedContentTypesResponse(BaseModel):
             "sorted.  Derived from `mimetypes` by the base parser; "
             "subclasses may override the default."
         ),
+    )
+
+
+class ChunkerInfo(BaseModel):
+    """One available chunker type and its parameter schema."""
+
+    type: str = Field(description="The chunker type identifier.")
+    parameter_schema: dict = Field(
+        description=(
+            "JSON Schema produced by `ChunkerBase.Parameters."
+            "model_json_schema()`, used to render the parameter form."
+        ),
+    )
+
+
+class ListChunkersResponse(BaseModel):
+    """Response body listing the available chunker types."""
+
+    chunkers: list[ChunkerInfo] = Field(
+        description="The available chunker types, in configured order.",
     )

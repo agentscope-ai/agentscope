@@ -14,6 +14,7 @@ class SessionSource(str, Enum):
 
     USER = "user"
     SCHEDULE = "schedule"
+    CHANNEL = "channel"
 
 
 class ChatModelConfig(BaseModel):
@@ -114,13 +115,50 @@ class SessionConfig(BaseModel):
     """Session configuration — set at creation, updatable via PATCH."""
 
     workspace_id: str
-    """The workspace id this session is bound to."""
+    """Authoritative workspace binding for the session.
+
+    Populated at session creation — either from an explicit
+    ``workspace_id`` on ``CreateSessionRequest`` (used by team
+    invite/borrow flows) or from
+    :meth:`WorkspaceManagerBase.assign_workspace_id` under the
+    manager's isolation policy. Consumed verbatim by chat,
+    ``list_mcps``, and team tools; also the cache key for
+    :meth:`WorkspaceManagerBase.get_workspace`."""
 
     name: str = Field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         description="Display name for the session.",
     )
     """The session display name."""
+
+    cwd: str | None = Field(
+        default=None,
+        description=(
+            "Directory the session is focused on — absolute, or "
+            "relative to the workspace root. ``None`` means the root."
+        ),
+    )
+    """The directory this session is currently focused on.
+
+    Not confined to the workspace root, matching
+    ``GET /workspace/directories``: on a sandboxed backend the
+    reachable filesystem *is* the sandbox, and on a local one the
+    caller is already trusted with the host. Nothing is validated on
+    write — the value only names a place to look, so a path that has
+    gone missing surfaces when something tries to read it rather than
+    blocking the change.
+
+    A relative value stays relative on purpose: the workspace root is
+    backend-dependent (a host directory for :class:`LocalWorkspace`, a
+    fixed in-sandbox path for the container backends) and only
+    resolvable asynchronously, so denormalising it here would go stale
+    the moment a session moves between backends. Resolve with
+    ``backend.abspath(cwd, cwd=workspace.workdir)`` at the point of use
+    — which handles both forms.
+
+    Purely a viewing anchor: it does **not** change where ``Bash``,
+    ``Glob`` or ``Grep`` execute.
+    """
 
     chat_model_config: ChatModelConfig | None = None
     """The chat model config. None means no model has been configured yet."""
@@ -152,6 +190,17 @@ class SessionRecord(_RecordBase):
 
     source_schedule_id: str | None = None
     """The source schedule Id."""
+
+    source_chat_id: str | None = None
+    """For channel-created sessions, the platform chat this session maps
+    to. Recorded so agent output can be delivered back to the right chat
+    even on a background / scheduled wake, where no inbound message is
+    available to supply it."""
+
+    source_channel_id: str | None = None
+    """For channel-created sessions, the owning channel id. Lets the
+    output forwarder locate the channel adapter + presentation settings
+    on a background / scheduled wake."""
 
     team_id: str | None = None
     """The team this session participates in, if any.

@@ -8,10 +8,18 @@ import {
 	ListTodo,
 	PanelRight,
 	ShieldCheck,
+	UsersRound,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ChatModelConfig, ContextUsage, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
+import type {
+	ChatModelConfig,
+	ContextUsage,
+	PermissionMode,
+	SessionKnowledgeConfig,
+	TTSModelConfig,
+	UpdateSessionRequest,
+} from '@/api';
 import { sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
@@ -23,6 +31,7 @@ import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/pan
 import { PermissionPanel } from '@/components/panel/PermissionPanel';
 import { SkillPanel } from '@/components/panel/SkillPanel';
 import { TaskPanel } from '@/components/panel/TaskPanel';
+import { TeamPanel } from '@/components/panel/TeamPanel';
 import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
@@ -48,6 +57,7 @@ import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
+import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
 import { formatNumber } from '@/utils/common';
 
@@ -122,6 +132,42 @@ function ContextUsageIndicator({ usage }: { usage: ContextUsage | null }) {
 /** Maximum number of panels stacked in a single dock column. */
 const MAX_PANELS_PER_COLUMN = 2;
 
+/** localStorage key holding the dock layout across page navigations. */
+const PANEL_LAYOUT_KEY = 'chat_panel_layout';
+
+// Typed as a full Record so adding a PanelKey without listing it here
+// is a compile error rather than a silently unrestorable panel.
+const KNOWN_PANELS: Record<PanelKey, true> = {
+	plan: true,
+	mcp: true,
+	skill: true,
+	permission: true,
+	knowledge: true,
+	team: true,
+};
+
+/**
+ * Restore the persisted dock layout, dropping anything that is no
+ * longer a known panel (keys get renamed/removed across releases).
+ *
+ * @returns The stored layout, or an empty one when absent or corrupt.
+ */
+function loadPanelLayout(): PanelKey[][] {
+	try {
+		const parsed: unknown = JSON.parse(localStorage.getItem(PANEL_LAYOUT_KEY) ?? '[]');
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.map((column: unknown) =>
+				Array.isArray(column)
+					? column.filter((key): key is PanelKey => key in KNOWN_PANELS)
+					: [],
+			)
+			.filter((column) => column.length > 0);
+	} catch {
+		return [];
+	}
+}
+
 /**
  * Insert a panel into the dock layout. Scans columns left to right and
  * appends to the first one with spare room; if every column is full a
@@ -178,16 +224,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
 
-	// When the viewport agent differs from the outer page's selected
-	// agent (i.e. user drilled into a team member), `refetchSessions`
-	// only refreshes the member's session list. The team sidebar is
-	// driven by the leader's session list owned by the outer page, so
-	// we also fire the parent's refetch to keep that in sync.
-	const handleTeamUpdated = useCallback(() => {
-		refetchSessions();
-		onTeamUpdated?.();
-	}, [refetchSessions, onTeamUpdated]);
-
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
 		null,
@@ -201,9 +237,35 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+	const [configPending, setConfigPending] = useState(false);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
-	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>([]);
+	// Persisted so leaving and returning to /chat keeps the same panels.
+	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+
+	useEffect(() => {
+		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
+	}, [panelLayout]);
+
+	// When the viewport agent differs from the outer page's selected
+	// agent (i.e. user drilled into a team member), `refetchSessions`
+	// only refreshes the member's session list, so we also fire the
+	// parent's refetch to keep its copy in sync.
+	//
+	// Surfacing the team panel here is what makes a team visible at all
+	// — `TeamCreate` / `AgentCreate` / `AgentInvite` are agent tools, so
+	// the user never opened a dialog that could have opened the panel.
+	// `team_updated` also fires on `TeamDelete` and carries no payload,
+	// hence checking the refetched list rather than opening blindly.
+	const handleTeamUpdated = useCallback(async () => {
+		const next = await refetchSessions();
+		if (next.some((v) => v.session.id === sessionId && v.team)) {
+			// `openPanelInLayout`, not `togglePanel` — the latter would
+			// close a panel the user already has open.
+			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
+		}
+		onTeamUpdated?.();
+	}, [refetchSessions, sessionId, onTeamUpdated]);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
@@ -221,23 +283,30 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setContextUsage((current) => (current ? { ...current, ...usage } : null));
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
-		agentId,
-		sessionId,
-		{
-			onTeamUpdated: handleTeamUpdated,
-			onStateUpdated: handleStateUpdated,
-			onContextUsageUpdated: handleContextUsageUpdated,
-		},
-	);
+	const {
+		msgs,
+		loading: messagesLoading,
+		phase,
+		send,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl,
+		interrupt,
+	} = useMessages(agentId, sessionId, {
+		onTeamUpdated: handleTeamUpdated,
+		onStateUpdated: handleStateUpdated,
+		onContextUsageUpdated: handleContextUsageUpdated,
+	});
 	const {
 		mcps,
 		loading: mcpsLoading,
 		addMcps,
+		addMcpsFromLibrary,
 		removeMcp,
 		skills,
 		skillsLoading,
-		addSkill,
+		uploadSkill,
+		addSkillsFromLibrary,
 		removeSkill,
 	} = useWorkspace(agentId, sessionId);
 	const { knowledgeBases, loading: knowledgeBasesLoading } = useKnowledgeBases();
@@ -274,15 +343,70 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 *
 	 * @param config - New attachment, or `null` to detach all.
 	 */
-	const handleKnowledgeConfigChange = useCallback(
-		async (config: SessionKnowledgeConfig | null) => {
+	/**
+	 * Persist a session config change, applying it locally only once
+	 * the server accepts it.
+	 *
+	 * The backend rejects config writes with 409 while a chat run holds
+	 * the session, so an optimistic update would leave the control
+	 * showing a value the session does not have. Waiting for the
+	 * response keeps the control on its previous value with no rollback
+	 * bookkeeping; `client.ts` has already surfaced the error toast by
+	 * the time we land in `catch`.
+	 *
+	 * Declared above `panels` for the same temporal-dead-zone reason as
+	 * `handleKnowledgeConfigChange` below.
+	 *
+	 * @param body - The PATCH body.
+	 * @param apply - Mirrors the change into local state on success.
+	 */
+	const patchConfig = useCallback(
+		async (body: UpdateSessionRequest, apply: () => void) => {
 			if (!sessionId || !agentId) return;
-			setSelectedKnowledgeConfig(config);
-			await sessionApi.update(sessionId, agentId, { knowledge_config: config });
-			await refetchSessions();
+			setConfigPending(true);
+			try {
+				await sessionApi.update(sessionId, agentId, body);
+				apply();
+				await refetchSessions();
+			} catch {
+				// Toast already shown; local state deliberately untouched.
+			} finally {
+				setConfigPending(false);
+			}
 		},
 		[sessionId, agentId, refetchSessions],
 	);
+
+	const handleKnowledgeConfigChange = useCallback(
+		async (config: SessionKnowledgeConfig | null) => {
+			await patchConfig({ knowledge_config: config }, () =>
+				setSelectedKnowledgeConfig(config),
+			);
+		},
+		[patchConfig],
+	);
+
+	// Declared above `panels` — the memo factory reads `view.team`
+	// eagerly on first render, so a later `const` would still be in
+	// the temporal dead zone.
+	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
+
+	const { status: workspaceStatus, refetch: refetchWorkspaceStatus } = useWorkspaceStatus(
+		agentId,
+		sessionId,
+		view?.session.config.cwd ?? null,
+	);
+
+	// A finished reply is the one moment the agent may have changed the
+	// working tree, and it is why nothing polls for git status. Watching
+	// `phase` rather than the REPLY_END event also covers the interrupt
+	// timeout, which reaches idle without one.
+	const prevPhaseRef = useRef(phase);
+	useEffect(() => {
+		const wasRunning = prevPhaseRef.current !== 'idle';
+		prevPhaseRef.current = phase;
+		if (wasRunning && phase === 'idle') void refetchWorkspaceStatus();
+	}, [phase, refetchWorkspaceStatus]);
 
 	// Build the panel descriptors with live data. Rebuilt on every
 	// data change so the dock always renders the latest state — the
@@ -302,6 +426,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						mcps={mcps}
 						loading={mcpsLoading}
 						onAdd={addMcps}
+						onAddFromLibrary={addMcpsFromLibrary}
 						onRemove={removeMcp}
 					/>
 				),
@@ -313,7 +438,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					<SkillPanel
 						skills={skills}
 						loading={skillsLoading}
-						onAdd={addSkill}
+						onUpload={uploadSkill}
+						onAddFromLibrary={addSkillsFromLibrary}
 						onRemove={removeSkill}
 					/>
 				),
@@ -362,6 +488,18 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					/>
 				),
 			},
+			team: {
+				title: (
+					<span className="flex items-center gap-x-2">
+						{t('common.team')}
+						{view?.team ? (
+							<Badge variant="outline">{view.team.members.length}</Badge>
+						) : null}
+					</span>
+				),
+				icon: <UsersRound className="size-4" />,
+				content: <TeamPanel team={view?.team ?? null} currentSessionId={sessionId} />,
+			},
 		}),
 		[
 			t,
@@ -369,10 +507,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			mcps,
 			mcpsLoading,
 			addMcps,
+			addMcpsFromLibrary,
 			removeMcp,
 			skills,
 			skillsLoading,
-			addSkill,
+			uploadSkill,
+			addSkillsFromLibrary,
 			removeSkill,
 			permissionContext,
 			knowledgeBases,
@@ -381,10 +521,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			kbMiddlewareSchema,
 			handleKnowledgeConfigChange,
 			sessionId,
+			view,
 		],
 	);
-
-	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 
 	// ChatViewport keeps its own `useSessions(agentId)` instance (the
 	// outer page has a separate one). Its built-in fetch only fires on
@@ -410,6 +549,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
 		setSelectedKnowledgeConfig(null);
+		setContextUsage(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -449,38 +589,32 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		};
 	};
 
-	// Sync tasksContext from the session snapshot. Real-time updates
-	// arrive via the CustomEvent(name="state_updated") → the
-	// onStateUpdated callback above. We always mirror the snapshot
-	// (including clearing to null when the session is gone or has no
-	// tasks yet) so that switching sessions doesn't leak stale tasks
-	// from the previous one.
+	// Seed tasks + permission from the session snapshot ONCE per
+	// session, then leave them to the CustomEvent(name="state_updated")
+	// stream via `handleStateUpdated`.
+	//
+	// Seeding on every `view` change would be wrong: storage is only
+	// written when a run ends, so mid-run the snapshot still holds the
+	// run-start values. `view` gets a new identity on every
+	// `refetchSessions()` — which `team_updated` triggers — and
+	// re-seeding then would silently roll both panels back to where the
+	// reply started. Clearing on `!view` still matters so switching
+	// sessions cannot leak the previous session's tasks or rules.
+	const seededSessionRef = useRef<string | null>(null);
 	useEffect(() => {
 		if (!view) {
+			seededSessionRef.current = null;
 			setTasksContext(null);
+			setPermissionContext(null);
 			setContextUsage(null);
 			return;
 		}
-		const tc = (view.session.state as Record<string, unknown>)?.tasks_context as
-			| TaskContext
-			| undefined;
-		setTasksContext(tc ?? null);
-		setContextUsage(view.session.state.context_usage ?? null);
-	}, [view]);
-
-	// Sync permissionContext from the session snapshot, mirroring the
-	// tasksContext approach above. Real-time updates arrive via the
-	// state_updated event → handleStateUpdated. Clearing to null when
-	// the session is gone avoids leaking stale rules across sessions.
-	useEffect(() => {
-		if (!view) {
-			setPermissionContext(null);
-			return;
-		}
-		const pc = (view.session.state as Record<string, unknown>)?.permission_context as
-			| PermissionContext
-			| undefined;
-		setPermissionContext(pc ?? null);
+		if (seededSessionRef.current === view.session.id) return;
+		seededSessionRef.current = view.session.id;
+		const state = view.session.state as Record<string, unknown> | undefined;
+		setTasksContext((state?.tasks_context as TaskContext) ?? null);
+		setPermissionContext((state?.permission_context as PermissionContext) ?? null);
+		setContextUsage((state?.context_usage as ContextUsage) ?? null);
 	}, [view]);
 
 	// Sync selectedModel + selectedFallbackModel from the session
@@ -504,8 +638,16 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			if (firstModel) {
 				setSelectedModel(firstModel);
 				if (sessionId && agentId) {
+					// `silent` because the user did not ask for this write —
+					// surfacing a toast for a revoked credential or a network
+					// blip they never triggered is pure noise.
 					sessionApi
-						.update(sessionId, agentId, { chat_model_config: firstModel })
+						.update(
+							sessionId,
+							agentId,
+							{ chat_model_config: firstModel },
+							{ silent: true },
+						)
 						.then(() => refetchSessions())
 						.catch(() => {});
 				}
@@ -537,10 +679,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 *   because the primary selector does not allow clearing.
 	 */
 	const handleLlmChange = async (config: ChatModelConfig | null) => {
-		if (!config || !sessionId || !agentId) return;
-		setSelectedModel(config);
-		await sessionApi.update(sessionId, agentId, { chat_model_config: config });
-		await refetchSessions();
+		if (!config) return;
+		await patchConfig({ chat_model_config: config }, () => setSelectedModel(config));
 	};
 
 	/**
@@ -549,11 +689,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 * @param parameters - New parameter map (model-provider specific).
 	 */
 	const handleParametersChange = async (parameters: Record<string, unknown>) => {
-		if (!selectedModel || !sessionId || !agentId) return;
+		if (!selectedModel) return;
 		const updated = { ...selectedModel, parameters };
-		setSelectedModel(updated);
-		await sessionApi.update(sessionId, agentId, { chat_model_config: updated });
-		await refetchSessions();
+		await patchConfig({ chat_model_config: updated }, () => setSelectedModel(updated));
 	};
 
 	/**
@@ -562,10 +700,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 * @param config - New fallback config or `null` to clear.
 	 */
 	const handleFallbackChange = async (config: ChatModelConfig | null) => {
-		if (!sessionId || !agentId) return;
-		setSelectedFallbackModel(config);
-		await sessionApi.update(sessionId, agentId, { fallback_chat_model_config: config });
-		await refetchSessions();
+		await patchConfig({ fallback_chat_model_config: config }, () =>
+			setSelectedFallbackModel(config),
+		);
 	};
 
 	/**
@@ -574,10 +711,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 * @param config - New TTS config or `null` to disable.
 	 */
 	const handleTTSChange = async (config: TTSModelConfig | null) => {
-		if (!sessionId || !agentId) return;
-		setSelectedTTSModel(config);
-		await sessionApi.update(sessionId, agentId, { tts_model_config: config });
-		await refetchSessions();
+		await patchConfig({ tts_model_config: config }, () => setSelectedTTSModel(config));
 	};
 
 	/**
@@ -585,30 +719,58 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 *
 	 * @param mode - New permission mode (e.g. `default`, `explore`).
 	 */
-	const handlePermissionModeChange = async (mode: string) => {
-		setSelectedPermissionMode(mode);
+	/**
+	 * Persist a new working directory.
+	 *
+	 * Nothing local mirrors it — the value is read straight off the
+	 * session view, which `patchConfig` refetches on success.
+	 *
+	 * @param next - Directory relative to the workspace root, or `null`
+	 *   for the root itself.
+	 */
+	const handleCwdChange = async (next: string | null) => {
+		// Bypasses `patchConfig`: the dialog shows the failure inline and
+		// stays open on it, so the toast would be a duplicate and the
+		// swallowed rejection would let the dialog close as if it worked.
 		if (!sessionId || !agentId) return;
-		await sessionApi.update(sessionId, agentId, { permission_mode: mode });
-		await refetchSessions();
+		setConfigPending(true);
+		try {
+			await sessionApi.update(sessionId, agentId, { cwd: next }, { silent: true });
+			await refetchSessions();
+		} finally {
+			setConfigPending(false);
+		}
+	};
+
+	const handlePermissionModeChange = async (mode: string) => {
+		await patchConfig({ permission_mode: mode as PermissionMode }, () =>
+			setSelectedPermissionMode(mode),
+		);
 	};
 
 	return (
 		<>
 			<main className="flex size-full">
 				<ResizablePanelGroup orientation="horizontal">
-					<ResizablePanel className="flex flex-1" minSize="24rem">
+					<ResizablePanel
+						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
+						minSize="24rem"
+					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div
-									id="tour-llm-select"
-									className="flex flex-row items-center gap-x-1"
-								>
+								<div className="flex flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
+								</div>
+								<div className="flex flex-row gap-x-1">
 									<LlmSelect
+										id="tour-llm-select"
+										variant="ghost"
+										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
 										refetchTrigger={credentialRefetchTrigger}
+										disabled={configPending}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -618,15 +780,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										onFallbackChange={handleFallbackChange}
 										selectedTTSModel={selectedTTSModel}
 										onTTSChange={handleTTSChange}
+										disabled={configPending}
 									/>
-								</div>
-								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
-									<ContextUsageIndicator usage={contextUsage} />
 									<PermissionModeSelect
+										id="tour-permission-mode"
+										variant={'ghost'}
+										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedPermissionMode}
-										disabled={!sessionId}
+										disabled={!sessionId || configPending}
 										onChange={handlePermissionModeChange}
 									/>
+									<ContextUsageIndicator usage={contextUsage} />
 									<DropdownMenu>
 										<DropdownMenuTrigger asChild>
 											<Button
@@ -679,6 +843,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												<Database />
 												{t('panel.knowledge.title')}
 											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('team')}
+												onCheckedChange={() => togglePanel('team')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<UsersRound />
+												{t('common.team')}
+											</DropdownMenuCheckboxItem>
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</div>
@@ -687,28 +859,39 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
-									sending={streaming}
+									loading={messagesLoading}
+									agentId={agentId}
+									sessionId={sessionId}
+									cwd={view?.session.config.cwd ?? null}
+									onCwdChange={handleCwdChange}
+									git={workspaceStatus?.git ?? null}
+									onRefreshGit={refetchWorkspaceStatus}
+									phase={phase}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onInterrupt={interrupt}
+									// cwd={
+									// 	{cwd: view?.session.config.cwd, git: {
+									// 		branch: 'main',
+									// 		deletion: 0,
+									// 		addition: 0,
+									// 	}}
+									// }
 									footerSlot={
 										subagentHitl.length > 0 ? (
-											<div className="space-y-2 pb-2">
-												{subagentHitl.map((entry) => (
-													<SubagentHitlCard
-														key={`${entry.worker_session_id}:${entry.reply_id}`}
-														entry={entry}
-														onConfirm={(toolCall, confirm, rules) =>
-															onSubagentConfirm(
-																entry,
-																toolCall,
-																confirm,
-																rules,
-															)
-														}
-													/>
-												))}
-											</div>
+											<SubagentHitlCard
+												key={`${subagentHitl[0].worker_session_id}:${subagentHitl[0].reply_id}`}
+												entry={subagentHitl[0]}
+												onConfirm={(toolCall, confirm, rules) =>
+													onSubagentConfirm(
+														subagentHitl[0],
+														toolCall,
+														confirm,
+														rules,
+													)
+												}
+											/>
 										) : null
 									}
 									allowedInputTypes={(
@@ -734,6 +917,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 														file.type || 'application/octet-stream',
 												},
 												name: file.name,
+												created_at: new Date().toISOString(),
 											};
 										}
 										if (file.type === 'text/plain') {
@@ -742,6 +926,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												id: crypto.randomUUID(),
 												type: 'text' as const,
 												text: `[File: ${file.name}]\n${text}`,
+												created_at: new Date().toISOString(),
 											};
 										}
 										const buffer = await file.arrayBuffer();
@@ -760,6 +945,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												data: base64,
 											},
 											name: file.name,
+											created_at: new Date().toISOString(),
 										};
 									}}
 								/>
@@ -767,7 +953,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						</div>
 					</ResizablePanel>
 					{panelLayout.length > 0 && (
-						<ResizableHandle withHandle className="bg-transparent" />
+						<ResizableHandle withHandle className="bg-transparent w-1.5" />
 					)}
 					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
