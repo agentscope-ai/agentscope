@@ -43,6 +43,11 @@ export const channelApi = {
 	/** Report the session; this call is also what advances it. */
 	pollBinding: (bindingId: string) => client.get<BindingView>(`/channels/bindings/${bindingId}`),
 
-	cancelBinding: (bindingId: string) =>
-		client.post<{ status: string }>(`/channels/bindings/${bindingId}/cancel`),
+	cancelBinding: (bindingId: string, options?: { silent?: boolean }) =>
+		client.post<{ status: string }>(
+			`/channels/bindings/${bindingId}/cancel`,
+			undefined,
+			undefined,
+			options,
+		),
 };

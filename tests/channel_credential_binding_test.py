@@ -319,6 +319,24 @@ class CredentialBindingTest(IsolatedAsyncioTestCase):
             await self.node_a.claim("u", opened.binding_id, "scripted")
         self.assertEqual(ctx.exception.status_code, 404)
 
+    async def test_cancelling_a_claimed_session_is_not_an_error(
+        self,
+    ) -> None:
+        """What creating a channel actually looks like: the claim
+        consumes the session, then the closing dialog cancels it. That
+        second call must not report a failure over a success."""
+        opened = await self.node_a.start("u", "scripted")
+        _ScriptedBinding.script = [
+            BindingStep(
+                state=BindingState.AUTHORIZED,
+                credentials={"app_id": "a", "app_secret": "s"},
+            ),
+        ]
+        await self.node_a.poll("u", opened.binding_id)
+        await self.node_a.claim("u", opened.binding_id, "scripted")
+
+        await self.node_b.cancel("u", opened.binding_id)
+
 
 class CredentialBindingRouterTest(CredentialBindingTest):
     """The endpoints answer with what their response models declare."""

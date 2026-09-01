@@ -198,12 +198,17 @@ class CredentialBindingService:
             user_id (`str`): Must own the session.
             binding_id (`str`): The session to abandon.
 
-        Raises:
-            `CredentialBindingError`: Unknown session or not the
-                caller's.
+        Idempotent: a session that no longer exists is already in the
+        state this asks for.
         """
         while True:
-            raw, session = await self._load(user_id, binding_id)
+            try:
+                raw, session = await self._load(user_id, binding_id)
+            except CredentialBindingError:
+                # Already claimed, expired, or never ours. Cancelling is
+                # asking for it to be gone, and it is — the common case
+                # is the create request having consumed it moments ago.
+                return
 
             # Approved but unclaimed: the operator walked away from
             # credentials that would otherwise stay claimable until the

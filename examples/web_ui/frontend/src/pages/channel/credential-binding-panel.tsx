@@ -75,7 +75,9 @@ export function CredentialBindingPanel({ channelType, onAuthorized }: Props) {
 			.startBinding(channelType)
 			.then((view) => {
 				if (cancelled) {
-					void channelApi.cancelBinding(view.binding_id).catch(() => {});
+					void channelApi
+						.cancelBinding(view.binding_id, { silent: true })
+						.catch(() => {});
 					return;
 				}
 				bindingId = view.binding_id;
@@ -98,7 +100,9 @@ export function CredentialBindingPanel({ channelType, onAuthorized }: Props) {
 			if (timer) clearTimeout(timer);
 			// Abandoning the dialog abandons the session, rather than
 			// leaving credentials claimable until the TTL runs out.
-			if (bindingId) void channelApi.cancelBinding(bindingId).catch(() => {});
+			// Best effort: the create request may already have consumed it.
+			if (bindingId)
+				void channelApi.cancelBinding(bindingId, { silent: true }).catch(() => {});
 		};
 	}, [channelType, attempt]);
 
