@@ -23,6 +23,8 @@ Differences from the Docker manager:
   ``workspace_id``.
 * Idle workspaces are evicted by a background sweeper task started in
   :meth:`__aenter__` and cancelled in :meth:`__aexit__`.
+* Cached workspaces are checked against the OpenSandbox control plane before
+  reuse. Paused sandboxes are reattached; expired sandboxes are recreated.
 * ``close_all`` fans calls out with :func:`asyncio.gather` because
   ``sandbox.pause()`` is a remote round-trip per sandbox.
 """
@@ -101,7 +103,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 SDK HTTP streaming layer is not shorter than bootstrap
                 command timeout.
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
-                Sandbox keep-alive / resume timeout.
+                Sandbox expiration lease and create/connect/resume timeout.
+                Open workspaces renew the finite lease in the background.
             gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
                 TCP port the in-sandbox gateway listens on.
             env (`dict[str, str] | None`, optional):
@@ -196,6 +199,64 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         await ws.initialize()
         return ws
 
+    async def _reuse_cached(
+        self,
+        workspace_id: str,
+    ) -> OpenSandboxWorkspace | None:
+        """Return a live cached workspace or evict its stale connection.
+
+        Remote lifecycle calls run outside :attr:`_lock` so one slow control
+        plane does not block unrelated workspace ids. Cache identity is
+        rechecked under the lock before a result is reused or evicted.
+
+        Args:
+            workspace_id (`str`):
+                Cache key to inspect.
+
+        Returns:
+            `OpenSandboxWorkspace | None`:
+                The renewed cached workspace, or ``None`` when the caller
+                must build a replacement.
+        """
+        while True:
+            async with self._lock:
+                cached = self._cache.get(workspace_id)
+            if cached is None:
+                return None
+            ws, _ = cached
+            # pylint: disable-next=protected-access
+            lifecycle = await ws._refresh_remote_lifecycle()
+
+            async with self._lock:
+                current = self._cache.get(workspace_id)
+                if current is None or current[0] is not ws:
+                    continue
+                if lifecycle == "running":
+                    self._cache[workspace_id] = (ws, time.monotonic())
+                    return ws
+                self._cache.pop(workspace_id)
+
+            if lifecycle == "reattach":
+                logger.info(
+                    "OpenSandbox workspace %r is paused; reattaching "
+                    "sandbox %r",
+                    workspace_id,
+                    ws.sandbox_id,
+                )
+            else:
+                logger.warning(
+                    "OpenSandbox workspace %r lost sandbox %r; recreating "
+                    "it. Ephemeral workspace data may have been lost.",
+                    workspace_id,
+                    ws.sandbox_id,
+                )
+            # Do not pause a sandbox that may already be paused or gone. Drop
+            # the SDK transport locally, then let normal initialization resume
+            # the matching paused sandbox or create a fresh one when absent.
+            # pylint: disable-next=protected-access
+            await ws._discard_local_connection()
+            return None
+
     async def get_workspace(
         self,
         user_id: str,
@@ -205,11 +266,11 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
     ) -> OpenSandboxWorkspace:
         """Return an initialized workspace, reattaching on cache miss.
 
-        On miss, the manager constructs ``OpenSandboxWorkspace`` with
-        the requested ``workspace_id`` and relies on its ``initialize``
-        method to find an existing sandbox by metadata, connect or
-        resume it depending on state, or create a fresh sandbox
-        otherwise.
+        Cached workspaces are checked and renewed before reuse. A paused
+        sandbox is reattached, while an expired or deleted sandbox is replaced
+        under the same ``workspace_id``. On a cache miss, normal initialization
+        finds an existing sandbox by metadata, connects or resumes it depending
+        on state, or creates a fresh sandbox otherwise.
 
         Idle eviction is not performed here; the background sweeper
         started by :meth:`__aenter__` handles that.
@@ -242,13 +303,11 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 agent_id=agent_id,
                 session_id="",
             )
+        assert workspace_id is not None
 
-        async with self._lock:
-            cached = self._cache.get(workspace_id)
-            if cached is not None:
-                ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
+        ws = await self._reuse_cached(workspace_id)
+        if ws is not None:
+            return ws
 
         # Cache miss: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two

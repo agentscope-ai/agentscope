@@ -32,6 +32,11 @@ if TYPE_CHECKING:
         SandboxInfo,
     )
 
+    from .._gateway_client import GatewayClient
+
+
+_RemoteLifecycleState = Literal["running", "reattach", "missing"]
+
 
 class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     """Workspace backed by an OpenSandbox sandbox.
@@ -138,6 +143,9 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
         self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
+        self._gateway: GatewayClient | None
+        self._renew_task: asyncio.Task | None = None
+        self._lease_lost = False
 
     @property
     def sandbox_id(self) -> str | None:
@@ -164,6 +172,20 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         await self._wait_until_running()
 
         self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)
+        if not await self._renew_once():
+            raise RuntimeError(
+                "OpenSandbox sandbox disappeared during initialization "
+                f"(workspace_id={self.workspace_id!r})",
+            )
+        self._start_renewal()
+
+    async def initialize(self) -> None:
+        """Initialize the workspace and clean up partial failures."""
+        try:
+            await super().initialize()
+        except Exception:
+            await self.close()
+            raise
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
@@ -172,6 +194,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         :meth:`initialize` can reattach via metadata lookup and
         resume. Errors are swallowed.
         """
+        await self._stop_renewal()
         if self._sandbox is not None:
             try:
                 await self._sandbox.pause()
@@ -185,6 +208,127 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                     exc,
                 )
             self._sandbox = None
+        self._lease_lost = False
+
+    @property
+    def _renew_interval(self) -> float:
+        """Return a conservative interval for refreshing the lease."""
+        return max(1.0, min(60.0, self.timeout_seconds / 3.0))
+
+    def _start_renewal(self) -> None:
+        """Start the sandbox lease-renewal loop once."""
+        if self._renew_task is None or self._renew_task.done():
+            self._renew_task = asyncio.create_task(self._renew_loop())
+
+    async def _stop_renewal(self) -> None:
+        """Cancel and await the sandbox lease-renewal loop."""
+        task = self._renew_task
+        self._renew_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _renew_loop(self) -> None:
+        """Keep the finite sandbox lease alive while this workspace is open."""
+        while True:
+            try:
+                await asyncio.sleep(self._renew_interval)
+            except asyncio.CancelledError:
+                return
+            try:
+                if not await self._renew_once():
+                    logger.warning(
+                        "OpenSandboxWorkspace: sandbox lease was lost for "
+                        "workspace_id=%r; waiting for manager recovery",
+                        self.workspace_id,
+                    )
+                    return
+            except Exception as exc:  # noqa: BLE001
+                # A transient control-plane failure must not cause a second
+                # sandbox to be created. Retry on the next renewal tick; the
+                # manager performs an authoritative check on cache access.
+                logger.warning(
+                    "OpenSandboxWorkspace: lease renewal failed for "
+                    "workspace_id=%r (will retry): %s",
+                    self.workspace_id,
+                    exc,
+                )
+
+    async def _renew_once(self) -> bool:
+        """Renew the current lease, returning ``False`` after a 404."""
+        from opensandbox.exceptions import SandboxApiException
+
+        if self._sandbox is None:
+            self._lease_lost = True
+            return False
+        try:
+            await self._sandbox.renew(
+                timedelta(seconds=self.timeout_seconds),
+            )
+        except SandboxApiException as exc:
+            if exc.status_code == 404:
+                self._lease_lost = True
+                return False
+            raise
+        self._lease_lost = False
+        return True
+
+    async def _refresh_remote_lifecycle(self) -> _RemoteLifecycleState:
+        """Check the remote state and refresh a running sandbox lease.
+
+        Returns:
+            `_RemoteLifecycleState`:
+                ``"running"`` when the current handle is reusable,
+                ``"reattach"`` when the sandbox is paused, or ``"missing"``
+                when it was deleted or entered a terminal state.
+        """
+        from opensandbox.exceptions import SandboxApiException
+
+        if self._sandbox is None or self._lease_lost:
+            return "missing"
+        try:
+            info = await self._sandbox.get_info()
+        except SandboxApiException as exc:
+            if exc.status_code == 404:
+                self._lease_lost = True
+                return "missing"
+            raise
+
+        state = info.status.state.lower()
+        if state == "running":
+            return "running" if await self._renew_once() else "missing"
+        if state == "paused":
+            return "reattach"
+        if state in {"stopping", "terminated", "failed"}:
+            self._lease_lost = True
+            return "missing"
+        raise RuntimeError(
+            f"OpenSandbox sandbox {self._sandbox.id!r} is transitioning "
+            f"(state={state!r}); retry later",
+        )
+
+    async def _discard_local_connection(self) -> None:
+        """Drop stale local handles without changing remote lifecycle state."""
+        await self._stop_renewal()
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._gateway = None
+        self._mcp_instances.clear()
+        self._mcp_last_used.clear()
+
+        sandbox = self._sandbox
+        self._sandbox = None
+        if sandbox is not None:
+            await sandbox.close()
+        self._backend = None
+        self.is_alive = False
 
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace.
