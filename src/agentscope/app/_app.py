@@ -265,7 +265,9 @@ def create_app(
             custom :class:`~agentscope.app.channel.ChannelBase` subclass
             to add a platform.  When ``None`` (default), no channel types
             are registered and the channel feature stays off until the
-            caller opts in by passing at least one adapter class.
+            caller opts in by passing at least one adapter class. Registering
+            ``WhatsAppChannel`` also exposes the ``/webhooks/whatsapp`` GET
+            and POST routes.
         download_secret (`str | None`, optional):
             Signs the short-lived tokens that let a browser download a
             workspace file by navigation. Defaults to a value generated
@@ -283,6 +285,7 @@ def create_app(
     """
     from fastapi import FastAPI, Request, status
     from fastapi.responses import JSONResponse
+    from ._router._whatsapp_webhook import create_whatsapp_webhook_router
 
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:
@@ -403,6 +406,8 @@ def create_app(
         channel_router,
     ):
         app.include_router(router)
+    if app.state.channel_type_registry.has_type("whatsapp"):
+        app.include_router(create_whatsapp_webhook_router())
 
     @app.exception_handler(HubError)
     async def _on_hub_error(_: Request, exc: HubError) -> JSONResponse:
