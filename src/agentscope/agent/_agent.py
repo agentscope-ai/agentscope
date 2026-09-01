@@ -186,19 +186,6 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
-        if self.context_config.compression_tool_enabled:
-            # The index 0 is the "basic" tool group
-            self.toolkit.tool_groups[0].tools.append(
-                FunctionTool(
-                    self._compress_context_tool,
-                    name="CompressContext",
-                    is_concurrency_safe=False,
-                    permission=PermissionDecision(
-                        behavior=PermissionBehavior.ALLOW,
-                        message="CompressContext is always allowed.",
-                    ),
-                ),
-            )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -3205,6 +3192,23 @@ class Agent:
             )
         # The conversation context
         messages.extend(self.state.context)
+
+        # Equip the compression tool, whose registration is kept across
+        # replies so that its schema is stable for prompt caching
+        if self.context_config.compression_tool_enabled and not (
+            await self.toolkit.get_tool("CompressContext")
+        ):
+            await self.toolkit.add_tool(
+                FunctionTool(
+                    self._compress_context_tool,
+                    name="CompressContext",
+                    is_concurrency_safe=False,
+                    permission=PermissionDecision(
+                        behavior=PermissionBehavior.ALLOW,
+                        message="CompressContext is always allowed.",
+                    ),
+                ),
+            )
 
         # Get the tools schemas
         tools = await self.toolkit.get_tool_schemas(
