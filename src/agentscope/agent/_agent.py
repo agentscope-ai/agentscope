@@ -109,6 +109,10 @@ if TYPE_CHECKING:
 else:
     MiddlewareBase = Any
 
+_COMPRESSION_DATA_PLACEHOLDER = (
+    "[Non-text attachment omitted during context compression]"
+)
+
 
 class Agent:
     """The agent class."""
@@ -408,6 +412,49 @@ class Agent:
 
             await execute_chain()
 
+    def _prepare_messages_for_compression(
+        self,
+        messages: list[Msg],
+    ) -> list[Msg]:
+        """Return message copies compatible with the compression model."""
+
+        def _replace_data_blocks(
+            blocks: list[TextBlock | DataBlock],
+        ) -> list[TextBlock | DataBlock]:
+            return [
+                TextBlock(text=_COMPRESSION_DATA_PLACEHOLDER)
+                if isinstance(block, DataBlock)
+                and not self.model.accepts_data_block(block)
+                else block
+                for block in blocks
+            ]
+
+        prepared_messages = deepcopy(messages)
+        for msg in prepared_messages:
+            if isinstance(msg.content, str):
+                continue
+
+            for index, block in enumerate(msg.content):
+                if isinstance(
+                    block,
+                    DataBlock,
+                ) and not self.model.accepts_data_block(block):
+                    msg.content[index] = TextBlock(
+                        text=_COMPRESSION_DATA_PLACEHOLDER,
+                    )
+                elif isinstance(block, ToolResultBlock) and isinstance(
+                    block.output,
+                    list,
+                ):
+                    block.output = _replace_data_blocks(block.output)
+                elif isinstance(block, HintBlock) and isinstance(
+                    block.hint,
+                    list,
+                ):
+                    block.hint = _replace_data_blocks(block.hint)
+
+        return prepared_messages
+
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
@@ -511,9 +558,12 @@ class Agent:
                 ),
             )
 
+        compression_messages = self._prepare_messages_for_compression(
+            msgs_to_compress,
+        )
         messages = (
             msgs_system
-            + msgs_to_compress
+            + compression_messages
             + instruction_msgs
             + [
                 UserMsg(name="user", content=cfg.compression_prompt),
@@ -563,10 +613,10 @@ class Agent:
                     "insufficient reserved context for compression. "
                     "Trying to compress by removing the oldest context.",
                 )
-                for i in range(1, len(msgs_to_compress) + 1):
+                for i in range(1, len(compression_messages) + 1):
                     messages = (
                         msgs_system
-                        + msgs_to_compress[i:]
+                        + compression_messages[i:]
                         + instruction_msgs
                         + [
                             UserMsg(
