@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Formatters for the OpenAI Responses API."""
 from abc import ABC
+from copy import deepcopy
+from fnmatch import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -27,10 +29,10 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``. '
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``. '
             "Audio is not supported by the Responses API."
         ),
     )
@@ -45,6 +47,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         Completions API:
 
         * ``image_url`` → ``input_image``
+        * ``file`` → ``input_file``
         * ``input_audio`` → skipped (the Responses API does not support
           audio input yet; use Chat Completions API instead). See
           https://developers.openai.com/api/docs/guides/audio
@@ -82,7 +85,78 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 "image_url": base_result["image_url"]["url"],
             }
 
+        if base_result.get("type") == "file":
+            return {"type": "input_file", **base_result["file"]}
+
         return base_result
+
+    def _format_tool_result_output(
+        self,
+        output: str | list[TextBlock | DataBlock],
+    ) -> str | list[dict[str, Any]]:
+        """Format a tool result using the native Responses API schema.
+
+        Text-only results remain strings. Once a supported image or file is
+        present, every block is serialized into the ordered content array.
+        Unsupported media remains visible through the formatter's textual
+        fallback at its original position.
+
+        Args:
+            output (`str | list[TextBlock | DataBlock]`):
+                The tool result to format.
+
+        Returns:
+            `str | list[dict[str, Any]]`:
+                A string for text-only results, otherwise the ordered native
+                content array.
+        """
+        if isinstance(output, str):
+            return output
+
+        output_parts: list[dict[str, Any]] = []
+        has_native_media = False
+
+        for block in output:
+            if isinstance(block, TextBlock):
+                output_parts.append(
+                    {"type": "input_text", "text": block.text},
+                )
+                continue
+
+            media_type = block.source.media_type
+            supports_native_output = (
+                media_type.split("/", 1)[0] == "image"
+                or media_type == "application/pdf"
+            ) and any(
+                fnmatch(media_type, pattern)
+                for pattern in self.supported_input_media_types
+            )
+
+            if supports_native_output:
+                formatted = self._format_response_data_block(block)
+                if formatted is None:
+                    raise RuntimeError(
+                        "Supported OpenAI Responses tool-result media could "
+                        f"not be formatted: {media_type}.",
+                    )
+                output_parts.append(formatted)
+                has_native_media = True
+            else:
+                output_parts.append(
+                    {
+                        "type": "input_text",
+                        "text": (
+                            self._convert_unsupported_data_block_to_string(
+                                block,
+                            )
+                        ),
+                    },
+                )
+
+        if has_native_media:
+            return output_parts
+
+        return "\n".join(part["text"] for part in output_parts)
 
 
 class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
@@ -126,8 +200,13 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
+                    text_type = (
+                        "output_text"
+                        if msg.role == "assistant"
+                        else "input_text"
+                    )
                     content_parts.append(
-                        {"type": "input_text", "text": block.text},
+                        {"type": text_type, "text": block.text},
                     )
 
                 elif isinstance(block, DataBlock):
@@ -203,7 +282,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         None,
                     )
                     if reasoning_item_id:
-                        if content_parts:
+                        if content_parts and block.thinking:
                             items.append(
                                 {
                                     "role": msg.role,
@@ -211,38 +290,48 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                 },
                             )
                             content_parts = []
-                        # summary may be empty when the model did not produce
-                        # reasoning summary text (e.g. o4-mini with streaming)
-                        summary = (
-                            [{"type": "summary_text", "text": block.thinking}]
-                            if block.thinking
-                            else []
+                        # Empty reasoning blocks can arrive after text deltas
+                        # only to carry reasoning_item_id; emit them before
+                        # pending assistant text for replay. Non-empty
+                        # reasoning starts a new output segment, so flush text
+                        # first.
+                        reasoning_item_raw = getattr(
+                            block,
+                            "reasoning_item_raw",
+                            None,
                         )
-                        items.append(
-                            {
-                                "type": "reasoning",
-                                "id": reasoning_item_id,
-                                "summary": summary,
-                                "content": [],
-                            },
-                        )
+                        if (
+                            isinstance(reasoning_item_raw, dict)
+                            and reasoning_item_raw.get("type") == "reasoning"
+                            and reasoning_item_raw.get("id")
+                            == reasoning_item_id
+                        ):
+                            items.append(deepcopy(reasoning_item_raw))
+                        else:
+                            summary = (
+                                [
+                                    {
+                                        "type": "summary_text",
+                                        "text": block.thinking,
+                                    },
+                                ]
+                                if block.thinking
+                                else []
+                            )
+                            items.append(
+                                {
+                                    "type": "reasoning",
+                                    "id": reasoning_item_id,
+                                    "summary": summary,
+                                    "content": [],
+                                },
+                            )
 
                 elif isinstance(block, ToolCallBlock):
-                    # The Responses API distinguishes two identifiers on a
-                    # function_call item:
-                    #   id       → fc_xxx: the item identifier used when
-                    #              echoing the item in multi-turn history
-                    #   call_id  → call_xxx: the identifier that must be
-                    #              echoed in the matching function_call_output
-                    # For other APIs (Chat Completions, DashScope …) only one
-                    # ID exists; call_id extra field is None and we fall back
-                    # to id for both fields.
                     function_calls.append(
                         {
                             "type": "function_call",
-                            "id": block.id,
-                            "call_id": getattr(block, "call_id", None)
-                            or block.id,
+                            "call_id": block.id,
                             "name": block.name,
                             "arguments": block.input,
                         },
@@ -269,42 +358,15 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         )
                         content_parts = []
 
-                    (
-                        textual_output,
-                        multimodal_data,
-                    ) = self.convert_tool_result_to_string(block.output)
-
                     items.append(
                         {
                             "type": "function_call_output",
                             "call_id": block.id,
-                            "output": textual_output,
+                            "output": self._format_tool_result_output(
+                                block.output,
+                            ),
                         },
                     )
-
-                    if multimodal_data:
-                        promo_content = []
-                        for item in multimodal_data:
-                            if isinstance(item, TextBlock):
-                                promo_content.append(
-                                    {
-                                        "type": "input_text",
-                                        "text": item.text,
-                                    },
-                                )
-                            elif isinstance(item, DataBlock):
-                                fmt_item = self._format_response_data_block(
-                                    item,
-                                )
-                                if fmt_item is not None:
-                                    promo_content.append(fmt_item)
-                        if promo_content:
-                            items.append(
-                                {
-                                    "role": "user",
-                                    "content": promo_content,
-                                },
-                            )
 
                 else:
                     logger.warning(

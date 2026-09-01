@@ -2,7 +2,7 @@
 """Request / response schemas for the credential router."""
 from pydantic import BaseModel, Field
 
-from ...storage import CredentialRecord
+from ..._service import CredentialView
 
 
 class CreateCredentialRequest(BaseModel):
@@ -28,7 +28,7 @@ class UpdateCredentialRequest(BaseModel):
 class ListCredentialsResponse(BaseModel):
     """Response body for listing credentials."""
 
-    credentials: list[CredentialRecord] = Field(
+    credentials: list[CredentialView] = Field(
         description="Credential records.",
     )
     total: int = Field(description="Total number of credentials.")

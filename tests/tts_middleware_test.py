@@ -5,6 +5,7 @@ from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+from agentscope import set_id_factory
 from agentscope.event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -157,6 +158,43 @@ class TestTTSMiddlewareNonRealtime(IsolatedAsyncioTestCase):
             [_dump(e) for e in upstream_events],
         )
         tts.synthesize.assert_not_called()
+
+    async def test_audio_block_id_uses_configured_id_factory(self) -> None:
+        """TTS audio DATA_BLOCK events use the configured ID factory."""
+        import agentscope._utils._common as common
+
+        # pylint: disable=protected-access
+        saved_factory = common._id_factory
+        self.addCleanup(setattr, common, "_id_factory", saved_factory)
+        set_id_factory(lambda: "custom-audio-id")
+
+        tts = MagicMock(spec=TTSModelBase)
+        tts.realtime = False
+        tts.__aenter__ = AsyncMock(return_value=tts)
+        tts.__aexit__ = AsyncMock(return_value=None)
+        tts.synthesize = AsyncMock(
+            return_value=_make_tts_response("AAAA"),
+        )
+
+        middleware = TTSMiddleware(tts_model=tts)
+        agent = _make_agent_stub()
+
+        async def next_handler(**_kwargs: Any) -> AsyncGenerator:
+            yield TextBlockDeltaEvent(
+                reply_id="reply-1",
+                block_id="blk-1",
+                delta="hi",
+            )
+            yield TextBlockEndEvent(reply_id="reply-1", block_id="blk-1")
+
+        emitted = [
+            evt async for evt in middleware.on_reply(agent, {}, next_handler)
+        ]
+
+        self.assertEqual(
+            [evt.block_id for evt in emitted[2:]],
+            ["custom-audio-id"] * 3,
+        )
 
     async def test_streaming_output_multiple_chunks(self) -> None:
         """When synthesize() returns an async generator, each chunk produces
