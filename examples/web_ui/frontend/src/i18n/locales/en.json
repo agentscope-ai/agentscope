@@ -140,6 +140,10 @@
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"greeting": "Where should we start?",
+		"contextUsage": {
+			"ariaLabel": "Context usage: {{current}} of {{threshold}} tokens",
+			"tooltip": "{{current}} / {{threshold}} tokens before compression. Window: {{window}}, trigger: {{ratio}}%."
+		},
 		"maxItersExceeded": {
 			"title": "Reached the iteration limit",
 			"description": "Send a new message to keep going, or continue the current task.",

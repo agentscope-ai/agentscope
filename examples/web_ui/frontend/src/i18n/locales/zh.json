@@ -140,6 +140,10 @@
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
+		"contextUsage": {
+			"ariaLabel": "上下文用量：{{current}} / {{threshold}} tokens",
+			"tooltip": "压缩前已用 {{current}} / {{threshold}} tokens。窗口：{{window}}，触发：{{ratio}}%。"
+		},
 		"maxItersExceeded": {
 			"title": "已达到最大迭代次数",
 			"description": "输入新消息可继续对话，或点击继续以完成当前任务。",

@@ -201,6 +201,22 @@ class ReplyContext(BaseModel):
     """The structured output generated within this reply."""
 
 
+class ContextUsage(BaseModel):
+    """Current context-window usage for a session."""
+
+    current_tokens: int = 0
+    """Estimated tokens currently occupying the model context."""
+
+    compression_threshold_tokens: int = 0
+    """Token count at which context compression will be triggered."""
+
+    context_window_tokens: int = 0
+    """The active model's maximum context window."""
+
+    trigger_ratio: float = 0.0
+    """Configured compression trigger ratio."""
+
+
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
@@ -262,6 +278,12 @@ class AgentState(BaseModel):
     # =================================================================
     reply_context: ReplyContext = Field(default_factory=ReplyContext)
     """The reply related context."""
+
+    # =================================================================
+    # The context usage
+    # =================================================================
+    context_usage: ContextUsage = Field(default_factory=ContextUsage)
+    """Current context-window token usage and compression threshold."""
 
     # =================================================================
     # The permission context

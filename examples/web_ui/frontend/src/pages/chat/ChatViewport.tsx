@@ -4,6 +4,7 @@ import {
 	BookText,
 	ChevronDown,
 	Database,
+	Gauge,
 	ListTodo,
 	PanelRight,
 	ShieldCheck,
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
 	ChatModelConfig,
+	ContextUsage,
 	PermissionMode,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
@@ -48,6 +50,7 @@ import {
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
@@ -56,6 +59,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { formatNumber } from '@/utils/common';
 
 interface ChatViewportProps {
 	/**
@@ -76,6 +80,53 @@ interface ChatViewportProps {
 	 * passing this callback wires that signal up.
 	 */
 	onTeamUpdated?: () => void;
+}
+
+function ContextUsageIndicator({ usage }: { usage: ContextUsage | null }) {
+	const { t } = useTranslation();
+	if (!usage || usage.compression_threshold_tokens <= 0) return null;
+
+	const current = Math.max(0, usage.current_tokens);
+	const threshold = Math.max(1, usage.compression_threshold_tokens);
+	const percent = Math.min(100, Math.round((current / threshold) * 100));
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<div
+					className="hidden h-8 min-w-32 items-center gap-2 rounded-md border bg-background px-2 text-xs text-muted-foreground sm:flex"
+					aria-label={t('chat.contextUsage.ariaLabel', {
+						current: formatNumber(current),
+						threshold: formatNumber(threshold),
+					})}
+				>
+					<Gauge className="size-4 shrink-0" />
+					<div className="min-w-0 flex-1">
+						<div className="flex justify-between gap-2 leading-none">
+							<span className="font-medium text-foreground">
+								{formatNumber(current)}
+							</span>
+							<span>{formatNumber(threshold)}</span>
+						</div>
+						<div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+							<div
+								className="h-full bg-primary transition-[width]"
+								style={{ width: `${percent}%` }}
+							/>
+						</div>
+					</div>
+				</div>
+			</TooltipTrigger>
+			<TooltipContent>
+				{t('chat.contextUsage.tooltip', {
+					current: formatNumber(current),
+					threshold: formatNumber(threshold),
+					window: formatNumber(Math.max(0, usage.context_window_tokens)),
+					ratio: Math.round(usage.trigger_ratio * 100),
+				})}
+			</TooltipContent>
+		</Tooltip>
+	);
 }
 
 /** Maximum number of panels stacked in a single dock column. */
@@ -185,6 +236,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
+	const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 	const [configPending, setConfigPending] = useState(false);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
@@ -222,6 +274,13 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		if (value.permission_context) {
 			setPermissionContext(value.permission_context as PermissionContext);
 		}
+		if (value.context_usage) {
+			setContextUsage(value.context_usage as ContextUsage);
+		}
+	}, []);
+
+	const handleContextUsageUpdated = useCallback((usage: Partial<ContextUsage>) => {
+		setContextUsage((current) => (current ? { ...current, ...usage } : null));
 	}, []);
 
 	const {
@@ -236,6 +295,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
+		onContextUsageUpdated: handleContextUsageUpdated,
 	});
 	const {
 		mcps,
@@ -489,6 +549,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
 		setSelectedKnowledgeConfig(null);
+		setContextUsage(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -545,6 +606,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			seededSessionRef.current = null;
 			setTasksContext(null);
 			setPermissionContext(null);
+			setContextUsage(null);
 			return;
 		}
 		if (seededSessionRef.current === view.session.id) return;
@@ -552,6 +614,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		const state = view.session.state as Record<string, unknown> | undefined;
 		setTasksContext((state?.tasks_context as TaskContext) ?? null);
 		setPermissionContext((state?.permission_context as PermissionContext) ?? null);
+		setContextUsage((state?.context_usage as ContextUsage) ?? null);
 	}, [view]);
 
 	// Sync selectedModel + selectedFallbackModel from the session
@@ -727,6 +790,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										disabled={!sessionId || configPending}
 										onChange={handlePermissionModeChange}
 									/>
+									<ContextUsageIndicator usage={contextUsage} />
 									<DropdownMenu>
 										<DropdownMenuTrigger asChild>
 											<Button

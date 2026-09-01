@@ -1113,6 +1113,19 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         await agent.compress_context()
 
+        kwargs = await agent._prepare_model_input()
+        expected_tokens = await model.count_tokens(**kwargs)
+        self.assertEqual(
+            agent.state.context_usage.current_tokens,
+            expected_tokens,
+        )
+        self.assertEqual(
+            agent.state.context_usage.compression_threshold_tokens,
+            70,
+        )
+        self.assertEqual(agent.state.context_usage.context_window_tokens, 100)
+        self.assertEqual(agent.state.context_usage.trigger_ratio, 0.7)
+
         self.assertEqual(
             agent.state.summary,
             """<system-info>Here is a summary of your previous work
@@ -2421,6 +2434,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             "<system-info>Some earlier messages were truncated for limited "
             "context.</system-info>"
         )
+        expected_state.context_usage.current_tokens = 61
+        expected_state.context_usage.compression_threshold_tokens = 70
+        expected_state.context_usage.context_window_tokens = 100
+        expected_state.context_usage.trigger_ratio = 0.7
 
         await agent.compress_context()
 
@@ -2434,6 +2451,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         agent, _ = _make_failing_compression_agent()
         agent.context_config.compression_fallback_to_truncation = False
         expected_state = agent.state.model_copy(deep=True)
+        expected_state.context_usage.current_tokens = 70
+        expected_state.context_usage.compression_threshold_tokens = 70
+        expected_state.context_usage.context_window_tokens = 100
+        expected_state.context_usage.trigger_ratio = 0.7
 
         with self.assertRaisesRegex(
             RuntimeError,
@@ -2456,6 +2477,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
         expected_state = agent.state.model_copy(deep=True)
         expected_state.context = []
+        expected_state.context_usage.current_tokens = 54
+        expected_state.context_usage.compression_threshold_tokens = 70
+        expected_state.context_usage.context_window_tokens = 100
+        expected_state.context_usage.trigger_ratio = 0.7
 
         await agent.compress_context()
 
