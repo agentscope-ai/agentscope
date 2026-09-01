@@ -26,8 +26,6 @@ def _record(bindings: list[ChannelBinding]) -> ChannelRecord:
         user_id="owner-1",
         routing=RoutingConfig(bindings=bindings),
         session=SessionSettings(chat_model_config={"type": "x"}),
-        created_at="t",
-        updated_at="t",
     )
 
 

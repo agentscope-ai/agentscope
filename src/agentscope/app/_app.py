@@ -87,6 +87,8 @@ def create_app(
     mcp_hubs: list[MCPHubBase] | None = None,
     skill_hubs: list[SkillHubBase] | None = None,
     *,
+    enable_channel_worker: bool = True,
+    enable_scheduler: bool = True,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
@@ -189,6 +191,22 @@ def create_app(
             The MCP hubs that provide MCPs.
         skill_hubs (`list[SkillHubBase] | None`, optional):
             The SkillHubs that provide skills.
+        enable_channel_worker (`bool`, defaults to ``True``):
+            Whether this process holds the channels' long connections.
+            ``True`` (embedded deployment) suits a desktop build or a
+            single API process. Set ``False`` when running dedicated
+            channel workers: a platform gives one bot's events to one
+            connection, so every replica connecting would either waste
+            connections or duplicate messages. The channel API, the
+            client factory and webhook delivery stay available either
+            way — only the connections move.
+        enable_scheduler (`bool`, defaults to ``True``):
+            Whether this process owns the schedule timers. APScheduler's
+            jobstore is in-memory, so every process holding them fires
+            every cron tick and a schedule runs once per replica — set
+            ``False`` on all but one. The schedule API and the agent's
+            schedule tools stay available either way; those processes
+            persist the record and notify the owner over the bus.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -241,7 +259,7 @@ def create_app(
             preserves the historical owner-isolated behavior.
         channels (`list[Type[ChannelBase]] | None`, optional):
             Channel adapter classes this service allows (e.g.
-            ``[FeishuChannel, DiscordChannel]``).  Each class
+            ``[DingTalkChannel, FeishuChannel, DiscordChannel]``).  Each class
             self-describes its ``channel_type``, credentials and config,
             so the service registers it without a separate table; pass a
             custom :class:`~agentscope.app.channel.ChannelBase` subclass
@@ -275,6 +293,7 @@ def create_app(
     # Attach shared state that lifespan and dependencies read from app.state
     app.state.storage = storage
     app.state.message_bus = message_bus
+    workspace_manager.bind_storage(storage)
     app.state.workspace_manager = workspace_manager
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
@@ -347,6 +366,8 @@ def create_app(
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None
     )
+    app.state.enable_channel_worker = enable_channel_worker
+    app.state.enable_scheduler = enable_scheduler
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state

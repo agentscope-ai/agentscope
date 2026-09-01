@@ -882,11 +882,50 @@ export interface KnowledgeBaseView {
 	 * shared with read-only permission.
 	 */
 	editable: boolean;
+	/** Number of documents registered in the knowledge base. */
+	document_count: number;
+	/** Total indexed chunks across all documents. */
+	chunk_count: number;
+	/**
+	 * Display name of the credential behind
+	 * `embedding_model_config.credential_id`, resolved server-side so
+	 * shared viewers see it too. `null` when the credential was deleted.
+	 */
+	credential_name: string | null;
+	/** Per-indexing-status document counts; always served. */
+	status_counts: KnowledgeBaseStatusCounts;
+}
+
+/** Documents of one knowledge base, counted by indexing status. */
+export interface KnowledgeBaseStatusCounts {
+	pending: number;
+	parsing: number;
+	chunking: number;
+	indexing: number;
+	ready: number;
+	error: number;
+}
+
+/** Query parameters accepted by `GET /knowledge_bases/`. */
+export interface ListKnowledgeBasesParams {
+	/** Filter down to one knowledge base — list doubles as get-single. */
+	id?: string;
+	/** Case-insensitive substring filter on the name. */
+	name?: string;
+	/** 1-based page number (default 1). */
+	page?: number;
+	/** Page size (default 30, max 128). */
+	page_size?: number;
+	orderby?: 'create_time' | 'update_time';
+	desc?: boolean;
 }
 
 export interface ListKnowledgeBasesResponse {
 	knowledge_bases: KnowledgeBaseView[];
+	/** Total across all pages (after filters), for page counts. */
 	total: number;
+	page: number;
+	page_size: number;
 }
 
 export interface CreateKnowledgeBaseRequest {
@@ -944,9 +983,28 @@ export interface KnowledgeDocumentView {
 	updated_at: string;
 }
 
+/** Query parameters accepted by `GET /knowledge_bases/{id}/documents`. */
+export interface ListKnowledgeDocumentsParams {
+	/** Filter down to one document by id. */
+	id?: string;
+	/** Case-insensitive substring filter on the filename. */
+	keywords?: string;
+	/** Filter by indexing status. */
+	status?: KnowledgeDocumentStatus;
+	/** 1-based page number (default 1). */
+	page?: number;
+	/** Page size (default 30, max 128). */
+	page_size?: number;
+	orderby?: 'create_time' | 'update_time';
+	desc?: boolean;
+}
+
 export interface ListKnowledgeDocumentsResponse {
 	documents: KnowledgeDocumentView[];
+	/** Total across all pages (after filters), for page counts. */
 	total: number;
+	page: number;
+	page_size: number;
 }
 
 export interface ListKnowledgeDocumentStatusResponse {
@@ -975,6 +1033,29 @@ export interface KnowledgeChunk {
 	chunk_index: number;
 	total_chunks: number;
 	metadata: Record<string, unknown>;
+}
+
+/**
+ * Response of `GET /knowledge_bases/{id}/documents/{doc}/chunks` —
+ * one page of a document's chunks in `chunk_index` order.
+ */
+export interface ListDocumentChunksResponse {
+	chunks: KnowledgeChunk[];
+	/** Total chunks in the document; `0` while it is still indexing. */
+	total: number;
+	page: number;
+	page_size: number;
+}
+
+/**
+ * Response of `POST /knowledge_bases/{id}/documents/{doc}/download_token`
+ * — a short-lived capability for browser-native fetches (`<iframe>`,
+ * `<img>`, download links) that cannot carry the `X-User-ID` header.
+ */
+export interface DocumentDownloadTokenResponse {
+	token: string;
+	/** Unix timestamp after which the token is refused. */
+	expires_at: number;
 }
 
 /**
@@ -1093,7 +1174,9 @@ export interface ChannelRecord {
 export interface CreateChannelRequest {
 	channel_type: string;
 	name?: string | null;
-	credentials: Record<string, unknown>;
+	credentials?: Record<string, unknown>;
+	/** Completed binding to take the credentials from, instead of sending them. */
+	credential_binding_id?: string | null;
 	platform_config?: Record<string, unknown>;
 	routing: RoutingConfig;
 	session: SessionSettings;
@@ -1116,6 +1199,19 @@ export interface ChannelTypeSchema {
 	credentials_schema: Record<string, unknown>;
 	config_schema: Record<string, unknown>;
 	platform_bot_id_field?: string;
+	/** Whether the platform can hand its credentials over interactively. */
+	supports_credential_binding?: boolean;
+}
+
+export type BindingState = 'pending' | 'authorized' | 'failed' | 'cancelled';
+
+export interface BindingView {
+	binding_id: string;
+	state: BindingState;
+	/** Where the operator must approve; rendered as a QR code. */
+	verification_url: string;
+	error: string;
+	retry_after_secs: number;
 }
 
 export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';

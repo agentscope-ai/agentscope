@@ -83,17 +83,21 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """
     from docx.oxml.ns import qn
 
+    text_tag = qn("w:t")
+    break_tags = {qn("w:br"), qn("w:cr")}
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
         row_data: list[str] = []
         for tc in tr.findall(qn("w:tc")):
             paragraphs: list[str] = []
             for p_elem in tc.findall(qn("w:p")):
-                texts: list[str] = []
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        texts.append(t_elem.text)
-                para_text = "".join(texts)
+                text_parts: list[str] = []
+                for element in p_elem.iter():
+                    if element.tag == text_tag and element.text:
+                        text_parts.append(element.text)
+                    elif element.tag in break_tags:
+                        text_parts.append("\n")
+                para_text = "".join(text_parts)
                 if para_text:
                     paragraphs.append(para_text)
             row_data.append("\n".join(paragraphs))
@@ -211,8 +215,10 @@ class WordParser(ParserBase):
             table_format (`Literal["markdown", "json"]`, defaults to
                 ``"markdown"``):
                 How to render tables.  ``"markdown"`` uses pipe-table
-                syntax; ``"json"`` emits a JSON array prefixed with a
-                ``<system-info>`` marker.
+                syntax, escaping pipes and rendering cell line breaks
+                as ``<br>``; ``"json"`` emits a JSON array prefixed with
+                a ``<system-info>`` marker and preserves extracted cell
+                strings without Markdown rendering.
 
         Raises:
             `ValueError`: If ``table_format`` is not one of

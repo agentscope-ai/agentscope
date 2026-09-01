@@ -81,6 +81,7 @@ storage-s3 = ["aioboto3"]
 channel = [
     "lark-oapi>=1.4.0",
     "discord.py>=2.3",
+    "dingtalk-stream>=0.24.3",
 ]
 # ------------ Workspace (sandbox backends) ------------
 workspace-docker = ["aiodocker"]
@@ -177,7 +178,8 @@ dev = [
     "pytest-forked",
     "myst_parser",
     "matplotlib",
-    "fakeredis",
+    # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
+    "fakeredis[lua]",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3

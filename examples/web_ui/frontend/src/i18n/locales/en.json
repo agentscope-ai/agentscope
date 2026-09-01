@@ -144,6 +144,11 @@
 			"ariaLabel": "Context usage: {{current}} of {{threshold}} tokens",
 			"tooltip": "{{current}} / {{threshold}} tokens before compression. Window: {{window}}, trigger: {{ratio}}%."
 		},
+		"maxItersExceeded": {
+			"title": "Reached the iteration limit",
+			"description": "Send a new message to keep going, or continue the current task.",
+			"continue": "Continue"
+		},
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",
@@ -384,6 +389,35 @@
 			"chunkPosition": "Chunk {{index}} of {{total}}",
 			"emptyTitle": "No matches",
 			"emptyDescription": "No chunks scored above the threshold for this query."
+		},
+		"config": {
+			"title": "Configuration",
+			"embeddingModel": "Embedding model",
+			"dimensions": "Dimensions",
+			"credential": "Credential",
+			"chunker": "Chunker",
+			"counts": "Contents",
+			"countsValue": "{{documents}} documents · {{chunks}} chunks",
+			"status": "Indexing",
+			"statusValue": "{{ready}} ready · {{indexing}} in progress · {{failed}} failed",
+			"createdAt": "Created"
+		},
+		"documentDetail": {
+			"description": "{{count}} indexed chunks",
+			"chunksTab": "Chunks",
+			"previewTab": "Preview",
+			"chunksEmptyTitle": "No chunks",
+			"chunksEmptyDescription": "This document has no indexed chunks yet.",
+			"chunksUnsupportedTitle": "Chunk browsing unavailable",
+			"chunksUnsupportedDescription": "The configured vector store does not support listing chunks.",
+			"previousPage": "Previous",
+			"nextPage": "Next",
+			"pageIndicator": "Page {{page}} of {{pageCount}}",
+			"previewUnavailableTitle": "No inline preview",
+			"previewUnavailableDescription": "This file type cannot be previewed in the browser.",
+			"previewTooLargeTitle": "File too large to preview",
+			"previewTooLargeDescription": "This file exceeds the inline preview limit. Download it to view the original.",
+			"downloadButton": "Download original file"
 		}
 	},
 	"llm-select": {
@@ -638,6 +672,15 @@
 		}
 	},
 	"channel": {
+		"credentialBinding": {
+			"tab": "Scan QR code",
+			"manualTab": "Enter manually",
+			"scanHint": "Scan with the platform app and approve to create the credentials.",
+			"authorized": "Approved. Credentials are ready.",
+			"failed": "The binding could not be completed.",
+			"unsafeUrl": "The platform returned a link that cannot be shown safely.",
+			"retry": "Try again"
+		},
 		"title": "Channels",
 		"subtitle": "Connect external platforms like Feishu and Discord so agents work in group chats",
 		"status": "Status",

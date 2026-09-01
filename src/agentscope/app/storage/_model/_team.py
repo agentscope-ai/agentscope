@@ -118,5 +118,11 @@ class TeamRecord(_RecordBase):
     session_id: str
     """The leader session id — the session that called ``create_team``."""
 
+    leader_agent_id: str | None = None
+    """The leader session's agent id, denormalised so resolving the
+    leader's name skips the session read. ``None`` on records written
+    before this field; read it via ``_resolve_team_leader``, which
+    backfills."""
+
     data: TeamData
     """The team data."""
