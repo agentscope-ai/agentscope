@@ -226,7 +226,7 @@ async def cancel_credential_binding(
         await bindings.cancel(user_id, binding_id)
     except CredentialBindingError as e:
         raise HTTPException(e.status_code, str(e)) from e
-    return ChannelActionResponse(channel_id=binding_id)
+    return ChannelActionResponse(status="cancelled")
 
 
 @channel_router.get("/{channel_id}")

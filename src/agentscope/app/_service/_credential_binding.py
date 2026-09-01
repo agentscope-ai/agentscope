@@ -204,6 +204,17 @@ class CredentialBindingService:
         """
         while True:
             raw, session = await self._load(user_id, binding_id)
+
+            # Approved but unclaimed: the operator walked away from
+            # credentials that would otherwise stay claimable until the
+            # TTL. Take them off the record instead of leaving them.
+            if session.state is BindingState.AUTHORIZED:
+                await self._bus.registry_pop(
+                    MessageBusKeys.channel_credential_binding(binding_id),
+                    MessageBusKeys.CREDENTIAL_BINDING_FIELD,
+                )
+                return
+
             if session.state.is_terminal:
                 return
 

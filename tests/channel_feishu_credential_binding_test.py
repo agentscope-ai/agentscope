@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
 """Tests for Feishu's device-flow credential binding.
 
 The provider is driven one step per call rather than by a loop of its

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
 """Tests for interactive channel credential binding.
 
 A session lives in the message bus rather than in any one process, so
@@ -24,6 +23,12 @@ from agentscope.app.channel import (
     ChannelTypeRegistry,
     CredentialBindingBase,
 )
+from agentscope.app._router._channel import (
+    cancel_credential_binding,
+    poll_credential_binding,
+    start_credential_binding,
+)
+from agentscope.app._router._schema import StartCredentialBindingRequest
 from agentscope.app.message_bus import InMemoryMessageBus
 
 
@@ -54,6 +59,28 @@ class _ScriptedBinding(CredentialBindingBase):
         if hook is not None:
             await hook()
         return type(self).script.pop(0)
+
+
+class _ContendingBus(InMemoryMessageBus):
+    """Hold registry reads until several callers have the same value.
+
+    Nothing in the in-memory bus suspends, so two gathered polls would
+    otherwise run one after the other and never contend.
+    """
+
+    def __init__(self, readers: int) -> None:
+        super().__init__()
+        self._barrier = asyncio.Barrier(readers)
+
+    async def registry_get(self, namespace: str, field: str) -> str | None:
+        """Read, then wait for the other readers to have read too."""
+        value = await super().registry_get(namespace, field)
+        if self._barrier.n_waiting < self._barrier.parties:
+            try:
+                await asyncio.wait_for(self._barrier.wait(), timeout=1)
+            except (TimeoutError, asyncio.BrokenBarrierError):
+                pass
+        return value
 
 
 class _BoundChannel(ChannelBase):
@@ -256,15 +283,67 @@ class CredentialBindingTest(IsolatedAsyncioTestCase):
     async def test_only_one_of_two_concurrent_polls_reaches_upstream(
         self,
     ) -> None:
-        """The client sets its request rate; the platform's interval
-        still bounds ours, even when two replicas poll at once."""
+        """Two replicas that read the same record must not both ask the
+        platform — the reservation, not the read, is what decides."""
         _ScriptedBinding.retry_after_secs = 60
-        opened = await self.node_a.start("u", "scripted")
+        registry = ChannelTypeRegistry([_BoundChannel, _FormOnlyChannel])
+        bus = await self._stack.enter_async_context(_ContendingBus(2))
+        node_a = CredentialBindingService(bus, registry)
+        node_b = CredentialBindingService(bus, registry)
+
+        opened = await node_a.start("u", "scripted")
         _ScriptedBinding.script = [BindingStep(), BindingStep()]
 
         await asyncio.gather(
-            self.node_a.poll("u", opened.binding_id),
-            self.node_b.poll("u", opened.binding_id),
+            node_a.poll("u", opened.binding_id),
+            node_b.poll("u", opened.binding_id),
         )
 
         self.assertEqual(_ScriptedBinding.calls, 1)
+
+    async def test_cancelling_an_approved_session_discards_it(self) -> None:
+        """Walking away from an approved binding must not leave the
+        credentials claimable until the TTL runs out."""
+        opened = await self.node_a.start("u", "scripted")
+        _ScriptedBinding.script = [
+            BindingStep(
+                state=BindingState.AUTHORIZED,
+                credentials={"app_id": "a", "app_secret": "s"},
+            ),
+        ]
+        await self.node_a.poll("u", opened.binding_id)
+
+        await self.node_b.cancel("u", opened.binding_id)
+
+        with self.assertRaises(CredentialBindingError) as ctx:
+            await self.node_a.claim("u", opened.binding_id, "scripted")
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+class CredentialBindingRouterTest(CredentialBindingTest):
+    """The endpoints answer with what their response models declare."""
+
+    async def test_the_endpoints_round_trip_a_session(self) -> None:
+        """Exercised through the route functions, so a response model
+        that cannot be built shows up here rather than as a 500."""
+        opened = await start_credential_binding(
+            StartCredentialBindingRequest(channel_type="scripted"),
+            bindings=self.node_a,
+            user_id="u",
+        )
+        self.assertEqual(opened.state, BindingState.PENDING)
+
+        _ScriptedBinding.script = [BindingStep()]
+        polled = await poll_credential_binding(
+            opened.binding_id,
+            bindings=self.node_b,
+            user_id="u",
+        )
+        self.assertEqual(polled.binding_id, opened.binding_id)
+
+        cancelled = await cancel_credential_binding(
+            opened.binding_id,
+            bindings=self.node_a,
+            user_id="u",
+        )
+        self.assertEqual(cancelled.status, "cancelled")
