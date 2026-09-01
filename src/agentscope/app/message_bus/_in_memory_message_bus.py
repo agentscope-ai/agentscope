@@ -27,7 +27,9 @@ from typing import Callable, Self
 from ._base import MessageBus
 
 
-class InMemoryMessageBus(MessageBus):
+class InMemoryMessageBus(
+    MessageBus,
+):  # pylint: disable=too-many-public-methods
     """In-memory implementation of :class:`MessageBus`.
 
     Mapping of bus modes to in-memory structures:
@@ -436,6 +438,26 @@ class InMemoryMessageBus(MessageBus):
                 Ignored (no TTL support).
         """
         self._registries[namespace][field] = value
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Compare-and-set one field. See base."""
+        _ = ttl_secs
+        if self._registries.get(namespace, {}).get(field) != expected:
+            return False
+        self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """Read and remove one field. See base."""
+        return self._registries.get(namespace, {}).pop(field, None)
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the registry at ``namespace``.

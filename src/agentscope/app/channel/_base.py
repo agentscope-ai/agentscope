@@ -33,6 +33,7 @@ from ...message import (
 from ...types import ReplyFinishedReason
 
 if TYPE_CHECKING:
+    from ._credential_binding import CredentialBindingBase
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
 
@@ -253,6 +254,11 @@ class ChannelBase(ABC):
     class Config(BaseModel):
         """Non-secret per-channel behaviour switches. Subclasses override;
         left empty when the platform exposes no options."""
+
+    credential_binding: type["CredentialBindingBase"] | None = None
+    """Provider letting an operator hand over credentials out of band
+    (scan a QR code, approve a consent screen) instead of pasting them.
+    Left ``None`` by platforms that only support the form."""
 
     def __init__(
         self,

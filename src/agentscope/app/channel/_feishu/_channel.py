@@ -33,6 +33,7 @@ from .._base import (
     ChatKind,
     _EVENT_ADAPTER,
 )
+from ._credential_binding import FeishuCredentialBinding
 from ._card_templates import (
     _build_action_response,
     _build_approval_card,
@@ -95,6 +96,7 @@ class FeishuChannel(ChannelBase):
     description = "Group and direct-message bot with card interactions."
     icon_url = "https://www.google.com/s2/favicons?domain=feishu.cn&sz=128"
     platform_bot_id_field = "app_id"
+    credential_binding = FeishuCredentialBinding
 
     class Credentials(BaseModel):
         """Feishu bot application credentials."""

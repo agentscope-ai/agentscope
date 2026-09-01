@@ -426,6 +426,59 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Set ``field`` only while it still holds ``expected``.
+
+        Compare-and-set, so a caller that read a value, decided on a new
+        one, and comes back to write it can tell whether anyone else
+        moved it meanwhile — without holding a lock across the think
+        time. The bus never interprets the value.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field name within the registry.
+            value (`str`):
+                Serialized value to store.
+            expected (`str`):
+                The value the caller last read. The write is skipped
+                when the stored value differs.
+            ttl_secs (`int | None`, optional):
+                Refresh the namespace expiry when the write happens.
+
+        Returns:
+            `bool`:
+                ``True`` when the value was written.
+        """
+
+    @abstractmethod
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """Read ``field`` and remove it in one step.
+
+        Lets a value be consumed exactly once however many callers race
+        for it: only one sees it, the rest get ``None``.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to take.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` when absent.
+        """
+
+    @abstractmethod
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the registry at ``namespace``.
 
