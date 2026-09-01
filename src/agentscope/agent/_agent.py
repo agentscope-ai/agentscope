@@ -640,6 +640,8 @@ class Agent:
                     error = retry_error
 
             if res is None:
+                if not cfg.compression_fallback_to_truncation:
+                    raise error
                 logger.warning(
                     "[AGENT %s]: Summary generation failed: %s. "
                     "Falling back to context truncation.",

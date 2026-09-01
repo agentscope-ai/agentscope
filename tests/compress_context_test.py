@@ -2368,6 +2368,23 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(agent.state, expected_state)
 
+    async def test_summary_failure_raises_without_truncation_fallback(
+        self,
+    ) -> None:
+        """Without the truncation fallback, a failed summary raises and
+        leaves the context untouched."""
+        agent, _ = _make_failing_compression_agent()
+        agent.context_config.compression_fallback_to_truncation = False
+        expected_state = agent.state.model_copy(deep=True)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "simulated compression overflow",
+        ):
+            await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
+
     async def test_offload_reminder_is_not_duplicated(self) -> None:
         """Repeated fallback preserves one reminder for a stable path."""
         reminder = (

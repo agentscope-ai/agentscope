@@ -137,6 +137,18 @@ class ContextConfig(BaseModel):
     )
     """The tool result limit to avoid tool result bursting."""
 
+    compression_fallback_to_truncation: bool = Field(
+        default=True,
+        description=(
+            "Whether to truncate the oldest context when the compression "
+            "summary cannot be generated. Turning it off raises the error "
+            "instead, keeping the context intact at the cost of exceeding "
+            "the context length."
+        ),
+    )
+    """Whether to fall back to context truncation when the summary generation
+    fails."""
+
     compression_tool_enabled: bool = Field(
         default=False,
         description=(
