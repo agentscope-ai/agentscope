@@ -523,14 +523,18 @@ class MilvusLiteStore(VectorStoreBase):
 
         Since milvus-lite >= 3.1.0 the ``distance`` field for COSINE
         already carries the cosine similarity (1.0 for identical
-        vectors), so no conversion is needed.
+        vectors).  For the ``L2`` distance metric the raw value is
+        lower-is-better, so it is negated to keep ``score`` meaning
+        "higher is more relevant" like the similarity metrics.
         """
         # pylint: disable=unused-argument
         if "distance" in hit:
-            return float(hit["distance"])
-        if "score" in hit:
-            return float(hit["score"])
-        return 0.0
+            score = float(hit["distance"])
+        elif "score" in hit:
+            score = float(hit["score"])
+        else:
+            return 0.0
+        return -score if metric_type == "L2" else score
 
     @staticmethod
     def _is_local_db_uri(uri: str) -> bool:

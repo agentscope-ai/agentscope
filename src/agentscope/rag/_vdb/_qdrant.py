@@ -315,7 +315,15 @@ class QdrantStore(VectorStoreBase):
         )
         return [
             VectorSearchResult(
-                score=point.score,
+                # Distance metrics (``Euclid`` / ``Manhattan``) are
+                # lower-is-better, so store the negated distance to keep
+                # ``score`` meaning "higher is more relevant" like the
+                # ``Cosine`` / ``Dot`` similarity metrics.
+                score=(
+                    -point.score
+                    if self._distance in ("Euclid", "Manhattan")
+                    else point.score
+                ),
                 document_id=point.payload["document_id"],
                 chunk=Chunk.model_validate(point.payload["chunk"]),
             )
