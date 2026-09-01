@@ -74,17 +74,13 @@ export function ToolCallRow({
 	body?: ReactNode;
 }) {
 	const expandable = body != null && body !== false;
-	// Shimmer the header text. The shadcn ``shimmer`` util is a text-clip effect,
-	// so it has to sit on the elements that *directly* hold the text — the
-	// header's own leaf spans — not on a wrapper (a wrapper only makes descendant
-	// text transparent). We target the direct span children of this flex row
-	// instead of wrapping ``header``, which also keeps their ``gap-x-2`` spacing.
+	const isRunning = !pair.result || pair.result.state === 'running';
 	const row = (
 		<div
 			className={cn(
 				'group flex flex-row gap-x-2 items-center w-full',
 				expandable && 'cursor-pointer',
-				!pair.result || pair.result.state === 'running' ? 'shimmer' : '',
+				isRunning && 'motion-safe:animate-pulse',
 			)}
 		>
 			{header}
