@@ -129,6 +129,11 @@ vdb-milvus = [
 ]
 vdb-mongodb = ["pymongo>=4.7"]
 vdb-elasticsearch = ["elasticsearch[async]>=8.12"]
+# RAGFlow is a managed end-to-end RAG pipeline (parsing, chunking,
+# indexing, retrieval).  It is integrated at the knowledge layer as
+# `RAGFlowKnowledge` rather than underneath VectorStoreBase, so it ships
+# as its own extra.
+vdb-ragflow = ["ragflow-sdk>=0.17.0"]
 # ------------ RAG ------------
 # Document parsers; pick a vector store via the vdb-* extras.
 rag = [
@@ -167,6 +172,7 @@ k8s = ["agentscope[workspace-k8s]"]
 milvuslite = ["agentscope[vdb-milvus]"]
 mongodb = ["agentscope[vdb-mongodb]"]
 elasticsearch = ["agentscope[vdb-elasticsearch]"]
+ragflow = ["agentscope[vdb-ragflow]"]
 mem0 = ["agentscope[memory-mem0]"]
 reme = ["agentscope[memory-reme]"]
 # ------------ Full ------------
@@ -187,6 +193,7 @@ full = [
     "agentscope[vdb-milvus]",
     "agentscope[vdb-mongodb]",
     "agentscope[vdb-elasticsearch]",
+    "agentscope[vdb-ragflow]",
     "agentscope[memory]",
 ]
 
