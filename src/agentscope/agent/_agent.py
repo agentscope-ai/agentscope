@@ -186,15 +186,19 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
-        self._compression_tool = FunctionTool(
-            self._compress_context_tool,
-            name="CompressContext",
-            is_concurrency_safe=False,
-            permission=PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="CompressContext is always allowed.",
-            ),
-        )
+        if self.context_config.compression_tool_enabled:
+            # The index 0 is the "basic" tool group
+            self.toolkit.tool_groups[0].tools.append(
+                FunctionTool(
+                    self._compress_context_tool,
+                    name="CompressContext",
+                    is_concurrency_safe=False,
+                    permission=PermissionDecision(
+                        behavior=PermissionBehavior.ALLOW,
+                        message="CompressContext is always allowed.",
+                    ),
+                ),
+            )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -1063,13 +1067,6 @@ class Agent:
                     ),
                 )
 
-            # Register the compression tool, whose registration is kept
-            # across replies so that its schema is stable for prompt caching
-            if self.context_config.compression_tool_enabled and not (
-                await self.toolkit.get_tool(self._compression_tool.name)
-            ):
-                await self.toolkit.add_tool(self._compression_tool)
-
             # =================================================================
             # Step 3: Enter the reasoning-acting loop until reaching max_iters
             #  or no more tool calls to execute
@@ -1557,9 +1554,9 @@ class Agent:
                     "No task is currently in progress, so this is a suitable "
                     "boundary for reducing older context. If the completed "
                     "work can be preserved accurately in a continuation "
-                    f"summary, call `{self._compression_tool.name}` before "
-                    "starting the next task. Keep the current context when "
-                    "exact earlier details are still needed."
+                    "summary, call `CompressContext` before starting the "
+                    "next task. Keep the current context when the exact "
+                    "earlier details are still needed."
                 )
 
         # =====================================================================

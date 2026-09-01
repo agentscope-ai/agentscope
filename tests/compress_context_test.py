@@ -1525,7 +1525,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
     ) -> None:
         """The tool compresses at the ratio where it is recommended, which is
         below the hard compression threshold."""
-        model = RecordingStructuredMockModel(context_size=100)
+        model = RecordingStructuredMockModel(context_size=500)
         model.set_structured_response(
             StructuredResponse(
                 content={
@@ -1541,8 +1541,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="You are helpful.",
             model=model,
-            # The hard threshold is 80 tokens, while the tool compresses from
-            # (0.8 - 0.2) * 100 = 60 tokens
+            # The context is 312 tokens, above the 300 tokens the tool
+            # compresses from, and below the 400 tokens hard threshold
             context_config=ContextConfig(
                 trigger_ratio=0.8,
                 reserve_ratio=0.3,
@@ -1551,9 +1551,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             state=AgentState(
                 session_id="123",
                 context=[
-                    UserMsg("User", "1" * 80, id="1"),
-                    AssistantMsg("Friday", "2" * 80, id="2"),
-                    UserMsg("User", "3" * 80, id="3"),
+                    UserMsg("User", str(index) * 80, id=str(index))
+                    for index in range(6)
                 ],
             ),
             toolkit=Toolkit(),
@@ -1582,11 +1581,13 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
     async def test_compression_tool_skips_small_context(self) -> None:
         """The tool leaves a context below the recommended ratio untouched,
         so that a spontaneous call doesn't lose details for nothing."""
-        model = RecordingStructuredMockModel(context_size=100)
+        model = RecordingStructuredMockModel(context_size=500)
         agent = Agent(
             name="Friday",
             system_prompt="You are helpful.",
             model=model,
+            # The context is 212 tokens, below the 300 tokens the tool
+            # compresses from
             context_config=ContextConfig(
                 trigger_ratio=0.8,
                 reserve_ratio=0.3,
@@ -1661,8 +1662,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             system_prompt="You are helpful.",
             model=model,
             toolkit=Toolkit(),
-            # The hard threshold is 400 tokens, while the tool compresses
-            # from (0.8 - 0.2) * 500 = 300 tokens
+            # The context is 312 tokens, above the 300 tokens the tool
+            # compresses from, and below the 400 tokens hard threshold
             context_config=ContextConfig(
                 trigger_ratio=0.8,
                 reserve_ratio=0.3,

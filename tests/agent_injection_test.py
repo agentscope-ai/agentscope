@@ -375,8 +375,8 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "is a suitable boundary for reducing older context. If the "
             "completed work can be preserved accurately in a continuation "
             "summary, call `CompressContext` before starting the next task. "
-            "Keep the current context when exact earlier details are still "
-            "needed.</context-compression>\n"
+            "Keep the current context when the exact earlier details are "
+            "still needed.</context-compression>\n"
             "</system-reminder>"
         )
         self.agent.context_config = ContextConfig(
