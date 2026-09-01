@@ -199,6 +199,18 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        # Built here rather than in ``_prepare_model_input``, so that the
+        # registration can tell this agent's tool from a tool of the same
+        # name, e.g. another agent sharing the toolkit
+        self._compression_tool = FunctionTool(
+            self._compress_context_tool,
+            name=_COMPRESSION_TOOL_NAME,
+            is_concurrency_safe=False,
+            permission=PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"{_COMPRESSION_TOOL_NAME} is always allowed.",
+            ),
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -251,7 +263,12 @@ class Agent:
                 f"{self.context_config.trigger_ratio}.",
             )
 
+        # The buffer is only consumed by the runtime state injection and
+        # the compression tool, so it's checked only when one of them is on
         if (
+            self.injection_config.inject_runtime_state
+            or self.context_config.compression_tool_enabled
+        ) and (
             self.context_config.context_buffer_ratio
             >= self.context_config.trigger_ratio
         ):
@@ -423,18 +440,19 @@ class Agent:
             await execute_chain()
 
     async def _compress_context_tool(self) -> ToolChunk:
-        """Compress older conversation context into a continuation summary
-        while preserving the recent context needed for upcoming work.
+        """Compress the older context into a continuation summary, while
+        preserving the recent context needed for the upcoming work.
 
-        Call this tool only after a `<context-compression>` reminder
-        recommends it, which means the context is large enough to compress
-        and no task was in progress. Don't call it while a task is
-        `in_progress`, even if an older reminder is still in the context.
-        Pending tasks don't prevent compression when you're between tasks.
+        Call it between tasks, where the completed work can be preserved
+        accurately in a summary, rather than in the middle of a task. Keep
+        the current context when the exact earlier details are still needed.
+        The context is replaced only after the summary is generated
+        successfully, and is left as-is when it's not long enough to be
+        worth compressing.
 
-        Keep the current context when the exact earlier details are still
-        needed. The conversation history is replaced only after the summary
-        is generated successfully.
+        Returns:
+            `ToolChunk`:
+                Whether the context was compressed.
         """
         # The agent decides when to compress, so lower the trigger to the
         # ratio where the compression is recommended. A context below that
@@ -446,6 +464,7 @@ class Agent:
             },
         )
 
+        n_msgs = len(self.state.context)
         try:
             await self.compress_context(context_config=context_config)
 
@@ -455,8 +474,16 @@ class Agent:
                 state=ToolResultState.ERROR,
             )
 
+        if len(self.state.context) == n_msgs:
+            text = (
+                "The context is not long enough to compress, so it remains "
+                "unchanged."
+            )
+        else:
+            text = "Context compressed successfully."
+
         return ToolChunk(
-            content=[TextBlock(text="Context compressed successfully.")],
+            content=[TextBlock(text=text)],
             state=ToolResultState.SUCCESS,
         )
 
@@ -2949,7 +2976,24 @@ class Agent:
 
             # Move unmatched results into the compressed part and recheck,
             # because this move can split another tool call/result pair.
-            block_index = max(remain_result_ids.values())
+            new_block_index = max(remain_result_ids.values())
+
+            if unfinished_block_indexes and new_block_index >= min(
+                unfinished_block_indexes,
+            ):
+                # The move would compress an unfinished tool call, so reserve
+                # the calls of the unmatched results instead
+                block_index = (
+                    min(
+                        index
+                        for index, block in enumerate(boundary_msg_content)
+                        if isinstance(block, ToolCallBlock)
+                        and block.id in remain_result_ids
+                    )
+                    - 1
+                )
+            else:
+                block_index = new_block_index
 
         # Split the boundary msg content
         boundary_msg_to_compress.content = boundary_msg_content[
@@ -3191,21 +3235,11 @@ class Agent:
 
         # Equip the compression tool, whose registration is kept across
         # replies so that its schema is stable for prompt caching
-        if self.context_config.compression_tool_enabled and not (
+        if self.context_config.compression_tool_enabled and (
             await self.toolkit.get_tool(_COMPRESSION_TOOL_NAME)
+            is not self._compression_tool
         ):
-            await self.toolkit.add_tool(
-                FunctionTool(
-                    self._compress_context_tool,
-                    name=_COMPRESSION_TOOL_NAME,
-                    is_concurrency_safe=False,
-                    permission=PermissionDecision(
-                        behavior=PermissionBehavior.ALLOW,
-                        message=f"{_COMPRESSION_TOOL_NAME} is always "
-                        "allowed.",
-                    ),
-                ),
-            )
+            await self.toolkit.add_tool(self._compression_tool)
 
         # Get the tools schemas
         tools = await self.toolkit.get_tool_schemas(

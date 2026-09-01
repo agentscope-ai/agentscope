@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
-# pylint: disable=protected-access
+# pylint: disable=protected-access, too-many-public-methods
 import hashlib
 import json
 import os
@@ -1541,18 +1541,19 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="You are helpful.",
             model=model,
-            # The context is 312 tokens, above the 300 tokens the tool
-            # compresses from, and below the 400 tokens hard threshold
+            # The context is 316 tokens, above the 250 tokens the tool
+            # compresses from, and below the 450 tokens hard threshold
             context_config=ContextConfig(
-                trigger_ratio=0.8,
+                trigger_ratio=0.9,
                 reserve_ratio=0.3,
+                context_buffer_ratio=0.4,
                 compression_tool_enabled=True,
             ),
             state=AgentState(
                 session_id="123",
                 context=[
                     UserMsg("User", str(index) * 80, id=str(index))
-                    for index in range(6)
+                    for index in range(8)
                 ],
             ),
             toolkit=Toolkit(),
@@ -1586,11 +1587,12 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="You are helpful.",
             model=model,
-            # The context is 212 tokens, below the 300 tokens the tool
+            # The context is 176 tokens, below the 250 tokens the tool
             # compresses from
             context_config=ContextConfig(
-                trigger_ratio=0.8,
+                trigger_ratio=0.9,
                 reserve_ratio=0.3,
+                context_buffer_ratio=0.4,
                 compression_tool_enabled=True,
             ),
             state=AgentState(
@@ -1606,7 +1608,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
-                        "text": "Context compressed successfully.",
+                        "text": "The context is not long enough to compress, "
+                        "so it remains unchanged.",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -1662,18 +1665,19 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             system_prompt="You are helpful.",
             model=model,
             toolkit=Toolkit(),
-            # The context is 312 tokens, above the 300 tokens the tool
-            # compresses from, and below the 400 tokens hard threshold
+            # The context is 316 tokens, above the 250 tokens the tool
+            # compresses from, and below the 450 tokens hard threshold
             context_config=ContextConfig(
-                trigger_ratio=0.8,
+                trigger_ratio=0.9,
                 reserve_ratio=0.3,
+                context_buffer_ratio=0.4,
                 compression_tool_enabled=True,
             ),
             state=AgentState(
                 session_id="123",
                 context=[
                     UserMsg("User", str(index) * 80, id=str(index))
-                    for index in range(6)
+                    for index in range(8)
                 ],
             ),
             injection_config=InjectionConfig(inject_runtime_state=False),
@@ -1692,6 +1696,60 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 and block.id == "compress-1"
             ],
             [ToolCallBlock, ToolResultBlock],
+        )
+
+    async def test_split_keeps_unfinished_call_before_its_earlier_pair(
+        self,
+    ) -> None:
+        """A finished pair after an unfinished call must not drag the
+        unfinished call into the compressed part."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=MockModel(context_size=100),
+            toolkit=Toolkit(),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    AssistantMsg(
+                        "Friday",
+                        [
+                            ToolCallBlock(id="a", name="Read", input="{}"),
+                            ToolCallBlock(
+                                id="compress-1",
+                                name="CompressContext",
+                                input="{}",
+                            ),
+                            ToolResultBlock(
+                                id="a",
+                                name="Read",
+                                output=[TextBlock(text="content")],
+                            ),
+                        ],
+                        id="reply-1",
+                    ),
+                ],
+            ),
+        )
+        agent.state.reply_id = "reply-1"
+
+        (
+            msgs_to_compress,
+            msgs_to_reserve,
+        ) = await agent._split_context_for_compression(1, [])
+
+        self.assertListEqual(msgs_to_compress, [])
+        self.assertListEqual(
+            [
+                (type(block).__name__, block.id)
+                for msg in msgs_to_reserve
+                for block in msg.content
+            ],
+            [
+                ("ToolCallBlock", "a"),
+                ("ToolCallBlock", "compress-1"),
+                ("ToolResultBlock", "a"),
+            ],
         )
 
     async def test_compression_tool_registration_tracks_config(self) -> None:
