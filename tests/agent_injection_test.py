@@ -370,9 +370,9 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "and a later reminder, if any, supersedes this one:\n"
             "<context-length>Your current context contains 700 tokens. "
             "When reaching 800 tokens, your context will be compressed. "
-            "No task is in progress, so you can call `CompressContext` to "
-            "compress it now, unless the exact earlier details are still "
-            "needed.</context-length>\n"
+            "No task is in progress, so judge by yourself whether the "
+            "context should be compressed now by calling `CompressContext`."
+            "</context-length>\n"
             "</system-reminder>"
         )
         self.agent.context_config = ContextConfig(

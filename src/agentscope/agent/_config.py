@@ -63,6 +63,22 @@ class ContextConfig(BaseModel):
     """The ratio of the tokens to reserve in context compression, which should
     be smaller than the trigger ratio."""
 
+    context_buffer_ratio: float = Field(
+        title="Context Buffer",
+        default=0.2,
+        ge=0,
+        le=1,
+        description=(
+            "The buffer ahead of the 'trigger_ratio', within which the agent "
+            "is told that a compression is near, and can compress by itself "
+            "if the compression tool is enabled. It must be smaller than the "
+            "'trigger_ratio'."
+        ),
+    )
+    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
+    of 0.8 and a buffer of 0.2, the context length is injected once the input
+    tokens exceed 60% of the model context size."""
+
     compression_prompt: str = Field(
         default=(
             "<system-hint>You have been working on the task described above. "
@@ -227,20 +243,19 @@ class InjectionConfig(BaseModel):
     """The minimum elapsed time in **hours** from the recorded time to trigger
     a new time injection."""
 
-    context_buffer_ratio: float = Field(
+    context_buffer_ratio: float | None = Field(
         title="Context Buffer",
-        default=0.2,
+        default=None,
         ge=0,
         le=1,
         description=(
-            "The buffer that will activate context length injection before "
-            "context compression, which should be smaller than the "
-            "'trigger_ratio' of the context config."
+            "Deprecated, use the 'context_buffer_ratio' of the context "
+            "config instead. When provided, it overrides the one in the "
+            "context config."
         ),
     )
-    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
-    of 0.8 and a buffer of 0.2, the context length is injected once the input
-    tokens exceed 60% of the model context size."""
+    """Deprecated in favor of ``ContextConfig.context_buffer_ratio``, which
+    is also consumed by the context compression tool."""
 
     tool_retries_limit: int = Field(
         title="Tool Retries Limit",

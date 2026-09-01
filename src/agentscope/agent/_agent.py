@@ -177,6 +177,16 @@ class Agent:
         self.context_config = context_config or ContextConfig()
         self.react_config = react_config or ReActConfig()
         self.injection_config = injection_config or InjectionConfig()
+        if self.injection_config.context_buffer_ratio is not None:
+            warnings.warn(
+                "The 'context_buffer_ratio' of the injection config is "
+                "deprecated, set it in the context config instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.context_config.context_buffer_ratio = (
+                self.injection_config.context_buffer_ratio
+            )
         self._validate_configs()
 
         # The permission engine
@@ -242,18 +252,15 @@ class Agent:
             )
 
         if (
-            self.injection_config.inject_runtime_state
-            or self.context_config.compression_tool_enabled
-        ) and (
-            self.injection_config.context_buffer_ratio
+            self.context_config.context_buffer_ratio
             >= self.context_config.trigger_ratio
         ):
             raise ValueError(
-                "The 'context_buffer_ratio' of the injection config must be "
-                "smaller than the 'trigger_ratio' of the context config, so "
-                "that the context length is injected and the compression "
-                "tool takes effect before the hard compression, got "
-                f"{self.injection_config.context_buffer_ratio} and "
+                "The 'context_buffer_ratio' of the context config must be "
+                "smaller than its 'trigger_ratio', so that the context "
+                "length is injected and the compression tool takes effect "
+                "before the hard compression, got "
+                f"{self.context_config.context_buffer_ratio} and "
                 f"{self.context_config.trigger_ratio}.",
             )
 
@@ -435,7 +442,7 @@ class Agent:
         context_config = self.context_config.model_copy(
             update={
                 "trigger_ratio": self.context_config.trigger_ratio
-                - self.injection_config.context_buffer_ratio,
+                - self.context_config.context_buffer_ratio,
             },
         )
 
@@ -1333,7 +1340,7 @@ class Agent:
           they have been compressed away) nor a previous tasks injection.
         - **Context**: injected at the first iteration of a reply when the
           current input tokens are within
-          ``injection_config.context_buffer_ratio`` of the compression
+          ``context_config.context_buffer_ratio`` of the compression
           threshold, letting the agent perceive that a compression is near.
           With the compression tool enabled and no task in progress, the
           agent is also told that it can compress right now. This dimension
@@ -1507,10 +1514,9 @@ class Agent:
                 self.context_config.trigger_ratio * self.model.context_size,
             )
             if input_tokens > (
-                max(
-                    0.0,
+                (
                     self.context_config.trigger_ratio
-                    - self.injection_config.context_buffer_ratio,
+                    - self.context_config.context_buffer_ratio
                 )
                 * self.model.context_size
             ):
@@ -1529,9 +1535,9 @@ class Agent:
                     and task_status["in_progress"] == 0
                 ):
                     hint += (
-                        " No task is in progress, so you can call "
-                        f"`{_COMPRESSION_TOOL_NAME}` to compress it now, "
-                        "unless the exact earlier details are still needed."
+                        " No task is in progress, so judge by yourself "
+                        "whether the context should be compressed now by "
+                        f"calling `{_COMPRESSION_TOOL_NAME}`."
                     )
 
                 injections["context-length"] = hint

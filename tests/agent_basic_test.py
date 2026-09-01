@@ -183,8 +183,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         )
 
     async def test_inconsistent_ratios_are_rejected(self) -> None:
-        """The ratios across the context and injection configs must leave room
-        ahead of the compression threshold."""
+        """The ratios of the context config must leave room ahead of the
+        compression threshold."""
         with self.assertRaises(ValueError):
             Agent(
                 name="agent",
@@ -201,9 +201,26 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 name="agent",
                 system_prompt="You are an agent.",
                 model=MockModel(),
-                context_config=ContextConfig(trigger_ratio=0.5),
-                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+                context_config=ContextConfig(
+                    trigger_ratio=0.5,
+                    context_buffer_ratio=0.5,
+                ),
             )
+
+    async def test_deprecated_context_buffer_ratio_is_migrated(self) -> None:
+        """The buffer ratio of the injection config still takes effect, and
+        overrides the one in the context config."""
+        context_config = ContextConfig(context_buffer_ratio=0.1)
+        with self.assertWarns(DeprecationWarning):
+            agent = Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.3),
+            )
+
+        self.assertEqual(agent.context_config.context_buffer_ratio, 0.3)
 
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
