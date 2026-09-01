@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The example script to start the agent service."""
 import os
+import sys
 
 import uvicorn
 from fastapi.middleware import Middleware
@@ -170,5 +171,7 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        # Hot reload forces a SelectorEventLoop on Windows, which cannot
+        # spawn the subprocesses that the builtin tools rely on
+        reload=sys.platform != "win32",
     )

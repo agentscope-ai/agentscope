@@ -220,6 +220,34 @@ class InjectionConfig(BaseModel):
     of 0.8 and a buffer of 0.2, the context length is injected once the input
     tokens exceed 60% of the model context size."""
 
+    tool_retries_limit: int = Field(
+        title="Tool Retries Limit",
+        default=3,
+        ge=3,
+        description=(
+            "The number of consecutive failures of the same tool call that "
+            "triggers the tool error injection."
+        ),
+    )
+    """The number of consecutive failures of the same tool call, i.e. the same
+    tool name and arguments, that triggers the tool error injection."""
+
+    tool_retries_hint: str = Field(
+        title="Tool Retries Hint",
+        default=(
+            "The last {count} calls to '{tool_name}' with the same arguments "
+            "all failed. Stop retrying the same call as-is, check the error "
+            "message and try a different approach."
+        ),
+        description=(
+            "The hint injected when the same tool call keeps failing, where "
+            "the '{tool_name}' and '{count}' placeholders will be replaced "
+            "by the failing tool name and the number of consecutive failures."
+        ),
+    )
+    """The hint injected when the same tool call keeps failing, which supports
+    the ``{tool_name}`` and ``{count}`` placeholders."""
+
     template: str = Field(
         title="Template",
         default="""<system-reminder>Treat the following as the ground truth \

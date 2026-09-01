@@ -2,6 +2,7 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
+import json
 import inspect
 import re
 import warnings
@@ -1194,6 +1195,65 @@ class Agent:
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Detect the same tool call, i.e. the same tool name and arguments,
+        failing in the trailing consecutive tool results.
+
+        Returns:
+            `tuple[str, int] | None`:
+                The tool name and the number of consecutive failures when it
+                reaches ``injection_config.tool_retries_limit``, or ``None``
+                when there is no such streak.
+        """
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        # The agent is only stuck when the latest tool call fails
+        results = last_msg.get_content_blocks("tool_result")
+        if not results or results[-1].state != ToolResultState.ERROR:
+            return None
+
+        # The trailing results that failed on the same tool, latest first
+        tool_name = results[-1].name
+        streak = []
+        for result in reversed(results):
+            if (
+                result.state != ToolResultState.ERROR
+                or result.name != tool_name
+            ):
+                break
+            streak.append(result.id)
+
+        limit = self.injection_config.tool_retries_limit
+        if len(streak) < limit:
+            return None
+
+        # The same tool isn't enough, the arguments must repeat as well. They
+        # live in the tool call blocks, normalized so that the same arguments
+        # in a different key order still match, while invalid JSON, e.g.
+        # truncated by the model, is compared as-is.
+        inputs = {
+            _.id: _.input for _ in last_msg.get_content_blocks("tool_call")
+        }
+        arguments = []
+        for block_id in streak:
+            raw = inputs.get(block_id, "")
+            try:
+                arguments.append(json.dumps(json.loads(raw), sort_keys=True))
+            except (TypeError, ValueError):
+                arguments.append(raw.strip())
+
+        count = 0
+        for value in arguments:
+            if value != arguments[0]:
+                break
+            count += 1
+
+        if count < limit:
+            return None
+        return tool_name, count
+
     async def _inject_runtime_state(
         self,
     ) -> AsyncGenerator[HintBlockEvent, None]:
@@ -1229,6 +1289,10 @@ class Agent:
           ``injection_config.context_buffer_ratio`` of the compression
           threshold, letting the agent perceive that a compression is near.
           This dimension is evaluated independently of the two above.
+        - **Tool error**: injected when the same tool call, i.e. the same tool
+          name and arguments, has failed in the last
+          ``injection_config.tool_retries_limit`` consecutive tool results, so
+          that the agent stops retrying a call that keeps failing.
 
         The user defined ``injection_config.extra_fields`` are attached to
         every injection, but never trigger one by themselves.
@@ -1408,6 +1472,20 @@ class Agent:
                     f"tokens. When reaching {trigger_tokens} tokens, "
                     f"your context will be compressed."
                 )
+
+        # =====================================================================
+        # Step 5: Check Repeated Tool Errors
+        # =====================================================================
+        # The agent keeps retrying the same failing call, so remind it to try
+        # something else
+        repeated_error = self._get_repeated_tool_error()
+        if repeated_error is not None:
+            tool_name, count = repeated_error
+            template = self.injection_config.tool_retries_hint
+            injections["tool-error"] = template.replace(
+                "{tool_name}",
+                tool_name,
+            ).replace("{count}", str(count))
 
         if injections:
             # The user defined fields, which don't trigger an injection by

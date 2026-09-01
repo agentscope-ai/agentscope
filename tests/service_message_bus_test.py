@@ -10,9 +10,11 @@ that are layered on top.
 """
 import asyncio
 from contextlib import AsyncExitStack
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
+from utils import AnyString
 
 from agentscope.app.message_bus import MessageBus, RedisMessageBus
 
@@ -82,6 +84,29 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         rest = await self.bus.queue_drain("k", max_count=10)
         self.assertEqual([p["i"] for _id, p in first], [0, 1, 2])
         self.assertEqual([p["i"] for _id, p in rest], [3, 4])
+
+    async def test_drain_reads_and_deletes_in_one_command(self) -> None:
+        """Reading and deleting as two commands lets a competing
+        consumer land in between, read the same entry and dispatch it a
+        second time (#1868)."""
+        await self.bus.queue_push("k", {"x": 1})
+
+        execute_command = self.fr.execute_command
+        issued: list[str] = []
+
+        async def recording_execute_command(*args: Any, **kwargs: Any) -> Any:
+            issued.append(args[0])
+            return await execute_command(*args, **kwargs)
+
+        self.fr.execute_command = recording_execute_command
+
+        self.assertListEqual(
+            await self.bus.queue_drain("k"),
+            [(AnyString(), {"x": 1})],
+        )
+        # One command, whatever it is — the contract is that the read
+        # and the delete cannot be observed apart.
+        self.assertEqual(len(issued), 1)
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
