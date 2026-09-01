@@ -369,14 +369,10 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
             "<context-length>Your current context contains 700 tokens. "
-            "When reaching 800 tokens, your context will be compressed."
-            "</context-length>\n"
-            "<context-compression>No task is currently in progress, so this "
-            "is a suitable boundary for reducing older context. If the "
-            "completed work can be preserved accurately in a continuation "
-            "summary, call `CompressContext` before starting the next task. "
-            "Keep the current context when the exact earlier details are "
-            "still needed.</context-compression>\n"
+            "When reaching 800 tokens, your context will be compressed. "
+            "No task is in progress, so you can call `CompressContext` to "
+            "compress it now, unless the exact earlier details are still "
+            "needed.</context-length>\n"
             "</system-reminder>"
         )
         self.agent.context_config = ContextConfig(
@@ -395,39 +391,36 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             [evt.model_dump() for evt in events],
         )
 
-        # The persisted recommendation remains visible to later reasoning and
-        # therefore is not appended repeatedly.
-        self.agent.state.cur_iter = 1
-        events = await self._run_injection()
-        self.assertEqual([], events)
-
-    async def test_compression_tool_waits_for_task_boundary(self) -> None:
-        """Finishing a task inside a reply exposes a compression boundary."""
+    async def test_compression_tool_is_not_recommended_within_a_task(
+        self,
+    ) -> None:
+        """An in-progress task isn't a boundary to compress at."""
         self.agent.context_config = ContextConfig(
             trigger_ratio=0.8,
+            reserve_ratio=0.1,
             compression_tool_enabled=True,
         )
-        self.agent.state.cur_iter = 1
+        self.agent.state.cur_iter = 0
         self._add_injection("2026-07-01T12:00:00")
-        task = Task(
-            subject="Write the report",
-            description="Draft the quarterly report.",
-            metadata={},
-            state="in_progress",
-        )
-        self.agent.state.tasks_context.tasks = [task]
+        self.agent.state.tasks_context.tasks = [
+            Task(
+                subject="Write the report",
+                description="Draft the quarterly report.",
+                metadata={},
+                state="in_progress",
+            ),
+        ]
         self.model.count_tokens = AsyncMock(return_value=700)
 
-        # No token count or compression recommendation while work is active.
-        await self._run_injection()
-        self.model.count_tokens.assert_not_awaited()
-
-        task.state = "completed"
         events = await self._run_injection()
-        hint = events[0].hint
-        self.assertIn("<context-compression>", hint)
-        self.assertIn("`CompressContext`", hint)
-        self.assertNotIn("<context-length>", hint)
+
+        self.assertNotIn("CompressContext", events[0].hint)
+        self.assertIn(
+            "<context-length>Your current context contains 700 tokens. "
+            "When reaching 800 tokens, your context will be compressed."
+            "</context-length>",
+            events[0].hint,
+        )
 
     async def test_disabled_compression_tool_keeps_awareness_boundary(
         self,

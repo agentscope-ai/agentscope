@@ -105,6 +105,9 @@ from ..permission import (
 from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
 
+# The name of the tool that the agent uses to compress its own context
+_COMPRESSION_TOOL_NAME = "CompressContext"
+
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
@@ -1328,11 +1331,13 @@ class Agent:
         - **Plan tasks**: injected when there are pending or in-progress tasks
           while the context contains neither task-related tool calls (e.g.
           they have been compressed away) nor a previous tasks injection.
-        - **Context**: the context length is injected at the first iteration
-          of a reply when the input tokens cross the configured buffer before
-          hard compression. If the compression tool is enabled, the same
-          threshold is also checked between tasks; with no task in progress,
-          the agent is reminded once that it can compress explicitly.
+        - **Context**: injected at the first iteration of a reply when the
+          current input tokens are within
+          ``injection_config.context_buffer_ratio`` of the compression
+          threshold, letting the agent perceive that a compression is near.
+          With the compression tool enabled and no task in progress, the
+          agent is also told that it can compress right now. This dimension
+          is evaluated independently of the two above.
         - **Tool error**: injected when the same tool call, i.e. the same tool
           name and arguments, has failed in the last
           ``injection_config.tool_retries_limit`` consecutive tool results, so
@@ -1381,19 +1386,11 @@ class Agent:
         # related tool calls or a previous tasks injection. Without uncompleted
         # tasks the flag is never used, so skip the detection entirely.
         aware_of_tasks = not has_uncompleted_tasks
-        should_recommend_compression = (
-            self.context_config.compression_tool_enabled
-            and task_status["in_progress"] == 0
-        )
-        aware_of_compression_recommendation = not should_recommend_compression
 
         for msg in reversed(self.state.context):
-            if (
-                last_time_text is not None
-                and aware_of_tasks
-                and aware_of_compression_recommendation
-            ):
-                # All dimensions that inspect historical context are settled.
+            if last_time_text is not None and aware_of_tasks:
+                # Both dimensions are settled, no need to scan the older
+                # context
                 break
 
             if msg.role != "assistant":
@@ -1417,11 +1414,6 @@ class Agent:
                         last_time_text = text
                     if not aware_of_tasks and "<tasks>" in text:
                         aware_of_tasks = True
-                    if (
-                        not aware_of_compression_recommendation
-                        and "<context-compression>" in text
-                    ):
-                        aware_of_compression_recommendation = True
 
                 elif (
                     isinstance(block, ToolCallBlock)
@@ -1503,16 +1495,10 @@ class Agent:
         # =====================================================================
         # Step 4: Context Length
         # =====================================================================
-        # The general context-length reminder is evaluated at the beginning of
-        # a reply. The compression recommendation is also evaluated at a task
-        # boundary, so a task completed within the current reply can expose a
-        # useful compression point without relying on ReplyEndEvent.
-        check_context_length = self.state.cur_iter == 0
-        check_compression_recommendation = (
-            should_recommend_compression
-            and not aware_of_compression_recommendation
-        )
-        if check_context_length or check_compression_recommendation:
+        # The context length is checked independently of the dimensions
+        # above, and only at the beginning of a reply, where the context has
+        # just grown by the new input
+        if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
             input_tokens = await self.model.count_tokens(**kwargs)
@@ -1520,33 +1506,35 @@ class Agent:
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
             )
-            awareness_ratio = max(
-                0.0,
-                self.context_config.trigger_ratio
-                - self.injection_config.context_buffer_ratio,
-            )
-            awareness_threshold = awareness_ratio * self.model.context_size
-            crossed_awareness_threshold = input_tokens > awareness_threshold
-
-            if check_context_length and crossed_awareness_threshold:
-                injections["context-length"] = (
+            if input_tokens > (
+                max(
+                    0.0,
+                    self.context_config.trigger_ratio
+                    - self.injection_config.context_buffer_ratio,
+                )
+                * self.model.context_size
+            ):
+                # To trigger memory compress
+                hint = (
                     f"Your current context contains {input_tokens} "
                     f"tokens. When reaching {trigger_tokens} tokens, "
                     f"your context will be compressed."
                 )
 
-            if (
-                check_compression_recommendation
-                and crossed_awareness_threshold
-            ):
-                injections["context-compression"] = (
-                    "No task is currently in progress, so this is a suitable "
-                    "boundary for reducing older context. If the completed "
-                    "work can be preserved accurately in a continuation "
-                    "summary, call `CompressContext` before starting the "
-                    "next task. Keep the current context when the exact "
-                    "earlier details are still needed."
-                )
+                # No task in progress means a boundary where the agent can
+                # compress by itself, preserving the completed work in a
+                # summary it writes
+                if (
+                    self.context_config.compression_tool_enabled
+                    and task_status["in_progress"] == 0
+                ):
+                    hint += (
+                        " No task is in progress, so you can call "
+                        f"`{_COMPRESSION_TOOL_NAME}` to compress it now, "
+                        "unless the exact earlier details are still needed."
+                    )
+
+                injections["context-length"] = hint
 
         # =====================================================================
         # Step 5: Check Repeated Tool Errors
@@ -3198,16 +3186,17 @@ class Agent:
         # Equip the compression tool, whose registration is kept across
         # replies so that its schema is stable for prompt caching
         if self.context_config.compression_tool_enabled and not (
-            await self.toolkit.get_tool("CompressContext")
+            await self.toolkit.get_tool(_COMPRESSION_TOOL_NAME)
         ):
             await self.toolkit.add_tool(
                 FunctionTool(
                     self._compress_context_tool,
-                    name="CompressContext",
+                    name=_COMPRESSION_TOOL_NAME,
                     is_concurrency_safe=False,
                     permission=PermissionDecision(
                         behavior=PermissionBehavior.ALLOW,
-                        message="CompressContext is always allowed.",
+                        message=f"{_COMPRESSION_TOOL_NAME} is always "
+                        "allowed.",
                     ),
                 ),
             )
