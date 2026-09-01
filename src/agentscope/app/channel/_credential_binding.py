@@ -67,10 +67,12 @@ class BindingStep(BaseModel):
     PKCE verifier, the domain a tenant was redirected to). Opaque to
     everything but the provider that produced it."""
 
-    retry_after_secs: int = 5
+    retry_after_secs: int | None = None
     """How long to wait before stepping again — the platform's polling
-    interval. Enforced service-side, so a client cannot poll upstream
-    faster than the platform allows."""
+    interval, enforced service-side so a client cannot poll upstream
+    faster than the platform allows. ``None`` keeps the session's
+    current interval; a platform that asks us to slow down returns a
+    larger one."""
 
     expires_in_secs: int = 600
     """How long the session stays usable."""

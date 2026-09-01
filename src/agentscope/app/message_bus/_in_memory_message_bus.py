@@ -448,7 +448,7 @@ class InMemoryMessageBus(
         expected: str,
         ttl_secs: int | None = None,
     ) -> bool:
-        """Compare-and-set one field. See base."""
+        """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
         _ = ttl_secs
         if self._registries.get(namespace, {}).get(field) != expected:
             return False

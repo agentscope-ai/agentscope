@@ -114,7 +114,9 @@ class CredentialBindingService:
             error=step.error,
             credentials=step.credentials,
             provider_state=step.provider_state,
-            retry_after_secs=step.retry_after_secs,
+            retry_after_secs=(
+                5 if step.retry_after_secs is None else step.retry_after_secs
+            ),
         )
         binding_id = secrets.token_urlsafe(24)
         await self._bus.registry_set(
@@ -148,6 +150,20 @@ class CredentialBindingService:
         ):
             return self._view(binding_id, session)
 
+        # Claim the upstream call before making it. Two replicas polled
+        # at once would otherwise both pass the check above and both ask
+        # the platform, doubling a rate the platform sets.
+        session.last_stepped_at = time.time()
+        reserved = session.model_dump_json()
+        if not await self._bus.registry_set_if(
+            MessageBusKeys.channel_credential_binding(binding_id),
+            MessageBusKeys.CREDENTIAL_BINDING_FIELD,
+            reserved,
+            expected=raw,
+        ):
+            _, session = await self._load(user_id, binding_id)
+            return self._view(binding_id, session)
+
         step = await self._provider(session.channel_type).advance(
             session.provider_state,
         )
@@ -155,7 +171,8 @@ class CredentialBindingService:
         session.error = step.error
         session.credentials = step.credentials or session.credentials
         session.provider_state = step.provider_state or session.provider_state
-        session.last_stepped_at = time.time()
+        if step.retry_after_secs is not None:
+            session.retry_after_secs = step.retry_after_secs
 
         # A losing write means the operator cancelled while we were
         # asking the platform. Drop this result rather than reviving it.
@@ -163,7 +180,7 @@ class CredentialBindingService:
             MessageBusKeys.channel_credential_binding(binding_id),
             MessageBusKeys.CREDENTIAL_BINDING_FIELD,
             session.model_dump_json(),
-            expected=raw,
+            expected=reserved,
             ttl_secs=(
                 MessageBusKeys.CREDENTIAL_BINDING_CLAIM_TTL_SECS
                 if session.state is BindingState.AUTHORIZED
@@ -185,18 +202,22 @@ class CredentialBindingService:
             `CredentialBindingError`: Unknown session or not the
                 caller's.
         """
-        raw, session = await self._load(user_id, binding_id)
-        if session.state.is_terminal:
-            return
+        while True:
+            raw, session = await self._load(user_id, binding_id)
+            if session.state.is_terminal:
+                return
 
-        session.state = BindingState.CANCELLED
-        session.credentials = {}
-        await self._bus.registry_set_if(
-            MessageBusKeys.channel_credential_binding(binding_id),
-            MessageBusKeys.CREDENTIAL_BINDING_FIELD,
-            session.model_dump_json(),
-            expected=raw,
-        )
+            session.state = BindingState.CANCELLED
+            session.credentials = {}
+            # Losing means a poll wrote first; re-read and insist, or
+            # this would report success on a session that stays live.
+            if await self._bus.registry_set_if(
+                MessageBusKeys.channel_credential_binding(binding_id),
+                MessageBusKeys.CREDENTIAL_BINDING_FIELD,
+                session.model_dump_json(),
+                expected=raw,
+            ):
+                return
 
     async def claim(
         self,
@@ -219,16 +240,10 @@ class CredentialBindingService:
             `CredentialBindingError`: Unknown, not the caller's, for a
                 different type, or not authorized yet.
         """
-        raw = await self._bus.registry_pop(
-            MessageBusKeys.channel_credential_binding(binding_id),
-            MessageBusKeys.CREDENTIAL_BINDING_FIELD,
-        )
-        if raw is None:
-            raise CredentialBindingError("Binding not found.", 404)
-
-        session = BindingSession.model_validate(json.loads(raw))
-        if session.user_id != user_id:
-            raise CredentialBindingError("Binding not found.", 404)
+        # Check before taking: a pop first would let anyone holding an
+        # id destroy someone else's session, and would burn the
+        # operator's own on a mismatched type or an early claim.
+        _, session = await self._load(user_id, binding_id)
         if session.channel_type != channel_type:
             raise CredentialBindingError(
                 f"Binding is for channel type '{session.channel_type}'.",
@@ -239,7 +254,17 @@ class CredentialBindingService:
                 f"Binding is {session.state.value}, not authorized.",
                 409,
             )
-        return session.credentials
+
+        # ``AUTHORIZED`` is terminal, so the record cannot have changed
+        # underneath — but two create requests can still race here, and
+        # only the one that takes it gets the credentials.
+        raw = await self._bus.registry_pop(
+            MessageBusKeys.channel_credential_binding(binding_id),
+            MessageBusKeys.CREDENTIAL_BINDING_FIELD,
+        )
+        if raw is None:
+            raise CredentialBindingError("Binding not found.", 404)
+        return BindingSession.model_validate(json.loads(raw)).credentials
 
     def _provider(self, channel_type: str) -> Any:
         """Resolve a channel type's binding provider.

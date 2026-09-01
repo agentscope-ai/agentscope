@@ -51,6 +51,7 @@ class FeishuCredentialBinding(CredentialBindingBase):
             provider_state={
                 "device_code": payload["device_code"],
                 "domain": _FEISHU_DOMAIN,
+                "interval": int(payload.get("interval", 5)),
             },
             retry_after_secs=int(payload.get("interval", 5)),
             expires_in_secs=int(payload.get("expires_in", 600)),
@@ -90,8 +91,17 @@ class FeishuCredentialBinding(CredentialBindingBase):
             )
 
         error = payload.get("error", "")
-        if error in ("authorization_pending", "slow_down"):
+        if error == "authorization_pending":
             return BindingStep(provider_state=provider_state)
+
+        if error == "slow_down":
+            # Feishu wants a wider gap; widen it the way its own SDK
+            # does and keep the new value for the next step.
+            interval = int(provider_state.get("interval", 5)) + 5
+            return BindingStep(
+                provider_state={**provider_state, "interval": interval},
+                retry_after_secs=interval,
+            )
 
         return BindingStep(
             state=BindingState.FAILED,

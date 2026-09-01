@@ -6,9 +6,12 @@ A session lives in the message bus rather than in any one process, so
 every test drives it through *two* services sharing one bus — the two
 replicas a client's requests would land on in turn.
 """
+import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
+
+from utils import AnyString
 
 from agentscope.app._service import (
     CredentialBindingError,
@@ -106,8 +109,16 @@ class CredentialBindingTest(IsolatedAsyncioTestCase):
     ) -> None:
         """The client hops replicas between every step and still wins."""
         opened = await self.node_a.start("u", "scripted")
-        self.assertEqual(opened.state, BindingState.PENDING)
-        self.assertEqual(opened.verification_url, "https://example.test/qr")
+        self.assertDictEqual(
+            opened.model_dump(),
+            {
+                "binding_id": AnyString(),
+                "state": BindingState.PENDING,
+                "verification_url": "https://example.test/qr",
+                "error": "",
+                "retry_after_secs": 0,
+            },
+        )
 
         _ScriptedBinding.script = [
             BindingStep(provider_state={"device_code": "dc-1"}),
@@ -120,11 +131,17 @@ class CredentialBindingTest(IsolatedAsyncioTestCase):
         still_waiting = await self.node_b.poll("u", opened.binding_id)
         self.assertEqual(still_waiting.state, BindingState.PENDING)
 
-        done = await self.node_a.poll("u", opened.binding_id)
-        self.assertEqual(done.state, BindingState.AUTHORIZED)
-
-        # The status view never carries the secret.
-        self.assertNotIn("app_secret", done.model_dump_json())
+        # The whole view, so a secret can never leak into it unnoticed.
+        self.assertDictEqual(
+            (await self.node_a.poll("u", opened.binding_id)).model_dump(),
+            {
+                "binding_id": opened.binding_id,
+                "state": BindingState.AUTHORIZED,
+                "verification_url": "https://example.test/qr",
+                "error": "",
+                "retry_after_secs": 0,
+            },
+        )
 
         self.assertDictEqual(
             await self.node_b.claim("u", opened.binding_id, "scripted"),
@@ -164,9 +181,16 @@ class CredentialBindingTest(IsolatedAsyncioTestCase):
             ),
         ]
 
-        after = await self.node_a.poll("u", opened.binding_id)
-
-        self.assertEqual(after.state, BindingState.CANCELLED)
+        self.assertDictEqual(
+            (await self.node_a.poll("u", opened.binding_id)).model_dump(),
+            {
+                "binding_id": opened.binding_id,
+                "state": BindingState.CANCELLED,
+                "verification_url": "https://example.test/qr",
+                "error": "",
+                "retry_after_secs": 0,
+            },
+        )
         with self.assertRaises(CredentialBindingError):
             await self.node_b.claim("u", opened.binding_id, "scripted")
 
@@ -197,3 +221,50 @@ class CredentialBindingTest(IsolatedAsyncioTestCase):
         with self.assertRaises(CredentialBindingError) as ctx:
             await self.node_a.start("u", "form-only")
         self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_a_rejected_claim_leaves_the_session_usable(self) -> None:
+        """Checks come before the destructive take, so a claim for the
+        wrong type — or one from an intruder — cannot burn a session."""
+        opened = await self.node_a.start("u", "scripted")
+
+        with self.assertRaises(CredentialBindingError) as early:
+            await self.node_a.claim("u", opened.binding_id, "scripted")
+        self.assertEqual(early.exception.status_code, 409)
+
+        with self.assertRaises(CredentialBindingError) as intruder:
+            await self.node_b.claim("hacker", opened.binding_id, "scripted")
+        self.assertEqual(intruder.exception.status_code, 404)
+
+        _ScriptedBinding.script = [
+            BindingStep(
+                state=BindingState.AUTHORIZED,
+                credentials={"app_id": "a", "app_secret": "s"},
+            ),
+        ]
+        await self.node_a.poll("u", opened.binding_id)
+
+        with self.assertRaises(CredentialBindingError) as wrong_type:
+            await self.node_b.claim("u", opened.binding_id, "form-only")
+        self.assertEqual(wrong_type.exception.status_code, 409)
+
+        # Still there after all of that.
+        self.assertDictEqual(
+            await self.node_a.claim("u", opened.binding_id, "scripted"),
+            {"app_id": "a", "app_secret": "s"},
+        )
+
+    async def test_only_one_of_two_concurrent_polls_reaches_upstream(
+        self,
+    ) -> None:
+        """The client sets its request rate; the platform's interval
+        still bounds ours, even when two replicas poll at once."""
+        _ScriptedBinding.retry_after_secs = 60
+        opened = await self.node_a.start("u", "scripted")
+        _ScriptedBinding.script = [BindingStep(), BindingStep()]
+
+        await asyncio.gather(
+            self.node_a.poll("u", opened.binding_id),
+            self.node_b.poll("u", opened.binding_id),
+        )
+
+        self.assertEqual(_ScriptedBinding.calls, 1)
