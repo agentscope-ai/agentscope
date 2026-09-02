@@ -22,6 +22,7 @@ import {
 import * as mime from 'mime-types';
 import { useEffect, useRef, useState } from 'react';
 
+import { useElapsedSeconds } from '@/hooks/useElapsedSeconds';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
@@ -375,8 +376,8 @@ interface MessageBubbleProps {
  * `[state-icon] [duration] [↑in ↓out]`:
  *   - State icon: spinning `Loader2` while running, static `CheckCircle`
  *     once finished.
- *   - Duration is `now - created_at` while running (ticking each second),
- *     `finished_at - created_at` once complete.
+ *   - Duration uses {@link useElapsedSeconds}: local anchor while running,
+ *     server timestamps once complete (avoids UTC-offset elapsed flashes).
  *   - Token counts only appear once `usage` is populated with non-zero
  *     values — typically after the message finishes.
  *
@@ -392,13 +393,12 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 		!!message.usage &&
 		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
 
-	// Tick once per second while running so the elapsed time updates live.
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (!isRunning) return;
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [isRunning]);
+	const elapsedSeconds = useElapsedSeconds(
+		message.created_at,
+		message.finished_at,
+		message.id,
+	);
+	const elapsedText = formatTime(elapsedSeconds);
 
 	// Audio data blocks are rendered in the footer;
 	// For role="user" messages, the data blocks are rendered as attachments in the
@@ -409,11 +409,6 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 	);
 
 	const blocks = groupToolCalls(message.content);
-
-	const startMs = new Date(message.created_at).getTime();
-	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
-	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
-	const elapsedText = formatTime(elapsedSeconds);
 
 	return (
 		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
@@ -492,17 +487,7 @@ function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
 	const { t } = useTranslation();
 	const isRunning = !block.finished_at;
 
-	// Tick once per second while running so the elapsed time updates live.
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (!isRunning) return;
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [isRunning]);
-
-	const startMs = new Date(block.created_at).getTime();
-	const endMs = isRunning ? now : new Date(block.finished_at!).getTime();
-	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
+	const elapsedSeconds = useElapsedSeconds(block.created_at, block.finished_at, block.id);
 	const elapsedText = formatTime(elapsedSeconds);
 	return (
 		<Collapsible>
