@@ -4,7 +4,7 @@ import asyncio
 from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from mcp.server import FastMCP
+from mcp.server import MCPServer as FastMCP
 from mcp.types import EmbeddedResource, TextResourceContents
 
 from agentscope.mcp import MCPClient, HttpMCPConfig
@@ -32,7 +32,7 @@ async def tool_2() -> list:
             type="resource",
             resource=TextResourceContents(
                 uri="file://tmp.txt",
-                mimeType="text/plain",
+                mime_type="text/plain",
                 text="test content",
             ),
         ),
@@ -41,12 +41,12 @@ async def tool_2() -> list:
 
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
-    sse_server = FastMCP("StreamableHTTP", port=8002)
+    sse_server = FastMCP("StreamableHTTP")
     sse_server.tool(description="A test tool function.")(tool_1)
     sse_server.tool(
         description="A test tool function with embedded resource.",
     )(tool_2)
-    sse_server.run(transport="streamable-http")
+    sse_server.run(transport="streamable-http", port=8002)
 
 
 class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
@@ -139,8 +139,8 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             res.content[0].text,
             """{
-  "uri": "file://tmp.txt/",
-  "mimeType": "text/plain",
+  "uri": "file://tmp.txt",
+  "mime_type": "text/plain",
   "meta": null,
   "text": "test content"
 }""",

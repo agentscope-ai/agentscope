@@ -4,7 +4,6 @@ import inspect
 import json
 import re
 from contextlib import _AsyncGeneratorContextManager
-from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
@@ -254,11 +253,11 @@ class MCPTool(ToolBase):
 
         self.description = tool.description or ""
 
-        # Preserve the full inputSchema (including $defs, anyOf, oneOf, etc.)
-        # rather than only copying "properties" and "required", which would
-        # silently drop any nested type definitions that the LLM needs to
-        # resolve $ref pointers.
-        _schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        # Preserve the full input_schema (including $defs, anyOf, oneOf,
+        # etc.) rather than only copying "properties" and "required",
+        # which would silently drop any nested type definitions that the
+        # LLM needs to resolve $ref pointers.
+        _schema = dict(tool.input_schema) if tool.input_schema else {}
         _schema.setdefault("type", "object")
         _schema.setdefault("properties", {})
         _schema.setdefault("required", [])
@@ -279,7 +278,7 @@ class MCPTool(ToolBase):
         self._session = session
 
         if timeout:
-            self._timeout = timedelta(seconds=timeout)
+            self._timeout = float(timeout)
         else:
             self._timeout = None
 
@@ -351,7 +350,7 @@ class MCPTool(ToolBase):
         return ToolChunk(
             content=self._convert_mcp_content_to_blocks(result.content),
             state=ToolResultState.ERROR
-            if result.isError
+            if result.is_error
             else ToolResultState.RUNNING,
         )
 
@@ -381,7 +380,7 @@ class MCPTool(ToolBase):
                     DataBlock(
                         source=Base64Source(
                             type="base64",
-                            media_type=content.mimeType,
+                            media_type=content.mime_type,
                             data=content.data,
                         ),
                     ),
@@ -408,7 +407,7 @@ class MCPTool(ToolBase):
                 as_content.append(
                     DataBlock(
                         source=URLSource(
-                            media_type=content.mimeType,
+                            media_type=content.mime_type,
                             url=content.uri,
                         ),
                     ),
