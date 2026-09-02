@@ -21,7 +21,7 @@ Example bootstrap (``mydeploy/worker_bootstrap.py``)::
     )
     from agentscope.app.message_bus import RedisMessageBus
     from agentscope.app.storage import RedisStorage
-    from agentscope.rag import ApproxTokenChunker, TextParser
+    from agentscope.rag import TextParser
 
     def bootstrap() -> dict:
         return {
@@ -33,7 +33,6 @@ Example bootstrap (``mydeploy/worker_bootstrap.py``)::
             ),
             "knowledge_base_manager": DefaultKnowledgeBaseManager(...),
             "parsers": [TextParser()],
-            "chunker": ApproxTokenChunker(),
         }
 
 And launch::

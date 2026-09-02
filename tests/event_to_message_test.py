@@ -807,22 +807,36 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             reply_id=_REPLY_ID,
             input_tokens=10,
             output_tokens=20,
+            cache_input_tokens=60,
+            cache_creation_input_tokens=40,
             finished_reason=FinishedReason.COMPLETED,
         )
         gt_model_call_end_1 = _base(
             _final_content,
-            usage={"input_tokens": 10, "output_tokens": 20},
+            usage={
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_input_tokens": 60,
+                "cache_creation_input_tokens": 40,
+            },
         )
 
         ev_model_call_end_2 = ModelCallEndEvent(
             reply_id=_REPLY_ID,
             input_tokens=5,
             output_tokens=8,
+            cache_input_tokens=12,
+            cache_creation_input_tokens=7,
             finished_reason=FinishedReason.COMPLETED,
         )
         gt_model_call_end_2 = _base(
             _final_content,
-            usage={"input_tokens": 15, "output_tokens": 28},
+            usage={
+                "input_tokens": 15,
+                "output_tokens": 28,
+                "cache_input_tokens": 72,
+                "cache_creation_input_tokens": 47,
+            },
         )
 
         # ================================================================
@@ -838,7 +852,12 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             _final_content,
             finished_at=_FIXED_END_TS,
             finished_reason="completed",
-            usage={"input_tokens": 15, "output_tokens": 28},
+            usage={
+                "input_tokens": 15,
+                "output_tokens": 28,
+                "cache_input_tokens": 72,
+                "cache_creation_input_tokens": 47,
+            },
         )
 
         # ================================================================

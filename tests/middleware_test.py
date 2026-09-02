@@ -5,9 +5,9 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 from typing import Any, AsyncGenerator, Awaitable, Callable, Union
 
-from utils import MockModel
+from utils import AnyString, MockModel
 from pydantic import BaseModel
-from agentscope.event import AgentEvent
+from agentscope.event import AgentEvent, ReplyEndEvent
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
@@ -121,6 +121,117 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_post",
         ]
         self.assertListEqual(self.execution_log, expected)
+
+    async def test_on_reply_middleware_swallow_reply_end(self) -> None:
+        """Test swallowing the ReplyEndEvent forces another reasoning
+        round within the same reply."""
+
+        class SwallowOnceMiddleware(MiddlewareBase):
+            """Middleware swallowing the first ReplyEndEvent."""
+
+            def __init__(self) -> None:
+                self.swallowed = False
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[[], AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Swallow the first ReplyEndEvent, deliver the rest."""
+                async for item in next_handler():
+                    if isinstance(item, ReplyEndEvent) and not self.swallowed:
+                        self.swallowed = True
+                        continue
+                    yield item
+
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="first answer")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="second answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[SwallowOnceMiddleware()],
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        events, final_msg = [], None
+        async for item in agent.reply_stream(
+            UserMsg("user", "test message"),
+            yield_final_msg=True,
+        ):
+            if isinstance(item, Msg):
+                final_msg = item
+            else:
+                events.append(item)
+
+        # A single reply whose swallowed end forced a second reasoning round
+        self.assertListEqual(
+            [str(_.type) for _ in events],
+            [
+                "REPLY_START",
+                "MODEL_CALL_START",
+                "TEXT_BLOCK_START",
+                "TEXT_BLOCK_DELTA",
+                "TEXT_BLOCK_END",
+                "MODEL_CALL_END",
+                "MODEL_CALL_START",
+                "TEXT_BLOCK_START",
+                "TEXT_BLOCK_DELTA",
+                "TEXT_BLOCK_END",
+                "MODEL_CALL_END",
+                "REPLY_END",
+            ],
+        )
+        self.assertDictEqual(
+            events[-1].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "metadata": {},
+                "type": "REPLY_END",
+                "session_id": agent.state.session_id,
+                "reply_id": agent.state.reply_id,
+                "finished_reason": "completed",
+                "error": None,
+            },
+        )
+        self.assertDictEqual(
+            final_msg.model_dump(),
+            {
+                "id": agent.state.reply_id,
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": "completed",
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "test_agent",
+                "role": "assistant",
+                "usage": None,
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "second answer",
+                    },
+                ],
+            },
+        )
 
     async def test_on_reasoning_middleware_pre_yield(self) -> None:
         """Test on_reasoning middleware pre and yield positions."""

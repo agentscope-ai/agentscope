@@ -142,6 +142,20 @@ class _FakeBus(MessageBus):
     ) -> None:
         self._registries.setdefault(namespace, {})[field] = value
 
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        raise NotImplementedError
+
     async def registry_del(self, namespace: str, field: str) -> None:
         if namespace in self._registries:
             self._registries[namespace].pop(field, None)

@@ -58,28 +58,7 @@ This is irreversible.
                 precondition fails.
         """
         try:
-            session = await self._storage.get_session(
-                self._user_id,
-                self._agent_id,
-                self._session_id,
-            )
-            if session is None or session.team_id is None:
-                return self._error(
-                    "TeamDelete: this session is not in any team.",
-                )
-            team = await self._storage.get_team(
-                self._user_id,
-                session.team_id,
-            )
-            if team is None:
-                return self._error(
-                    "TeamDelete: team " f"{session.team_id} no longer exists.",
-                )
-            if team.session_id != self._session_id:
-                return self._error(
-                    "TeamDelete: only the team leader can dissolve "
-                    "the team; this session is a worker.",
-                )
+            team = await self._require_leader_team("dissolve the team")
 
             # Local import to avoid a circular dependency between
             # ``_tools`` and ``_service`` at module load.
@@ -88,6 +67,7 @@ This is irreversible.
             session_service = SessionService(
                 storage=self._storage,
                 message_bus=self._message_bus,
+                workspace_manager=self._workspace_manager,
             )
             await session_service.delete_team(self._user_id, team.id)
             return ToolChunk(

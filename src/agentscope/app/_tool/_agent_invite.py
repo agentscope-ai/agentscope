@@ -25,11 +25,10 @@ from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
 from ._team_routing import _display_handle, _invited_display_name
-from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox
 from ..storage import SessionConfig, TeamMember
-from ..storage._utils import _ensure_team_members
-from ...message import HintBlock, TextBlock
+from ..storage._utils import _ensure_team_members, _resolve_team_leader
+from ...message import HintBlock, TextBlock, ToolResultState
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 from ..._utils._common import _generate_id
@@ -150,7 +149,7 @@ class AgentInvite(_TeamToolBase):
         agent_id: str,
         invitable_pool: list["AgentRecord"],
     ) -> None:
-        """Bind request-scoped identifiers plus the invitable pool snapshot.
+        """Bind the base dependencies plus the invitable pool snapshot.
 
         Args:
             storage (`StorageBase`):
@@ -158,8 +157,8 @@ class AgentInvite(_TeamToolBase):
             message_bus (`MessageBus`):
                 Application message bus.
             workspace_manager (`WorkspaceManagerBase`):
-                Used to mint the workspace id for freshly-invited
-                agents (see :meth:`__call__`).
+                Assigns the borrowed session's workspace id when the
+                invited agent has no session of its own yet.
             user_id (`str`):
                 The owner user id.
             session_id (`str`):
@@ -242,33 +241,10 @@ class AgentInvite(_TeamToolBase):
                 target,
             )
             if resolve_err is not None:
-                return self._error(resolve_err)
+                return _error(resolve_err)
             assert invited is not None  # narrows for mypy
 
-            session = await self._storage.get_session(
-                self._user_id,
-                self._agent_id,
-                self._session_id,
-            )
-            if session is None or session.team_id is None:
-                return self._error(
-                    "AgentInvite: this session is not in any team — "
-                    "call TeamCreate first.",
-                )
-            team = await self._storage.get_team(
-                self._user_id,
-                session.team_id,
-            )
-            if team is None:
-                return self._error(
-                    f"AgentInvite: team {session.team_id} no longer "
-                    f"exists.",
-                )
-            if team.session_id != self._session_id:
-                return self._error(
-                    "AgentInvite: only the team leader can invite "
-                    "members; this session is a worker.",
-                )
+            team = await self._require_leader_team("invite members")
 
             # Re-fetch fresh — the snapshot could be stale if the user
             # just toggled the invite off.
@@ -283,7 +259,7 @@ class AgentInvite(_TeamToolBase):
                     fresh.data.invite_config.invite_description or ""
                 ).strip()
             ):
-                return self._error(
+                return _error(
                     f"AgentInvite: agent {invited.data.name!r} is no "
                     f"longer invitable.",
                 )
@@ -296,7 +272,7 @@ class AgentInvite(_TeamToolBase):
                 team,
             )
             if any(m.agent_id == invited.id for m in existing_members):
-                return self._error(
+                return _error(
                     f"AgentInvite: agent {invited.data.name!r} is "
                     f"already a member of team "
                     f"{team.data.name!r}.",
@@ -311,20 +287,19 @@ class AgentInvite(_TeamToolBase):
                 team.session_id,
             )
             if leader_session is None:
-                return self._error(
+                return _error(
                     f"AgentInvite: leader session {team.session_id} "
                     f"for team {team.id} is missing — team is in an "
                     f"inconsistent state.",
                 )
-            leader_agent = await self._storage.get_agent(
+            leader = await _resolve_team_leader(
+                self._storage,
                 self._user_id,
-                leader_session.agent_id,
+                team,
             )
-            leader_name = (
-                leader_agent.data.name
-                if leader_agent is not None
-                else leader_session.agent_id
-            )
+            # Fall back to the id so a missing leader agent record does
+            # not block the invite.
+            leader_name = leader.name if leader else leader_session.agent_id
 
             # Prefer the invited agent's own primary session for
             # workspace + chat-model reuse: it already has any MCP /
@@ -350,7 +325,7 @@ class AgentInvite(_TeamToolBase):
                 )
             else:
                 borrowed_workspace_id = (
-                    self._workspace_manager.assign_workspace_id(
+                    await self._workspace_manager.assign_workspace_id(
                         user_id=self._user_id,
                         agent_id=invited.id,
                         session_id=_generate_id(),
@@ -435,15 +410,12 @@ class AgentInvite(_TeamToolBase):
                     ensure_ascii=False,
                 ),
             )
-            await self._message_bus.queue_push(
-                MessageBusKeys.inbox(borrowed.id),
-                hint.model_dump(mode="json"),
-            )
-            await enqueue_run_trigger(
+            await deliver_to_inbox(
                 self._message_bus,
                 user_id=self._user_id,
                 session_id=borrowed.id,
                 agent_id=invited.id,
+                payload=hint.model_dump(mode="json"),
             )
 
             return ToolChunk(
@@ -457,7 +429,10 @@ class AgentInvite(_TeamToolBase):
                 ],
             )
         except Exception as e:  # pylint: disable=broad-except
-            return self._error(f"AgentInvite failed: {e}")
+            return ToolChunk(
+                content=[TextBlock(text=f"AgentInvite failed: {e}")],
+                state=ToolResultState.ERROR,
+            )
 
 
 def _resolve_target(
@@ -527,4 +502,17 @@ def _resolve_target(
     return None, (
         f"AgentInvite: no invitable agent matches target {target!r}. "
         f"Available: {available}."
+    )
+
+
+def _error(text: str) -> ToolChunk:
+    """Build an ``ERROR``-state :class:`ToolChunk` with a text block.
+
+    Not moved to :mod:`_team_tool_base` because that shape is specific
+    to :class:`AgentInvite`'s branchy validation path — the other team
+    tools currently inline the same pattern.
+    """
+    return ToolChunk(
+        content=[TextBlock(text=text)],
+        state=ToolResultState.ERROR,
     )

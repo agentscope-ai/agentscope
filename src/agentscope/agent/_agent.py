@@ -2,8 +2,10 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
+import json
 import inspect
 import re
+import warnings
 
 from asyncio import Queue
 from copy import deepcopy
@@ -92,6 +94,7 @@ from ..tool import (
     ToolChunk,
     ToolChoice,
     ToolResponse,
+    FunctionTool,
 )
 from ..permission import (
     PermissionBehavior,
@@ -101,6 +104,9 @@ from ..permission import (
 )
 from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
+
+# The name of the tool that the agent uses to compress its own context
+_COMPRESSION_TOOL_NAME = "CompressContext"
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -171,6 +177,16 @@ class Agent:
         self.context_config = context_config or ContextConfig()
         self.react_config = react_config or ReActConfig()
         self.injection_config = injection_config or InjectionConfig()
+        if self.injection_config.context_buffer_ratio is not None:
+            warnings.warn(
+                "The 'context_buffer_ratio' of the injection config is "
+                "deprecated, set it in the context config instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.context_config.context_buffer_ratio = (
+                self.injection_config.context_buffer_ratio
+            )
         self._validate_configs()
 
         # The permission engine
@@ -183,6 +199,18 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        # Built here rather than in ``_prepare_model_input``, so that the
+        # registration can tell this agent's tool from a tool of the same
+        # name, e.g. another agent sharing the toolkit
+        self._compression_tool = FunctionTool(
+            self._compress_context_tool,
+            name=_COMPRESSION_TOOL_NAME,
+            is_concurrency_safe=False,
+            permission=PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"{_COMPRESSION_TOOL_NAME} is always allowed.",
+            ),
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -211,6 +239,10 @@ class Agent:
             _ for _ in middlewares if _.is_implemented("on_compress_context")
         ]
 
+        # Set when a `ReplyEndEvent` escapes the reply middleware chain; the
+        # reply loop only exits after the event is delivered (not swallowed)
+        self._receive_reply_end: bool = False
+
     def _validate_configs(self) -> None:
         """Validate the config combinations that a single config class cannot
         check by itself.
@@ -231,16 +263,21 @@ class Agent:
                 f"{self.context_config.trigger_ratio}.",
             )
 
+        # The buffer is only consumed by the runtime state injection and
+        # the compression tool, so it's checked only when one of them is on
         if (
             self.injection_config.inject_runtime_state
-            and self.injection_config.context_buffer_ratio
+            or self.context_config.compression_tool_enabled
+        ) and (
+            self.context_config.context_buffer_ratio
             >= self.context_config.trigger_ratio
         ):
             raise ValueError(
-                "The 'context_buffer_ratio' of the injection config must be "
-                "smaller than the 'trigger_ratio' of the context config, so "
-                "that the context length is injected before the compression, "
-                f"got {self.injection_config.context_buffer_ratio} and "
+                "The 'context_buffer_ratio' of the context config must be "
+                "smaller than its 'trigger_ratio', so that the context "
+                "length is injected and the compression tool takes effect "
+                "before the hard compression, got "
+                f"{self.context_config.context_buffer_ratio} and "
                 f"{self.context_config.trigger_ratio}.",
             )
 
@@ -402,6 +439,54 @@ class Agent:
 
             await execute_chain()
 
+    async def _compress_context_tool(self) -> ToolChunk:
+        """Compress the older context into a continuation summary, while
+        preserving the recent context needed for the upcoming work.
+
+        Call it between tasks, where the completed work can be preserved
+        accurately in a summary, rather than in the middle of a task. Keep
+        the current context when the exact earlier details are still needed.
+        The context is replaced only after the summary is generated
+        successfully, and is left as-is when it's not long enough to be
+        worth compressing.
+
+        Returns:
+            `ToolChunk`:
+                Whether the context was compressed.
+        """
+        # The agent decides when to compress, so lower the trigger to the
+        # ratio where the compression is recommended. A context below that
+        # ratio is left untouched.
+        context_config = self.context_config.model_copy(
+            update={
+                "trigger_ratio": self.context_config.trigger_ratio
+                - self.context_config.context_buffer_ratio,
+            },
+        )
+
+        n_msgs = len(self.state.context)
+        try:
+            await self.compress_context(context_config=context_config)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return ToolChunk(
+                content=[TextBlock(text=f"Context compression failed: {e}")],
+                state=ToolResultState.ERROR,
+            )
+
+        if len(self.state.context) == n_msgs:
+            text = (
+                "The context is not long enough to compress, so it remains "
+                "unchanged."
+            )
+        else:
+            text = "Context compressed successfully."
+
+        return ToolChunk(
+            content=[TextBlock(text=text)],
+            state=ToolResultState.SUCCESS,
+        )
+
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
@@ -420,6 +505,10 @@ class Agent:
                 context to guide the summarization behavior.
         """
         cfg: ContextConfig = context_config or self.context_config
+
+        # Limit the number of images in the context first, so that the token
+        # counting below reflects the images that actually remain
+        await self._limit_context_images(cfg)
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
@@ -539,13 +628,14 @@ class Agent:
             context_overflow = True
 
         # Compress the messages
+        res = None
         try:
             res = await self.model.generate_structured_output(
                 messages=messages,
                 structured_model=cfg.summary_schema,
             )
 
-        except Exception as e:
+        except Exception as error:
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -578,15 +668,27 @@ class Agent:
                     ):
                         break
 
-                res = await self.model.generate_structured_output(
-                    messages=messages,
-                    structured_model=cfg.summary_schema,
+                try:
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+                except Exception as retry_error:
+                    error = retry_error
+
+            if res is None:
+                if not cfg.compression_fallback_to_truncation:
+                    raise error
+                logger.warning(
+                    "[AGENT %s]: Summary generation failed: %s. "
+                    "Falling back to context truncation.",
+                    self.name,
+                    error,
                 )
 
-            else:
-                raise e from None
-
-        if res.finished_reason == FinishedReason.INTERRUPTED:
+        if res is not None and (
+            res.finished_reason == FinishedReason.INTERRUPTED
+        ):
             logger.warning(
                 "The context compression was interrupted and skipped. ",
             )
@@ -595,22 +697,45 @@ class Agent:
         # Update the summary
         async def _apply_change() -> None:
             """Apply the context change with interruption protection."""
-            new_summary = cfg.summary_template.format(**res.content)
+            if res is not None:
+                new_summary = cfg.summary_template.format(**res.content)
+            else:
+                # Keep the previous summary if the compression failed
+                new_summary = self.state.summary or (
+                    "<system-info>Some earlier messages were truncated for "
+                    "limited context.</system-info>"
+                )
+
+            # Offload the compressed context if offloader is provided
             if self.offloader:
                 path = await self.offloader.offload_context(
                     self.state.session_id,
                     msgs=msgs_to_compress,
                 )
-                new_summary += (
-                    f"\n<system-reminder>The compressed context is offloaded "
-                    f"to '{path}', you can refer to it when needed."
-                    f"</system-reminder>"
+                offload_reminder = (
+                    f"<system-reminder>The compressed context"
+                    f" is offloaded to '{path}', you can refer"
+                    f" to it when needed.</system-reminder>"
                 )
+                # Avoid duplicating the reminder when the previous summary
+                # is reused after a failed compression
+                if isinstance(new_summary, list):
+                    if not any(
+                        isinstance(block, TextBlock)
+                        and block.text == offload_reminder
+                        for block in new_summary
+                    ):
+                        new_summary = [
+                            *new_summary,
+                            TextBlock(text=offload_reminder),
+                        ]
+                elif offload_reminder not in new_summary:
+                    new_summary += f"\n{offload_reminder}"
 
-            # Protected from interruption
+            # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
-            # Update the context
+            # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
 
@@ -626,6 +751,110 @@ class Agent:
             await apply_task
             raise
 
+    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+        """Limit the number of images in the context according to
+        ``cfg.max_image_num``. The oldest images exceeding the limit are
+        offloaded to the workspace (if an offloader is provided) and replaced
+        by a hint recording the offloaded path; otherwise they are dropped and
+        replaced by a hint without path information.
+
+        Image data blocks at the top level of a non-user message are
+        replaced by :class:`HintBlock`, while those in user messages or
+        nested inside a :class:`ToolResultBlock` / :class:`HintBlock` are
+        replaced by :class:`TextBlock` (as required by their type
+        constraints).
+
+        Args:
+            cfg (`ContextConfig`):
+                The context config that provides ``max_image_num``.
+        """
+        max_image_num = cfg.max_image_num
+
+        def _is_image(block: Any) -> bool:
+            """Check whether the given block is an image data block."""
+            return isinstance(
+                block,
+                DataBlock,
+            ) and block.source.media_type.startswith("image/")
+
+        # Collect all the image data blocks in chronological order, recorded
+        # as (container list, index, block, is_top_level, role)
+        images: list[tuple[list, int, DataBlock, bool, str]] = []
+        for msg in self.state.context:
+            for i, block in enumerate(msg.content):
+                if _is_image(block):
+                    images.append((msg.content, i, block, True, msg.role))
+                elif isinstance(block, ToolResultBlock) and isinstance(
+                    block.output,
+                    list,
+                ):
+                    for j, sub in enumerate(block.output):
+                        if _is_image(sub):
+                            images.append(
+                                (block.output, j, sub, False, msg.role),
+                            )
+                elif isinstance(block, HintBlock) and isinstance(
+                    block.hint,
+                    list,
+                ):
+                    for j, sub in enumerate(block.hint):
+                        if _is_image(sub):
+                            images.append(
+                                (block.hint, j, sub, False, msg.role),
+                            )
+
+        n_exceed = len(images) - max_image_num
+        if n_exceed <= 0:
+            return
+
+        logger.info(
+            "[AGENT %s]: The number of images in context (%d) exceeds the "
+            "limit (%d), removing the oldest %d image(s).",
+            self.name,
+            len(images),
+            max_image_num,
+            n_exceed,
+        )
+
+        # Offload the images first (which may involve I/O), and then apply
+        # the replacements together to avoid partial modification on
+        # interruption
+        replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
+        for container, idx, block, is_top_level, role in images[:n_exceed]:
+            url = ""
+            if isinstance(block.source, URLSource):
+                url = str(block.source.url)
+            elif self.offloader is not None:
+                saved = await self.offloader.offload_data_block(block)
+                if isinstance(saved.source, URLSource):
+                    url = str(saved.source.url)
+
+            name = f"named '{block.name}' " if block.name else ""
+            if url:
+                text = (
+                    f"<system-reminder>The image {name}is offloaded into "
+                    f"{url}, you can refer to it when needed."
+                    f"</system-reminder>"
+                )
+            else:
+                text = (
+                    f"<system-reminder>The image {name}is removed to free "
+                    f"up context space.</system-reminder>"
+                )
+
+            new_block: HintBlock | TextBlock
+            if is_top_level and role != "user":
+                new_block = HintBlock(hint=text)
+            else:
+                # User messages only accept text/data blocks (see the
+                # validator in Msg), and a hint block is equivalent to a user
+                # text block for the model anyway.
+                new_block = TextBlock(type="text", text=text)
+            replacements.append((container, idx, new_block))
+
+        for container, idx, new_block in replacements:
+            container[idx] = new_block
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -640,13 +869,15 @@ class Agent:
         | None = None,
         structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply entry point (maybe wrapped by middleware)."""
+        """Reply entry point (maybe wrapped by middleware). The reply loop
+        exits only after its ``ReplyEndEvent`` escapes the middleware chain,
+        so an ``on_reply`` middleware can swallow the event (receive it
+        without yielding) to force another reasoning-acting round."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(
+            agen = self._reply_impl(
                 inputs=inputs,
                 structured_schema=structured_schema,
-            ):
-                yield item
+            )
         else:
 
             async def execute_chain(
@@ -688,8 +919,15 @@ class Agent:
                     ):
                         yield item
 
-            async for item in execute_chain():
-                yield item
+            agen = execute_chain()
+
+        self._receive_reply_end = False
+        async for item in agen:
+            # Set before the yield: the suspended `_reply_impl` checks the
+            # flag once resumed by the next pull
+            if isinstance(item, ReplyEndEvent):
+                self._receive_reply_end = True
+            yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -756,7 +994,7 @@ class Agent:
                 ),
             )
 
-    async def _reply_impl(
+    async def _reply_impl(  # pylint: disable=too-many-branches
         self,
         inputs: Msg
         | list[Msg]
@@ -860,6 +1098,9 @@ class Agent:
             #  or no more tool calls to execute
             # =================================================================
             final_msg: Msg | None = None
+            # Detects middlewares swallowing the ReplyEndEvent repeatedly
+            # without any reasoning/acting in between (a busy loop)
+            made_progress = True
             while True:
                 # =============================================================
                 # Step 3.1: Decide the next action based on the current state
@@ -868,13 +1109,36 @@ class Agent:
 
                 match next_action:
                     case Exit(exit_msg=exit_msg, exit_events=exit_events):
-                        for exit_event in exit_events or []:
-                            yield exit_event
-                        if exit_msg:
+                        if not exit_events:
+                            # Parked on HITL: the reply is not finished, so
+                            # the continuation protocol doesn't apply
                             yield exit_msg
-                        return
+                            return
+
+                        for exit_event in exit_events:
+                            yield exit_event
+
+                        # Exit unless a middleware swallowed the ReplyEndEvent
+                        # to force another reasoning-acting round
+                        if self._receive_reply_end:
+                            yield exit_msg
+                            return
+
+                        if not made_progress:
+                            raise RuntimeError(
+                                "A middleware swallowed the ReplyEndEvent "
+                                "twice without any reasoning/acting in "
+                                "between. Unblock the next round (e.g. "
+                                "adjust 'cur_iter', 'max_iters' or the "
+                                "structured output state) before swallowing "
+                                "the event again.",
+                            )
+                        made_progress = False
+                        final_msg = None
+                        continue
 
                     case Reasoning(hint=hint, tool_choice=tool_choice):
+                        made_progress = True
                         final_msg = None
                         if hint:
                             self.state.append_context(self.name, [hint])
@@ -916,6 +1180,7 @@ class Agent:
                             return
 
                     case Acting(tool_calls=tool_calls):
+                        made_progress = True
                         for batch in await self._batch_tool_calls(tool_calls):
                             if batch.type == "sequential":
                                 evt_generator = (
@@ -1011,6 +1276,65 @@ class Agent:
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Detect the same tool call, i.e. the same tool name and arguments,
+        failing in the trailing consecutive tool results.
+
+        Returns:
+            `tuple[str, int] | None`:
+                The tool name and the number of consecutive failures when it
+                reaches ``injection_config.tool_retries_limit``, or ``None``
+                when there is no such streak.
+        """
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        # The agent is only stuck when the latest tool call fails
+        results = last_msg.get_content_blocks("tool_result")
+        if not results or results[-1].state != ToolResultState.ERROR:
+            return None
+
+        # The trailing results that failed on the same tool, latest first
+        tool_name = results[-1].name
+        streak = []
+        for result in reversed(results):
+            if (
+                result.state != ToolResultState.ERROR
+                or result.name != tool_name
+            ):
+                break
+            streak.append(result.id)
+
+        limit = self.injection_config.tool_retries_limit
+        if len(streak) < limit:
+            return None
+
+        # The same tool isn't enough, the arguments must repeat as well. They
+        # live in the tool call blocks, normalized so that the same arguments
+        # in a different key order still match, while invalid JSON, e.g.
+        # truncated by the model, is compared as-is.
+        inputs = {
+            _.id: _.input for _ in last_msg.get_content_blocks("tool_call")
+        }
+        arguments = []
+        for block_id in streak:
+            raw = inputs.get(block_id, "")
+            try:
+                arguments.append(json.dumps(json.loads(raw), sort_keys=True))
+            except (TypeError, ValueError):
+                arguments.append(raw.strip())
+
+        count = 0
+        for value in arguments:
+            if value != arguments[0]:
+                break
+            count += 1
+
+        if count < limit:
+            return None
+        return tool_name, count
+
     async def _inject_runtime_state(
         self,
     ) -> AsyncGenerator[HintBlockEvent, None]:
@@ -1043,9 +1367,15 @@ class Agent:
           they have been compressed away) nor a previous tasks injection.
         - **Context**: injected at the first iteration of a reply when the
           current input tokens are within
-          ``injection_config.context_buffer_ratio`` of the compression
+          ``context_config.context_buffer_ratio`` of the compression
           threshold, letting the agent perceive that a compression is near.
-          This dimension is evaluated independently of the two above.
+          With the compression tool enabled and no task in progress, the
+          agent is also told that it can compress right now. This dimension
+          is evaluated independently of the two above.
+        - **Tool error**: injected when the same tool call, i.e. the same tool
+          name and arguments, has failed in the last
+          ``injection_config.tool_retries_limit`` consecutive tool results, so
+          that the agent stops retrying a call that keeps failing.
 
         The user defined ``injection_config.extra_fields`` are attached to
         every injection, but never trigger one by themselves.
@@ -1199,9 +1529,9 @@ class Agent:
         # =====================================================================
         # Step 4: Context Length
         # =====================================================================
-        # The context length is checked independently of the dimensions above,
-        # and only at the beginning of a reply, where the context has just
-        # grown by the new input
+        # The context length is checked independently of the dimensions
+        # above, and only at the beginning of a reply, where the context has
+        # just grown by the new input
         if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
@@ -1210,21 +1540,48 @@ class Agent:
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
             )
-
             if input_tokens > (
-                max(
-                    0.0,
+                (
                     self.context_config.trigger_ratio
-                    - self.injection_config.context_buffer_ratio,
+                    - self.context_config.context_buffer_ratio
                 )
                 * self.model.context_size
             ):
                 # To trigger memory compress
-                injections["context-length"] = (
+                hint = (
                     f"Your current context contains {input_tokens} "
                     f"tokens. When reaching {trigger_tokens} tokens, "
                     f"your context will be compressed."
                 )
+
+                # No task in progress means a boundary where the agent can
+                # compress by itself, preserving the completed work in a
+                # summary it writes
+                if (
+                    self.context_config.compression_tool_enabled
+                    and task_status["in_progress"] == 0
+                ):
+                    hint += (
+                        " No task is in progress, so judge by yourself "
+                        "whether the context should be compressed now by "
+                        f"calling `{_COMPRESSION_TOOL_NAME}`."
+                    )
+
+                injections["context-length"] = hint
+
+        # =====================================================================
+        # Step 5: Check Repeated Tool Errors
+        # =====================================================================
+        # The agent keeps retrying the same failing call, so remind it to try
+        # something else
+        repeated_error = self._get_repeated_tool_error()
+        if repeated_error is not None:
+            tool_name, count = repeated_error
+            template = self.injection_config.tool_retries_hint
+            injections["tool-error"] = template.replace(
+                "{tool_name}",
+                tool_name,
+            ).replace("{count}", str(count))
 
         if injections:
             # The user defined fields, which don't trigger an injection by
@@ -1412,14 +1769,15 @@ class Agent:
             )
 
         # Send the model call ended event with usage if available
+        usage = completed_response.usage
         yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
-            input_tokens=completed_response.usage.input_tokens
-            if completed_response.usage
-            else 0,
-            output_tokens=completed_response.usage.output_tokens
-            if completed_response.usage
-            else 0,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            cache_input_tokens=(usage.cache_input_tokens or 0) if usage else 0,
+            cache_creation_input_tokens=(
+                (usage.cache_creation_input_tokens or 0) if usage else 0
+            ),
             finished_reason=completed_response.finished_reason,
         )
 
@@ -1450,6 +1808,12 @@ class Agent:
                 Usage(
                     input_tokens=last_ctx.usage.input_tokens,
                     output_tokens=last_ctx.usage.output_tokens,
+                    cache_input_tokens=(
+                        last_ctx.usage.cache_input_tokens or 0
+                    ),
+                    cache_creation_input_tokens=(
+                        last_ctx.usage.cache_creation_input_tokens or 0
+                    ),
                 )
                 if last_ctx is not None and last_ctx.usage is not None
                 else None
@@ -2537,6 +2901,23 @@ class Agent:
         if msg_index < 0:
             return [], deepcopy(self.state.context)
 
+        # Compression can also be requested from inside the acting loop. In
+        # that case the current tool call has been written to context but its
+        # result has not. Never move an unfinished call into the summary: the
+        # result will be appended after the tool returns and must remain paired
+        # with its call in the retained context.
+        unfinished_tool_call_ids = {
+            block.id
+            for block in self.state.get_unfinished_tool_calls(self.name)
+        }
+        for index, msg in enumerate(self.state.context[: msg_index + 1]):
+            if any(
+                block.id in unfinished_tool_call_ids
+                for block in msg.get_content_blocks("tool_call")
+            ):
+                msg_index = index
+                break
+
         # The msgs that won't exceed the reserved token limit
         msgs_to_compress = self.state.context[:msg_index]
         msgs_to_reserve = self.state.context[msg_index + 1 :]
@@ -2562,6 +2943,15 @@ class Agent:
                 break
             block_index -= 1
 
+        unfinished_block_indexes = [
+            index
+            for index, block in enumerate(boundary_msg_content)
+            if isinstance(block, ToolCallBlock)
+            and block.id in unfinished_tool_call_ids
+        ]
+        if unfinished_block_indexes:
+            block_index = min(block_index, min(unfinished_block_indexes) - 1)
+
         # Adjust the block_index to avoid splitting tool call and result pairs.
         # Moving the boundary can bring another tool call into the compressed
         # part while leaving its result reserved, so repeat until it is stable.
@@ -2586,7 +2976,24 @@ class Agent:
 
             # Move unmatched results into the compressed part and recheck,
             # because this move can split another tool call/result pair.
-            block_index = max(remain_result_ids.values())
+            new_block_index = max(remain_result_ids.values())
+
+            if unfinished_block_indexes and new_block_index >= min(
+                unfinished_block_indexes,
+            ):
+                # The move would compress an unfinished tool call, so reserve
+                # the calls of the unmatched results instead
+                block_index = (
+                    min(
+                        index
+                        for index, block in enumerate(boundary_msg_content)
+                        if isinstance(block, ToolCallBlock)
+                        and block.id in remain_result_ids
+                    )
+                    - 1
+                )
+            else:
+                block_index = new_block_index
 
         # Split the boundary msg content
         boundary_msg_to_compress.content = boundary_msg_content[
@@ -2826,6 +3233,14 @@ class Agent:
         # The conversation context
         messages.extend(self.state.context)
 
+        # Equip the compression tool, whose registration is kept across
+        # replies so that its schema is stable for prompt caching
+        if self.context_config.compression_tool_enabled and (
+            await self.toolkit.get_tool(_COMPRESSION_TOOL_NAME)
+            is not self._compression_tool
+        ):
+            await self.toolkit.add_tool(self._compression_tool)
+
         # Get the tools schemas
         tools = await self.toolkit.get_tool_schemas(
             self.state.tool_context.activated_groups,
@@ -3006,6 +3421,10 @@ class Agent:
             Usage(
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
+                cache_input_tokens=usage.cache_input_tokens or 0,
+                cache_creation_input_tokens=(
+                    usage.cache_creation_input_tokens or 0
+                ),
             )
             if usage is not None
             else None
@@ -3037,6 +3456,10 @@ class Agent:
             else:
                 tail.usage.input_tokens += msg_usage.input_tokens
                 tail.usage.output_tokens += msg_usage.output_tokens
+                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
+                tail.usage.cache_creation_input_tokens += (
+                    msg_usage.cache_creation_input_tokens
+                )
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
@@ -3141,12 +3564,17 @@ class Agent:
                 >= self.react_config.max_iters
                 + self.react_config.structured_output_grace_iters
             ):
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exceed_event = ExceedMaxItersEvent(
+                        reply_id=self.state.reply_id,
+                        name=self.name,
+                    )
                 return Exit(
                     exit_events=[
-                        ExceedMaxItersEvent(
-                            reply_id=self.state.reply_id,
-                            name=self.name,
-                        ),
+                        exceed_event,
                         ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
@@ -3201,17 +3629,69 @@ class Agent:
 
         # The last reasoning produced a text-only final message
         if final_msg is not None:
+            # In the normal flow, ``cur_iter == max_iters + 1`` here means
+            # this text came from the one forced finalization call.
+            exceeded_max_iters = (
+                self.state.cur_iter > self.react_config.max_iters
+            )
+            finished_reason = (
+                ReplyFinishedReason.EXCEED_MAX_ITERS
+                if exceeded_max_iters
+                else ReplyFinishedReason.COMPLETED
+            )
+            exit_events: list[AgentEvent] = []
+
+            if exceeded_max_iters:
+                logger.warning(
+                    "Agent %s exceeds the max iteration numbers %d. "
+                    "Stop the react loop.",
+                    self.name,
+                    self.react_config.max_iters,
+                )
+                final_msg.finished_reason = finished_reason
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exit_events.append(
+                        ExceedMaxItersEvent(
+                            reply_id=self.state.reply_id,
+                            name=self.name,
+                        ),
+                    )
+
+            exit_events.append(
+                ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    finished_reason=finished_reason,
+                ),
+            )
             return Exit(
-                exit_events=[
-                    ReplyEndEvent(
-                        session_id=self.state.session_id,
-                        reply_id=self.state.reply_id,
-                        finished_reason=ReplyFinishedReason.COMPLETED,
-                    ),
-                ],
+                exit_events=exit_events,
                 exit_msg=final_msg,
             )
 
+        # At equality, the regular iteration budget is exhausted, but the
+        # one forced finalization call has not run yet.
+        if self.state.cur_iter == self.react_config.max_iters:
+            return Reasoning(
+                hint=HintBlock(
+                    hint=(
+                        f"<system-reminder>You have reached the maximum of "
+                        f"{self.react_config.max_iters} reasoning-acting "
+                        f"iterations. Summarize the work and findings so far "
+                        f"and return the final answer as text. Do not call "
+                        f"any tools.</system-reminder>"
+                    ),
+                    source='{"label": "System", "sublabel": '
+                    '"Max Iterations Reached"}',
+                ),
+                tool_choice=ToolChoice(mode="none"),
+            )
+
+        # Equality returned above, so reaching this check means the forced
+        # finalization call also failed to produce a final message.
         if self.state.cur_iter >= self.react_config.max_iters:
             logger.warning(
                 "Agent %s exceeds the max iteration numbers %d. "
@@ -3220,12 +3700,17 @@ class Agent:
                 self.react_config.max_iters,
             )
 
+            # Deprecated but still emitted for backward compatibility;
+            # suppressed since the warning targets consumers
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                exceed_event = ExceedMaxItersEvent(
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
             return Exit(
                 exit_events=[
-                    ExceedMaxItersEvent(
-                        reply_id=self.state.reply_id,
-                        name=self.name,
-                    ),
+                    exceed_event,
                     ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,

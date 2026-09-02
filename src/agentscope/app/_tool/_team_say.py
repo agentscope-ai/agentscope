@@ -8,8 +8,8 @@ from pydantic import Field
 
 from ._team_routing import _build_member_directory
 from ._team_tool_base import _TeamToolBase
-from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox
+from ..storage._utils import _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -148,60 +148,7 @@ class TeamSay(_TeamToolBase):
                 error chunk on failure.
         """
         try:
-            session = await self._storage.get_session(
-                self._user_id,
-                self._agent_id,
-                self._session_id,
-            )
-            if session is None or session.team_id is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                "TeamSay: this session is not in any "
-                                "team — call TeamCreate first if you "
-                                "want to start one."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
-                )
-
-            team = await self._storage.get_team(
-                self._user_id,
-                session.team_id,
-            )
-            if team is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                f"TeamSay: team {session.team_id} no longer "
-                                f"exists."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
-                )
-
-            leader_session = await self._storage.get_session(
-                self._user_id,
-                "",
-                team.session_id,
-            )
-            if leader_session is None:
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=(
-                                f"TeamSay: leader session "
-                                f"{team.session_id} missing for team "
-                                f"{team.id}."
-                            ),
-                        ),
-                    ],
-                    state=ToolResultState.ERROR,
-                )
+            team = await self._require_team()
 
             # Build a (name -> (session_id, agent_id)) directory. The
             # leader is always in the directory under its plain agent
@@ -215,29 +162,34 @@ class TeamSay(_TeamToolBase):
             # The shared directory qualifies renamed members with a
             # stable handle when a display name collides with the leader
             # or another member, so no entry is silently overwritten.
-            leader_agent = await self._storage.get_agent(
+            leader = await _resolve_team_leader(
+                self._storage,
                 self._user_id,
-                leader_session.agent_id,
+                team,
             )
-            leader_name = (
-                leader_agent.data.name
-                if leader_agent is not None
-                else leader_session.agent_id
-            )
+            if leader is None:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"TeamSay: leader records missing for "
+                                f"team {team.id}."
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
             directory: dict[str, tuple[str, str]] = {
-                leader_name: (leader_session.id, leader_session.agent_id),
+                leader.name: (leader.session_id, leader.agent.id),
             }
             member_directory = await _build_member_directory(
                 self._storage,
                 self._user_id,
                 team,
-                reserved_names={leader_name},
+                reserved_names={leader.name},
             )
             for display, member in member_directory.items():
-                directory[display] = (
-                    member.session_id,
-                    member.agent_id,
-                )
+                directory[display] = (member.session_id, member.agent_id)
 
             own_session_ids = {sid for sid, _aid in directory.values()}
             if self._session_id not in own_session_ids:
@@ -316,15 +268,12 @@ class TeamSay(_TeamToolBase):
             payload = hint.model_dump(mode="json")
 
             for sid, aid in recipients:
-                await self._message_bus.queue_push(
-                    MessageBusKeys.inbox(sid),
-                    payload,
-                )
-                await enqueue_run_trigger(
+                await deliver_to_inbox(
                     self._message_bus,
                     user_id=self._user_id,
                     session_id=sid,
                     agent_id=aid,
+                    payload=payload,
                 )
 
             count = len(recipients)

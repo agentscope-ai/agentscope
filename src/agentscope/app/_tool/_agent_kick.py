@@ -135,6 +135,7 @@ class AgentKick(_TeamToolBase):
             service = SessionService(
                 storage=self._storage,
                 message_bus=self._message_bus,
+                workspace_manager=self._workspace_manager,
             )
             removed = await service.delete_team_member(
                 self._user_id,
