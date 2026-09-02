@@ -1355,6 +1355,53 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_oversized_document_block_is_truncated(self) -> None:
+        from agentscope.app.channel._dingtalk._tools import (
+            ReadKnowledgeDocument,
+        )
+
+        media_api = _FakeMediaOpenAPI()
+        media_api.knowledge_node = {
+            "nodeId": "doc-1",
+            "workspaceId": "space-1",
+            "name": "Runbook",
+            "type": "FILE",
+            "category": "ALIDOC",
+        }
+        media_api.document_blocks = [
+            {
+                "blockType": "paragraph",
+                "paragraph": {"text": "x" * 30_000},
+                "index": 0,
+            },
+        ]
+        channel, _ = _channel_with_openapi(media_api)
+        tools = await channel.list_tools(
+            cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            "staff-1",
+        )
+
+        document = await cast(ReadKnowledgeDocument, tools[7])("doc-1", 0, 1)
+
+        self.assertDictEqual(
+            json.loads(document.content[0].text),
+            {
+                "document": {
+                    "node_id": "doc-1",
+                    "workspace_id": "space-1",
+                    "name": "Runbook",
+                    "url": "",
+                    "modified_time": "",
+                    "word_count": None,
+                },
+                "markdown": "x" * 20_000,
+                "start_index": 0,
+                "returned_blocks": 1,
+                "next_start_index": 1,
+                "unsupported_block_types": [],
+            },
+        )
+
     async def test_knowledge_tools_hidden_without_channel_sender(self) -> None:
         channel = _channel()
         workspace = cast(

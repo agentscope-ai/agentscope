@@ -936,7 +936,7 @@ class FeishuChannel(ChannelBase):
             page_token = payload.get("page_token", "")
         return results
 
-    async def list_tools(
+    async def list_tools(  # pylint: disable=unused-argument
         self,
         workspace: "WorkspaceBase",
         channel_user_id: str | None = None,
@@ -954,7 +954,6 @@ class FeishuChannel(ChannelBase):
         Returns:
             `list[ToolBase]`: The Feishu agent tools.
         """
-        del channel_user_id
         from ._tools import (
             ListChatMembers,
             ListChats,

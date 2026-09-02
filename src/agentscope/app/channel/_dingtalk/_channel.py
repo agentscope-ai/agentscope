@@ -526,7 +526,10 @@ class DingTalkChannel(ChannelBase):
         """
         from ._tools import (
             ListConversations,
+            ListKnowledgeBases,
+            ListKnowledgeNodes,
             ListUsers,
+            ReadKnowledgeDocument,
             SendFile,
             SendImage,
             SendMessage,
@@ -541,13 +544,6 @@ class DingTalkChannel(ChannelBase):
             SendImage(self, backend),
         ]
         if channel_user_id:
-            from ._tools import (
-                ListKnowledgeBases,
-                ListKnowledgeNodes,
-                ReadKnowledgeDocument,
-            )
-
-            backend = workspace.get_backend()
             tools.extend(
                 [
                     ListKnowledgeBases(self, backend, channel_user_id),

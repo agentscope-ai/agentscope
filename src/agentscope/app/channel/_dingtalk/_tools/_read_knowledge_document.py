@@ -131,6 +131,11 @@ def _render_blocks(
             unsupported.add(block_type)
         added = len(rendered) + (2 if parts else 0)
         if total + added > _MAX_CONTENT_CHARS:
+            # A first block over the budget would otherwise return nothing
+            # and no continuation index, so emit a truncated prefix.
+            if not parts:
+                parts.append(rendered[:_MAX_CONTENT_CHARS])
+                consumed.append(block)
             return "\n\n".join(parts), consumed, unsupported, True
         parts.append(rendered)
         consumed.append(block)

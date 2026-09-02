@@ -820,19 +820,15 @@ class _DingTalkOpenAPI:
                 or payload.get("errorMessage")
                 or "request rejected",
             )
-            if response.status_code >= 400:
+            if (
+                response.status_code >= 400
+                or code not in (None, "", 0, "0")
+                or payload.get("success") is False
+            ):
                 raise _DingTalkAPIError(
                     f"DingTalk {operation} failed (HTTP "
                     f"{response.status_code}, code={code or 'unknown'}): "
                     f"{message[:_ERROR_BODY_CHARS]}",
-                )
-            if (
-                code not in (None, "", 0, "0")
-                or payload.get("success") is False
-            ):
-                raise _DingTalkAPIError(
-                    f"DingTalk {operation} failed (code="
-                    f"{code or 'unknown'}): {message[:_ERROR_BODY_CHARS]}",
                 )
             return payload
         except _DingTalkAPIError:
