@@ -5,17 +5,19 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+	ExternalExecutionResultEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
-import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import type { ClientExternalToolResult } from '@/lib/client-external-tools';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -419,6 +421,52 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
+	/** Return a client-executed tool result and resume the parked reply. */
+	const onClientExternalToolResult = useCallback(
+		async (toolCall: ToolCallBlock, result: ClientExternalToolResult, replyId: string) => {
+			if (!agentId || !sessionId) return;
+
+			currentReplyRef.current = msgsRef.current.find((msg) => msg.id === replyId) ?? null;
+			const createdAt = new Date().toISOString();
+			const toolResult: ToolResultBlock = {
+				type: 'tool_result',
+				id: toolCall.id,
+				name: toolCall.name,
+				output: [
+					{
+						type: 'text',
+						id: crypto.randomUUID(),
+						text: JSON.stringify(result),
+						created_at: createdAt,
+						finished_at: createdAt,
+					},
+				],
+				state: 'success',
+				created_at: createdAt,
+				finished_at: createdAt,
+			};
+			const event: ExternalExecutionResultEvent = {
+				type: EventType.EXTERNAL_EXECUTION_RESULT,
+				id: crypto.randomUUID(),
+				created_at: createdAt,
+				reply_id: replyId,
+				execution_results: [toolResult],
+			};
+
+			try {
+				await chatApi.trigger({
+					agent_id: agentId,
+					session_id: sessionId,
+					input: event,
+				});
+			} catch (error) {
+				setError(error as Error);
+				throw error;
+			}
+		},
+		[agentId, sessionId],
+	);
+
 	/** Abort the current SSE connection. */
 	const abort = useCallback(() => {
 		abortRef.current?.abort();
@@ -539,6 +587,7 @@ export function useMessages(
 		error: ownsConversation ? error : null,
 		send,
 		onUserConfirm,
+		onClientExternalToolResult,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,

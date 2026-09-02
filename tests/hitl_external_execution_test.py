@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-builtin
 """Test the external execution events in the agent class."""
+import json
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -25,7 +26,10 @@ from agentscope.message import (
     UserMsg,
     ToolResultState,
 )
-from agentscope.event import ExternalExecutionResultEvent
+from agentscope.event import (
+    ExternalExecutionResultEvent,
+    RequireExternalExecutionEvent,
+)
 
 
 class MockExternalSequentialTool(ToolBase):
@@ -271,6 +275,49 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
             },
         ]
+
+    async def test_external_input_is_normalized_after_repair(self) -> None:
+        """External clients receive valid JSON after input repair."""
+        self.agent.toolkit = Toolkit(
+            tools=[MockExternalSequentialTool()],
+        )
+        malformed_input = "{'input': 'test1'}"
+        response = ChatResponse(
+            content=[
+                ToolCallBlock(
+                    id=self.tool_call_id_1,
+                    name=self.sequential_tool_name,
+                    input=malformed_input,
+                ),
+            ],
+            is_last=True,
+            usage=None,
+        )
+        self.model.set_responses([[response]])
+
+        pending = None
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content=self.user_input_text),
+        ):
+            if isinstance(event, RequireExternalExecutionEvent):
+                pending = event
+
+        self.assertIsNotNone(pending)
+        assert pending is not None
+        normalized_input = pending.tool_calls[0].input
+        stored_call = self.agent.state.context[-1].content[0]
+        self.assertIsInstance(stored_call, ToolCallBlock)
+        assert isinstance(stored_call, ToolCallBlock)
+        self.assertEqual(
+            {
+                "parsed": json.loads(normalized_input),
+                "stored": stored_call.input,
+            },
+            {
+                "parsed": {"input": "test1"},
+                "stored": normalized_input,
+            },
+        )
 
     async def test_single_external_execution(self) -> None:
         """Test single external execution tool call.

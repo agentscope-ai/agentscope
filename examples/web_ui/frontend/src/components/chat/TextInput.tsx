@@ -83,6 +83,8 @@ interface TextInputProps {
 	 *   - ``interrupting`` — Stop (disabled while the interrupt is in flight)
 	 */
 	phase?: ReplyPhase;
+	/** Allow sending while a reply is parked awaiting structured input. */
+	acceptsInput?: boolean;
 	onInterrupt?: () => void;
 	/**
 	 * Content rendered directly above the input pill, inside the outer
@@ -138,6 +140,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			phase = 'idle',
+			acceptsInput = false,
 			onInterrupt,
 			headerSlot,
 		},
@@ -218,7 +221,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const handleSend = () => {
-			if (!value.trim() || disabled || hasProcessing) return;
+			if (!value.trim() || disabled || hasProcessing || (acceptsInput && files.length > 0))
+				return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -256,7 +260,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			disabled: boolean;
 			onClick: (() => void) | undefined;
 		} = (() => {
-			if (phase === 'streaming') {
+			if (phase === 'streaming' && !acceptsInput) {
 				return {
 					icon: Square,
 					tooltip: t('textInput.stop'),
@@ -275,7 +279,11 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			return {
 				icon: ArrowUp,
 				tooltip: t('textInput.send'),
-				disabled: disabled || !value.trim() || hasProcessing,
+				disabled:
+					disabled ||
+					!value.trim() ||
+					hasProcessing ||
+					(acceptsInput && files.length > 0),
 				onClick: handleSend,
 			};
 		})();

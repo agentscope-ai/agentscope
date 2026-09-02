@@ -1,25 +1,42 @@
 # -*- coding: utf-8 -*-
 """The interactive console entry for trying an agent in the terminal."""
 import asyncio
+import json
 import signal
+
+import jsonschema
 
 from ._renderer import ConsoleRenderer, Verbosity
 from ..agent import Agent
 from ..pipeline import PipelineProtocol
 from ..event import (
     ConfirmResult,
+    ExternalExecutionResultEvent,
+    RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
-from ..message import Msg, UserMsg
+from ..message import (
+    Msg,
+    TextBlock,
+    ToolResultBlock,
+    ToolResultState,
+    UserMsg,
+)
+from ..tool import RequestUserInput
 
 
 async def _run_reply(
     agent: Agent | PipelineProtocol,
     renderer: ConsoleRenderer,
-    inputs: Msg | UserConfirmResultEvent | UserInterruptEvent,
-) -> RequireUserConfirmEvent | None:
+    inputs: (
+        Msg
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+    ),
+) -> RequireUserConfirmEvent | RequireExternalExecutionEvent | None:
     """Consume one ``reply_stream`` call, rendering every event.
 
     Ctrl+C during streaming cancels the reply task; the agent handles the
@@ -28,17 +45,22 @@ async def _run_reply(
     its default ``False``.
 
     Returns:
-        `RequireUserConfirmEvent | None`:
-            The pending confirmation request if the reply parked on
-            human-in-the-loop, otherwise `None`.
+        `RequireUserConfirmEvent | RequireExternalExecutionEvent | None`:
+            The pending outside-interaction request if the reply parked,
+            otherwise `None`.
     """
-    pending: RequireUserConfirmEvent | None = None
+    pending: RequireUserConfirmEvent | RequireExternalExecutionEvent | None = (
+        None
+    )
 
     async def consume() -> None:
         nonlocal pending
         async for event in agent.reply_stream(inputs):
             renderer.render(event)
-            if isinstance(event, RequireUserConfirmEvent):
+            if isinstance(
+                event,
+                (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+            ):
                 pending = event
 
     task = asyncio.ensure_future(consume())
@@ -93,6 +115,99 @@ async def _confirm(
     )
 
 
+async def _read_choice(maximum: int) -> int:
+    """Read a one-based option number and return its zero-based index."""
+    while True:
+        answer = (
+            await asyncio.to_thread(
+                input,
+                f"Select an option [1-{maximum}]: ",
+            )
+        ).strip()
+        if answer.isdigit() and 1 <= int(answer) <= maximum:
+            return int(answer) - 1
+        print(f"Enter a number from 1 to {maximum}.")
+
+
+async def _read_other() -> str:
+    """Read a non-empty custom answer for the Other option."""
+    while True:
+        answer = (
+            await asyncio.to_thread(input, "Enter your answer: ")
+        ).strip()
+        if answer:
+            return answer
+        print("The answer cannot be empty.")
+
+
+async def _request_user_input(
+    pending: RequireExternalExecutionEvent,
+) -> ExternalExecutionResultEvent:
+    """Collect results for pending ``RequestUserInput`` tool calls."""
+    results: list[ToolResultBlock] = []
+    for tool_call in pending.tool_calls:
+        if tool_call.name != RequestUserInput.name:
+            raise ValueError(
+                f"The console cannot execute external tool "
+                f"'{tool_call.name}'.",
+            )
+
+        tool_input = json.loads(tool_call.input)
+        try:
+            jsonschema.validate(
+                tool_input,
+                RequestUserInput.input_schema,
+            )
+        except jsonschema.ValidationError as error:
+            raise ValueError(
+                f"Invalid RequestUserInput payload: {error.message}",
+            ) from error
+        options = tool_input["options"]
+        question = tool_input["question"]
+        print(f"\n{question}")
+        for index, option in enumerate(options, start=1):
+            recommended = " (Recommended)" if option.get("recommended") else ""
+            label = option["label"]
+            print(f"  {index}. {label}{recommended}")
+            description = option.get("description")
+            if description:
+                print(f"     {description}")
+
+        other_index = len(options)
+        print(f"  {other_index + 1}. Other")
+        selected = await _read_choice(other_index + 1)
+        payload: dict[str, str | int]
+        if selected == other_index:
+            payload = {
+                "type": "other",
+                "text": await _read_other(),
+            }
+        else:
+            payload = {
+                "type": "option",
+                "option_index": selected,
+                "label": options[selected]["label"],
+            }
+
+        results.append(
+            ToolResultBlock(
+                id=tool_call.id,
+                name=tool_call.name,
+                output=[
+                    TextBlock(
+                        text=json.dumps(payload, ensure_ascii=False),
+                    ),
+                ],
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+
+    return ExternalExecutionResultEvent(
+        reply_id=pending.reply_id,
+        execution_results=results,
+    )
+
+
 async def launch_console(
     agent: Agent | PipelineProtocol,
     user_name: str = "user",
@@ -105,9 +220,9 @@ async def launch_console(
     persistence: the conversation lives in ``agent.state`` and ends with
     the process. Reads user messages from stdin, renders every streamed
     :class:`~agentscope.event.AgentEvent`, asks for tool-call
-    confirmation (y/n) when the agent requires it, and turns Ctrl+C into
-    an interruption of the current reply. Type ``exit``/``quit`` or
-    press Ctrl+D to leave.
+    confirmation (y/n) when the agent requires it, handles structured
+    ``RequestUserInput`` choices, and turns Ctrl+C into an interruption
+    of the current reply. Type ``exit``/``quit`` or press Ctrl+D to leave.
 
     .. code-block:: python
 
@@ -151,16 +266,24 @@ async def launch_console(
         if not query:
             continue
 
-        inputs: Msg | UserConfirmResultEvent | UserInterruptEvent = UserMsg(
-            name=user_name,
-            content=query,
-        )
+        inputs: (
+            Msg
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+        ) = UserMsg(name=user_name, content=query)
         while True:
             pending = await _run_reply(agent, renderer, inputs)
             if pending is None:
                 break
             try:
-                inputs = await _confirm(pending)
+                if isinstance(pending, RequireUserConfirmEvent):
+                    inputs = await _confirm(pending)
+                else:
+                    inputs = await _request_user_input(pending)
             except (EOFError, KeyboardInterrupt):
                 # Abort the parked reply so the next input starts clean
+                inputs = UserInterruptEvent(reply_id=pending.reply_id)
+            except ValueError as error:
+                renderer.console.print(str(error), style="red")
                 inputs = UserInterruptEvent(reply_id=pending.reply_id)

@@ -445,10 +445,18 @@ import type {
 } from '@agentscope-ai/agentscope/event';
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
+export interface ClientExternalToolDefinition {
+	name: string;
+	description: string;
+	read_only: boolean;
+	input_schema: Record<string, unknown>;
+}
+
 export interface ChatRequest {
 	agent_id: string;
 	session_id: string;
 	input: Msg | Msg[] | UserConfirmResultEvent | ExternalExecutionResultEvent | null;
+	client_external_tools?: ClientExternalToolDefinition[];
 }
 
 // ─── MCP ──────────────────────────────────────────────────────────────────────

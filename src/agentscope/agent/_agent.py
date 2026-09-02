@@ -4,6 +4,7 @@ import asyncio
 import collections
 import json
 import inspect
+import json
 import re
 import warnings
 
@@ -2481,6 +2482,11 @@ class Agent:
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message}",
                 ) from e
+            except Exception as e:
+                raise AgentOrientedException(
+                    f"Input schema evaluation failed for tool "
+                    f"'{tool_call.name}': {e}",
+                ) from e
 
         # The exceptions that
         #  - cannot found tool
@@ -2584,6 +2590,12 @@ class Agent:
             )
             # Send requiring external execution event if it's an external tool
             if tool.is_external_tool:
+                # External clients should receive the same repaired and
+                # schema-validated JSON that permission checks consumed.
+                tool_call.input = json.dumps(
+                    parsed_input,
+                    ensure_ascii=False,
+                )
                 # Update the state to "submitted" BEFORE yielding
                 # because the outer loop will break immediately after
                 # receiving this event, preventing any code after yield
