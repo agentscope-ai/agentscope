@@ -295,8 +295,11 @@ class Toolkit:
 
         # Async function
         try:
-            # Prepare keyword arguments
-            kwargs = _json_loads_with_repair(tool_call.input)
+            # Repair here too: tools may override __call__.
+            kwargs = _json_loads_with_repair(
+                tool_call.input,
+                getattr(tool_func, "input_schema", None),
+            )
 
             # State injection
             if (

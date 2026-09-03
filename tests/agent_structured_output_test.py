@@ -205,6 +205,11 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             block.model_dump()
             for block in assistant_msg.get_content_blocks("tool_result")
         ]
+        self.assertIn(
+            "Schema-guided argument repair failed",
+            tool_results[0]["output"],
+        )
+        self.assertIn("$.temperature", tool_results[0]["output"])
         self.assertListEqual(
             tool_results,
             [
@@ -214,9 +219,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                     "finished_at": None,
                     "id": "structured_call_0",
                     "name": "GenerateStructuredOutput",
-                    "output": "Input validation failed for tool "
-                    "'GenerateStructuredOutput': 'hot' is not of type "
-                    "'number'",
+                    "output": AnyString(),
                     "state": "error",
                     "metadata": {},
                 },

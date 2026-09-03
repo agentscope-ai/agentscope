@@ -25,7 +25,7 @@ dependencies = [
     "docstring_parser",
     "filetype",
     "json5",
-    "json_repair",
+    "json_repair[schema]>=0.63.4",
     "mcp<2.0.0",
     "httpx",
     "numpy",

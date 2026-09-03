@@ -10,6 +10,7 @@ import os
 import types
 import uuid
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .._logging import logger
@@ -83,39 +84,82 @@ def _normalize_local_path(path: str) -> str:
     return os.path.abspath(os.path.expanduser(path))
 
 
+def _check_repaired_integers(original: Any, repaired: Any) -> None:
+    """Reject integer repairs that lose numeric precision."""
+    if isinstance(original, str):
+        if isinstance(repaired, int) and not isinstance(repaired, bool):
+            try:
+                exact = Decimal(original)
+            except InvalidOperation:
+                return
+            if not exact.is_finite() or exact != repaired:
+                raise ValueError(
+                    "Integer argument repair would lose precision.",
+                )
+        elif isinstance(repaired, (dict, list)):
+            # Inspect JSON-encoded containers before comparing.
+            try:
+                decoded = json.loads(original)
+            except json.JSONDecodeError:
+                decoded = original
+            if isinstance(decoded, (dict, list)):
+                original = decoded
+
+    if isinstance(original, dict) and isinstance(repaired, dict):
+        for key in original.keys() & repaired.keys():
+            _check_repaired_integers(original[key], repaired[key])
+    elif isinstance(repaired, list):
+        if isinstance(original, list):
+            for before, after in zip(original, repaired):
+                _check_repaired_integers(before, after)
+        elif len(repaired) == 1:
+            _check_repaired_integers(original, repaired[0])
+
+
 def _json_loads_with_repair(
     json_str: str,
-    schema: dict | None = None,
+    schema: dict | bool | None = None,
 ) -> dict:
-    """The given json_str maybe incomplete, e.g. '{"key', so we need to
-    repair and load it into a Python object.
+    """Parse tool arguments, repairing syntax and types when needed.
 
-    .. note::
-        This function is currently only used for parsing the streaming output
-        of the argument field in `tool_use`, so the parsed result must be a
-        dict.
+    Schema-guided repair also applies to valid JSON.
 
     Args:
         json_str (`str`):
             The JSON string to parse, which may be incomplete or malformed.
-        schema (`dict`, optional):
+        schema (`dict | bool`, optional):
             An optional JSON schema to guide the repair process.
 
     Returns:
         `dict`:
-            A dictionary parsed from the JSON string after repair attempts.
-            Returns an empty dict if all repair attempts fail.
+            The parsed and repaired arguments.
+
+    Raises:
+        ToolJSONDecodeError:
+            If arguments cannot be repaired to a dict or fail safety checks.
     """
+    original = None
     try:
         # Loads directly
         res = json.loads(json_str)
+        original = res
         if isinstance(res, dict):
-            return res
-
-        error_message = (
-            f"Error: Your argument string is decoded into a {type(res)} "
-            f"object, but a dict object is expected!"
-        )
+            if schema is None:
+                return res
+            # Reject non-finite values before repair can hide them.
+            try:
+                json.dumps(res, allow_nan=False)
+            except ValueError as e:
+                raise ToolJSONDecodeError(
+                    "Input validation failed: non-finite numbers are not "
+                    "valid JSON values.",
+                ) from e
+            error_message = "Error: Tool arguments do not match the schema."
+        else:
+            error_message = (
+                f"Error: Your argument string is decoded into a {type(res)} "
+                f"object, but a dict object is expected!"
+            )
     except json.JSONDecodeError as e:
         error_message = (
             f"Error: When decoding your tool arguments from JSON format "
@@ -127,18 +171,32 @@ def _json_loads_with_repair(
         # Try to repair with json_repair
         from json_repair import repair_json
 
-        repaired = repair_json(json_str, stream_stable=True, schema=schema)
-        res = json.loads(repaired)
+        if schema is not None and original is None:
+            original = repair_json(
+                json_str,
+                stream_stable=True,
+                return_objects=True,
+            )
+            json.dumps(original, allow_nan=False)
+
+        res = repair_json(
+            json_str,
+            stream_stable=True,
+            schema=schema,
+            return_objects=True,
+        )
         if isinstance(res, dict):
+            if schema is not None:
+                # Repair may create NaN/Infinity from strings.
+                json.dumps(res, allow_nan=False)
+                _check_repaired_integers(original, res)
             return res
 
-    except Exception:
-        # Whatever the error is, we throw the original error message to the
-        # agent, which is more helpful for debugging.
-        pass
+    except Exception as e:
+        if schema is not None:
+            error_message = f"Error: Schema-guided argument repair failed: {e}"
 
-    # If still failed, we throw the original error message to the agent, rather
-    # than the error from json_repair, which is less helpful for debugging.
+    # Bound the input excerpt in error messages.
     if len(json_str) > 200:
         error_json_str = json_str[:100] + "[TRUNCATE]" + json_str[-100:]
         ellipsis_hint = (
