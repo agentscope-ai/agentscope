@@ -280,8 +280,8 @@ class ToolSchemaRepairIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await tool(value="42")
         self.assertEqual(received[1], "42")
 
-    async def test_invalid_arguments_do_not_execute(self) -> None:
-        """Direct calls raise; Toolkit returns errors without executing."""
+    async def test_unsafe_arguments_do_not_execute(self) -> None:
+        """Best-effort repair must not bypass numeric safety checks."""
         received: list[int] = []
 
         async def integer_tool(count: int) -> str:
@@ -290,12 +290,14 @@ class ToolSchemaRepairIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
         tool = FunctionTool(integer_tool)
         toolkit = Toolkit(tools=[tool])
-        for kwargs in (
-            {"count": "invalid"},
-            {"count": "1e23"},
-            {"count": float("nan")},
-            {},
+        for expected_type, value in (
+            ("integer", "1e23"),
+            ("number", "1e999"),
+            ("number", float("nan")),
+            ("number", float("inf")),
         ):
+            tool.input_schema = _schema({"count": {"type": expected_type}})
+            kwargs = {"count": value}
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(ToolJSONDecodeError):
                     await tool(**kwargs)

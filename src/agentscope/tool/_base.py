@@ -195,13 +195,14 @@ class ToolBase(ABC):
         have completed.
 
         Repair JSON-compatible kwargs before middleware, preserving injected
-        state and native Python objects.
+        state and native Python objects. If schema repair fails, leave the
+        original arguments for the tool to handle.
 
         Raises:
             TypeError:
                 If positional arguments are provided.
             ToolJSONDecodeError:
-                If JSON-compatible arguments cannot be repaired safely.
+                If arguments fail safety checks or the schema is invalid.
         """
         if args:
             raise TypeError(
@@ -224,7 +225,11 @@ class ToolBase(ABC):
                 # Preserve native objects from direct Python callers.
                 pass
             else:
-                kwargs = _json_loads_with_repair(serialized, schema)
+                kwargs = _json_loads_with_repair(
+                    serialized,
+                    schema,
+                    strict_schema=False,
+                )
                 kwargs.update(injected_kwargs)
 
         # ``getattr`` with a default so the no-middleware path keeps working

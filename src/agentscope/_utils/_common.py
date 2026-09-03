@@ -119,6 +119,8 @@ def _check_repaired_integers(original: Any, repaired: Any) -> None:
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | bool | None = None,
+    *,
+    strict_schema: bool = True,
 ) -> dict:
     """Parse tool arguments, repairing syntax and types when needed.
 
@@ -129,6 +131,9 @@ def _json_loads_with_repair(
             The JSON string to parse, which may be incomplete or malformed.
         schema (`dict | bool`, optional):
             An optional JSON schema to guide the repair process.
+        strict_schema (`bool`, optional):
+            If False, preserve schema-invalid arguments when repair fails.
+            Numeric safety checks still apply. Defaults to True.
 
     Returns:
         `dict`:
@@ -179,12 +184,29 @@ def _json_loads_with_repair(
             )
             json.dumps(original, allow_nan=False)
 
-        res = repair_json(
-            json_str,
-            stream_stable=True,
-            schema=schema,
-            return_objects=True,
-        )
+        try:
+            res = repair_json(
+                json_str,
+                stream_stable=True,
+                schema=schema,
+                return_objects=True,
+            )
+        except ValueError:
+            if (
+                strict_schema
+                or schema is None
+                or not isinstance(original, dict)
+            ):
+                raise
+
+            # Validate the schema before preserving mismatched input.
+            from jsonschema.validators import validator_for
+
+            validator = validator_for(schema)
+            validator.check_schema(schema)
+            if not list(validator(schema).iter_errors(original)):
+                raise
+            res = original
         if isinstance(res, dict):
             if schema is not None:
                 # Repair may create NaN/Infinity from strings.

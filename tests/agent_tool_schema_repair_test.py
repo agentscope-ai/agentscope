@@ -109,6 +109,19 @@ class AgentToolSchemaRepairTest(IsolatedAsyncioTestCase):
         """Reject invalid values without overwriting the original input."""
         cases: tuple[tuple[dict[str, Any], str], ...] = (
             ({"type": "integer", "minimum": 100}, '{"value": "42"}'),
+            ({"type": "integer", "maximum": 600000}, '{"value": 900000}'),
+            (
+                {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {"type": "string", "enum": ["known"]},
+                        },
+                        {"type": "null"},
+                    ],
+                },
+                '{"value": ["unknown"]}',
+            ),
             ({"type": "integer"}, '{"value": "invalid"}'),
             (
                 {"type": "number", "minimum": 0, "maximum": 1},

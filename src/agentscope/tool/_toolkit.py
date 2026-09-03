@@ -299,6 +299,7 @@ class Toolkit:
             kwargs = _json_loads_with_repair(
                 tool_call.input,
                 getattr(tool_func, "input_schema", None),
+                strict_schema=False,
             )
 
             # State injection
