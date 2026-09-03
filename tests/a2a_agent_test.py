@@ -3,7 +3,6 @@
 # pylint: disable=wrong-import-position
 """Tests for the A2A agent adapter."""
 import base64
-import inspect
 import json
 
 from collections.abc import AsyncGenerator
@@ -22,7 +21,7 @@ from google.protobuf import json_format
 import httpx
 from utils import AnyString
 
-from agentscope.agent import Agent, A2AAgent
+from agentscope.agent import A2AAgent
 from agentscope.event import (
     CustomEvent,
     ReplyFinishedReason,
@@ -234,21 +233,6 @@ class A2AAgentConstructionTest(IsolatedAsyncioTestCase):
         )
         await agent.aclose()
         self.assertEqual(client.close_count, 1)
-
-    def test_compress_context_signature_matches_agent(self) -> None:
-        """Keep the compatibility no-op callable like Agent's method."""
-        expected = inspect.signature(Agent.compress_context)
-        actual = inspect.signature(A2AAgent.compress_context)
-        self.assertEqual(
-            [
-                (parameter.name, parameter.kind, parameter.default)
-                for parameter in expected.parameters.values()
-            ],
-            [
-                (parameter.name, parameter.kind, parameter.default)
-                for parameter in actual.parameters.values()
-            ],
-        )
 
 
 class A2AAgentTest(IsolatedAsyncioTestCase):
@@ -1010,8 +994,9 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
         self.assertEqual(client.requests[1].message.task_id, "task-1")
         self.assertEqual(reply.get_text_content(), "done")
 
-    async def test_resume_subscribes_and_falls_back_to_get_task(self) -> None:
-        """Resume uses SubscribeToTask and its terminal-race fallback."""
+    async def test_reply_follows_a_running_task_before_sending(self) -> None:
+        """A running Task is followed, by subscription or the GetTask race
+        fallback, before the new message is sent."""
         from a2a.utils.errors import UnsupportedOperationError
 
         completed_task = _task_response(
@@ -1019,22 +1004,39 @@ class A2AAgentTest(IsolatedAsyncioTestCase):
             artifacts=[
                 types.Artifact(
                     artifact_id="answer",
-                    parts=[types.Part(text="resumed")],
+                    parts=[types.Part(text="followed")],
                 ),
             ],
         ).task
         client = _FakeClient(
-            [[_task_response("TASK_STATE_AUTH_REQUIRED")]],
+            [
+                [_task_response("TASK_STATE_WORKING")],
+                [
+                    _task_response(
+                        "TASK_STATE_COMPLETED",
+                        artifacts=[
+                            types.Artifact(
+                                artifact_id="answer",
+                                parts=[types.Part(text="done")],
+                            ),
+                        ],
+                    ),
+                ],
+            ],
             subscriptions=[[UnsupportedOperationError()]],
             get_tasks=[completed_task],
         )
         agent = A2AAgent(_card("1.0"), client=client)
         await agent.reply(UserMsg(name="user", content="start"))
+        self.assertEqual(agent.task_state, "TASK_STATE_WORKING")
 
-        reply = await agent.resume()
-        self.assertEqual(reply.get_text_content(), "resumed")
+        reply = await agent.reply(UserMsg(name="user", content="next"))
         self.assertEqual(client.subscribe_requests[0].id, "task-1")
         self.assertEqual(client.get_requests[0].id, "task-1")
+        # The followed Task completed, so the new message starts a new Task
+        # and its own result is what the caller gets back.
+        self.assertEqual(client.requests[1].message.task_id, "")
+        self.assertEqual(reply.get_text_content(), "done")
 
     async def test_get_and_cancel_task_update_remote_state(self) -> None:
         """Task inspection and cancellation use the latest remote ID."""

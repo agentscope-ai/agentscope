@@ -16,7 +16,7 @@ from ..event import (
     ReplyFinishedReason,
     ReplyStartEvent,
 )
-from ..message import AssistantMsg, HintBlock, Msg, TextBlock
+from ..message import AssistantMsg, Msg, TextBlock
 from ..types import ErrorInfo, ErrorType
 from ._a2a_content import (
     _ArtifactReducer,
@@ -24,7 +24,6 @@ from ._a2a_content import (
     _emit_block,
     _part_to_block,
 )
-from ._config import ContextConfig
 
 if TYPE_CHECKING:
     from a2a.client import Client
@@ -108,11 +107,11 @@ class A2AAgent:
                 :attr:`context_id` property of an earlier adapter. Subsequent
                 messages join that conversation instead of starting a new one.
             task_id (`str | None`, optional):
-                A remote Task to reattach to, for :meth:`get_task`,
-                :meth:`resume` and :meth:`cancel_task`. :meth:`reply` ignores
-                it until one of those learns the Task's state, so a Task the
-                server has since dropped degrades into a new Task within
-                ``context_id`` rather than a failure.
+                A remote Task to reattach to, for :meth:`get_task` and
+                :meth:`cancel_task`. :meth:`reply` ignores it until one of
+                those learns the Task's state, so a Task the server has since
+                dropped degrades into a new Task within ``context_id`` rather
+                than a failure.
         """
         try:
             from a2a import types
@@ -194,17 +193,13 @@ class A2AAgent:
             self._ensure_open()
             self._observed_msgs.extend(messages)
 
-    async def compress_context(
-        self,
-        context_config: ContextConfig | None = None,
-        instructions: HintBlock | None = None,
-    ) -> None:
+    async def compress_context(self, *args: Any, **kwargs: Any) -> None:
         """Do nothing because the remote A2A server owns its context.
 
         The arguments are accepted for interface compatibility with
         :class:`agentscope.agent.Agent`.
         """
-        del context_config, instructions
+        del args, kwargs
         logger.warning(
             "Ignoring compress_context() on A2AAgent %s: the remote A2A "
             "server owns its own conversation context.",
@@ -215,29 +210,22 @@ class A2AAgent:
         self,
         inputs: Msg | list[Msg] | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Send input and stream the remote reply as AgentScope events."""
+        """Send input and stream the remote reply as AgentScope events.
+
+        A Task still running on the server is followed to completion first,
+        so its events precede the ones this input produces.
+        """
         async for event_or_msg in self._reply(inputs):
             if not isinstance(event_or_msg, Msg):
                 yield event_or_msg
 
     async def reply(self, inputs: Msg | list[Msg] | None = None) -> Msg:
-        """Send input and return the canonical final assistant message."""
-        return await self._consume_final(self._reply(inputs))
+        """Send input and return the canonical final assistant message.
 
-    async def resume_stream(self) -> AsyncGenerator[AgentEvent, None]:
-        """Resume updates for the latest non-completed remote Task.
-
-        Subscription is attempted first. If the server reports that
-        subscription is unsupported, the canonical Task is fetched to close
-        the subscribe-versus-completion race.
+        A Task still running on the server is followed to completion first;
+        the returned message is always the one this input produced.
         """
-        async for event_or_msg in self._resume():
-            if not isinstance(event_or_msg, Msg):
-                yield event_or_msg
-
-    async def resume(self) -> Msg:
-        """Resume the latest remote Task and return its completed result."""
-        return await self._consume_final(self._resume())
+        return await self._consume_final(self._reply(inputs))
 
     async def get_task(self) -> A2ATask:
         """Fetch and return the latest remote Task snapshot."""
@@ -286,7 +274,7 @@ class A2AAgent:
         """Request cancellation and return the server's Task snapshot."""
         async with self._reply_lock:
             self._ensure_open()
-            task_id = self._require_resumable_task_id()
+            task_id = self._require_cancelable_task_id()
             task = await self._client.cancel_task(
                 self._types.CancelTaskRequest(id=task_id),
             )
@@ -319,7 +307,11 @@ class A2AAgent:
                 raise ValueError(
                     "A2AAgent reply requires at least one message.",
                 )
-            self._validate_send_state()
+            # A Task still running owns the conversation until it resolves,
+            # so follow it before the new message decides what to continue.
+            if self._task_state in self._active:
+                async for item in self._follow_active_task():
+                    yield item
             request = self._build_request(messages)
             expected_task_id = (
                 self._task_id
@@ -333,32 +325,37 @@ class A2AAgent:
             ):
                 yield item
 
-    async def _resume(self) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Subscribe to an active Task with a canonical GetTask fallback."""
-        async with self._reply_lock:
-            self._ensure_open()
-            task_id = self._require_resumable_task_id()
+    async def _follow_active_task(
+        self,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Subscribe to a running Task with a canonical GetTask fallback.
 
-            async def responses() -> AsyncGenerator[StreamResponse, None]:
-                from a2a.utils.errors import UnsupportedOperationError
+        Subscription is attempted first. If the server reports that
+        subscription is unsupported, the canonical Task is fetched to close
+        the subscribe-versus-completion race.
+        """
+        task_id = self._require_task_id()
 
-                try:
-                    async for response in self._client.subscribe(
-                        self._types.SubscribeToTaskRequest(id=task_id),
-                    ):
-                        yield response
-                except UnsupportedOperationError:
-                    task = await self._client.get_task(
-                        self._types.GetTaskRequest(id=task_id),
-                    )
-                    yield self._types.StreamResponse(task=task)
+        async def responses() -> AsyncGenerator[StreamResponse, None]:
+            from a2a.utils.errors import UnsupportedOperationError
 
-            async for item in self._reduce_stream(
-                responses(),
-                clear_observations=False,
-                expected_task_id=task_id,
-            ):
-                yield item
+            try:
+                async for response in self._client.subscribe(
+                    self._types.SubscribeToTaskRequest(id=task_id),
+                ):
+                    yield response
+            except UnsupportedOperationError:
+                task = await self._client.get_task(
+                    self._types.GetTaskRequest(id=task_id),
+                )
+                yield self._types.StreamResponse(task=task)
+
+        async for item in self._reduce_stream(
+            responses(),
+            clear_observations=False,
+            expected_task_id=task_id,
+        ):
+            yield item
 
     async def _reduce_stream(
         self,
@@ -584,17 +581,6 @@ class A2AAgent:
             raise TypeError("inputs must be a Msg, a list of Msg, or None.")
         return messages
 
-    def _validate_send_state(self) -> None:
-        """Ensure a new Message is valid for the current remote Task state."""
-        if self._task_state in {
-            self._state("TASK_STATE_SUBMITTED"),
-            self._state("TASK_STATE_WORKING"),
-        }:
-            raise RuntimeError(
-                f"A2A task {self._task_id!r} is {self.task_state}; call "
-                "resume() to follow it instead of sending a new message.",
-            )
-
     def _status_event(self, reply_id: str) -> CustomEvent:
         """Expose the remote Task state without changing core event types.
 
@@ -652,6 +638,14 @@ class A2AAgent:
             self._task_id = task_id
 
     @property
+    def _active(self) -> set[int]:
+        """The Task states that are still running on the remote server."""
+        return {
+            self._state("TASK_STATE_SUBMITTED"),
+            self._state("TASK_STATE_WORKING"),
+        }
+
+    @property
     def _interrupted(self) -> set[int]:
         """The Task states that a new Message continues rather than starts.
 
@@ -677,8 +671,8 @@ class A2AAgent:
             raise RuntimeError("A2AAgent has no remote Task to operate on.")
         return self._task_id
 
-    def _require_resumable_task_id(self) -> str:
-        """Return a non-terminal Task ID suitable for subscription."""
+    def _require_cancelable_task_id(self) -> str:
+        """Return a non-terminal Task ID, the only kind worth canceling."""
         task_id = self._require_task_id()
         terminal_states = {
             self._state("TASK_STATE_COMPLETED"),
@@ -728,5 +722,3 @@ class A2AAgent:
         if self._closed:
             raise RuntimeError("A2AAgent is closed.")
 
-
-__all__ = ["A2AAgent"]

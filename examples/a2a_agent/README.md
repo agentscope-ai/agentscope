@@ -101,10 +101,11 @@ response stream ends the reply. The state it ended on decides how:
 Every event carries the remote `context_id`, `task_id`, and `task_state` in its
 metadata, and a `CustomEvent` named `a2a_status_update` reports each state change.
 
-- `SUBMITTED` or `WORKING`: call `resume()` / `resume_stream()` to subscribe to
-  the active Task. If subscription is unsupported, the adapter fetches the
-  current Task snapshot. This is also how to follow a Task that continues on its
-  own after authorization is granted out of band.
+- `SUBMITTED` or `WORKING`: the next `reply()` subscribes to the running Task
+  and streams it to completion before sending, so its events precede the ones
+  the new input produces. If subscription is unsupported, the adapter fetches
+  the current Task snapshot instead. This is also how a Task that continues on
+  its own after out-of-band authorization is picked up.
 - Use `get_task()` to inspect the active Task, `list_tasks()` to enumerate every
   Task in the context (optionally filtered by state), and `cancel_task()` to
   request remote cancellation.
@@ -123,8 +124,8 @@ task = await agent.get_task()
 ```
 
 The server may have dropped the context or the Task in the meantime, so
-`get_task()` and `resume()` raise the SDK's `TaskNotFoundError` and
-`list_tasks()` returns an empty list. `reply()` needs no such handling: without
+`get_task()` raises the SDK's `TaskNotFoundError` and `list_tasks()` returns an
+empty list. `reply()` needs no such handling: without
 a synced state it opens a new Task inside `context_id`.
 
 A2A carries credentials out of band, so an `AUTH_REQUIRED` Task cannot be
