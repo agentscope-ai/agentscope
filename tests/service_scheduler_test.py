@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Tests for :meth:`SchedulerManager._build_trigger`.
+"""Tests for :class:`SchedulerManager`'s trigger and job ownership.
 
 We don't drive APScheduler here — we ask the manager to build a trigger
 coroutine for a record and invoke it directly. The trigger's contract is:
@@ -13,16 +13,24 @@ coroutine for a record and invoke it directly. The trigger's contract is:
 In stateful mode the session id is deterministic (``{record_id}_stateful``)
 and reused across fires; in non-stateful mode a fresh session id is
 created every fire.
+
+The second half covers ownership: only an enabled node holds jobs, and
+it learns about writes by reconciling against storage rather than by
+being called in-process.
 """
+import asyncio
 import json
+import tempfile
 from contextlib import AsyncExitStack
 from datetime import datetime
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 import fakeredis.aioredis
+from fastapi.testclient import TestClient
 
-from utils import AnyString
+from utils import AnyString, FakeWorkspaceManager
 
+from agentscope.app import create_app
 from agentscope.app._manager import SchedulerManager
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
@@ -32,6 +40,7 @@ from agentscope.app.storage import (
     ScheduleRecord,
     SessionSource,
 )
+from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
 
 
@@ -115,6 +124,7 @@ class _SchedulerFireTestBase(IsolatedAsyncioTestCase):
         self.manager = SchedulerManager(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
         )
 
     async def asyncTearDown(self) -> None:
@@ -267,3 +277,206 @@ class TestSchedulerFireNonStatefulMode(_SchedulerFireTestBase):
         )
         self.assertEqual(len(sessions), 2)
         self.assertNotEqual(sessions[0].id, sessions[1].id)
+
+
+class TestSchedulerFireWorkspaceBinding(_SchedulerFireTestBase):
+    """A fired session binds a workspace under the isolation policy.
+
+    The ids below are the PER_AGENT BLAKE2b digests of ``<user>::a``.
+    """
+
+    async def test_two_users_do_not_share_one_workspace(self) -> None:
+        """Two users scheduling the same agent land on distinct
+        workspaces — an unbound session would pool them into one."""
+        await self.manager._build_trigger(_make_record(user_id="alice"))()
+        await self.manager._build_trigger(_make_record(user_id="bob"))()
+
+        self.assertListEqual(
+            [
+                *(
+                    s.config.workspace_id
+                    for s in await self.storage.list_sessions("alice", "a")
+                ),
+                *(
+                    s.config.workspace_id
+                    for s in await self.storage.list_sessions("bob", "a")
+                ),
+            ],
+            ["ca79105d522eba6f", "ecbe3dbe754c96ee"],
+        )
+
+    async def test_both_trigger_branches_bind_a_workspace(self) -> None:
+        """The stateful and the fresh-session branch both resolve an id."""
+        await self.manager._build_trigger(_make_record(stateful=True))()
+        await self.manager._build_trigger(_make_record(stateful=False))()
+
+        sessions = await self.storage.list_sessions("u", "a")
+        self.assertListEqual(
+            [s.config.workspace_id for s in sessions],
+            ["77377d7bd2f7a1fc", "77377d7bd2f7a1fc"],
+        )
+
+
+class _SchedulerOwnershipTestBase(_SchedulerFireTestBase):
+    """Adds job-set inspection to the shared fixture."""
+
+    def job_ids(self, manager: SchedulerManager | None = None) -> list[str]:
+        """Return the schedule ids this node currently holds timers for.
+
+        Args:
+            manager (`SchedulerManager | None`, optional):
+                Which manager to inspect; defaults to the fixture's.
+
+        Returns:
+            `list[str]`: Sorted job ids.
+        """
+        scheduler = (manager or self.manager)._scheduler
+        return sorted(job.id for job in scheduler.get_jobs())
+
+
+class TestSchedulerReconcile(_SchedulerOwnershipTestBase):
+    """The owner's job set follows storage, not in-process calls."""
+
+    async def test_reconcile_holds_enabled_records_only(self) -> None:
+        """A disabled record is persisted but never given a timer."""
+        live = _make_record()
+        await self.storage.upsert_schedule("u", live)
+        await self.storage.upsert_schedule("u", _make_record(enabled=False))
+
+        await self.manager.reconcile()
+
+        self.assertListEqual(self.job_ids(), [live.id])
+
+    async def test_reconcile_drops_a_deleted_record(self) -> None:
+        """Deleting the record takes the timer with it."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        await self.manager.reconcile()
+
+        await self.storage.delete_schedule("u", record.id)
+        await self.manager.reconcile()
+
+        self.assertListEqual(self.job_ids(), [])
+
+    async def test_reconcile_drops_a_disabled_record(self) -> None:
+        """Disabling stops the firing without deleting the record."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        await self.manager.reconcile()
+
+        record.data.enabled = False
+        record.updated_at = datetime(2025, 6, 1)
+        await self.storage.upsert_schedule("u", record)
+        await self.manager.reconcile()
+
+        self.assertListEqual(self.job_ids(), [])
+
+    async def test_reconcile_reregisters_an_edited_record(self) -> None:
+        """A changed ``updated_at`` replaces the job; an unchanged one
+        leaves it alone."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        await self.manager.reconcile()
+        first = self.manager._scheduler.get_job(record.id)
+
+        await self.manager.reconcile()
+        self.assertIs(self.manager._scheduler.get_job(record.id), first)
+
+        record.data.cron_expression = "30 3 * * *"
+        record.updated_at = datetime(2025, 6, 1)
+        await self.storage.upsert_schedule("u", record)
+        await self.manager.reconcile()
+
+        self.assertListEqual(self.job_ids(), [record.id])
+        self.assertIsNot(self.manager._scheduler.get_job(record.id), first)
+
+    async def test_reconcile_survives_an_unparseable_cron(self) -> None:
+        """One bad record must not cost every schedule after it."""
+        broken = _make_record()
+        broken.data.cron_expression = "not a cron"
+        good = _make_record()
+        await self.storage.upsert_schedule("u", broken)
+        await self.storage.upsert_schedule("u", good)
+
+        await self.manager.reconcile()
+
+        self.assertListEqual(self.job_ids(), [good.id])
+
+
+class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
+    """Only the enabled node holds timers; every node can notify."""
+
+    async def test_disabled_node_holds_no_timers(self) -> None:
+        """Entering a disabled manager starts nothing, however many
+        enabled schedules are persisted."""
+        await self.storage.upsert_schedule("u", _make_record())
+
+        disabled = SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
+            enabled=False,
+        )
+        async with disabled:
+            self.assertListEqual(self.job_ids(disabled), [])
+            self.assertFalse(disabled._scheduler.running)
+
+    async def test_a_write_on_one_node_reaches_the_owner(self) -> None:
+        """The owner picks up a schedule written by another node, having
+        never been called in-process."""
+        owner = SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
+        )
+        async with owner:
+            self.assertListEqual(self.job_ids(owner), [])
+
+            record = _make_record()
+            await self.storage.upsert_schedule("u", record)
+            # ``self.manager`` stands in for an API node with no timers.
+            await self.manager.notify_changed(record.id)
+
+            for _ in range(50):
+                await asyncio.sleep(0.02)
+                if self.job_ids(owner):
+                    break
+            self.assertListEqual(self.job_ids(owner), [record.id])
+
+
+class TestSchedulerFlag(TestCase):
+    """``enable_scheduler`` decides whether a process owns the timers."""
+
+    def _boot(self, enabled: bool) -> SchedulerManager:
+        """Run an app's lifespan and hand back its scheduler manager.
+
+        Args:
+            enabled (`bool`): The ``enable_scheduler`` value to pass.
+
+        Returns:
+            `SchedulerManager`: The manager the lifespan built.
+        """
+        # pylint: disable=consider-using-with
+        workdir = self.enterContext(tempfile.TemporaryDirectory())
+        fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        app = create_app(
+            storage=_make_storage(fr),
+            message_bus=_make_bus(fr),
+            workspace_manager=LocalWorkspaceManager(workdir),
+            enable_index_worker=False,
+            enable_scheduler=enabled,
+        )
+        self.enterContext(TestClient(app))
+        return app.state.scheduler_manager
+
+    def test_disabled_process_starts_no_scheduler(self) -> None:
+        """The manager is still there for the API and the agent tools,
+        it just runs nothing."""
+        manager = self._boot(False)
+
+        self.assertFalse(manager._scheduler.running)
+        self.assertListEqual(list(manager._scheduler.get_jobs()), [])
+
+    def test_enabled_process_starts_the_scheduler(self) -> None:
+        """The default keeps a single-process deployment working."""
+        self.assertTrue(self._boot(True)._scheduler.running)

@@ -165,6 +165,55 @@ class MCPRenderTest(TestCase):
 
         self.assertIn("region", str(ctx.exception))
 
+    def test_missing_optional_env_is_omitted(self) -> None:
+        """An unfilled optional env input is not launched as a placeholder."""
+        card = MCPCard(
+            hub_id="testhub",
+            name="local",
+            inputs_schema={
+                "type": "object",
+                "properties": {"region": {"type": "string"}},
+            },
+            config_template={
+                "type": "stdio_mcp",
+                "command": "uvx",
+                "args": ["server"],
+                "env": {"REGION": "${region}"},
+            },
+        )
+
+        client = render_mcp(card, {})
+
+        self.assertEqual(client.mcp_config.env, {})
+
+    def test_schema_default_fills_omitted_env_input(self) -> None:
+        """API callers inherit schema defaults without submitting them."""
+        card = MCPCard(
+            hub_id="testhub",
+            name="local",
+            inputs_schema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "default": "safe",
+                    },
+                },
+            },
+            config_template={
+                "type": "stdio_mcp",
+                "command": "uvx",
+                "args": ["server"],
+                "env": {"MODE": "${mode}"},
+            },
+        )
+        submitted: dict = {}
+
+        client = render_mcp(card, submitted)
+
+        self.assertEqual(client.mcp_config.env, {"MODE": "safe"})
+        self.assertEqual(submitted, {})
+
     def test_no_inputs_card(self) -> None:
         """A card with no inputs renders as-is."""
         card = MCPCard(

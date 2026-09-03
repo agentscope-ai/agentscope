@@ -136,6 +136,192 @@ async def enqueue_run_trigger(
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
 
+# ── session inbox hand-off ─────────────────────────────────────────────
+#
+# Three helpers implementing one protocol, whose only job is to make
+# sure a payload pushed to a session inbox is always consumed by *some*
+# run rather than sitting there until the next user turn.
+#
+# The naive version — "push, then wake the session unless it looks
+# busy" — loses entries: a run that already performed its last drain is
+# still busy (it is streaming, persisting, releasing its lock), so the
+# producer skips the wake-up while the run will never look again.
+#
+# The fix is to make two tiny critical sections mutually exclusive
+# under :meth:`MessageBusKeys.inbox_lock`:
+#
+#   producer   push entry            → read consumer flag
+#   consumer   drain remaining entries → clear consumer flag
+#
+# Whichever runs first, the entry is covered. Producer first → the
+# consumer's drain sees the entry and keeps going. Consumer first →
+# the flag is already clear, so the producer enqueues a wake-up.
+# Because the wake-up is only produced when no consumer is registered,
+# it never spawns a run that has nothing to do.
+
+
+async def deliver_to_inbox(
+    bus: "MessageBus",
+    *,
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    payload: dict,
+) -> None:
+    """Push a payload to a session inbox and wake the session if no run
+    is currently consuming it.
+
+    Args:
+        bus (`MessageBus`):
+            The application message bus.
+        user_id (`str`):
+            The owning user id.
+        session_id (`str`):
+            The session whose inbox receives the payload.
+        agent_id (`str`):
+            The agent that owns the session.
+        payload (`dict`):
+            JSON-serialisable payload, normally a serialised
+            :class:`~agentscope.message.HintBlock`.
+    """
+    async with bus.acquire_lock(
+        MessageBusKeys.inbox_lock(session_id),
+        ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
+    ):
+        await bus.queue_push(MessageBusKeys.inbox(session_id), payload)
+        consumer = await bus.registry_get(
+            MessageBusKeys.inbox_consumer(session_id),
+            MessageBusKeys.INBOX_CONSUMER_FIELD,
+        )
+
+    if consumer is None:
+        await enqueue_run_trigger(
+            bus,
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+
+
+async def register_inbox_consumer(bus: "MessageBus", session_id: str) -> None:
+    """Mark this run as the consumer of ``session_id``'s inbox.
+
+    Call once per run, as early as possible — any producer that pushes
+    after this point relies on this run draining the entry rather than
+    enqueueing its own wake-up.
+
+    The flag carries the same lease as a chat run, so a process that
+    dies mid-run stops suppressing wake-ups once the lease expires.
+
+    Args:
+        bus (`MessageBus`):
+            The application message bus.
+        session_id (`str`):
+            The session being consumed.
+    """
+    await bus.registry_set(
+        MessageBusKeys.inbox_consumer(session_id),
+        MessageBusKeys.INBOX_CONSUMER_FIELD,
+        "1",
+        ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+    )
+
+
+async def has_pending_inbox_or_release(
+    bus: "MessageBus",
+    session_id: str,
+) -> bool:
+    """Report whether the inbox still holds anything, releasing the
+    consumer registration when it does not.
+
+    Call at the very end of a run, before it releases the session lock.
+    ``True`` means the run must go around once more — it stays
+    registered as the consumer, so producers keep deferring to it
+    instead of enqueuing their own wake-up. ``False`` means the run may
+    finish: the registration is gone, so the next producer wakes the
+    session itself.
+
+    The check reads by draining and putting everything straight back,
+    because the bus deliberately exposes no non-destructive peek. Both
+    halves happen under :meth:`MessageBusKeys.inbox_lock`, which every
+    producer also holds while pushing, so nothing can slip in between
+    and arrival order is preserved.
+
+    Args:
+        bus (`MessageBus`):
+            The application message bus.
+        session_id (`str`):
+            The session being consumed.
+
+    Returns:
+        `bool`:
+            ``True`` when payloads remain to be consumed.
+    """
+    inbox = MessageBusKeys.inbox(session_id)
+    async with bus.acquire_lock(
+        MessageBusKeys.inbox_lock(session_id),
+        ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
+    ):
+        payloads: list[dict] = []
+        while True:
+            batch = await bus.queue_drain(inbox, max_count=100)
+            if not batch:
+                break
+            payloads.extend(payload for _entry_id, payload in batch)
+
+        if not payloads:
+            await bus.registry_del(
+                MessageBusKeys.inbox_consumer(session_id),
+                MessageBusKeys.INBOX_CONSUMER_FIELD,
+            )
+            return False
+
+        for payload in payloads:
+            await bus.queue_push(inbox, payload)
+        return True
+
+
+async def abandon_inbox_consumer(
+    bus: "MessageBus",
+    *,
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+) -> None:
+    """Give up the consumer registration without having drained the
+    inbox, waking the session when payloads are still queued.
+
+    Used when a run ends abnormally — an interrupt, a cancelled task, a
+    failed turn. Producers deferred to this run while it was
+    registered, so it cannot simply drop the registration and leave
+    their payloads unattended.
+
+    Args:
+        bus (`MessageBus`):
+            The application message bus.
+        user_id (`str`):
+            The owning user id.
+        session_id (`str`):
+            The session being abandoned.
+        agent_id (`str`):
+            The agent that owns the session.
+    """
+    pending = await has_pending_inbox_or_release(bus, session_id)
+    if not pending:
+        return
+
+    await bus.registry_del(
+        MessageBusKeys.inbox_consumer(session_id),
+        MessageBusKeys.INBOX_CONSUMER_FIELD,
+    )
+    await enqueue_run_trigger(
+        bus,
+        user_id=user_id,
+        session_id=session_id,
+        agent_id=agent_id,
+    )
+
+
 # ── enqueue_index_task ─────────────────────────────────────────────────
 
 
@@ -177,49 +363,3 @@ async def enqueue_index_task(
         },
     )
     await bus.publish(MessageBusKeys.index_tasks_signal(), {})
-
-
-# ── enqueue_channel_output ─────────────────────────────────────────────
-
-
-async def enqueue_channel_output(
-    bus: "MessageBus",
-    *,
-    session_id: str,
-    channel_id: str,
-    chat_id: str,
-    user_id: str,
-    agent_id: str,
-) -> None:
-    """Signal that a channel-bound session is producing output.
-
-    Pushes one signal onto the durable channel-outbound queue and nudges
-    the consumers. Whichever node hosts the channel drains it and
-    forwards the reply back to the platform chat. Called once at the
-    start of a channel-bound run, before the reply is produced.
-
-    Args:
-        bus (`MessageBus`):
-            The application message bus.
-        session_id (`str`):
-            The session about to produce output.
-        channel_id (`str`):
-            The owning channel (locates the adapter + presentation).
-        chat_id (`str`):
-            The platform chat to deliver the reply to.
-        user_id (`str`):
-            The owning user id.
-        agent_id (`str`):
-            The agent id that owns the session.
-    """
-    await bus.queue_push(
-        MessageBusKeys.channel_outbound_queue(),
-        {
-            "session_id": session_id,
-            "channel_id": channel_id,
-            "chat_id": chat_id,
-            "user_id": user_id,
-            "agent_id": agent_id,
-        },
-    )
-    await bus.publish(MessageBusKeys.channel_outbound_signal(), {})

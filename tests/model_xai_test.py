@@ -307,6 +307,37 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    @patch("xai_sdk.AsyncClient")
+    async def test_usage_includes_reasoning_tokens(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Reasoning tokens are included in normalized output usage."""
+        response = _mock_completion(text="Answer")
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = 100
+        response.usage.completion_tokens = 20
+        response.usage.reasoning_tokens = 30
+        response.usage.cached_prompt_text_tokens = 10
+        mock_chat = _MockChatStream(sample_response=response)
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        result = await self.model([])
+
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 10,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests
@@ -327,6 +358,7 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         final_response.usage = MagicMock()
         final_response.usage.prompt_tokens = 10
         final_response.usage.completion_tokens = 5
+        final_response.usage.reasoning_tokens = 0
         final_response.usage.cached_prompt_text_tokens = 0
 
         stream_items = [
@@ -388,6 +420,7 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         final_response.usage = MagicMock()
         final_response.usage.prompt_tokens = 10
         final_response.usage.completion_tokens = 5
+        final_response.usage.reasoning_tokens = 7
         final_response.usage.cached_prompt_text_tokens = 0
 
         stream_items = [
@@ -441,6 +474,18 @@ class TestXAIStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+        self.assertEqual(
+            dict(responses[-1].usage),
+            {
+                "input_tokens": 10,
+                "output_tokens": 12,
+                "time": responses[-1].usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
 
     @patch("xai_sdk.AsyncClient")
     async def test_stream_tool_calls_in_final(
@@ -460,6 +505,7 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         final_response.usage = MagicMock()
         final_response.usage.prompt_tokens = 10
         final_response.usage.completion_tokens = 5
+        final_response.usage.reasoning_tokens = 0
         final_response.usage.cached_prompt_text_tokens = 0
 
         stream_items = [

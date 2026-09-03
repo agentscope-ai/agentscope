@@ -45,12 +45,12 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
     Example::
 
-        from agentscope.middleware import BudgetControlMiddleware
+        from agentscope.middleware import ReplyBudgetControlMiddleware
 
         agent = Agent(
             ...,
             middlewares=[
-                BudgetControlMiddleware(
+                ReplyBudgetControlMiddleware(
                     token_budget=10000,
                     input_token_weight=1.0,
                     output_token_weight=2.0,

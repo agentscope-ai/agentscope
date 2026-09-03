@@ -36,6 +36,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.39.0",
     "opentelemetry-semantic-conventions>=0.60b0",
     "python-socketio",
+    "rich",
     "shortuuid",
     "python-frontmatter",
     "jinja2",
@@ -43,6 +44,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
 ]
@@ -79,6 +81,7 @@ storage-s3 = ["aioboto3"]
 channel = [
     "lark-oapi>=1.4.0",
     "discord.py>=2.3",
+    "dingtalk-stream>=0.24.3",
     "wecom-aibot-python-sdk>=1.0.2",
 ]
 # ------------ Workspace (sandbox backends) ------------
@@ -99,6 +102,10 @@ workspace = [
 # (remote sandboxes install ripgrep inside the sandbox instead).
 tools = [
     "ripgrep",
+]
+# ------------ A2A ------------
+a2a = [
+    "a2a-sdk>=1.1.1",
 ]
 # ------------ Vector stores ------------
 vdb-qdrant = ["qdrant-client"]
@@ -158,6 +165,7 @@ full = [
     "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[vdb-qdrant]",
     "agentscope[vdb-milvus]",
@@ -176,7 +184,8 @@ dev = [
     "pytest-forked",
     "myst_parser",
     "matplotlib",
-    "fakeredis",
+    # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
+    "fakeredis[lua]",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3

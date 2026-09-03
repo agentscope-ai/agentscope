@@ -89,7 +89,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Release underlying transport resources. Default is a no-op."""
 
     # ------------------------------------------------------------------
-    # Mode A — drain queue (single consumer, ack-on-read)
+    # Mode A — drain queue (competing consumers, ack-on-read)
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -102,10 +102,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> str:
         """Append ``payload`` to the drain queue at ``key``.
 
-        Drain queues are single-consumer, ack-on-read: a subsequent
-        :meth:`queue_drain` returns each entry exactly once and then
-        deletes it. ``ttl_secs`` bounds the queue's lifetime so a key
-        whose consumer disappears does not accumulate entries forever.
+        Drain queues are ack-on-read: :meth:`queue_drain` returns each
+        entry to exactly one caller and then deletes it. ``ttl_secs``
+        bounds the queue's lifetime so a key whose consumer disappears
+        does not accumulate entries forever.
 
         Args:
             key (`str`):
@@ -135,10 +135,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> list[tuple[str, dict]]:
         """Drain up to ``max_count`` entries from the queue at ``key``.
 
-        Returned entries are removed from the queue in the same
-        operation, so a subsequent call returns only entries that
-        arrived after this one. Safe under the single-consumer-per-key
-        invariant.
+        Reading and removing are one atomic operation, so concurrent
+        callers on the same key get disjoint entries and each entry is
+        delivered once. Delivery is at-most-once: an entry is gone from
+        the queue as soon as it is returned, so a caller that dies
+        before acting on it loses it.
 
         Args:
             key (`str`):
@@ -422,6 +423,59 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Serialized value to store.
             ttl_secs (`int | None`, optional):
                 Refresh the namespace expiry to this many seconds.
+        """
+
+    @abstractmethod
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Set ``field`` only while it still holds ``expected``.
+
+        Compare-and-set, so a caller that read a value, decided on a new
+        one, and comes back to write it can tell whether anyone else
+        moved it meanwhile — without holding a lock across the think
+        time. The bus never interprets the value.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field name within the registry.
+            value (`str`):
+                Serialized value to store.
+            expected (`str`):
+                The value the caller last read. The write is skipped
+                when the stored value differs.
+            ttl_secs (`int | None`, optional):
+                Refresh the namespace expiry when the write happens.
+
+        Returns:
+            `bool`:
+                ``True`` when the value was written.
+        """
+
+    @abstractmethod
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """Read ``field`` and remove it in one step.
+
+        Lets a value be consumed exactly once however many callers race
+        for it: only one sees it, the rest get ``None``.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to take.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` when absent.
         """
 
     @abstractmethod

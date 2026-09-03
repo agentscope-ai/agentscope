@@ -28,6 +28,7 @@ The whole module is skipped when no Docker daemon is reachable.
 import base64
 import hashlib
 import os
+import sys
 import re
 import shutil
 import subprocess
@@ -68,6 +69,11 @@ def _docker_available() -> bool:
     Probes via the ``docker`` CLI rather than the aiodocker async client
     so the check is cheap and synchronous (runs at module import time).
     """
+    if sys.platform == "win32":
+        # Docker workspace tests require Linux containers; the Windows
+        # CI runner ships Docker in Windows mode which cannot build or
+        # run the Linux-based workspace images.
+        return False
     if shutil.which("docker") is None:
         return False
     try:
@@ -514,11 +520,11 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         return skill_dir
 
     async def test_initialize_copy_skills(self) -> None:
-        """``skill_paths`` are copied into the container's ``skills/``.
+        """``skill_paths`` are copied into the container's seed template.
 
         Verifies:
-        1. Both seed skills appear under ``<workdir>/skills/`` (host
-           mirror) — directory + SKILL.md + supplementary files.
+        1. Both seed skills appear under ``<workdir>/skills/.seed/``
+           (host mirror) — directory + SKILL.md + supplementary files.
         """
         skill1 = self._create_test_skill(
             "test_skill_1",
@@ -538,7 +544,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         )
         await self.workspace.initialize()
 
-        skills_host = os.path.join(self.temp_dir.name, "skills")
+        skills_host = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.isdir(skills_host))
         for name, extra in (
             ("test_skill_1", "tool.py"),
@@ -556,7 +562,8 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
 
         Verifies:
         1. Every seeded skill is returned with the right name + dir.
-        2. The dir field uses the *container-side* path.
+        2. The dir field uses the *container-side* path, inside the
+           partition the caller was equipped with.
         """
         skill1 = self._create_test_skill(
             "list_skill_1",
@@ -585,7 +592,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             skills_sorted[0].dir,
-            f"{CONTAINER_SKILLS_DIR}/list_skill_1",
+            f"{CONTAINER_SKILLS_DIR}/default/list_skill_1",
         )
 
         self.assertEqual(skills_sorted[1].name, "list_skill_2")
@@ -595,7 +602,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             skills_sorted[1].dir,
-            f"{CONTAINER_SKILLS_DIR}/list_skill_2",
+            f"{CONTAINER_SKILLS_DIR}/default/list_skill_2",
         )
 
     async def test_list_skills_empty(self) -> None:
@@ -704,7 +711,13 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         )
         try:
             await ws.initialize()
-            self.assertListEqual(await ws.list_mcps(), [])
+            self.assertListEqual(
+                await ws.list_mcps(
+                    agent_id="test-agent",
+                    session_id="test-session",
+                ),
+                [],
+            )
         finally:
             await ws.close()
 

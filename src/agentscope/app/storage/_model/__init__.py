@@ -10,7 +10,11 @@ from ._channel import (
     SessionSettings,
 )
 from ._credential import CredentialRecord
-from ._knowledge_base import KnowledgeBaseData, KnowledgeBaseRecord
+from ._knowledge_base import (
+    ChunkerConfig,
+    KnowledgeBaseData,
+    KnowledgeBaseRecord,
+)
 from ._knowledge_document import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
@@ -36,6 +40,7 @@ __all__ = [
     "AgentRecord",
     "ChannelBinding",
     "ChannelRecord",
+    "ChunkerConfig",
     "RoutingConfig",
     "SessionScope",
     "SessionSettings",

@@ -62,6 +62,10 @@ class Usage(BaseModel):
     """The number of input tokens."""
     output_tokens: int
     """The number of output tokens."""
+    cache_input_tokens: int = 0
+    """The number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """The number of input tokens used to create the prompt cache."""
 
 
 class Msg(BaseModel):
@@ -237,7 +241,7 @@ class Msg(BaseModel):
                 return block
         return None
 
-    def append_event(  # pylint: disable=too-many-branches
+    def append_event(  # pylint: disable=too-many-branches,too-many-statements
         self,
         event: AgentEvent,
     ) -> Self:
@@ -283,10 +287,18 @@ class Msg(BaseModel):
                     self.usage = Usage(
                         input_tokens=event.input_tokens,
                         output_tokens=event.output_tokens,
+                        cache_input_tokens=event.cache_input_tokens,
+                        cache_creation_input_tokens=(
+                            event.cache_creation_input_tokens
+                        ),
                     )
                 else:
                     self.usage.input_tokens += event.input_tokens
                     self.usage.output_tokens += event.output_tokens
+                    self.usage.cache_input_tokens += event.cache_input_tokens
+                    self.usage.cache_creation_input_tokens += (
+                        event.cache_creation_input_tokens
+                    )
 
             case EventType.TEXT_BLOCK_START:
                 self.content.append(TextBlock(id=event.block_id, text=""))
@@ -311,6 +323,7 @@ class Msg(BaseModel):
                             data="",
                             media_type=event.media_type,
                         ),
+                        name=event.name,
                     ),
                 )
 
@@ -320,6 +333,13 @@ class Msg(BaseModel):
                     logger.warning(
                         "DataBlock %s not found, skipping.",
                         event.block_id,
+                    )
+                elif event.type == EventType.DATA_BLOCK_DELTA and event.url:
+                    # A URL is the whole content, so it replaces the empty
+                    # base64 source the start event created.
+                    block.source = URLSource(
+                        url=event.url,
+                        media_type=event.media_type,
                     )
                 elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
                     # Each delta is an independently base64-encoded chunk

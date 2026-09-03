@@ -116,6 +116,14 @@ class LocalBlobStore(BlobStoreBase):
         async with aiofiles.open(path, "rb") as fp:
             yield fp
 
+    async def size(self, uri: str) -> int | None:
+        """Return the file's size on disk, or ``None`` if it is gone."""
+        path = self._path_for(self._key_from_uri(uri))
+        try:
+            return (await aiofiles.os.stat(path)).st_size
+        except FileNotFoundError:
+            return None
+
     async def delete(self, uri: str) -> None:
         """Remove the blob at ``uri`` if present (idempotent)."""
         path = self._path_for(self._key_from_uri(uri))

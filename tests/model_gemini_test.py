@@ -6,6 +6,7 @@ Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
 import json
+from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -68,9 +69,14 @@ def _mock_completion(
     resp.candidates = [MagicMock()]
     resp.candidates[0].content = MagicMock()
     resp.candidates[0].content.parts = parts
-    resp.usage_metadata = MagicMock()
-    resp.usage_metadata.prompt_token_count = 10
-    resp.usage_metadata.candidates_token_count = 5
+    resp.usage_metadata = SimpleNamespace(
+        prompt_token_count=10,
+        candidates_token_count=5,
+        tool_use_prompt_token_count=0,
+        thoughts_token_count=0,
+        total_token_count=15,
+        cached_content_token_count=0,
+    )
     return resp
 
 
@@ -84,9 +90,14 @@ def _make_stream_chunk(
     chunk.candidates = [MagicMock()]
     chunk.candidates[0].content = MagicMock()
     chunk.candidates[0].content.parts = parts
-    chunk.usage_metadata = MagicMock()
-    chunk.usage_metadata.prompt_token_count = 10
-    chunk.usage_metadata.candidates_token_count = 5
+    chunk.usage_metadata = SimpleNamespace(
+        prompt_token_count=10,
+        candidates_token_count=5,
+        tool_use_prompt_token_count=0,
+        thoughts_token_count=0,
+        total_token_count=15,
+        cached_content_token_count=0,
+    )
     return chunk
 
 
@@ -243,6 +254,68 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_usage_classifies_tool_use_tokens_as_input(self) -> None:
+        """Usage classifies tool-use tokens as input, not output."""
+        parts = [_make_part(text="hello")]
+        resp = _mock_completion(parts)
+        # Mirror the SDK's documented invariant: total = prompt +
+        # candidates + tool_use_prompt + thoughts.
+        resp.usage_metadata = SimpleNamespace(
+            prompt_token_count=500,
+            candidates_token_count=120,
+            tool_use_prompt_token_count=300,
+            thoughts_token_count=10,
+            total_token_count=930,
+            cached_content_token_count=50,
+        )
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=resp,
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 800,
+                "output_tokens": 130,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 50,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+
+    async def test_usage_fallback_excludes_tool_use_tokens(self) -> None:
+        """Usage fallback excludes tool-use tokens from output."""
+        resp = _mock_completion([_make_part(text="hello")])
+        resp.usage_metadata = SimpleNamespace(
+            prompt_token_count=500,
+            tool_use_prompt_token_count=300,
+            thoughts_token_count=10,
+            total_token_count=810,
+            cached_content_token_count=0,
+        )
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=resp,
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 800,
+                "output_tokens": 10,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests
@@ -308,6 +381,40 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_usage_classifies_tool_use_tokens(self) -> None:
+        """Streaming usage classifies tool-use tokens as input."""
+        chunk = _make_stream_chunk([_make_part(text="hello")])
+        chunk.usage_metadata = SimpleNamespace(
+            prompt_token_count=500,
+            candidates_token_count=120,
+            tool_use_prompt_token_count=300,
+            thoughts_token_count=10,
+            total_token_count=930,
+            cached_content_token_count=50,
+        )
+        self.mock_client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_MockAsyncStream([chunk]),
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        # The delta and the accumulated final response both carry the
+        # usage of the last chunk.
+        self.assertEqual(
+            dict(responses[0].usage),
+            {
+                "input_tokens": 800,
+                "output_tokens": 130,
+                "time": responses[0].usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 50,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+        self.assertEqual(responses[-1].usage, responses[0].usage)
 
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then accumulated final."""
@@ -578,6 +685,30 @@ class TestGeminiFormatTools(unittest.TestCase):
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertIsNone(fmt_choice)
 
+    def test_schema_keyword_removed_from_parameters(self) -> None:
+        """The unsupported `$schema` keyword is removed before the call."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search for text",
+                    "parameters": {
+                        "$schema": "https://example.com/schema.json",
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        ]
+
+        fmt_tools, _ = self.model._format_tools(tools, None)
+        parameters = fmt_tools[0]["function_declarations"][0]["parameters"]
+
+        self.assertNotIn("$schema", parameters)
+
 
 # ---------------------------------------------------------------------------
 # Tests for _sanitize_schema_for_gemini and _flatten_json_schema
@@ -586,6 +717,31 @@ class TestGeminiFormatTools(unittest.TestCase):
 
 class TestGeminiSchemaUtils(unittest.TestCase):
     """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
+
+    def test_sanitize_removes_schema_keyword_recursively(self) -> None:
+        """The unsupported `$schema` keyword is removed recursively."""
+        result = _sanitize_schema_for_gemini(
+            {
+                "$schema": "https://example.com/schema.json",
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "$schema": "https://example.com/schema.json",
+                        "type": "string",
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                },
+            },
+        )
 
     def test_sanitize_removes_additional_properties_and_inlines_optional(
         self,
@@ -605,6 +761,91 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 {"type": "object", "additionalProperties": False},
             ),
             {"type": "object"},
+        )
+
+    def test_sanitize_inlines_nullable_type_array(self) -> None:
+        """JSON Schema type arrays with null are inlined for Gemini."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": ["string", "null"],
+                            "description": "Optional name",
+                        },
+                    },
+                },
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Optional name",
+                    },
+                },
+            },
+        )
+
+    def test_sanitize_converts_nullable_union_type_array_to_anyof(
+        self,
+    ) -> None:
+        """Nullable type arrays with multiple non-null types use anyOf."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": ["string", "integer", "null"],
+                    "description": "String or integer identifier",
+                },
+            ),
+            {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "integer"},
+                ],
+                "description": "String or integer identifier",
+            },
+        )
+
+    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+        self,
+    ) -> None:
+        """Existing anyOf constraints are not overwritten silently."""
+        with self.assertRaisesRegex(
+            ValueError,
+            "multi-type nullable type array and anyOf",
+        ):
+            _sanitize_schema_for_gemini(
+                {
+                    "type": ["string", "integer", "null"],
+                    "anyOf": [
+                        {"enum": ["auto"]},
+                        {"enum": [0]},
+                        {"type": "null"},
+                    ],
+                },
+            )
+
+    def test_sanitize_inlines_annotated_null_anyof(self) -> None:
+        """Annotated null schemas in anyOf are treated as null branches."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "description": "Optional name",
+                    "anyOf": [
+                        {"type": "string"},
+                        {
+                            "type": "null",
+                            "description": "No value",
+                        },
+                    ],
+                },
+            ),
+            {
+                "type": "string",
+                "description": "Optional name",
+            },
         )
 
     def test_sanitize_pydantic_optional_list_dict(self) -> None:
