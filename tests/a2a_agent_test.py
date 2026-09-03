@@ -226,8 +226,8 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
         self.assertIsNone(agent.state.task_id)
         await agent.aclose()
 
-    async def test_streamed_artifacts_are_one_block_per_part(self) -> None:
-        """Every Part is its own block, tagged with its A2A identifiers."""
+    async def test_streamed_artifact_chunks_are_one_text_block(self) -> None:
+        """Appended chunks continue one block; a binary Part ends it."""
         client = _FakeClient(
             [
                 [
@@ -237,14 +237,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                             context_id="context-1",
                             artifact=types.Artifact(
                                 artifact_id="artifact-1",
-                                parts=[
-                                    types.Part(text="first "),
-                                    types.Part(
-                                        raw=b"bytes",
-                                        media_type="image/png",
-                                        filename="chart.png",
-                                    ),
-                                ],
+                                parts=[types.Part(text="first ")],
                             ),
                         ),
                     ),
@@ -255,6 +248,23 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                             artifact=types.Artifact(
                                 artifact_id="artifact-1",
                                 parts=[types.Part(text="second")],
+                            ),
+                            append=True,
+                        ),
+                    ),
+                    types.StreamResponse(
+                        artifact_update=types.TaskArtifactUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            artifact=types.Artifact(
+                                artifact_id="artifact-1",
+                                parts=[
+                                    types.Part(
+                                        raw=b"bytes",
+                                        media_type="image/png",
+                                        filename="chart.png",
+                                    ),
+                                ],
                             ),
                             append=True,
                             last_chunk=True,
@@ -285,7 +295,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
-                        "text": "first ",
+                        "text": "first second",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": AnyString(),
@@ -299,13 +309,6 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                             "media_type": "image/png",
                         },
                         "name": "chart.png",
-                        "created_at": AnyString(),
-                        "finished_at": AnyString(),
-                    },
-                    {
-                        "type": "text",
-                        "text": "second",
-                        "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": AnyString(),
                     },
@@ -361,24 +364,83 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
         ]
 
         self.assertListEqual(
-            [(_["type"], _["metadata"]) for _ in events],
+            events,
             [
-                ("REPLY_START", {}),
-                ("TEXT_BLOCK_START", {}),
-                ("TEXT_BLOCK_DELTA", {}),
-                (
-                    "TEXT_BLOCK_END",
-                    {
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "REPLY_START",
+                    "session_id": AnyString(),
+                    "reply_id": AnyString(),
+                    "name": "remote-agent",
+                    "role": "assistant",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_START",
+                    "reply_id": AnyString(),
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_DELTA",
+                    "reply_id": AnyString(),
+                    "block_id": AnyString(),
+                    "delta": "report",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {
                         "a2a": {
                             "task_id": "task-1",
                             "artifact_id": "artifact-1",
                         },
                     },
-                ),
-                ("TEXT_BLOCK_START", {}),
-                ("TEXT_BLOCK_DELTA", {}),
-                ("TEXT_BLOCK_END", {"a2a": {"task_id": "task-1"}}),
-                ("REPLY_END", {"a2a": {"context_id": "context-1"}}),
+                    "type": "TEXT_BLOCK_END",
+                    "reply_id": AnyString(),
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_START",
+                    "reply_id": AnyString(),
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_DELTA",
+                    "reply_id": AnyString(),
+                    "block_id": AnyString(),
+                    "delta": "done",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {"a2a": {"task_id": "task-1"}},
+                    "type": "TEXT_BLOCK_END",
+                    "reply_id": AnyString(),
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {"a2a": {"context_id": "context-1"}},
+                    "type": "REPLY_END",
+                    "session_id": AnyString(),
+                    "reply_id": AnyString(),
+                    "finished_reason": "completed",
+                    "error": None,
+                },
             ],
         )
         await agent.aclose()

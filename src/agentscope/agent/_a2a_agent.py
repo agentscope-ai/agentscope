@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
+from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 from ..state import A2AAgentState
@@ -36,50 +37,91 @@ if TYPE_CHECKING:
     from a2a.types import Part
 
 
-def _part_to_events(
-    part: Part,
+@dataclass
+class _TextRun:
+    """The text block that consecutive text Parts stream into.
+
+    A2A marks continuation per artifact update rather than per Part, so a
+    run is identified by the metadata its Parts share and ends as soon as
+    anything else is emitted.
+    """
+
+    block_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _parts_to_events(
+    parts: Iterable[Part],
     reply_id: str,
     metadata: dict[str, Any],
+    run: _TextRun,
+    append: bool = False,
+    last_chunk: bool = True,
 ) -> list[AgentEvent]:
-    """Build the events for one A2A Part. Each Part is its own block.
+    """Build the events for one group of A2A Parts sharing one source.
 
-    A text Part becomes a text block, and a raw or URL Part becomes a data
-    block. The A2A ids the Part came from are carried on the block end event,
-    so a consumer can tell which Task and Artifact each block belongs to.
+    ``append`` and ``last_chunk`` are the artifact update flags of the same
+    name: together they say whether this group continues the block ``run``
+    holds open and whether anything more can join it. Text Parts stream into
+    that one block, because reopening a block per chunk fragments one reply
+    into many; every other Part is a block of its own. The A2A ids the Parts
+    came from are carried on each block end event.
     """
-    block_id = _generate_id()
-    kind = part.WhichOneof("content")
-    if kind == "text":
-        events: list[AgentEvent] = [
-            TextBlockStartEvent(reply_id=reply_id, block_id=block_id),
-        ]
-        if part.text:
+    events: list[AgentEvent] = []
+
+    def close_run() -> None:
+        """End the open text block, if any."""
+        if run.block_id:
             events.append(
-                TextBlockDeltaEvent(
+                TextBlockEndEvent(
                     reply_id=reply_id,
-                    block_id=block_id,
-                    delta=part.text,
+                    block_id=run.block_id,
+                    metadata=run.metadata,
                 ),
             )
-        events.append(
-            TextBlockEndEvent(
-                reply_id=reply_id,
-                block_id=block_id,
-                metadata=metadata,
-            ),
-        )
-        return events
+            run.block_id = None
 
-    if kind in ("raw", "url"):
+    if not (append and run.metadata == metadata):
+        close_run()
+
+    for part in parts:
+        kind = part.WhichOneof("content")
+        if kind == "text":
+            if run.block_id is None:
+                run.block_id, run.metadata = _generate_id(), metadata
+                events.append(
+                    TextBlockStartEvent(
+                        reply_id=reply_id,
+                        block_id=run.block_id,
+                    ),
+                )
+            if part.text:
+                events.append(
+                    TextBlockDeltaEvent(
+                        reply_id=reply_id,
+                        block_id=run.block_id,
+                        delta=part.text,
+                    ),
+                )
+            continue
+
+        close_run()
+        if kind not in ("raw", "url"):
+            raise ValueError(
+                "A2AAgent supports text, raw, and URL parts; got "
+                f"unsupported {kind or 'empty'} content.",
+            )
+
+        block_id = _generate_id()
         media_type = part.media_type or "application/octet-stream"
-        events = [
+        events.append(
             DataBlockStartEvent(
                 reply_id=reply_id,
                 block_id=block_id,
                 media_type=media_type,
                 name=part.filename or None,
             ),
-        ]
+        )
         if kind == "url":
             events.append(
                 DataBlockDeltaEvent(
@@ -105,12 +147,10 @@ def _part_to_events(
                 metadata=metadata,
             ),
         )
-        return events
 
-    raise ValueError(
-        "A2AAgent supports text, raw, and URL parts; got unsupported "
-        f"{kind or 'empty'} content.",
-    )
+    if last_chunk:
+        close_run()
+    return events
 
 
 def _get_finished_reason(state: int) -> ReplyFinishedReason:
@@ -370,6 +410,7 @@ class A2AAgent:
         )
 
         finished_reason = ReplyFinishedReason.COMPLETED
+        run = _TextRun()
 
         async for response in self._client.send_message(
             self._build_request(input_msgs),
@@ -384,15 +425,12 @@ class A2AAgent:
                         self.state.context_id = message.context_id
                     self.state.task_id = None
 
-                    metadata = {
-                        "a2a": {"message_id": message.message_id},
-                    }
-                    for part in message.parts:
-                        events += _part_to_events(
-                            part,
-                            reply_id,
-                            metadata,
-                        )
+                    events += _parts_to_events(
+                        message.parts,
+                        reply_id,
+                        {"a2a": {"message_id": message.message_id}},
+                        run,
+                    )
 
                 case "artifact_update":
                     # An artifact carries no Task status, so it never
@@ -401,18 +439,22 @@ class A2AAgent:
                     if update.context_id:
                         self.state.context_id = update.context_id
 
-                    metadata = {
-                        "a2a": {
-                            "task_id": update.task_id,
-                            "artifact_id": update.artifact.artifact_id,
+                    # `append` is the only continuation A2A gives, and it
+                    # is per update, so the chunks of one artifact are what
+                    # keeps a text block open.
+                    events += _parts_to_events(
+                        update.artifact.parts,
+                        reply_id,
+                        {
+                            "a2a": {
+                                "task_id": update.task_id,
+                                "artifact_id": update.artifact.artifact_id,
+                            },
                         },
-                    }
-                    for part in update.artifact.parts:
-                        events += _part_to_events(
-                            part,
-                            reply_id,
-                            metadata,
-                        )
+                        run,
+                        append=update.append,
+                        last_chunk=update.last_chunk,
+                    )
 
                 case "status_update":
                     update = response.status_update
@@ -430,13 +472,12 @@ class A2AAgent:
                         update.status.state,
                     )
 
-                    metadata = {"a2a": {"task_id": update.task_id}}
-                    for part in update.status.message.parts:
-                        events += _part_to_events(
-                            part,
-                            reply_id,
-                            metadata,
-                        )
+                    events += _parts_to_events(
+                        update.status.message.parts,
+                        reply_id,
+                        {"a2a": {"task_id": update.task_id}},
+                        run,
+                    )
 
                 case "task":
                     # A full Task snapshot, the only payload the
@@ -453,26 +494,24 @@ class A2AAgent:
                     )
 
                     for artifact in task.artifacts:
-                        metadata = {
-                            "a2a": {
-                                "task_id": task.id,
-                                "artifact_id": artifact.artifact_id,
-                            },
-                        }
-                        for part in artifact.parts:
-                            events += _part_to_events(
-                                part,
-                                reply_id,
-                                metadata,
-                            )
-
-                    metadata = {"a2a": {"task_id": task.id}}
-                    for part in task.status.message.parts:
-                        events += _part_to_events(
-                            part,
+                        events += _parts_to_events(
+                            artifact.parts,
                             reply_id,
-                            metadata,
+                            {
+                                "a2a": {
+                                    "task_id": task.id,
+                                    "artifact_id": artifact.artifact_id,
+                                },
+                            },
+                            run,
                         )
+
+                    events += _parts_to_events(
+                        task.status.message.parts,
+                        reply_id,
+                        {"a2a": {"task_id": task.id}},
+                        run,
+                    )
 
                 case _:
                     raise RuntimeError(
@@ -484,6 +523,11 @@ class A2AAgent:
                 yield event
 
         metadata = {"a2a": {"context_id": self.state.context_id}}
+
+        # A stream that ended mid-artifact still owes the block its end.
+        for event in _parts_to_events([], reply_id, {}, run):
+            msg.append_event(event)
+            yield event
 
         # `append_event` stamps finished_reason and finished_at from the
         # end event, so the message must see it before it is yielded.

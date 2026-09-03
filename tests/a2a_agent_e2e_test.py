@@ -187,8 +187,8 @@ class A2AAgentE2ETest(IsolatedAsyncioTestCase):
 
                 first_context_id = agent.state.context_id
                 self.assertTrue(first_context_id)
-                # The two artifact chunks stay two blocks: one Part is one
-                # block, and nothing merges them back together.
+                # Two artifact chunks, but one text block: the appended
+                # chunk continues the block the first one opened.
                 self.assertListEqual(
                     deltas,
                     ["turn=1; u", "sers=FIRST"],
@@ -203,7 +203,7 @@ class A2AAgentE2ETest(IsolatedAsyncioTestCase):
                 self.assertIsNone(agent.state.task_id)
                 self.assertEqual(
                     reply.get_text_content(),
-                    "turn=2; users=\nFIRST | SECOND",
+                    "turn=2; users=FIRST | SECOND",
                 )
         finally:
             server.should_exit = True
