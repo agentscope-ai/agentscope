@@ -34,7 +34,7 @@ from a2a.utils.constants import TransportProtocol
 from starlette.applications import Starlette
 
 from agentscope.agent import A2AAgent
-from agentscope.event import CustomEvent, TextBlockDeltaEvent
+from agentscope.event import TextBlockDeltaEvent
 from agentscope.message import UserMsg
 
 
@@ -179,29 +179,32 @@ class A2AAgentE2ETest(IsolatedAsyncioTestCase):
             ).create(card)
             async with A2AAgent(card, client=client) as agent:
                 deltas: list[str] = []
-                states: list[str] = []
                 async for event in agent.reply_stream(
                     UserMsg(name="user", content="FIRST"),
                 ):
                     if isinstance(event, TextBlockDeltaEvent):
                         deltas.append(event.delta)
-                    elif isinstance(event, CustomEvent):
-                        states.append(event.value["task_state"])
 
-                first_context_id = agent.context_id
+                first_context_id = agent.state.context_id
                 self.assertTrue(first_context_id)
-                self.assertEqual("".join(deltas), "turn=1; users=FIRST")
-                self.assertIn("TASK_STATE_WORKING", states)
+                # The two artifact chunks stay two blocks: one Part is one
+                # block, and nothing merges them back together.
+                self.assertListEqual(
+                    deltas,
+                    ["turn=1; u", "sers=FIRST"],
+                )
 
                 reply = await agent.reply(
                     UserMsg(name="user", content="SECOND"),
                 )
-                self.assertEqual(agent.context_id, first_context_id)
+                # The same context spans both turns, and each completed Task
+                # is over, so nothing is carried into the next one.
+                self.assertEqual(agent.state.context_id, first_context_id)
+                self.assertIsNone(agent.state.task_id)
                 self.assertEqual(
                     reply.get_text_content(),
-                    "turn=2; users=FIRST | SECOND",
+                    "turn=2; users=\nFIRST | SECOND",
                 )
-                self.assertEqual(agent.task_state, "TASK_STATE_COMPLETED")
         finally:
             server.should_exit = True
             await server_task

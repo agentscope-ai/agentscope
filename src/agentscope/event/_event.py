@@ -203,6 +203,8 @@ class DataBlockStartEvent(EventBase):
     """Unique identifier of the data block."""
     media_type: str
     """MIME type of the data content (e.g. "image/png")."""
+    name: str | None = None
+    """Name of the data, e.g. a file name."""
 
 
 class DataBlockDeltaEvent(EventBase):
@@ -214,10 +216,21 @@ class DataBlockDeltaEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the data block."""
-    data: str
-    """Incremental base64-encoded data."""
     media_type: str
     """MIME type of the data content."""
+    data: str | None = None
+    """Incremental base64-encoded data, mutually exclusive with `url`."""
+    url: str | None = None
+    """URL pointing to the data, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
 
 
 class DataBlockEndEvent(EventBase):

@@ -2,50 +2,148 @@
 """A stateful client-side adapter for remote A2A agents."""
 from __future__ import annotations
 
-import asyncio
-
-from collections.abc import AsyncGenerator, AsyncIterator
+import base64
+from collections.abc import AsyncGenerator
 from typing import Any, TYPE_CHECKING
 
+from ..state import A2AAgentState
 from .._logging import logger
 from .._utils._common import _generate_id
 from ..event import (
-    AgentEvent,
-    CustomEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
     ReplyStartEvent,
+    AgentEvent,
+    DataBlockDeltaEvent,
+    DataBlockEndEvent,
+    DataBlockStartEvent,
+    TextBlockDeltaEvent,
+    TextBlockEndEvent,
+    TextBlockStartEvent,
 )
-from ..message import AssistantMsg, Msg, TextBlock
-from ..types import ErrorInfo, ErrorType
-from ._a2a_content import (
-    _ArtifactReducer,
-    _block_to_part,
-    _emit_block,
-    _part_to_block,
+from ..message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    Base64Source,
+    DataBlock,
+    URLSource,
 )
 
 if TYPE_CHECKING:
     from a2a.client import Client
-    from a2a.types import AgentCard, Message, StreamResponse
-    from a2a.types import Task as A2ATask
-
-    from ..message import ContentBlock
+    from a2a.types import AgentCard
+    from a2a.types import Part
 
 
-# The reply outcome for each A2A Task state a response stream can end on.
-# The interrupted states end the reply normally: the remote Task is suspended
-# server-side, but nothing is suspended locally, so the status message is an
-# ordinary turn that the caller answers with the next `reply()`. A stream that
-# ends on any other state (`SUBMITTED`, `WORKING`) died without a resolution.
-_FINISHED_REASONS = {
-    "TASK_STATE_COMPLETED": ReplyFinishedReason.COMPLETED,
-    "TASK_STATE_INPUT_REQUIRED": ReplyFinishedReason.COMPLETED,
-    "TASK_STATE_AUTH_REQUIRED": ReplyFinishedReason.COMPLETED,
-    "TASK_STATE_CANCELED": ReplyFinishedReason.INTERRUPTED,
-    "TASK_STATE_FAILED": ReplyFinishedReason.ERROR,
-    "TASK_STATE_REJECTED": ReplyFinishedReason.ERROR,
-}
+def _part_to_events(
+    part: Part,
+    reply_id: str,
+    metadata: dict[str, Any],
+) -> list[AgentEvent]:
+    """Build the events for one A2A Part. Each Part is its own block.
+
+    A text Part becomes a text block, and a raw or URL Part becomes a data
+    block. The A2A ids the Part came from are carried on the block end event,
+    so a consumer can tell which Task and Artifact each block belongs to.
+    """
+    block_id = _generate_id()
+    kind = part.WhichOneof("content")
+    if kind == "text":
+        events: list[AgentEvent] = [
+            TextBlockStartEvent(reply_id=reply_id, block_id=block_id),
+        ]
+        if part.text:
+            events.append(
+                TextBlockDeltaEvent(
+                    reply_id=reply_id,
+                    block_id=block_id,
+                    delta=part.text,
+                ),
+            )
+        events.append(
+            TextBlockEndEvent(
+                reply_id=reply_id,
+                block_id=block_id,
+                metadata=metadata,
+            ),
+        )
+        return events
+
+    if kind in ("raw", "url"):
+        media_type = part.media_type or "application/octet-stream"
+        events = [
+            DataBlockStartEvent(
+                reply_id=reply_id,
+                block_id=block_id,
+                media_type=media_type,
+                name=part.filename or None,
+            ),
+        ]
+        if kind == "url":
+            events.append(
+                DataBlockDeltaEvent(
+                    reply_id=reply_id,
+                    block_id=block_id,
+                    url=part.url,
+                    media_type=media_type,
+                ),
+            )
+        elif part.raw:
+            events.append(
+                DataBlockDeltaEvent(
+                    reply_id=reply_id,
+                    block_id=block_id,
+                    data=base64.b64encode(part.raw).decode("ascii"),
+                    media_type=media_type,
+                ),
+            )
+        events.append(
+            DataBlockEndEvent(
+                reply_id=reply_id,
+                block_id=block_id,
+                metadata=metadata,
+            ),
+        )
+        return events
+
+    raise ValueError(
+        "A2AAgent supports text, raw, and URL parts; got unsupported "
+        f"{kind or 'empty'} content.",
+    )
+
+
+def _get_finished_reason(state: int) -> ReplyFinishedReason:
+    """Map the A2A Task state a response stream ended on to a reply outcome.
+
+    A Task waiting for input ends the reply normally: it is suspended
+    server-side, but nothing is suspended locally, so its status message is
+    an ordinary turn that the caller answers with the next reply.
+    """
+    from a2a.types import TaskState
+
+    if state in (
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        TaskState.TASK_STATE_AUTH_REQUIRED,
+    ):
+        return ReplyFinishedReason.COMPLETED
+    if state == TaskState.TASK_STATE_CANCELED:
+        return ReplyFinishedReason.INTERRUPTED
+    # FAILED and REJECTED, plus a stream that died on SUBMITTED or WORKING
+    # without ever resolving.
+    return ReplyFinishedReason.ERROR
+
+
+def _awaiting_input(state: int) -> bool:
+    """Whether a Task in this state is suspended waiting for the caller, so
+    the next message continues it instead of starting a new Task."""
+    from a2a.types import TaskState
+
+    return state in (
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        TaskState.TASK_STATE_AUTH_REQUIRED,
+    )
 
 
 class A2AAgent:
@@ -54,11 +152,16 @@ class A2AAgent:
     This class intentionally provides Agent-like interaction methods without
     inheriting :class:`agentscope.agent.Agent`. A local ``Agent`` owns a model,
     toolkit, state, and reasoning loop; this adapter delegates those concerns
-    to the remote A2A server and owns only the client-side conversation and
-    Task lifecycle.
+    to the remote A2A server and owns only the remote conversation
+    (``context_id``) and the Task the next message continues (``task_id``),
+    both held in :class:`agentscope.state.A2AAgentState`.
 
-    The adapter owns the remote context and active Task lifecycle. It supports
-    text, raw bytes, and URL Parts, including streamed text/raw artifacts.
+    Each A2A Part of a response becomes one content block: text Parts become
+    :class:`~agentscope.message.TextBlock`, raw byte and URL Parts become
+    :class:`~agentscope.message.DataBlock`.
+
+    The adapter owns its A2A client and closes it in :meth:`aclose`, so it is
+    single-use: once closed it cannot be reopened.
     """
 
     def __init__(
@@ -66,8 +169,7 @@ class A2AAgent:
         agent_card: AgentCard,
         *,
         client: Client | None = None,
-        context_id: str | None = None,
-        task_id: str | None = None,
+        state: A2AAgentState | None = None,
     ) -> None:
         """Initialize the A2A agent adapter.
 
@@ -84,19 +186,13 @@ class A2AAgent:
                 the card, which then requires a ``JSONRPC`` or ``HTTP+JSON``
                 interface. The adapter owns the client either way and closes
                 it in :meth:`aclose`.
-            context_id (`str | None`, optional):
-                An existing remote context to continue, as returned by the
-                :attr:`context_id` property of an earlier adapter. Subsequent
-                messages join that conversation instead of starting a new one.
-            task_id (`str | None`, optional):
-                A remote Task to reattach to, for :meth:`get_task` and
-                :meth:`cancel_task`. :meth:`reply` ignores it until one of
-                those learns the Task's state, so a Task the server has since
-                dropped degrades into a new Task within ``context_id`` rather
-                than a failure.
+            state (`agentscope.state.A2AAgentState | None`, optional):
+                An existing state to resume, e.g. one saved from an earlier
+                adapter, so its ``context_id`` continues the same remote
+                conversation. A fresh state is created when omitted.
         """
         try:
-            from a2a import types
+            import a2a  # noqa: F401  pylint: disable=unused-import
         except ImportError as error:
             raise ImportError(
                 "A2AAgent requires the A2A extra. Install it with "
@@ -119,33 +215,17 @@ class A2AAgent:
                     ],
                 ),
             ).create(self._agent_card)
+
         self._client = client
-        self._types = types
-        self._observed_msgs: list[Msg] = []
-        self._context_id = context_id
-        self._task_id = task_id
-        self._task_state: int | None = None
-        self._session_id = _generate_id()
-        self._reply_lock = asyncio.Lock()
+        self.state = state or A2AAgentState()
         self._closed = False
 
-    @property
-    def context_id(self) -> str | None:
-        """The latest remote context ID."""
-        return self._context_id
-
-    @property
-    def task_id(self) -> str | None:
-        """The latest remote Task ID, if the interaction used a Task."""
-        return self._task_id
-
-    @property
-    def task_state(self) -> str | None:
-        """The latest remote Task state name."""
-        return self._state_name(self._task_state)
-
     async def __aenter__(self) -> A2AAgent:
-        """Enter the asynchronous context manager."""
+        """Enter the asynchronous context manager.
+
+        Leaving the block closes the owned client, and nothing reopens it,
+        so an adapter can only be entered before it is closed.
+        """
         if self._closed:
             raise RuntimeError("A2AAgent is closed.")
         return self
@@ -156,35 +236,9 @@ class A2AAgent:
 
     async def aclose(self) -> None:
         """Close the owned A2A client. Repeated calls are safe."""
-        async with self._reply_lock:
-            if not self._closed:
-                await self._client.close()
-                self._closed = True
-
-    async def observe(self, msgs: Msg | list[Msg] | None = None) -> None:
-        """Cache messages to include in the next request."""
-        if msgs is None:
-            return
-        messages = [msgs] if isinstance(msgs, Msg) else msgs
-        if not isinstance(messages, list) or not all(
-            isinstance(msg, Msg) for msg in messages
-        ):
-            raise TypeError("msgs must be a Msg, a list of Msg, or None.")
-        async with self._reply_lock:
-            self._ensure_open()
-            self._observed_msgs.extend(messages)
-
-    async def compress_context(self, *args: Any, **kwargs: Any) -> None:
-        """Do nothing because the remote A2A server owns its context.
-
-        The arguments are accepted for interface compatibility with
-        :class:`agentscope.agent.Agent`.
-        """
-        logger.warning(
-            "Ignoring compress_context() on A2AAgent %s: the remote A2A "
-            "server owns its own conversation context.",
-            self.name,
-        )
+        if not self._closed:
+            await self._client.close()
+            self._closed = True
 
     async def reply_stream(
         self,
@@ -193,15 +247,11 @@ class A2AAgent:
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Send input and stream the remote reply as AgentScope events.
 
-        A Task still running on the server is followed to completion first,
-        so its events precede the ones this input produces.
-
         Args:
             inputs (`Msg | list[Msg] | None`, optional):
-                The messages to send, appended to the observed ones.
+                The messages to send, preceded by the observed ones.
             yield_final_msg (`bool`, defaults to `False`):
-                If yield the final reply message. A followed Task yields its
-                own final message before the one this input produces.
+                Whether to yield the final reply message after the events.
 
         Yields:
             `AgentEvent | Msg`:
@@ -213,74 +263,18 @@ class A2AAgent:
             yield event_or_msg
 
     async def reply(self, inputs: Msg | list[Msg] | None = None) -> Msg:
-        """Send input and return the canonical final assistant message.
-
-        A Task still running on the server is followed to completion first;
-        the returned message is always the one this input produced.
-        """
-        return await self._consume_final(self._reply(inputs))
-
-    async def get_task(self) -> A2ATask:
-        """Fetch and return the latest remote Task snapshot."""
-        async with self._reply_lock:
-            self._ensure_open()
-            task_id = self._require_task_id()
-            task = await self._client.get_task(
-                self._types.GetTaskRequest(id=task_id),
-            )
-            self._update_task(task)
-            return task
-
-    async def list_tasks(self, state: str | None = None) -> list[A2ATask]:
-        """List every remote Task in the current context.
+        """Send input and return the final assistant message.
 
         Args:
-            state (`str | None`, optional):
-                An A2A Task state name, e.g. ``"TASK_STATE_INPUT_REQUIRED"``,
-                to return only the Tasks in that state.
+            inputs (`Msg | list[Msg] | None`, optional):
+                The messages to send, preceded by the observed ones.
 
         Returns:
-            `list[a2a.types.Task]`:
-                The matching Tasks, across all result pages. An empty list
-                means the server no longer knows this context.
+            `Msg`:
+                The reply message, assembled from the streamed events.
         """
-        async with self._reply_lock:
-            self._ensure_open()
-            if self._context_id is None:
-                raise RuntimeError("A2AAgent has no remote context yet.")
-            tasks: list[A2ATask] = []
-            page_token = ""
-            while True:
-                request = self._types.ListTasksRequest(
-                    context_id=self._context_id,
-                    page_token=page_token,
-                )
-                if state is not None:
-                    request.status = self._state(state)
-                response = await self._client.list_tasks(request)
-                tasks.extend(response.tasks)
-                page_token = response.next_page_token
-                if not page_token:
-                    return tasks
-
-    async def cancel_task(self) -> A2ATask:
-        """Request cancellation and return the server's Task snapshot."""
-        async with self._reply_lock:
-            self._ensure_open()
-            task_id = self._require_cancelable_task_id()
-            task = await self._client.cancel_task(
-                self._types.CancelTaskRequest(id=task_id),
-            )
-            self._update_task(task)
-            return task
-
-    async def _consume_final(
-        self,
-        stream: AsyncIterator[AgentEvent | Msg],
-    ) -> Msg:
-        """Consume a shared internal stream and return its final message."""
         final_msg: Msg | None = None
-        async for event_or_msg in stream:
+        async for event_or_msg in self._reply(inputs):
             if isinstance(event_or_msg, Msg):
                 final_msg = event_or_msg
         if final_msg is None:
@@ -289,429 +283,331 @@ class A2AAgent:
 
     async def _reply(
         self,
-        inputs: Msg | list[Msg] | None,
+        inputs: Msg | list[Msg] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Build one A2A Message and reduce its response stream."""
-        async with self._reply_lock:
-            self._ensure_open()
-            direct_inputs = self._normalize_inputs(inputs)
-            messages = [*self._observed_msgs, *direct_inputs]
-            if not messages:
-                raise ValueError(
-                    "A2AAgent reply requires at least one message.",
-                )
-            # A Task still running owns the conversation until it resolves,
-            # so follow it before the new message decides what to continue.
-            if self._task_state in self._active:
-                async for item in self._follow_active_task():
-                    yield item
-            request = self._build_request(messages)
-            expected_task_id = (
-                self._task_id
-                if self._task_state in self._interrupted
-                else None
-            )
-            async for item in self._reduce_stream(
-                self._client.send_message(request),
-                clear_observations=True,
-                expected_task_id=expected_task_id,
-            ):
-                yield item
+        """Send one A2A Message and stream its response back.
 
-    async def _follow_active_task(
-        self,
-    ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Subscribe to a running Task with a canonical GetTask fallback.
+        The observed messages lead the input, and the whole turn is flattened
+        into a single A2A Message. It continues the remote Task the previous
+        reply left waiting for input, if any, and otherwise starts a new one
+        within the same ``context_id``.
 
-        Subscription is attempted first. If the server reports that
-        subscription is unsupported, the canonical Task is fetched to close
-        the subscribe-versus-completion race.
+        Args:
+            inputs (`Msg | list[Msg] | None`):
+                The input message(s) to send, preceded by the observed ones.
+
+        Yields:
+            `AgentEvent | Msg`:
+                The streamed events, then the final reply message.
+
+        Raises:
+            `RuntimeError`:
+                If the remote Task from an earlier reply is still running,
+                since a second message would execute it again.
         """
-        task_id = self._require_task_id()
+        from a2a.types import GetTaskRequest, TaskState
+        from a2a.utils.errors import TaskNotFoundError
 
-        async def responses() -> AsyncGenerator[StreamResponse, None]:
-            from a2a.utils.errors import UnsupportedOperationError
+        # Ensure the client is open
+        self._ensure_open()
 
-            try:
-                async for response in self._client.subscribe(
-                    self._types.SubscribeToTaskRequest(id=task_id),
-                ):
-                    yield response
-            except UnsupportedOperationError:
-                task = await self._client.get_task(
-                    self._types.GetTaskRequest(id=task_id),
-                )
-                yield self._types.StreamResponse(task=task)
-
-        async for item in self._reduce_stream(
-            responses(),
-            clear_observations=False,
-            expected_task_id=task_id,
+        # Normalize the inputs into a2a-acceptable objects
+        if isinstance(inputs, Msg):
+            input_msgs = [inputs]
+        elif isinstance(inputs, list) and all(
+            isinstance(_, Msg) for _ in inputs
         ):
-            yield item
+            input_msgs = inputs
+        else:
+            input_msgs = []
 
-    async def _reduce_stream(
-        self,
-        responses: AsyncIterator[StreamResponse],
-        *,
-        clear_observations: bool,
-        expected_task_id: str | None,
-    ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reduce Message/Task/status/artifact responses through one path."""
-        reply_id = _generate_id()
-        yield ReplyStartEvent(
-            session_id=self._session_id,
-            reply_id=reply_id,
-            name=self.name,
-        )
-        reducer = _ArtifactReducer()
-        direct_blocks: list[ContentBlock] = []
-        status_blocks: list[ContentBlock] = []
-        completed_status_blocks: list[ContentBlock] = []
-        completed = False
-        saw_response = False
-        stream_task_id = expected_task_id
-        stream_context_id: str | None = None
+        # Observed messages are earlier context, so they lead this input.
+        input_msgs = [*self.state.observed_context, *input_msgs]
+        self.state.observed_context.clear()
 
-        async for response in responses:
-            saw_response = True
-            payload = response.WhichOneof("payload")
-            if payload == "message":
-                if completed or direct_blocks or reducer.artifact_ids:
-                    raise RuntimeError(
-                        "A2A response contained more than one final result.",
-                    )
-                message = response.message
-                stream_task_id = self._validate_stream_task_id(
-                    stream_task_id,
-                    message.task_id,
-                )
-                stream_context_id = self._validate_stream_context_id(
-                    stream_context_id,
-                    message.context_id,
-                )
-                self._update_message(message)
-                for part in message.parts:
-                    block = _part_to_block(part)
-                    direct_blocks.append(block)
-                    async for event in _emit_block(
-                        block,
-                        reply_id,
-                        self._event_metadata(reply_id),
-                        close=True,
-                    ):
-                        yield event
-                completed = True
-                self._task_state = None
-                continue
+        if not input_msgs:
+            raise ValueError(
+                "A2AAgent reply requires at least one message.",
+            )
 
-            if payload == "artifact_update":
-                update = response.artifact_update
-                stream_task_id = self._validate_stream_task_id(
-                    stream_task_id,
-                    update.task_id,
+        # A Task left over from an earlier reply decides what this input
+        # does, and only the server knows how it ended.
+        if self.state.task_id:
+            try:
+                task = await self._client.get_task(
+                    GetTaskRequest(id=self.state.task_id),
                 )
-                stream_context_id = self._validate_stream_context_id(
-                    stream_context_id,
-                    update.context_id,
-                )
-                self._update_ids(update.context_id, update.task_id)
-                async for event in reducer.apply(
-                    update.artifact,
-                    reply_id,
-                    self._event_metadata(reply_id),
-                    append=update.append,
-                    last_chunk=update.last_chunk,
-                    snapshot=False,
-                ):
-                    yield event
-                continue
-
-            # Both remaining payloads carry a TaskStatus; only a `task`
-            # payload also carries the canonical artifact snapshot.
-            if payload == "status_update":
-                update = response.status_update
-                context_id, task_id = update.context_id, update.task_id
-                status, artifacts, snapshot = update.status, (), False
-            elif payload == "task":
-                task = response.task
-                context_id, task_id = task.context_id, task.id
-                status, artifacts, snapshot = task.status, task.artifacts, True
+            except TaskNotFoundError:
+                # The server has forgotten the Task; start a new one.
+                self.state.task_id = None
             else:
-                raise RuntimeError("A2A response contained no payload.")
-
-            stream_task_id = self._validate_stream_task_id(
-                stream_task_id,
-                task_id,
-            )
-            stream_context_id = self._validate_stream_context_id(
-                stream_context_id,
-                context_id,
-            )
-            self._update_ids(context_id, task_id)
-            self._task_state = int(status.state)
-            completed = self._task_state == self._state(
-                "TASK_STATE_COMPLETED",
-            )
-
-            # A status message is content only on the state the stream ends
-            # on: the remote agent's question, its authorization instructions,
-            # or why it failed. A completed Task keeps the artifacts as its
-            # output, and an in-flight message is progress, not the answer.
-            if status.HasField("message"):
-                blocks = [
-                    _part_to_block(part) for part in status.message.parts
-                ]
-                if completed:
-                    completed_status_blocks = blocks
-                elif self.task_state in _FINISHED_REASONS:
-                    for block in blocks:
-                        async for event in _emit_block(
-                            block,
-                            reply_id,
-                            self._event_metadata(reply_id),
-                            close=True,
-                        ):
-                            yield event
-                    status_blocks.extend(blocks)
-
-            yield self._status_event(reply_id)
-
-            for artifact in artifacts:
-                async for event in reducer.apply(
-                    artifact,
-                    reply_id,
-                    self._event_metadata(reply_id),
-                    append=False,
-                    last_chunk=completed,
-                    snapshot=True,
+                if task.status.state in (
+                    TaskState.TASK_STATE_SUBMITTED,
+                    TaskState.TASK_STATE_WORKING,
                 ):
-                    yield event
-            if snapshot and completed:
-                async for event in reducer.reconcile_completed(
-                    {artifact.artifact_id for artifact in artifacts},
-                    reply_id,
-                    self._event_metadata(reply_id),
-                ):
-                    yield event
+                    # The server taps the running Task's own queue, so
+                    # sending now would execute it a second time.
+                    raise RuntimeError(
+                        f"A2A task {self.state.task_id} is still running "
+                        "on the remote server; retry once it has finished.",
+                    )
+                if not _awaiting_input(task.status.state):
+                    self.state.task_id = None
 
-        if not saw_response:
-            raise RuntimeError("A2A response stream ended without a response.")
-        if clear_observations:
-            self._observed_msgs.clear()
-
-        metadata = self._final_metadata(reducer.artifact_ids)
-        async for event in reducer.close(reply_id, metadata):
-            yield event
-        content = [*direct_blocks, *reducer.blocks, *status_blocks]
-        if not content:
-            content = completed_status_blocks
-
-        # A direct Message response never creates a Task, so it always
-        # completes; otherwise the state the stream ended on decides.
-        state_name = self.task_state
-        finished_reason = (
-            ReplyFinishedReason.COMPLETED
-            if state_name is None
-            else _FINISHED_REASONS.get(state_name, ReplyFinishedReason.ERROR)
-        )
-        error = None
-        if finished_reason == ReplyFinishedReason.ERROR:
-            error = ErrorInfo(
-                type=ErrorType.UPSTREAM,
-                message="\n".join(
-                    block.text
-                    for block in content
-                    if isinstance(block, TextBlock)
-                )
-                or f"The remote A2A task ended in {self.task_state}.",
-            )
-
-        final_msg = AssistantMsg(
+        reply_id = _generate_id()
+        # The reply message is assembled from the very events streamed to
+        # the caller, so the two can never disagree.
+        msg = AssistantMsg(
             id=reply_id,
-            name=self.name,
-            content=content,
-            metadata=metadata,
-            finished_reason=finished_reason,
+            name=self._agent_card.name,
+            content=[],
         )
-        final_msg.error = error
-        yield final_msg
-        yield ReplyEndEvent(
-            session_id=self._session_id,
+
+        yield ReplyStartEvent(
+            session_id=self.state.session_id,
+            reply_id=reply_id,
+            name=self._agent_card.name,
+        )
+
+        finished_reason = ReplyFinishedReason.COMPLETED
+
+        async for response in self._client.send_message(
+            self._build_request(input_msgs),
+        ):
+            events: list[AgentEvent] = []
+            match response.WhichOneof("payload"):
+                case "message":
+                    # A direct Message response carries no Task status, and
+                    # answering it never continues a Task.
+                    message = response.message
+                    if message.context_id:
+                        self.state.context_id = message.context_id
+                    self.state.task_id = None
+
+                    metadata = {
+                        "a2a": {"message_id": message.message_id},
+                    }
+                    for part in message.parts:
+                        events += _part_to_events(
+                            part,
+                            reply_id,
+                            metadata,
+                        )
+
+                case "artifact_update":
+                    # An artifact carries no Task status, so it never
+                    # decides whether the Task is still to be continued.
+                    update = response.artifact_update
+                    if update.context_id:
+                        self.state.context_id = update.context_id
+
+                    metadata = {
+                        "a2a": {
+                            "task_id": update.task_id,
+                            "artifact_id": update.artifact.artifact_id,
+                        },
+                    }
+                    for part in update.artifact.parts:
+                        events += _part_to_events(
+                            part,
+                            reply_id,
+                            metadata,
+                        )
+
+                case "status_update":
+                    update = response.status_update
+                    if update.context_id:
+                        self.state.context_id = update.context_id
+                    self.state.task_id = (
+                        update.task_id
+                        if _awaiting_input(update.status.state)
+                        else None
+                    )
+
+                    # Last write wins: the outcome is decided by the
+                    # state the stream ends on.
+                    finished_reason = _get_finished_reason(
+                        update.status.state,
+                    )
+
+                    metadata = {"a2a": {"task_id": update.task_id}}
+                    for part in update.status.message.parts:
+                        events += _part_to_events(
+                            part,
+                            reply_id,
+                            metadata,
+                        )
+
+                case "task":
+                    # A full Task snapshot, the only payload the
+                    # non-streaming path and GetTask return.
+                    task = response.task
+                    if task.context_id:
+                        self.state.context_id = task.context_id
+                    self.state.task_id = (
+                        task.id if _awaiting_input(task.status.state) else None
+                    )
+
+                    finished_reason = _get_finished_reason(
+                        task.status.state,
+                    )
+
+                    for artifact in task.artifacts:
+                        metadata = {
+                            "a2a": {
+                                "task_id": task.id,
+                                "artifact_id": artifact.artifact_id,
+                            },
+                        }
+                        for part in artifact.parts:
+                            events += _part_to_events(
+                                part,
+                                reply_id,
+                                metadata,
+                            )
+
+                    metadata = {"a2a": {"task_id": task.id}}
+                    for part in task.status.message.parts:
+                        events += _part_to_events(
+                            part,
+                            reply_id,
+                            metadata,
+                        )
+
+                case _:
+                    raise RuntimeError(
+                        "A2A response contained no payload.",
+                    )
+
+            for event in events:
+                msg.append_event(event)
+                yield event
+
+        metadata = {"a2a": {"context_id": self.state.context_id}}
+
+        # `append_event` stamps finished_reason and finished_at from the
+        # end event, so the message must see it before it is yielded.
+        end_event = ReplyEndEvent(
+            session_id=self.state.session_id,
             reply_id=reply_id,
             finished_reason=finished_reason,
-            error=error,
             metadata=metadata,
         )
+        msg.append_event(end_event)
+        yield end_event
+
+        msg.metadata = metadata
+        yield msg
 
     def _build_request(self, messages: list[Msg]) -> Any:
-        """Flatten AgentScope messages into one A2A user Message."""
-        parts = [
-            _block_to_part(block, self._types)
-            for message in messages
-            for block in message.content
-        ]
-        message = self._types.Message(
+        """Flatten AgentScope messages into one A2A user Message.
+
+        Args:
+            messages (`list[Msg]`):
+                The messages of this turn, whose blocks become the Parts of
+                a single user Message.
+
+        Returns:
+            `a2a.types.SendMessageRequest`:
+                The request, carrying the remote ``context_id`` and, when the
+                Task is waiting for input, its ``task_id``.
+        """
+        from a2a.types import Part, Message, Role, SendMessageRequest
+
+        # Convert Msg objects into A2A message parts.
+        parts = []
+        for msg in messages:
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    parts.append(Part(text=block.text))
+
+                elif isinstance(block, DataBlock):
+                    if isinstance(block.source, Base64Source):
+                        try:
+                            raw = base64.b64decode(
+                                block.source.data,
+                                validate=True,
+                            )
+                        except ValueError as error:
+                            raise ValueError(
+                                "A2AAgent received invalid base64 input data.",
+                            ) from error
+                        parts.append(
+                            Part(
+                                raw=raw,
+                                media_type=block.source.media_type,
+                                filename=block.name or "",
+                            ),
+                        )
+
+                    elif isinstance(block.source, URLSource):
+                        parts.append(
+                            Part(
+                                url=str(block.source.url),
+                                media_type=block.source.media_type,
+                                filename=block.name or "",
+                            ),
+                        )
+
+                else:
+                    raise TypeError(
+                        f"A2AAgent cannot send block of type {type(block)}.",
+                    )
+
+        message = Message(
             message_id=_generate_id(),
-            role=self._types.Role.Value("ROLE_USER"),
+            role=Role.ROLE_USER,
             parts=parts,
         )
-        if self._context_id:
-            message.context_id = self._context_id
-        if self._task_state in self._interrupted:
-            assert self._task_id is not None
-            message.task_id = self._task_id
-        return self._types.SendMessageRequest(message=message)
 
-    def _normalize_inputs(self, inputs: Msg | list[Msg] | None) -> list[Msg]:
-        """Normalize and validate direct reply inputs."""
-        if inputs is None:
-            return []
-        messages = [inputs] if isinstance(inputs, Msg) else inputs
-        if not isinstance(messages, list) or not all(
-            isinstance(msg, Msg) for msg in messages
-        ):
-            raise TypeError("inputs must be a Msg, a list of Msg, or None.")
-        return messages
+        # Use the current session id as the a2a context id if already set
+        if self.state.context_id:
+            message.context_id = self.state.context_id
 
-    def _status_event(self, reply_id: str) -> CustomEvent:
-        """Expose the remote Task state without changing core event types.
+        if self.state.task_id:
+            message.task_id = self.state.task_id
 
-        The status message itself is emitted as ordinary content blocks, so
-        this event carries identifiers and state only.
-        """
-        value: dict[str, Any] = {
-            "context_id": self._context_id,
-            "task_id": self._task_id,
-            "task_state": self.task_state,
-        }
-        return CustomEvent(
-            name="a2a_status_update",
-            value=value,
-            metadata=self._event_metadata(reply_id),
-        )
-
-    def _event_metadata(self, reply_id: str) -> dict[str, Any]:
-        """Build concise metadata for streamed A2A events."""
-        return {
-            "a2a": {
-                "context_id": self._context_id,
-                "task_id": self._task_id,
-                "task_state": self.task_state,
-            },
-            "reply_id": reply_id,
-        }
-
-    def _final_metadata(self, artifact_ids: list[str]) -> dict[str, Any]:
-        """Build the canonical final A2A metadata view."""
-        return {
-            "a2a": {
-                "context_id": self._context_id,
-                "task_id": self._task_id,
-                "task_state": self.task_state,
-                "artifact_ids": artifact_ids,
-            },
-        }
-
-    def _update_message(self, message: Message) -> None:
-        """Update remote identifiers from a direct Message."""
-        self._update_ids(message.context_id, "")
-        self._task_id = message.task_id or None
-
-    def _update_task(self, task: A2ATask) -> None:
-        """Update remote identifiers and state from a Task snapshot."""
-        self._update_ids(task.context_id, task.id)
-        self._task_state = int(task.status.state)
-
-    def _update_ids(self, context_id: str, task_id: str) -> None:
-        """Remember non-empty server-authoritative identifiers."""
-        if context_id:
-            self._context_id = context_id
-        if task_id:
-            self._task_id = task_id
-
-    @property
-    def _active(self) -> set[int]:
-        """The Task states that are still running on the remote server."""
-        return {
-            self._state("TASK_STATE_SUBMITTED"),
-            self._state("TASK_STATE_WORKING"),
-        }
-
-    @property
-    def _interrupted(self) -> set[int]:
-        """The Task states that a new Message continues rather than starts.
-
-        ``AUTH_REQUIRED`` is included because the A2A specification lets a
-        client message negotiate, correct, or reject the request.
-        """
-        return {
-            self._state("TASK_STATE_INPUT_REQUIRED"),
-            self._state("TASK_STATE_AUTH_REQUIRED"),
-        }
-
-    def _state(self, name: str) -> int:
-        """Resolve a protobuf Task state by name."""
-        return int(self._types.TaskState.Value(name))
-
-    def _state_name(self, state: int | None) -> str | None:
-        """Return a protobuf Task state name."""
-        return self._types.TaskState.Name(state) if state is not None else None
-
-    def _require_task_id(self) -> str:
-        """Return the current Task ID or raise an actionable error."""
-        if self._task_id is None:
-            raise RuntimeError("A2AAgent has no remote Task to operate on.")
-        return self._task_id
-
-    def _require_cancelable_task_id(self) -> str:
-        """Return a non-terminal Task ID, the only kind worth canceling."""
-        task_id = self._require_task_id()
-        terminal_states = {
-            self._state("TASK_STATE_COMPLETED"),
-            self._state("TASK_STATE_FAILED"),
-            self._state("TASK_STATE_CANCELED"),
-            self._state("TASK_STATE_REJECTED"),
-        }
-        if self._task_state in terminal_states:
-            raise RuntimeError(
-                f"A2A task {task_id!r} is already terminal "
-                f"({self.task_state}).",
-            )
-        return task_id
-
-    @staticmethod
-    def _validate_stream_task_id(
-        expected: str | None,
-        incoming: str,
-    ) -> str | None:
-        """Ensure one response stream cannot silently switch Tasks."""
-        if not incoming:
-            return expected
-        if expected is not None and incoming != expected:
-            raise RuntimeError(
-                "A2A response stream changed task ID from "
-                f"{expected!r} to {incoming!r}.",
-            )
-        return incoming
-
-    @staticmethod
-    def _validate_stream_context_id(
-        expected: str | None,
-        incoming: str,
-    ) -> str | None:
-        """Ensure one response stream cannot silently switch contexts."""
-        if not incoming:
-            return expected
-        if expected is not None and incoming != expected:
-            raise RuntimeError(
-                "A2A response stream changed context ID from "
-                f"{expected!r} to {incoming!r}.",
-            )
-        return incoming
+        return SendMessageRequest(message=message)
 
     def _ensure_open(self) -> None:
         """Reject operations after client closure."""
         if self._closed:
             raise RuntimeError("A2AAgent is closed.")
 
+    # =================================================================
+    # The functions that not implemented by the A2A protocol, leaving for
+    # alignment with the Agent interface.
+    # =================================================================
+
+    async def compress_context(  # pylint: disable=unused-argument
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Do nothing because the remote A2A server owns its context.
+
+        The arguments are accepted for interface compatibility with
+        :class:`agentscope.agent.Agent`.
+        """
+        logger.warning(
+            "Ignoring compress_context() on A2AAgent %s: the remote A2A "
+            "server owns its own conversation context.",
+            self.name,
+        )
+
+    async def observe(self, msgs: Msg | list[Msg] | None = None) -> None:
+        """Cache messages to send ahead of the next reply's own input.
+
+        Args:
+            msgs (`Msg | list[Msg] | None`, optional):
+                The messages to remember. ``None`` is ignored.
+        """
+        if msgs is None:
+            return
+        messages = [msgs] if isinstance(msgs, Msg) else msgs
+        if not isinstance(messages, list) or not all(
+            isinstance(msg, Msg) for msg in messages
+        ):
+            raise TypeError("msgs must be a Msg, a list of Msg, or None.")
+        self._ensure_open()
+        self.state.observed_context.extend(messages)
