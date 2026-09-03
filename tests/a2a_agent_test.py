@@ -194,42 +194,26 @@ class _FakeClient:
 class A2AAgentConstructionTest(IsolatedAsyncioTestCase):
     """Test A2AAgent construction and compatibility boundaries."""
 
-    async def test_protocol_validation_and_filtering(self) -> None:
-        """Only A2A 1.0 interfaces survive validation."""
+    async def test_default_client_configuration(self) -> None:
+        """The default client streams over the two supported bindings."""
         client = _FakeClient([])
-        agent = A2AAgent(_card("0.3", "1.0"), client=client)
-        # pylint: disable=protected-access
-        interfaces = agent._agent_card.supported_interfaces
-        self.assertEqual(
-            [interface.protocol_version for interface in interfaces],
-            ["1.0"],
-        )
-        await agent.aclose()
-
-        with self.assertRaisesRegex(ValueError, "A2A 1.0"):
-            A2AAgent(_card("0.3"), client=_FakeClient([]))
-
-    async def test_default_client_receives_only_1_0_interfaces(self) -> None:
-        """The SDK factory cannot select its A2A 0.3 compatibility path."""
-        client = _FakeClient([])
+        card = _card("0.3", "1.0")
         with patch("a2a.client.ClientFactory") as factory_class:
             factory_class.return_value.create.return_value = client
-            agent = A2AAgent(_card("0.3", "1.0"))
+            agent = A2AAgent(card)
 
         config = factory_class.call_args.args[0]
         self.assertTrue(config.streaming)
         self.assertFalse(config.polling)
-        self.assertEqual(
+        self.assertListEqual(
             [binding.value for binding in config.supported_protocol_bindings],
             ["JSONRPC", "HTTP+JSON"],
         )
-        factory_card = factory_class.return_value.create.call_args.args[0]
-        self.assertEqual(
-            [
-                interface.protocol_version
-                for interface in factory_card.supported_interfaces
-            ],
-            ["1.0"],
+        # The card reaches the SDK untouched, so the factory can fall back to
+        # its A2A 0.3 compatibility transport when a peer offers nothing newer.
+        self.assertIs(
+            factory_class.return_value.create.call_args.args[0],
+            card,
         )
         await agent.aclose()
 

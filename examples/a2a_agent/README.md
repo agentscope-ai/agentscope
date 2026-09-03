@@ -139,8 +139,8 @@ cancellation; call `cancel_task()` explicitly when that is the desired action.
 
 Text, raw bytes, and URL Parts are mapped to AgentScope text/data blocks.
 Streaming is supported for text and raw-byte artifacts. Structured-data Parts,
-thinking/tool/hint blocks, push notifications, and A2A 0.3 interfaces are not
-supported by this adapter.
+thinking/tool/hint blocks, and push notifications are not supported by this
+adapter.
 
 `compress_context()` is intentionally a no-op because the remote A2A server,
 not the local adapter, owns and compresses its conversation context.

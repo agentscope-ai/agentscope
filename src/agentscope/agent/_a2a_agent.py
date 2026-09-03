@@ -34,29 +34,8 @@ if TYPE_CHECKING:
     from ..message import ContentBlock
 
 
-def _protocol_1_0_card(agent_card: AgentCard, types: Any) -> AgentCard:
-    """Copy an Agent Card while retaining only A2A 1.0 interfaces."""
-    if not isinstance(agent_card, types.AgentCard):
-        raise TypeError("agent_card must be an a2a.types.AgentCard instance.")
-    interfaces = [
-        interface
-        for interface in agent_card.supported_interfaces
-        if interface.protocol_version == "1.0"
-    ]
-    if not interfaces:
-        raise ValueError(
-            "A2AAgent requires an Agent Card with at least one A2A 1.0 "
-            "interface.",
-        )
-    filtered_card = types.AgentCard()
-    filtered_card.CopyFrom(agent_card)
-    del filtered_card.supported_interfaces[:]
-    filtered_card.supported_interfaces.extend(interfaces)
-    return filtered_card
-
-
 def _validate_default_transport(agent_card: AgentCard) -> None:
-    """Ensure the SDK factory can select a supported A2A 1.0 transport."""
+    """Ensure the SDK factory can select a supported transport."""
     supported_bindings = {"JSONRPC", "HTTP+JSON"}
     advertised_bindings = [
         interface.protocol_binding
@@ -66,8 +45,8 @@ def _validate_default_transport(agent_card: AgentCard) -> None:
         binding in supported_bindings for binding in advertised_bindings
     ):
         raise ValueError(
-            "A2AAgent's default client requires an A2A 1.0 JSONRPC or "
-            "HTTP+JSON interface; advertised bindings: "
+            "A2AAgent's default client requires a JSONRPC or HTTP+JSON "
+            "interface; advertised bindings: "
             f"{advertised_bindings!r}. Inject a compatible SDK Client to "
             "use another transport.",
         )
@@ -115,15 +94,15 @@ class A2AAgent:
             agent_card (`a2a.types.AgentCard`):
                 The remote Agent Card, used both to identify the peer (its
                 ``name`` becomes this adapter's ``name``) and to select a
-                transport. Only its A2A 1.0 interfaces are retained; a card
-                advertising no 1.0 interface is rejected, so the SDK cannot
-                silently fall back to an A2A 0.3 endpoint.
+                transport. The SDK picks the newest protocol version the card
+                advertises for the chosen binding, falling back to its A2A 0.3
+                compatibility transport when that is all the peer offers.
             client (`a2a.client.Client | None`, optional):
                 An official SDK client, e.g. one configured for gRPC or with
-                custom auth. If omitted, a streaming client is built from the
-                filtered card, which then requires a ``JSONRPC`` or
-                ``HTTP+JSON`` interface. The adapter owns the client either
-                way and closes it in :meth:`aclose`.
+                custom auth. If omitted, a streaming client is built from
+                the card, which then requires a ``JSONRPC`` or ``HTTP+JSON``
+                interface. The adapter owns the client either way and closes
+                it in :meth:`aclose`.
             context_id (`str | None`, optional):
                 An existing remote context to continue, as returned by the
                 :attr:`context_id` property of an earlier adapter. Subsequent
@@ -143,7 +122,7 @@ class A2AAgent:
                 "`pip install 'agentscope[a2a]'`.",
             ) from error
 
-        self._agent_card = _protocol_1_0_card(agent_card, types)
+        self._agent_card = agent_card
         self.name = self._agent_card.name
         if client is None:
             from a2a.client import ClientConfig, ClientFactory

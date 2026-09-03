@@ -104,7 +104,7 @@ tools = [
 ]
 # ------------ A2A ------------
 a2a = [
-    "a2a-sdk>=1.1.1,<2.0.0",
+    "a2a-sdk>=1.1.1",
 ]
 # ------------ Vector stores ------------
 vdb-qdrant = ["qdrant-client"]
