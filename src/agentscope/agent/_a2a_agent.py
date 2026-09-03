@@ -33,24 +33,6 @@ if TYPE_CHECKING:
     from ..message import ContentBlock
 
 
-def _validate_default_transport(agent_card: AgentCard) -> None:
-    """Ensure the SDK factory can select a supported transport."""
-    supported_bindings = {"JSONRPC", "HTTP+JSON"}
-    advertised_bindings = [
-        interface.protocol_binding
-        for interface in agent_card.supported_interfaces
-    ]
-    if not any(
-        binding in supported_bindings for binding in advertised_bindings
-    ):
-        raise ValueError(
-            "A2AAgent's default client requires a JSONRPC or HTTP+JSON "
-            "interface; advertised bindings: "
-            f"{advertised_bindings!r}. Inject a compatible SDK Client to "
-            "use another transport.",
-        )
-
-
 # The reply outcome for each A2A Task state a response stream can end on.
 # The interrupted states end the reply normally: the remote Task is suspended
 # server-side, but nothing is suspended locally, so the status message is an
@@ -127,7 +109,6 @@ class A2AAgent:
             from a2a.client import ClientConfig, ClientFactory
             from a2a.utils.constants import TransportProtocol
 
-            _validate_default_transport(self._agent_card)
             client = ClientFactory(
                 ClientConfig(
                     streaming=True,
@@ -199,7 +180,6 @@ class A2AAgent:
         The arguments are accepted for interface compatibility with
         :class:`agentscope.agent.Agent`.
         """
-        del args, kwargs
         logger.warning(
             "Ignoring compress_context() on A2AAgent %s: the remote A2A "
             "server owns its own conversation context.",
@@ -209,15 +189,28 @@ class A2AAgent:
     async def reply_stream(
         self,
         inputs: Msg | list[Msg] | None = None,
-    ) -> AsyncGenerator[AgentEvent, None]:
+        yield_final_msg: bool = False,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Send input and stream the remote reply as AgentScope events.
 
         A Task still running on the server is followed to completion first,
         so its events precede the ones this input produces.
+
+        Args:
+            inputs (`Msg | list[Msg] | None`, optional):
+                The messages to send, appended to the observed ones.
+            yield_final_msg (`bool`, defaults to `False`):
+                If yield the final reply message. A followed Task yields its
+                own final message before the one this input produces.
+
+        Yields:
+            `AgentEvent | Msg`:
+                Streamed events produced during the reply.
         """
         async for event_or_msg in self._reply(inputs):
-            if not isinstance(event_or_msg, Msg):
-                yield event_or_msg
+            if isinstance(event_or_msg, Msg) and not yield_final_msg:
+                continue
+            yield event_or_msg
 
     async def reply(self, inputs: Msg | list[Msg] | None = None) -> Msg:
         """Send input and return the canonical final assistant message.

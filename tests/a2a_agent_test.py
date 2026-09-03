@@ -216,14 +216,6 @@ class A2AAgentConstructionTest(IsolatedAsyncioTestCase):
         )
         await agent.aclose()
 
-    async def test_default_client_rejects_unsupported_binding(self) -> None:
-        """Fail before the SDK factory sees an unusable advertised binding."""
-        with self.assertRaisesRegex(
-            ValueError,
-            r"default client requires.*advertised bindings: \['GRPC'\]",
-        ):
-            A2AAgent(_card("1.0", protocol_binding="GRPC"))
-
     async def test_injected_client_may_use_another_binding(self) -> None:
         """Transport restrictions belong only to the default client path."""
         client = _FakeClient([])
