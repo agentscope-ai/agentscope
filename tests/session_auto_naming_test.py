@@ -21,6 +21,8 @@ from unittest import IsolatedAsyncioTestCase
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
+from utils import AnyString
+
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app import create_app
 from agentscope.app._service import ChatService
@@ -39,8 +41,6 @@ from agentscope.app.storage import (
     SessionRecord,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
-
-from utils import AnyString
 
 HEADERS = {"X-User-ID": "alice"}
 
@@ -365,10 +365,7 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
         await self._name(_Model(), "draft the v2 release notes")
 
         self.assertListEqual(
-            [
-                (c.name, c.naming.auto)
-                for c in self.storage.written_configs
-            ],
+            [(c.name, c.naming.auto) for c in self.storage.written_configs],
             [("draft the v2 release notes", False)],
         )
 

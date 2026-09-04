@@ -215,8 +215,10 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onSessionsChanged?.();
 	}, [refetchSessions, sessionId, onSessionsChanged]);
 
-	// Auto-naming replaced the session's placeholder name; both session
-	// lists still hold the old one.
+	// Auto-naming replaced the session's placeholder name. The outer
+	// page shares this cached list whenever both are looking at the same
+	// agent; when they are not — drilled into a team member — it needs
+	// its own nudge.
 	const handleSessionUpdated = useCallback(async () => {
 		await refetchSessions();
 		onSessionsChanged?.();
@@ -473,14 +475,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		],
 	);
 
-	// ChatViewport keeps its own `useSessions(agentId)` instance (the
-	// outer page has a separate one). Its built-in fetch only fires on
-	// `agentId` change, so when the outer page creates a new session
-	// under the same agent, this list doesn't auto-refresh. Without
-	// this refetch, `view` would stay `null` for the brand-new session
-	// id and every effect below would early-return on `!view`,
-	// leaving the model select and friends pinned to whatever the
-	// previously-viewed session had configured.
+	// Safety net for a `view` that never arrives. A session created from
+	// the outer page reaches this list on its own, since both mount the
+	// same cached query — but not when the two are looking at different
+	// agents (drilled into a team member), and not for a write that
+	// happened outside either. Without a `view` every effect below
+	// early-returns on `!view`, leaving the model select and friends
+	// pinned to whatever the previously-viewed session had configured.
 	useEffect(() => {
 		if (!sessionId) return;
 		if (view) return;
