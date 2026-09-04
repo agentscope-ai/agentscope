@@ -2482,9 +2482,6 @@ class Agent:
                     f"{e.message}",
                 ) from e
 
-            if tool.input_schema is not None:
-                tool_call.input = json.dumps(parsed_input)
-
         # The exceptions that
         #  - cannot found tool
         #  - tool not available

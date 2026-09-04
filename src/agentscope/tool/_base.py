@@ -2,7 +2,6 @@
 # pylint: disable=unused-argument
 """The tool protocol in agentscope."""
 import inspect
-import json
 import os
 from abc import abstractmethod, ABC
 from pathlib import Path
@@ -19,7 +18,6 @@ from ..permission import (
 )
 from ._response import ToolChunk
 from ._utils import _remove_title_field
-from .._utils._common import _json_loads_with_repair
 
 
 class ParamsBase(BaseModel):
@@ -193,45 +191,12 @@ class ToolBase(ABC):
         middleware is the outermost layer and runs its pre-logic before
         any inner layers, then its post-logic after all inner layers
         have completed.
-
-        Repair JSON-compatible kwargs before middleware, preserving injected
-        state and native Python objects. If schema repair fails, leave the
-        original arguments for the tool to handle.
-
-        Raises:
-            TypeError:
-                If positional arguments are provided.
-            ToolJSONDecodeError:
-                If arguments fail safety checks or the schema is invalid.
         """
         if args:
             raise TypeError(
                 f"{type(self).__name__} must be called with keyword arguments "
                 f"only, but got {len(args)} positional argument(s).",
             )
-
-        # Exclude injected state from serialization and repair.
-        schema = getattr(self, "input_schema", None)
-        if schema is not None:
-            tool_kwargs = dict(kwargs)
-            injected_kwargs = {}
-            if self.is_state_injected and "_agent_state" in tool_kwargs:
-                injected_kwargs["_agent_state"] = tool_kwargs.pop(
-                    "_agent_state",
-                )
-            try:
-                serialized = json.dumps(tool_kwargs)
-            except TypeError:
-                # Preserve native objects from direct Python callers.
-                pass
-            else:
-                kwargs = _json_loads_with_repair(
-                    serialized,
-                    schema,
-                    strict_schema=False,
-                )
-                kwargs.update(injected_kwargs)
-
         # ``getattr`` with a default so the no-middleware path keeps working
         # even if a subclass overrides ``__init__`` without calling
         # ``super().__init__()``.
