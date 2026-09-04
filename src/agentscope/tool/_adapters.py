@@ -3,7 +3,7 @@
 import inspect
 import json
 import re
-from contextlib import _AsyncGeneratorContextManager
+from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
 
@@ -209,7 +209,7 @@ class MCPTool(ToolBase):
         self,
         mcp_name: str,
         tool: mcp.types.Tool,
-        client_gen: Callable[..., _AsyncGeneratorContextManager[Any]]
+        client_gen: Callable[..., AbstractAsyncContextManager[Any]]
         | None = None,
         session: Any | None = None,
         timeout: float | None = None,
@@ -222,7 +222,7 @@ class MCPTool(ToolBase):
                 The name of the MCP server instance.
             tool (`mcp.types.Tool`):
                 The MCP tool definition.
-            client_gen (`Callable[..., _AsyncGeneratorContextManager[Any]] \
+            client_gen (`Callable[..., AbstractAsyncContextManager[Any]] \
             | None`, optional):
                 The MCP client generator function for stateless clients.
                 Either this or ``session`` must be provided.

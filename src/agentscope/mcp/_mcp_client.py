@@ -2,8 +2,12 @@
 """Unified MCP client implementation for AgentScope."""
 import asyncio
 import re
-from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
-from typing import Any, TYPE_CHECKING
+from contextlib import (
+    AbstractAsyncContextManager,
+    asynccontextmanager,
+    AsyncExitStack,
+)
+from typing import Any, AsyncGenerator, ClassVar, TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx
@@ -11,6 +15,7 @@ import mcp.types
 from mcp import ClientSession, stdio_client, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 from pydantic import Field, BaseModel, PrivateAttr
 
 from ._config import StdioMCPConfig, HttpMCPConfig
@@ -68,6 +73,23 @@ class MCPClient(BaseModel):
 
     """
 
+    _RUNTIME_HEADER_DENYLIST: ClassVar[frozenset[str]] = frozenset(
+        {
+            "accept",
+            "connection",
+            "content-length",
+            "content-type",
+            "host",
+            "last-event-id",
+            "mcp-protocol-version",
+            "mcp-session-id",
+            "transfer-encoding",
+        },
+    )
+    _RUNTIME_HEADER_NAME_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+",
+    )
+
     name: str = Field(
         title="MCP Name",
         description="The MCP name.",
@@ -106,6 +128,10 @@ class MCPClient(BaseModel):
     _stack: AsyncExitStack | None = PrivateAttr(default=None)
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
+    _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
+    _runtime_header_names: frozenset[str] = PrivateAttr(
+        default_factory=frozenset,
+    )
 
     @property
     def is_connected(self) -> bool:
@@ -182,7 +208,7 @@ class MCPClient(BaseModel):
 
     def _create_http_client(
         self,
-    ) -> _AsyncGeneratorContextManager[Any]:
+    ) -> AbstractAsyncContextManager[Any]:
         """Create an HTTP MCP client (SSE or streamable HTTP)."""
         config = self.mcp_config
 
@@ -200,17 +226,137 @@ class MCPClient(BaseModel):
                 timeout=config.timeout,
             )
 
-        # StreamableHTTP transport
-        http_client = None
-        if config.headers or config.timeout:
+        return self._create_streamable_http_client()
+
+    @asynccontextmanager
+    async def _create_streamable_http_client(
+        self,
+    ) -> AsyncGenerator[Any, None]:
+        """Create an owned HTTP client with live header injection."""
+        config = self.mcp_config
+        if config.headers is None and config.timeout is None:
+            http_client = create_mcp_http_client()
+        else:
             http_client = httpx.AsyncClient(
                 headers=config.headers,
                 timeout=config.timeout,
             )
-        return streamable_http_client(
-            url=config.url,
-            http_client=http_client,
+        http_client.event_hooks["request"].append(
+            self._inject_runtime_headers,
         )
+
+        async with http_client:
+            async with streamable_http_client(
+                url=config.url,
+                http_client=http_client,
+            ) as transport:
+                yield transport
+
+    async def _inject_runtime_headers(
+        self,
+        request: httpx.Request,
+    ) -> None:
+        """Apply a runtime-header snapshot to a same-origin request."""
+        configured_url = httpx.URL(self.mcp_config.url)
+        same_origin = (
+            request.url.scheme,
+            request.url.host,
+            request.url.port,
+        ) == (
+            configured_url.scheme,
+            configured_url.host,
+            configured_url.port,
+        )
+
+        # Redirect requests inherit ordinary custom headers. Remove every
+        # name ever owned by the runtime layer before deciding whether the
+        # current request may receive a fresh snapshot.
+        runtime_header_names = self._runtime_header_names
+        for name in runtime_header_names:
+            request.headers.pop(name, None)
+        if not same_origin:
+            return
+
+        # Restore configured values that may have been shadowed by a prior
+        # runtime snapshot, then apply the current complete replacement map.
+        for name, value in (self.mcp_config.headers or {}).items():
+            if name.lower() in runtime_header_names:
+                request.headers[name] = value
+        request.headers.update(dict(self._runtime_headers))
+
+    async def set_runtime_headers(
+        self,
+        headers: dict[str, str],
+    ) -> None:
+        """Replace headers applied to subsequent Streamable HTTP requests.
+
+        This method replaces the complete runtime header map instead of
+        merging it. An empty map removes all runtime overrides, so static
+        headers from :attr:`mcp_config` apply again. It can be called before
+        connecting a local stateful client, or at any time for a stateless
+        client.
+
+        The update applies to subsequent outbound requests to the configured
+        MCP origin. Runtime headers are not forwarded across cross-origin
+        redirects. A request already in progress may have read the previous
+        header snapshot. SSE transport is not supported because its headers
+        are fixed when the stream is established.
+
+        Runtime headers are live instance state. They are intentionally
+        excluded from ``model_dump`` and workspace persistence.
+
+        Args:
+            headers (`dict[str, str]`):
+                The complete runtime header map. An empty dict clears it.
+
+        Raises:
+            `ValueError`:
+                The client is not Streamable HTTP, a header is invalid, or
+                a header is owned by the HTTP/MCP transport.
+        """
+        if self.mcp_config.type != "http_mcp":
+            raise ValueError(
+                "Runtime headers require an HTTP MCP client.",
+            )
+        path = urlsplit(self.mcp_config.url).path
+        if path.endswith("/sse") or path.endswith("/messages/"):
+            raise ValueError(
+                "Runtime headers currently support only Streamable HTTP.",
+            )
+        if not isinstance(headers, dict):
+            raise ValueError("Runtime headers must be a dict of strings.")
+
+        validated: dict[str, str] = {}
+        for name, value in headers.items():
+            if not isinstance(name, str) or not isinstance(value, str):
+                raise ValueError(
+                    "Runtime headers must be a dict of strings.",
+                )
+            if name.lower() in self._RUNTIME_HEADER_DENYLIST:
+                raise ValueError(
+                    f"Runtime header {name!r} is owned by the transport.",
+                )
+            invalid_value = any(
+                (ord(char) < 32 and char != "\t") or ord(char) == 127
+                for char in value
+            )
+            try:
+                value.encode("ascii")
+            except UnicodeEncodeError:
+                invalid_value = True
+            if (
+                self._RUNTIME_HEADER_NAME_PATTERN.fullmatch(name) is None
+                or invalid_value
+            ):
+                raise ValueError(
+                    f"Runtime header {name!r} is invalid.",
+                )
+            validated[name] = value
+
+        self._runtime_header_names = self._runtime_header_names.union(
+            name.lower() for name in validated
+        )
+        self._runtime_headers = validated
 
     async def connect(self) -> None:
         """Connect to the MCP server (for stateful connections only).
@@ -310,7 +456,7 @@ class MCPClient(BaseModel):
             self._is_connected = False
             logger.info("MCP closed: %s", self.name)
 
-    def _get_client_gen(self) -> _AsyncGeneratorContextManager[Any]:
+    def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:
         """Get client generator for stateless connections."""
         if self.mcp_config.type == "stdio_mcp":
             return self._client
