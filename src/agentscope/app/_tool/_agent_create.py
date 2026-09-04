@@ -13,6 +13,7 @@ from .._types import SubAgentTemplate
 from .._bus_ops import deliver_to_inbox
 from ..storage import AgentData, AgentRecord, SessionConfig, TeamMember
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
+from ..._logging import logger
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
 from ...state import AgentState
@@ -477,7 +478,58 @@ optional):
             ]
             await self._storage.upsert_team(self._user_id, team)
 
-            # 4. Deliver the initial task to the worker's inbox + wakeup.
+            # 4. Equip the worker with the template's MCPs and skills,
+            #    keyed on its own agent id so the leader and its
+            #    siblings are untouched. Installed one by one so a
+            #    single unusable entry — an unreachable skill, a name
+            #    the backend refuses — costs the worker that entry
+            #    rather than every tool it was meant to have.
+            if template.mcps or template.skills:
+                workspace = await self._workspace_manager.get_workspace(
+                    self._user_id,
+                    self._agent_id,
+                    self._session_id,
+                    leader_session.config.workspace_id,
+                )
+                for mcp in template.mcps:
+                    try:
+                        await workspace.add_mcp(
+                            mcp,
+                            agent_id=worker_agent.id,
+                            session_id=worker_session.id,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to equip sub-agent %r with MCP %r: %s",
+                            name,
+                            mcp.name,
+                            e,
+                        )
+
+                for skill in template.skills:
+                    try:
+                        if isinstance(skill, str):
+                            await workspace.add_skill(
+                                skill,
+                                agent_id=worker_agent.id,
+                            )
+                        else:
+                            archive = await skill.open()
+                            await workspace.add_skill_archive(
+                                archive.stream,
+                                archive.format,
+                                skill.name,
+                                agent_id=worker_agent.id,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to equip sub-agent %r with skill %r: %s",
+                            name,
+                            skill if isinstance(skill, str) else skill.name,
+                            e,
+                        )
+
+            # 5. Deliver the initial task to the worker's inbox + wakeup.
             hint = HintBlock(
                 hint=(
                     f'<team-message from="{leader_name}">\n'
