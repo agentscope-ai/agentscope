@@ -70,12 +70,12 @@ interface ChatViewportProps {
 	 */
 	sessionId: string | null;
 	/**
-	 * Optional hook invoked when a team membership change arrives on
-	 * this viewport's SSE stream. The outer page owns the session list
-	 * that backs the team sidebar, so it must be told to refetch too;
-	 * passing this callback wires that signal up.
+	 * Optional hook invoked when a server-side change to this session
+	 * or its team arrives on the SSE stream. The outer page owns the
+	 * session list that backs the sidebar, so it must be told to
+	 * refetch too; passing this callback wires that signal up.
 	 */
-	onTeamUpdated?: () => void;
+	onSessionsChanged?: () => void;
 }
 
 /** Maximum number of panels stacked in a single dock column. */
@@ -168,7 +168,7 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
@@ -212,8 +212,15 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			// close a panel the user already has open.
 			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
 		}
-		onTeamUpdated?.();
-	}, [refetchSessions, sessionId, onTeamUpdated]);
+		onSessionsChanged?.();
+	}, [refetchSessions, sessionId, onSessionsChanged]);
+
+	// Auto-naming replaced the session's placeholder name; both session
+	// lists still hold the old one.
+	const handleSessionUpdated = useCallback(async () => {
+		await refetchSessions();
+		onSessionsChanged?.();
+	}, [refetchSessions, onSessionsChanged]);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
@@ -236,6 +243,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
+		onSessionUpdated: handleSessionUpdated,
 	});
 	const {
 		mcps,

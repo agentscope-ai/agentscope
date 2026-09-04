@@ -83,6 +83,10 @@ const SOURCE_ICON: Record<SessionSource, LucideIcon> = {
 	channel: Cable,
 };
 
+/** localStorage keys holding the last (agent, session) the user viewed. */
+const LAST_AGENT_KEY = 'chat_last_agent';
+const LAST_SESSION_KEY = 'chat_last_session';
+
 const ChatPageInner = () => {
 	const navigate = useNavigate();
 	const {
@@ -136,21 +140,38 @@ const ChatPageInner = () => {
 				? (urlSessionId ?? null)
 				: null;
 
-	// Redirect: URL is missing an agent → pick the first one and rewrite
-	// the URL in-place (replace so we don't pollute history).
+	// Remember where the user was, so coming back to a bare `/chat` —
+	// from another page, or from a new tab — reopens it instead of
+	// making them pick the same pair again.
 	useEffect(() => {
-		if (!urlAgentId && agents.length > 0) {
-			navigate(`/chat/${agents[0].id}`, { replace: true });
-		}
+		if (!urlAgentId || !urlSessionId) return;
+		localStorage.setItem(LAST_AGENT_KEY, urlAgentId);
+		localStorage.setItem(LAST_SESSION_KEY, urlSessionId);
+	}, [urlAgentId, urlSessionId]);
+
+	// Redirect: URL is missing an agent → reopen the last one viewed,
+	// falling back to the first, and rewrite the URL in-place (replace
+	// so we don't pollute history).
+	useEffect(() => {
+		if (urlAgentId || agents.length === 0) return;
+		const remembered = localStorage.getItem(LAST_AGENT_KEY);
+		const agent = agents.find((a) => a.id === remembered) ?? agents[0];
+		navigate(`/chat/${agent.id}`, { replace: true });
 	}, [agents, urlAgentId, navigate]);
 
 	// Redirect: URL has an agent but no session, or its sessionId no
-	// longer exists for this agent → pick the first available session.
+	// longer exists for this agent → reopen the last session viewed
+	// under *this* agent, falling back to the first available one.
 	useEffect(() => {
 		if (!urlAgentId || sessions.length === 0) return;
 		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
 		if (matches) return;
-		navigate(`/chat/${urlAgentId}/${sessions[0].session.id}`, { replace: true });
+		const remembered =
+			localStorage.getItem(LAST_AGENT_KEY) === urlAgentId
+				? localStorage.getItem(LAST_SESSION_KEY)
+				: null;
+		const view = sessions.find((v) => v.session.id === remembered) ?? sessions[0];
+		navigate(`/chat/${urlAgentId}/${view.session.id}`, { replace: true });
 	}, [urlAgentId, urlSessionId, sessions, navigate]);
 
 	/**
@@ -493,7 +514,7 @@ const ChatPageInner = () => {
 				<ChatViewport
 					agentId={effectiveAgentId}
 					sessionId={effectiveSessionId}
-					onTeamUpdated={refetchSessions}
+					onSessionsChanged={refetchSessions}
 				/>
 			</div>
 			{selectedAgent && (

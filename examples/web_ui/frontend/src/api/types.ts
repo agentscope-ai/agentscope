@@ -115,6 +115,8 @@ export type SessionSource = 'user' | 'schedule' | 'channel';
 
 export interface SessionConfig {
 	name: string;
+	/** Who owns `name` — see the backend's `SessionNaming`. */
+	naming: { auto: boolean };
 	chat_model_config: ChatModelConfig;
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
