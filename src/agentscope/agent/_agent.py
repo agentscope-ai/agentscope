@@ -6,6 +6,7 @@ import json
 import inspect
 import re
 import warnings
+from contextlib import contextmanager
 
 from asyncio import Queue
 from copy import deepcopy
@@ -18,6 +19,7 @@ from typing import (
     List,
     TYPE_CHECKING,
     Type,
+    Iterator,
 )
 
 import jsonschema
@@ -368,12 +370,13 @@ class Agent:
                 A final reply message.
         """
         final_msg: Msg | None = None
-        async for evt_or_msg in self._reply(
-            inputs=inputs,
-            structured_schema=structured_schema,
-        ):
-            if isinstance(evt_or_msg, Msg):
-                final_msg = evt_or_msg
+        with self._model_calibration_scope():
+            async for evt_or_msg in self._reply(
+                inputs=inputs,
+                structured_schema=structured_schema,
+            ):
+                if isinstance(evt_or_msg, Msg):
+                    final_msg = evt_or_msg
         if final_msg is None:
             raise RuntimeError("Agent did not produce a final message.")
         return final_msg
@@ -512,7 +515,10 @@ class Agent:
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
-        estimated_tokens = await self.model.count_tokens(**kwargs)
+        estimated_tokens = await self._count_model_tokens(
+            kwargs["messages"],
+            kwargs.get("tools"),
+        )
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
@@ -614,7 +620,7 @@ class Agent:
             },
         ]
         context_overflow = False
-        estimated_compression_tokens = await self.model.count_tokens(
+        estimated_compression_tokens = await self._count_model_tokens(
             messages,
             compression_tool_schema,
         )
@@ -630,7 +636,7 @@ class Agent:
         # Compress the messages
         res = None
         try:
-            res = await self.model.generate_structured_output(
+            res = await self._generate_structured_output(
                 messages=messages,
                 structured_model=cfg.summary_schema,
             )
@@ -655,7 +661,7 @@ class Agent:
                         ]
                     )
                     estimated_compression_tokens = (
-                        await self.model.count_tokens(
+                        await self._count_model_tokens(
                             messages,
                             compression_tool_schema,
                         )
@@ -669,7 +675,7 @@ class Agent:
                         break
 
                 try:
-                    res = await self.model.generate_structured_output(
+                    res = await self._generate_structured_output(
                         messages=messages,
                         structured_model=cfg.summary_schema,
                     )
@@ -738,6 +744,7 @@ class Agent:
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
+            self._clear_model_usage_anchor()
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",
@@ -1535,7 +1542,10 @@ class Agent:
         if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
-            input_tokens = await self.model.count_tokens(**kwargs)
+            input_tokens = await self._count_model_tokens(
+                kwargs["messages"],
+                kwargs.get("tools"),
+            )
 
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
@@ -1885,7 +1895,9 @@ class Agent:
             # Given event, required but not match
             extra_ids = set(
                 _.tool_call.id for _ in event.confirm_results
-            ) - set(awaiting_confirmations)
+            ) - set(
+                awaiting_confirmations,
+            )
             if extra_ids:
                 raise ValueError(
                     f"Received UserConfirmResultEvent with tool call ids "
@@ -2889,7 +2901,7 @@ class Agent:
         msg_index = len(self.state.context) - 1
         while msg_index >= 0:
             # Count the tokens when msgs after msg_index are reserved
-            reserved_tokens = await self.model.count_tokens(
+            reserved_tokens = await self._count_model_tokens(
                 system_msg + self.state.context[msg_index:],
                 tools,
             )
@@ -2935,7 +2947,7 @@ class Agent:
             attempt_msg.content = boundary_msg_content[block_index:]
 
             try_reserved = system_msg + [attempt_msg] + msgs_to_reserve
-            reserved_tokens = await self.model.count_tokens(
+            reserved_tokens = await self._count_model_tokens(
                 try_reserved,
                 tools,
             )
@@ -3052,7 +3064,7 @@ class Agent:
                 A tuple of the tool result blocks to reserved in context and
                 to offload (if any).
         """
-        n_tokens = await self.model.count_tokens(
+        n_tokens = await self._count_model_tokens(
             [AssistantMsg(self.name, content=tool_result.output)],
             None,
         )
@@ -3074,7 +3086,7 @@ class Agent:
         boundary_index = 0
         for i in range(len(copied_tool_result.output) - 1, 0, -1):
             copied_tool_result.output = tool_result.output[:i]
-            cur_tokens = await self.model.count_tokens(
+            cur_tokens = await self._count_model_tokens(
                 [
                     AssistantMsg(
                         self.name,
@@ -3101,11 +3113,11 @@ class Agent:
         if isinstance(boundary_block, TextBlock):
             # Truncate it
             truncated_text = boundary_block.text
-            cur_tokens = await self.model.count_tokens(
+            cur_tokens = await self._count_model_tokens(
                 [AssistantMsg(self.name, content=reserved_blocks)],
                 None,
             )
-            cur_tokens_plus = await self.model.count_tokens(
+            cur_tokens_plus = await self._count_model_tokens(
                 [
                     AssistantMsg(
                         self.name,
@@ -3188,6 +3200,52 @@ class Agent:
     # ======================================================================
     # Agent internal utility methods
     # ======================================================================
+    @contextmanager
+    def _model_calibration_scope(
+        self,
+        model: ChatModelBase | None = None,
+    ) -> Iterator[None]:
+        """Bind model usage calibration to this agent's session."""
+        target = model or self.model
+        scope = getattr(target, "_token_calibration_scope", None)
+        if scope is None:
+            yield
+            return
+        with scope(self.state.session_id):
+            yield
+
+    def _clear_model_usage_anchor(self) -> None:
+        """Reset provider calibration after replacing the context."""
+        models = [self.model]
+        if self.model_config.fallback_model is not None:
+            models.append(self.model_config.fallback_model)
+        for model in models:
+            clear_anchor = getattr(model, "_clear_usage_anchor", None)
+            if clear_anchor is not None:
+                clear_anchor(self.state.session_id)
+
+    async def _count_model_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """Count tokens while preserving per-session calibration."""
+        with self._model_calibration_scope():
+            return await self.model.count_tokens(messages, tools)
+
+    async def _generate_structured_output(
+        self,
+        messages: list[Msg],
+        structured_model: Any,
+    ) -> Any:
+        """Generate structured output within this agent's session scope."""
+        with self._model_calibration_scope():
+            response = await self.model.generate_structured_output(
+                messages=messages,
+                structured_model=structured_model,
+            )
+            return response
+
     async def _get_system_prompt(self) -> str:
         """Get the system prompt of the agent."""
         prompt = [self._system_prompt]
@@ -3295,11 +3353,12 @@ class Agent:
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
-                            messages=messages,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                        )
+                        with self._model_calibration_scope(model):
+                            return await model(
+                                messages=messages,
+                                tools=tools,
+                                tool_choice=tool_choice,
+                            )
                     else:
                         # pylint: disable=cell-var-from-loop
                         async def execute_chain(
@@ -3343,7 +3402,8 @@ class Agent:
                                     next_handler=next_handler,
                                 )
 
-                        return await execute_chain()
+                        with self._model_calibration_scope(model):
+                            return await execute_chain()
                 except Exception as e:
                     last_exception = e
                     # Only log a "Retrying" message when there's actually a
