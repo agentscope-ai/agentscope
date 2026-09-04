@@ -36,7 +36,7 @@ class _VerificationResult(BaseModel):
 
     result: Literal["pass", "fail", "impossible"] = Field(
         description=(
-            "The verfication result, which can be 'pass', 'fail', or "
+            "The verification result, which can be 'pass', 'fail', or "
             "'impossible'. 'impossible' means the given goal is impossible to "
             "achieve, and the executor should stop trying."
         ),
