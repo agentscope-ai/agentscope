@@ -5,6 +5,7 @@
 import asyncio
 from datetime import timedelta
 from importlib.util import find_spec
+import time
 from types import SimpleNamespace
 from typing import Any
 import unittest
@@ -230,7 +231,10 @@ class TestOpenSandboxWorkspaceManagerRecovery(IsolatedAsyncioTestCase):
         manager = OpenSandboxWorkspaceManager()
         workspace = await manager.get_workspace("u", "a", "s1", "wid")
         sandbox = workspace._sandbox
-        manager._cache["wid"] = (workspace, 0.0)
+        manager._cache["wid"] = (
+            workspace,
+            time.monotonic() - manager._ttl - 1.0,
+        )
 
         await manager._sweep_once()
 
