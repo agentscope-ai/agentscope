@@ -703,10 +703,24 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div className="flex flex-row items-center gap-x-1">
+								<div className="flex min-w-0 flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
+									{/* The open session, named opposite its own
+									    settings. The sidebar is the only other
+									    place the name appears, and it collapses
+									    on mobile — so on a narrow screen this is
+									    the only thing saying which conversation
+									    is on screen. */}
+									<span
+										className="truncate px-2 text-sm font-medium"
+										title={view?.session.config.name}
+									>
+										{view?.session.config.name}
+									</span>
 								</div>
-								<div className="flex flex-row gap-x-1">
+								{/* Never squeezed by a long session name: the
+								    name truncates instead. */}
+								<div className="flex shrink-0 flex-row gap-x-1">
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
