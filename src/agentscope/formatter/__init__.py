@@ -30,6 +30,10 @@ from ._openai_response_formatter import (
     OpenAIResponseFormatter,
     OpenAIResponseMultiAgentFormatter,
 )
+from ._minimax_formatter import (
+    MiniMaxChatFormatter,
+    MiniMaxMultiAgentFormatter,
+)
 from ._moonshot_formatter import (
     MoonshotChatFormatter,
     MoonshotMultiAgentFormatter,
@@ -55,6 +59,8 @@ __all__ = [
     "DeepSeekMultiAgentFormatter",
     "OpenAIResponseFormatter",
     "OpenAIResponseMultiAgentFormatter",
+    "MiniMaxChatFormatter",
+    "MiniMaxMultiAgentFormatter",
     "MoonshotChatFormatter",
     "MoonshotMultiAgentFormatter",
     "XAIChatFormatter",
