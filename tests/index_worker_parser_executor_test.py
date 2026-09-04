@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Regression tests for IndexWorker parser execution."""
 
 import asyncio
