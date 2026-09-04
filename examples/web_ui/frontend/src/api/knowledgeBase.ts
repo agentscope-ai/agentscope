@@ -192,7 +192,9 @@ export const knowledgeBaseApi = {
 		client.post<CreateKnowledgeBaseResponse>('/knowledge_bases/', body),
 
 	update: (knowledgeBaseId: string, body: UpdateKnowledgeBaseRequest) =>
-		client.patch<KnowledgeBaseView>(`/knowledge_bases/${knowledgeBaseId}`, body),
+		client.patch<KnowledgeBaseView>(`/knowledge_bases/${knowledgeBaseId}`, body, undefined, {
+			silent: true,
+		}),
 
 	delete: (knowledgeBaseId: string) => client.delete(`/knowledge_bases/${knowledgeBaseId}`),
 

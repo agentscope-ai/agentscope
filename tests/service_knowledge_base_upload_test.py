@@ -263,6 +263,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
                 name=name,
                 description=description,
                 embedding_model_config=embedding_model_config,
+                chunker_config=chunker_config,
                 collection_name="",
             ),
         )
@@ -499,3 +500,91 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["items"], [])
+
+    async def test_chunker_update_reindexes_existing_document(self) -> None:
+        """PATCH persists chunking and drives a second worker pass."""
+        headers = {"X-User-ID": "user-1"}
+        with TestClient(self._app) as client:
+            uploaded = client.post(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                files={
+                    "file": (
+                        "reindex.txt",
+                        b"abcdefgh01234567" * 16,
+                        "text/plain",
+                    ),
+                },
+                headers=headers,
+            )
+            self.assertEqual(uploaded.status_code, 201, uploaded.text)
+            document_id = uploaded.json()["document_id"]
+
+            deadline = 5.0
+            poll = 0.05
+            elapsed = 0.0
+            initial = None
+            while elapsed < deadline:
+                response = client.get(
+                    f"/knowledge_bases/{self._kb_id}/documents/status",
+                    params={"ids": document_id},
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                initial = response.json()["items"][0]
+                if initial["status"] in ("ready", "error"):
+                    break
+                await asyncio.sleep(poll)
+                elapsed += poll
+            self.assertIsNotNone(initial)
+            if initial is None:
+                self.fail("Initial indexing did not return a document.")
+            self.assertEqual(initial["status"], "ready", initial)
+            self.assertEqual(initial["chunk_count"], 1)
+
+            updated = client.patch(
+                f"/knowledge_bases/{self._kb_id}",
+                json={
+                    "chunker_config": {
+                        "type": "approx_token",
+                        "parameters": {
+                            "chunk_size": 4,
+                            "overlap": 0,
+                        },
+                    },
+                },
+                headers=headers,
+            )
+            self.assertEqual(updated.status_code, 200, updated.text)
+            self.assertEqual(
+                updated.json()["chunker_config"],
+                {
+                    "type": "approx_token",
+                    "parameters": {
+                        "chunk_size": 4,
+                        "overlap": 0,
+                    },
+                },
+            )
+
+            elapsed = 0.0
+            rebuilt = None
+            while elapsed < deadline:
+                response = client.get(
+                    f"/knowledge_bases/{self._kb_id}/documents/status",
+                    params={"ids": document_id},
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                rebuilt = response.json()["items"][0]
+                if rebuilt["status"] == "error":
+                    break
+                if rebuilt["status"] == "ready" and rebuilt["chunk_count"] > 1:
+                    break
+                await asyncio.sleep(poll)
+                elapsed += poll
+
+            self.assertIsNotNone(rebuilt)
+            if rebuilt is None:
+                self.fail("Reindexing did not return a document.")
+            self.assertEqual(rebuilt["status"], "ready", rebuilt)
+            self.assertEqual(rebuilt["chunk_count"], 16)

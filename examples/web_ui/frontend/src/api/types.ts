@@ -934,13 +934,14 @@ export interface CreateKnowledgeBaseResponse {
 }
 
 /**
- * Body for `PATCH /knowledge_bases/{id}`. Only mutable fields can be
- * sent; the embedding model is pinned at creation time and cannot
- * change because the underlying collection is sized to its dimension.
+ * Body for `PATCH /knowledge_bases/{id}`. Changing the chunker rebuilds
+ * every existing document. The embedding model remains pinned because
+ * the underlying collection is sized to its dimension.
  */
 export interface UpdateKnowledgeBaseRequest {
 	name?: string;
 	description?: string;
+	chunker_config?: ChunkerConfig;
 }
 
 /**
