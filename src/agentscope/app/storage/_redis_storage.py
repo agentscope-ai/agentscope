@@ -1743,6 +1743,8 @@ class RedisStorage(StorageBase):
         # Role-aware member cleanup — see docstring above.
         members = await _ensure_team_members(self, user_id, team)
         for member in members:
+            if member.session_id == team.session_id:
+                continue
             if member.role == "created":
                 await self.delete_agent(member.owner_id, member.agent_id)
             else:  # invited

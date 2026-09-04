@@ -16,6 +16,7 @@ from agentscope.app.storage import (
     ScheduleData,
     SessionSource,
     TeamData,
+    TeamMember,
     TeamRecord,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
@@ -1213,6 +1214,33 @@ class TestTeamCascade(IsolatedAsyncioTestCase):
         """delete_team on a missing team returns False without crashing."""
         result = await self.storage.delete_team(self.user_id, "no-such-id")
         self.assertFalse(result)
+
+    async def test_delete_team_skips_leader_in_corrupt_roster(self) -> None:
+        """A leader listed as its own member is not recursively deleted."""
+        self.team.data.member_ids = []
+        self.team.data.members = [
+            TeamMember(
+                owner_id=self.user_id,
+                agent_id=self.leader_agent.id,
+                session_id=self.leader_session_id,
+                role="created",
+            ),
+        ]
+        await self.storage.upsert_team(self.user_id, self.team)
+
+        self.assertTrue(
+            await self.storage.delete_team(self.user_id, self.team.id),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(self.user_id, self.leader_agent.id),
+        )
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session_id,
+        )
+        self.assertIsNotNone(leader)
+        self.assertIsNone(leader.team_id)
 
 
 def make_mcp_record(

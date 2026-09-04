@@ -634,6 +634,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     )
 
         for member in members:
+            if member.session_id == team.session_id:
+                continue
             if member.role == "created":
                 await self._delete_agent_impl(
                     sess,

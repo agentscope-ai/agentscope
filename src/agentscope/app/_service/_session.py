@@ -336,25 +336,22 @@ class SessionService:
 
         Steps:
 
-        1. Cancel any in-flight run for ``session_id`` (cross-process
+        1. Clean any leader-side subagent HITL projections while the
+           session and team records still identify this session's role.
+        2. If this session leads a team, dissolve it through
+           :meth:`delete_team` so created and invited members follow
+           their role-aware service cascades.
+        3. Cancel any in-flight run for ``session_id`` (cross-process
            via the bus cancel channel).
-        2. Delete the session record (and its storage-side cascade:
-           message log, schedule-session index, team dissolution when
-           this session leads one — recursive into worker agents).
-        3. Purge transient bus state for ``session_id`` (events log,
+        4. Delete the session record and its storage-side cascade
+           (message log and schedule-session index).
+        5. Purge transient bus state for ``session_id`` (events log,
            inbox).
-        4. Drop the session's workspace state (MCP clients, offload
-           files). Workspaces outlive sessions and are usually shared
-           by every session of an agent, so this would otherwise
-           accumulate for the life of the workspace.
-
-        Worker sessions that storage cascades through are picked up
-        here too: when this session is a team leader,
-        ``storage.delete_session`` calls ``storage.delete_team`` →
-        ``storage.delete_agent`` → ``storage.delete_session`` for each
-        worker, and we mirror that on the bus side by purging worker
-        sessions identified up front via
-        :meth:`_team_worker_session_ids`.
+        6. Drop this session's workspace state (MCP clients,
+           declarations, capacity records and offload files).
+           Role-aware team deletion delegates each worker back through
+           this method; created workers additionally pass through
+           :meth:`delete_agent` to purge their agent-scoped skills.
 
         Args:
             user_id (`str`): The owner user id.
@@ -367,33 +364,32 @@ class SessionService:
                 ``False`` otherwise. Mirrors
                 :meth:`StorageBase.delete_session`.
         """
-        # Identify all bus-purge targets before storage mutates anything.
-        worker_sids = await self._team_worker_session_ids(
-            user_id,
-            agent_id,
-            session_id,
-        )
-        all_sids = [session_id, *worker_sids]
-
-        # Resolve the workspace binding while the record still exists.
-        record = await self._storage.get_session(user_id, agent_id, session_id)
-        workspace_id = record.config.workspace_id if record else None
-
         # Clean leader-side subagent HITL projections before storage
         # cascades remove the records we need to resolve roles from.
         await self._purge_subagent_hitl(user_id, agent_id, session_id)
 
-        await asyncio.gather(
-            *(self.cancel_session_run(sid) for sid in all_sids),
+        # Resolve the workspace binding and any leader-owned team while
+        # their records still exist. Team deletion must happen after HITL
+        # cleanup because that cleanup also resolves the session's role
+        # from the team record.
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
         )
+        workspace_id = session.config.workspace_id if session else None
+        if session and session.team_id:
+            team = await self._storage.get_team(user_id, session.team_id)
+            if team is not None and team.session_id == session_id:
+                await self.delete_team(user_id, session.team_id)
+
+        await self.cancel_session_run(session_id)
         deleted = await self._storage.delete_session(
             user_id,
             agent_id,
             session_id,
         )
-        await asyncio.gather(
-            *(self._purge_session_bus(sid) for sid in all_sids),
-        )
+        await self._purge_session_bus(session_id)
 
         # Best-effort: a workspace that cannot be resolved (backend
         # down, sandbox gone) must not fail a committed deletion.
@@ -459,6 +455,10 @@ class SessionService:
 
         members = await _ensure_team_members(self._storage, user_id, team)
         for member in members:
+            # Guard against a corrupt roster that lists the leader as one
+            # of its own members, which would recurse through delete_team.
+            if member.session_id == team.session_id:
+                continue
             if member.role == "created":
                 await self.delete_agent(member.owner_id, member.agent_id)
             else:  # invited
@@ -602,52 +602,6 @@ class SessionService:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
-
-    async def _team_worker_session_ids(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> list[str]:
-        """Return the session ids of every worker in the team that
-        ``session_id`` leads, or ``[]`` when the session does not lead
-        a team.
-
-        Mirrors :meth:`StorageBase.delete_session`'s own team-leader
-        cascade so the bus side can purge the same sessions.
-
-        Uses :func:`ensure_team_members` — which carries the exact
-        session id per member (including invited members whose agent
-        can have multiple sessions of its own, only one of which
-        belongs to this team). Falling back to
-        ``list_sessions(agent_id)[0]`` here would pick the wrong
-        session for invited agents.
-
-        Args:
-            user_id (`str`): The owner user id.
-            agent_id (`str`):
-                The agent that owns ``session_id``. May be empty when
-                unknown; team-leader lookup does not depend on it.
-            session_id (`str`):
-                The candidate leader session.
-
-        Returns:
-            `list[str]`:
-                Worker session ids, empty when this session is not a
-                team leader.
-        """
-        session = await self._storage.get_session(
-            user_id,
-            agent_id,
-            session_id,
-        )
-        if session is None or not session.team_id:
-            return []
-        team = await self._storage.get_team(user_id, session.team_id)
-        if team is None or team.session_id != session_id:
-            return []
-        members = await _ensure_team_members(self._storage, user_id, team)
-        return [m.session_id for m in members]
 
     async def _purge_session_bus(self, session_id: str) -> None:
         """Drop all per-session bus state for one session."""
