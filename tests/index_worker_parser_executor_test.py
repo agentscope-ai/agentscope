@@ -107,18 +107,32 @@ class IndexWorkerParserExecutorTest(IsolatedAsyncioTestCase):
         parser = _BlockingParser()
         loop = asyncio.get_running_loop()
         started = asyncio.Event()
+        probe_completed = threading.Event()
+        watchdog_fired = threading.Event()
 
         def watch_parser_start() -> None:
             parser.started.wait()
             loop.call_soon_threadsafe(started.set)
 
+        def watchdog() -> None:
+            parser.started.wait()
+            if not probe_completed.wait(timeout=5.0):
+                watchdog_fired.set()
+                parser.release.set()
+
         watcher = threading.Thread(target=watch_parser_start, daemon=True)
+        watchdog_thread = threading.Thread(target=watchdog, daemon=True)
         watcher.start()
+        watchdog_thread.start()
         task = asyncio.create_task(
             _worker(parser)._parse(parser, b"body", "x.txt"),
         )
         try:
             await started.wait()
+            self.assertFalse(
+                watchdog_fired.is_set(),
+                "parser blocked the event loop",
+            )
 
             probe = asyncio.Event()
 
@@ -126,6 +140,7 @@ class IndexWorkerParserExecutorTest(IsolatedAsyncioTestCase):
                 probe.set()
 
             await asyncio.create_task(event_loop_probe())
+            probe_completed.set()
             self.assertTrue(probe.is_set())
             self.assertFalse(task.done())
 
@@ -136,6 +151,7 @@ class IndexWorkerParserExecutorTest(IsolatedAsyncioTestCase):
             if not task.done():
                 await task
             watcher.join()
+            watchdog_thread.join()
 
     async def test_parser_exception_is_propagated(self) -> None:
         """Parser failures remain visible to the indexing pipeline."""
