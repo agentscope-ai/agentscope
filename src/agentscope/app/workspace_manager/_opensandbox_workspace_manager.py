@@ -23,6 +23,8 @@ Differences from the Docker manager:
   ``workspace_id``.
 * Idle workspaces are evicted by a background sweeper task started in
   :meth:`__aenter__` and cancelled in :meth:`__aexit__`.
+* Cached workspaces renew their sandbox lease on access. A renewal 404
+  evicts the stale connection so the sandbox can be recreated.
 * ``close_all`` fans calls out with :func:`asyncio.gather` because
   ``sandbox.pause()`` is a remote round-trip per sandbox.
 """
@@ -101,7 +103,9 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 SDK HTTP streaming layer is not shorter than bootstrap
                 command timeout.
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
-                Sandbox keep-alive / resume timeout.
+                Sandbox expiration lease and create/connect/resume timeout.
+                Defaults to 1800 seconds and renews on cache access, not
+                in the background. Set it longer than the longest turn.
             gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
                 TCP port the in-sandbox gateway listens on.
             env (`dict[str, str] | None`, optional):
@@ -205,11 +209,12 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
     ) -> OpenSandboxWorkspace:
         """Return an initialized workspace, reattaching on cache miss.
 
-        On miss, the manager constructs ``OpenSandboxWorkspace`` with
-        the requested ``workspace_id`` and relies on its ``initialize``
-        method to find an existing sandbox by metadata, connect or
-        resume it depending on state, or create a fresh sandbox
-        otherwise.
+        Cached workspaces renew their lease before reuse. A renewal 404
+        triggers replacement under the same ``workspace_id``; other renewal
+        failures are logged without rejecting the cached workspace. On a
+        cache miss, initialization connects or resumes an existing sandbox
+        found by metadata, or creates a fresh one otherwise. Recreation
+        cannot recover ephemeral data lost with the previous sandbox.
 
         Idle eviction is not performed here; the background sweeper
         started by :meth:`__aenter__` handles that.
@@ -236,36 +241,37 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if not workspace_id:
-            workspace_id = await self.assign_workspace_id(
-                user_id=user_id,
-                agent_id=agent_id,
-                session_id="",
-            )
+        resolved_id: str = workspace_id or await self.assign_workspace_id(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id="",
+        )
 
+        # Serialize reuse and recovery so concurrent requests cannot create
+        # two replacement sandboxes for the same workspace id.
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(resolved_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
-
-        # Cache miss: build under the lock to prevent two concurrent
-        # get_workspace(workspace_id=X) calls from creating two
-        # workspaces (and thus two sandboxes) for the same id.
-        async with self._lock:
-            cached = self._cache.get(workspace_id)
-            if cached is not None:
-                ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
+                # pylint: disable-next=protected-access
+                if await ws._renew_once():
+                    self._cache[resolved_id] = (ws, time.monotonic())
+                    return ws
+                self._cache.pop(resolved_id)
+                logger.warning(
+                    "OpenSandbox workspace %r lost sandbox %r; recreating "
+                    "it. Ephemeral workspace data may have been lost.",
+                    resolved_id,
+                    ws.sandbox_id,
+                )
+                await self._safe_close(ws)
 
             ws = await self._build_and_start(
-                workspace_id=workspace_id,
+                workspace_id=resolved_id,
                 user_id=user_id,
                 agent_id=agent_id,
             )
-            self._cache[workspace_id] = (ws, time.monotonic())
+            self._cache[resolved_id] = (ws, time.monotonic())
             return ws
 
     async def close(self, workspace_id: str) -> None:
