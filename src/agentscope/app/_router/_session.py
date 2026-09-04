@@ -59,6 +59,7 @@ from ..workspace_manager import WorkspaceManagerBase
 
 async def _build_team_detail(
     storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     team: TeamRecord,
 ) -> TeamDetailResponse:
@@ -69,6 +70,8 @@ async def _build_team_detail(
         storage (`StorageBase`):
             Application storage. Used to look up the leader session,
             each member agent, and each member's session.
+        access (`ResourceAccessService`):
+            Resolves roster agents against the viewer's current grants.
         user_id (`str`):
             The owner user id.
         team (`TeamRecord`):
@@ -91,8 +94,8 @@ async def _build_team_detail(
 
     members: list[TeamMemberView] = []
     for member in await _ensure_team_members(storage, user_id, team):
-        agent = await storage.get_agent(member.owner_id, member.agent_id)
-        if agent is None:
+        agent = await access.try_resolve_agent(user_id, member.agent_id)
+        if agent is None or agent.user_id != member.owner_id:
             continue
         # Use the member's team-scoped session id directly; an invited
         # agent has multiple sessions and only ``member.session_id``
@@ -243,6 +246,7 @@ async def list_sessions(
             if team_record is not None:
                 team_detail = await _build_team_detail(
                     storage,
+                    access,
                     user_id,
                     team_record,
                 )

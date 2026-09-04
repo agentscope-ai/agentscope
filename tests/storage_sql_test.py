@@ -495,10 +495,11 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         # another that will be "invited".
         created_agent = _agent_record("user-1", "created")
         created_agent.source = "team"
-        invited_agent = _agent_record("user-1", "invited")
+        invited_owner = "user-2"
+        invited_agent = _agent_record(invited_owner, "invited")
 
         await self.storage.upsert_agent("user-1", created_agent)
-        await self.storage.upsert_agent("user-1", invited_agent)
+        await self.storage.upsert_agent(invited_owner, invited_agent)
 
         # Sessions for both, plus the leader session.
         leader = await self.storage.upsert_session(
@@ -517,7 +518,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             config=_session_config(),
         )
         surviving_session = await self.storage.upsert_session(
-            user_id="user-1",
+            user_id=invited_owner,
             agent_id=invited_agent.id,
             config=_session_config(),
         )
@@ -535,7 +536,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                         role="created",
                     ),
                     TeamMember(
-                        owner_id="user-1",
+                        owner_id=invited_owner,
                         agent_id=invited_agent.id,
                         session_id=invited_session.id,
                         role="invited",
@@ -560,7 +561,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         )
         # Invited member: agent survives, only the invited session is gone.
         self.assertIsNotNone(
-            await self.storage.get_agent("user-1", invited_agent.id),
+            await self.storage.get_agent(invited_owner, invited_agent.id),
         )
         self.assertIsNone(
             await self.storage.get_session(
@@ -571,7 +572,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(
             await self.storage.get_session(
-                "user-1",
+                invited_owner,
                 invited_agent.id,
                 surviving_session.id,
             ),

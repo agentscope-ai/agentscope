@@ -16,6 +16,7 @@ from agentscope.app.storage import (
     ScheduleData,
     SessionSource,
     TeamData,
+    TeamMember,
     TeamRecord,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
@@ -1133,6 +1134,55 @@ class TestTeamCascade(IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(leader)
         self.assertIsNone(leader.team_id)
+
+    async def test_delete_team_removes_cross_owner_borrowed_session(
+        self,
+    ) -> None:
+        """An invited definition owner differs from its session owner."""
+        definition_owner = "user-2"
+        invited = make_agent_record(definition_owner)
+        await self.storage.upsert_agent(definition_owner, invited)
+        owner_session = await self.storage.upsert_session(
+            definition_owner,
+            invited.id,
+            make_session_config("owner-private-workspace"),
+        )
+        borrowed = await self.storage.upsert_session(
+            self.user_id,
+            invited.id,
+            make_session_config("viewer-borrowed-workspace"),
+        )
+        self.team.data.members = [
+            TeamMember(
+                owner_id=definition_owner,
+                agent_id=invited.id,
+                session_id=borrowed.id,
+                role="invited",
+            ),
+        ]
+        self.team.data.member_ids = [invited.id]
+        await self.storage.upsert_team(self.user_id, self.team)
+
+        self.assertTrue(
+            await self.storage.delete_team(self.user_id, self.team.id),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                invited.id,
+                borrowed.id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                definition_owner,
+                invited.id,
+                owner_session.id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(definition_owner, invited.id),
+        )
 
     async def test_delete_leader_session_dissolves_team(self) -> None:
         """Deleting a leader session auto-dissolves its team."""

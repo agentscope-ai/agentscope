@@ -865,7 +865,8 @@ class StorageBase(ABC):
              is fully removed because it was spawned solely for this
              team.
            - ``role == "invited"`` — call :meth:`delete_session` for
-             the borrowed team-scoped session only. The invited
+             the borrowed team-scoped session under the team owner's
+             namespace only. The invited
              agent's :class:`AgentRecord` and any other sessions it
              owns survive the team's dissolution.
         2. Clear ``team_id`` on the leader session referenced by
