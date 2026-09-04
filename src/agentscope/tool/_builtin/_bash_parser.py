@@ -217,14 +217,22 @@ class BashCommandParser:
     def _is_single_command_read_only(self, cmd: str) -> bool:
         """Check if a single (non-compound) command is read-only.
 
+        A leading variable assignment makes the command non-read-only,
+        whatever follows it: ``PATH=/tmp/evil ls`` runs ``ls`` from a
+        directory the caller chose.
+
         Args:
             cmd (`str`):
-                A single command string (no &&, ||, ;, |)
+                A single statement from :meth:`split_compound_command`,
+                which is not always a plain command
 
         Returns:
             `bool`:
                 True if the command is read-only, False otherwise
         """
+        if self._has_leading_assignment(cmd):
+            return False
+
         # Check exact match in read-only commands
         if cmd in READ_ONLY_COMMANDS:
             return True
@@ -239,20 +247,26 @@ class BashCommandParser:
 
         # Check base command for simple read-only operations
         tokens = cmd.split()
-        if tokens:
-            base_cmd = tokens[0]
-            # Skip environment variables
-            i = 0
-            while i < len(tokens) and "=" in tokens[i]:
-                i += 1
-            if i < len(tokens):
-                base_cmd = tokens[i]
-
-            # Check if base command is in safe commands
-            if base_cmd in SAFE_COMMANDS:
-                return True
+        if tokens and tokens[0] in SAFE_COMMANDS:
+            return True
 
         return False
+
+    def _has_leading_assignment(self, cmd: str) -> bool:
+        """Check if a command is prefixed with a variable assignment."""
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+        except Exception:
+            # Cannot tell, so report the assignment and fail closed
+            return True
+
+        node = self._find_first_simple_command(tree.root_node)
+        if node is None:
+            return False
+
+        return any(
+            child.type == "variable_assignment" for child in node.children
+        )
 
     def _is_mutating_find_command(self, cmd: str) -> bool:
         """Check if a find command contains mutating predicates via AST."""
@@ -545,7 +559,7 @@ class BashCommandParser:
         """Split compound commands using tree-sitter for precise parsing.
 
         Every statement the shell would run is returned, whatever separator
-        joins them — ``&&``, ``||``, ``;``, ``|``, ``&`` and newlines alike.
+        joins them: ``&&``, ``||``, ``;``, ``|``, ``&`` and newlines alike.
         Statements that are not plain commands (``export``/``declare``,
         bare assignments, ``unset``, ...) are returned as-is rather than
         dropped, so callers judging the split cannot mistake them for
@@ -565,24 +579,13 @@ class BashCommandParser:
 
         def extract_commands(node: Node) -> None:
             """Recursively extract statements from AST."""
-            if node.type == "command":
-                # Extract command text
-                cmd_text = command[node.start_byte : node.end_byte]
-                subcommands.append(cmd_text)
-            elif node.type in COMPOUND_NODE_TYPES:
-                # Recursively process compound structures, skipping the
-                # separator tokens between the statements they group
+            if node.type in COMPOUND_NODE_TYPES:
+                # Grouping only, the separators between are anonymous
                 for child in node.children:
                     if child.is_named:
                         extract_commands(child)
-            elif node.type in NON_STATEMENT_NODE_TYPES:
-                # Nothing executable here
-                return
-            elif node.is_named:
-                # An unrecognized statement — ``export PATH=/evil``, a bare
-                # assignment, a subshell, ... Return its text instead of
-                # dropping it, so a caller that requires every subcommand to
-                # be read-only fails closed on what we cannot classify.
+            elif node.is_named and node.type not in NON_STATEMENT_NODE_TYPES:
+                # Statements we cannot classify are returned, not dropped
                 subcommands.append(command[node.start_byte : node.end_byte])
 
         extract_commands(root)

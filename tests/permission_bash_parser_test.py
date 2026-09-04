@@ -325,15 +325,33 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
         """Test the split returns statements that are not plain commands."""
         command = "ls\nPATH=/tmp/evil\nls"
         tree = self.parser.parser.parse(bytes(command, "utf8"))
-        self.assertEqual(
+        self.assertListEqual(
             self.parser.split_compound_command(tree.root_node, command),
             ["ls", "PATH=/tmp/evil", "ls"],
         )
+
+    async def test_leading_assignment_is_not_read_only(self) -> None:
+        """Test an inline assignment prefix fails closed."""
+        commands = [
+            "PATH=/tmp/evil ls",
+            "LD_PRELOAD=/tmp/evil.so ls",
+            "BASH_ENV=/tmp/evil ls",
+            "LD_LIBRARY_PATH=/tmp/evil cat file.txt",
+            "IFS=. NODE_ENV=prod git status",
+        ]
+        for cmd in commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
 
     async def test_read_only_subcommands_stay_read_only(self) -> None:
         """Test the extra separators keep read-only sequences read-only."""
         read_only_commands = [
             "ls &",
+            "echo a=b",
+            "grep 'k=v' file.txt",
             "ls\ncat file.txt",
             "echo a\necho b",
             "git status\ngit log",

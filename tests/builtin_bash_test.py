@@ -307,6 +307,10 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
             "ls\nexport PATH=/tmp/evil\nls",
             "ls\nPATH=/tmp/evil\nls",
             "ls\nunset PATH",
+            # The same poisoning written inline, which parses as one command
+            "PATH=/tmp/evil ls",
+            "LD_PRELOAD=/tmp/evil.so ls",
+            "BASH_ENV=/tmp/evil ls",
         ]
         for cmd in test_cases:
             with self.subTest(cmd=cmd):
