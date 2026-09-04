@@ -740,7 +740,7 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 						<div
 							className={cn(
 								'group w-full flex gap-2 items-center text-sm text-muted-foreground cursor-pointer hover:text-primary',
-								hasRunningCall && 'motion-safe:animate-pulse',
+								hasRunningCall && 'shimmer',
 							)}
 						>
 							<span>{title}</span>
