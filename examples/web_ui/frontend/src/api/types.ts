@@ -736,6 +736,7 @@ export interface ScheduleData {
 	permission_mode: PermissionMode;
 	source: ScheduleSource;
 	source_session_id: string;
+	channel_id: string | null;
 }
 
 export interface ScheduleRecord extends RecordBase {
@@ -754,6 +755,7 @@ export interface CreateScheduleRequest {
 	enabled?: boolean;
 	stateful?: boolean;
 	permission_mode?: PermissionMode;
+	channel_id?: string | null;
 }
 
 export interface CreateScheduleResponse {
@@ -768,6 +770,7 @@ export interface UpdateScheduleRequest {
 	enabled?: boolean;
 	stateful?: boolean;
 	permission_mode?: PermissionMode;
+	channel_id?: string | null;
 }
 
 export interface ScheduleListResponse {
@@ -1157,6 +1160,7 @@ export interface ChannelRecord {
 	name: string | null;
 	user_id: string;
 	platform_bot_id: string;
+	supports_scheduled_tools: boolean;
 	enabled: boolean;
 	platform_config: Record<string, unknown>;
 	routing: RoutingConfig;

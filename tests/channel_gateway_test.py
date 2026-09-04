@@ -52,6 +52,13 @@ from agentscope.event import (
 )
 from agentscope.message import DataBlock, TextBlock
 from agentscope.message._block import Base64Source, URLSource
+from agentscope.permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionEngine,
+    PermissionMode,
+    PermissionRule,
+)
 from agentscope.types import ReplyFinishedReason
 
 _RID = "reply-1"
@@ -588,3 +595,84 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
         # The routing guess was tried first, then the parked session.
         self.assertNotEqual(storage.asked[0], "the-parked-session")
         self.assertIn("the-parked-session", storage.asked)
+
+
+class FeishuScheduledToolsTest(IsolatedAsyncioTestCase):
+    """Scheduled Feishu tools use a narrow, explicit authorisation set."""
+
+    async def test_schedule_whitelist_and_permission_are_isolated(
+        self,
+    ) -> None:
+        """Only discovery/text-send tools are scheduled; normal sends ASK."""
+        from agentscope.app.channel._feishu._channel import FeishuChannel
+
+        class _Workspace:
+            def get_backend(self) -> Any:
+                return None
+
+        channel = FeishuChannel(
+            "c",
+            FeishuChannel.Credentials(app_id="a", app_secret="s"),
+            FeishuChannel.Config(),
+        )
+        normal = {
+            tool.name: tool for tool in await channel.list_tools(_Workspace())
+        }
+        scheduled = {
+            tool.name: tool
+            for tool in await channel.list_scheduled_tools(_Workspace())
+        }
+
+        self.assertEqual(
+            set(scheduled),
+            {"ListChats", "ListChatMembers", "SendMessage"},
+        )
+        context = PermissionContext(mode=PermissionMode.DONT_ASK)
+        self.assertEqual(
+            (
+                await normal["SendMessage"].check_permissions({}, context)
+            ).behavior,
+            PermissionBehavior.ASK,
+        )
+        self.assertEqual(
+            (
+                await PermissionEngine(context).check_permission(
+                    normal["SendMessage"],
+                    {},
+                )
+            ).behavior,
+            PermissionBehavior.DENY,
+        )
+        self.assertEqual(
+            (
+                await scheduled["SendMessage"].check_permissions({}, context)
+            ).behavior,
+            PermissionBehavior.ALLOW,
+        )
+        self.assertEqual(
+            (
+                await PermissionEngine(context).check_permission(
+                    scheduled["SendMessage"],
+                    {},
+                )
+            ).behavior,
+            PermissionBehavior.ALLOW,
+        )
+
+        for behavior in (PermissionBehavior.DENY, PermissionBehavior.ASK):
+            engine = PermissionEngine(
+                PermissionContext(mode=PermissionMode.DONT_ASK),
+            )
+            engine.add_rule(
+                PermissionRule(
+                    tool_name="SendMessage",
+                    rule_content=None,
+                    behavior=behavior,
+                    source="test",
+                ),
+            )
+            decision = await engine.check_permission(
+                scheduled["SendMessage"],
+                {},
+            )
+            self.assertEqual(decision.behavior, PermissionBehavior.DENY)

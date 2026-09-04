@@ -893,22 +893,83 @@ class ChatService:
                     )
 
                 # -------------------------------------------------------------
-                # 1c. Resolve the channel binding ONCE; the toolkit and the
-                # system-prompt attachment share it.
+                # 1c. Resolve channel tools ONCE; interactive channel sessions
+                # also share the client with the system-prompt attachment.
+                # Scheduled sessions resolve their current schedule on every
+                # run, but are never treated as conversation-bound.
                 # -------------------------------------------------------------
-                channel = (
-                    await self._channel_clients.get(
-                        session_record.source_channel_id,
-                    )
-                    if session_record.source_channel_id
-                    and self._channel_clients is not None
-                    else None
-                )
-                channel_tools = (
-                    await channel.list_tools(workspace)
-                    if channel is not None
-                    else []
-                )
+                channel = None
+                channel_tools = []
+                if self._channel_clients is not None:
+                    clients = self._channel_clients
+                    if (
+                        session_record.source == SessionSource.CHANNEL
+                        and session_record.source_channel_id
+                    ):
+                        channel = await clients.get(
+                            session_record.source_channel_id,
+                        )
+                        if channel is not None:
+                            channel_tools = await channel.list_tools(workspace)
+                    elif (
+                        session_record.source == SessionSource.SCHEDULE
+                        and session_record.source_schedule_id
+                    ):
+                        schedule_id = session_record.source_schedule_id
+                        try:
+                            schedule = await self._storage.get_schedule(
+                                user_id,
+                                schedule_id,
+                            )
+                            selected_channel_id = (
+                                schedule.data.channel_id
+                                if schedule is not None
+                                and schedule.agent_id == agent_id
+                                and schedule.data.enabled
+                                else None
+                            )
+                            if selected_channel_id is not None:
+                                channel = await clients.get_scheduled(
+                                    selected_channel_id,
+                                    user_id,
+                                )
+                            if channel is not None:
+                                assert selected_channel_id is not None
+                                channel_tools = (
+                                    await channel.list_scheduled_tools(
+                                        workspace,
+                                    )
+                                )
+                                latest = await self._storage.get_schedule(
+                                    user_id,
+                                    schedule_id,
+                                )
+                                schedule_is_current = (
+                                    latest is not None
+                                    and latest.data.enabled
+                                    and latest.agent_id == agent_id
+                                    and latest.data.channel_id
+                                    == selected_channel_id
+                                )
+                                channel_is_current = False
+                                if schedule_is_current:
+                                    is_current = clients.is_scheduled_current
+                                    channel_is_current = await is_current(
+                                        selected_channel_id,
+                                        user_id,
+                                        channel,
+                                    )
+                                if not channel_is_current:
+                                    channel = None
+                                    channel_tools = []
+                        except Exception:  # pylint: disable=broad-except
+                            logger.warning(
+                                "Schedule %r: selected channel could not be "
+                                "resolved for this run",
+                                schedule_id,
+                            )
+                            channel = None
+                            channel_tools = []
 
                 # -------------------------------------------------------------
                 # 2. Middlewares — framework-supplied first, then caller
@@ -1063,8 +1124,11 @@ class ChatService:
                 # -------------------------------------------------------------
                 attachment = f"You're within a session (id={session_id})."
 
-                # Channel-bound sessions: tell the agent which chat it serves.
-                if channel is not None:
+                # Only a true channel-originated session is conversation-bound.
+                if (
+                    session_record.source == SessionSource.CHANNEL
+                    and channel is not None
+                ):
                     tools = ", ".join(t.name for t in channel_tools)
                     chat_id = session_record.source_chat_id or ""
                     kind = await channel.chat_kind(chat_id)

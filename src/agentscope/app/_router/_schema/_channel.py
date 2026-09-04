@@ -56,6 +56,7 @@ class ChannelResponse(BaseModel):
     name: str | None
     user_id: str
     platform_bot_id: str
+    supports_scheduled_tools: bool
     enabled: bool
     platform_config: dict
     routing: RoutingConfig
