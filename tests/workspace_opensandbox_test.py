@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Test cases for OpenSandboxWorkspace.
 
-The whole module is skipped when the ``OPENSANDBOX_DOMAIN`` environment
-variable is not set, because every test requires a live OpenSandbox
-service.
+Most of this module is skipped when the ``OPENSANDBOX_DOMAIN``
+environment variable is not set, because those tests require a live
+OpenSandbox service. The ``is_healthy`` liveness-probe tests use a
+sandbox double instead, so they always run.
 """
 import os
 import unittest
@@ -18,6 +20,48 @@ from agentscope.workspace import OpenSandboxWorkspace
 _DOMAIN = os.getenv("OPENSANDBOX_DOMAIN", "")
 _API_KEY = os.getenv("OPENSANDBOX_API_KEY", "")
 _SKIP_REASON = "OPENSANDBOX_DOMAIN environment variable is not set"
+
+
+# ── liveness probe tests (regression for #2202) ────────────────────
+
+
+class _FakeSandbox:
+    """Sandbox double exposing only the ``is_healthy`` probe."""
+
+    def __init__(self, healthy: bool = True, raises: bool = False) -> None:
+        self._healthy = healthy
+        self._raises = raises
+
+    async def is_healthy(self) -> bool:
+        """Report the simulated liveness, or raise if configured to."""
+        if self._raises:
+            raise RuntimeError("sandbox not found")
+        return self._healthy
+
+
+class TestOpenSandboxWorkspaceIsHealthy(IsolatedAsyncioTestCase):
+    """``is_healthy`` before/after initialize and on probe failure."""
+
+    async def test_is_healthy_false_before_initialize(self) -> None:
+        """Without a bound sandbox, the workspace reports unhealthy."""
+        workspace = OpenSandboxWorkspace()
+        self.assertFalse(await workspace.is_healthy())
+
+    async def test_is_healthy_reflects_sandbox_probe(self) -> None:
+        """A live sandbox's probe result is forwarded verbatim."""
+        workspace = OpenSandboxWorkspace()
+        workspace._sandbox = _FakeSandbox(healthy=True)
+        self.assertTrue(await workspace.is_healthy())
+
+        workspace._sandbox = _FakeSandbox(healthy=False)
+        self.assertFalse(await workspace.is_healthy())
+
+    async def test_is_healthy_false_on_probe_error(self) -> None:
+        """A probe that raises (e.g. sandbox 404) is treated as dead,
+        not propagated."""
+        workspace = OpenSandboxWorkspace()
+        workspace._sandbox = _FakeSandbox(raises=True)
+        self.assertFalse(await workspace.is_healthy())
 
 
 # ── lifecycle tests ────────────────────────────────────────────────
