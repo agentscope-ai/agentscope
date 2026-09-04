@@ -215,26 +215,27 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		onTeamUpdated?.();
 	}, [refetchSessions, sessionId, onTeamUpdated]);
 
+	// Surface the plan panel the first time a session's tasks arrive over
+	// the stream, and only then — reopening it on every update would undo
+	// the user closing it. `state_updated` also fires for permission-only
+	// changes and always carries `tasks_context`, hence gating on a
+	// non-empty task list rather than the field being present.
+	const taskPanelOpenedForRef = useRef<string | null>(null);
 	const handleStateUpdated = useCallback(
 		(value: Record<string, unknown>) => {
 			if (value.tasks_context) {
 				const incoming = value.tasks_context as TaskContext;
-				setTasksContext((prev) => {
-					// Auto-open the plan panel on the first genuine task
-					// update per session so the user can see plan progress
-					// without having to manually open the panel.
-					if (!taskPanelAutoOpenedRef.current && incoming !== prev) {
-						taskPanelAutoOpenedRef.current = true;
-						setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
-					}
-					return incoming;
-				});
+				setTasksContext(incoming);
+				if (incoming.tasks.length > 0 && taskPanelOpenedForRef.current !== sessionId) {
+					taskPanelOpenedForRef.current = sessionId;
+					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+				}
 			}
 			if (value.permission_context) {
 				setPermissionContext(value.permission_context as PermissionContext);
 			}
 		},
-		[],
+		[sessionId],
 	);
 
 	const {
@@ -553,20 +554,15 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// reply started. Clearing on `!view` still matters so switching
 	// sessions cannot leak the previous session's tasks or rules.
 	const seededSessionRef = useRef<string | null>(null);
-	// Track whether we already auto-opened the task panel for the current
-	// session so we don't keep forcing it open on every subsequent update.
-	const taskPanelAutoOpenedRef = useRef(false);
 	useEffect(() => {
 		if (!view) {
 			seededSessionRef.current = null;
-			taskPanelAutoOpenedRef.current = false;
 			setTasksContext(null);
 			setPermissionContext(null);
 			return;
 		}
 		if (seededSessionRef.current === view.session.id) return;
 		seededSessionRef.current = view.session.id;
-		taskPanelAutoOpenedRef.current = false;
 		const state = view.session.state as Record<string, unknown> | undefined;
 		setTasksContext((state?.tasks_context as TaskContext) ?? null);
 		setPermissionContext((state?.permission_context as PermissionContext) ?? null);
