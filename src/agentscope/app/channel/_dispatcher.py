@@ -137,6 +137,7 @@ class ChannelLifecycleDispatcher:
                 credentials=record.credentials,
                 config=record.platform_config,
             )
+            channel.bind_message_bus(self._bus)
             task = asyncio.create_task(
                 channel.start_listening(self._gateway.process),
                 name=f"channel-listener:{record.id}",

@@ -76,7 +76,7 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 - **[2026-08] `功能`:** 支持流水线 —— 按照固化逻辑运行多智能体，并向外提供统一接口。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/overview)
 - **[2026-08] `集成`:** 支持钉钉（DingTalk）频道。[文档](https://docs.agentscope.io/latest/zh/deploy/channel/dingtalk)
 - **[2026-08] `功能`:** 支持 Console —— 在终端中测试与调试智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
-- **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
+- **[2026-08] `集成`:** 支持飞书（Lark）、Discord 与 Telegram 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
 - **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
 - **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
 - **[2026-08] `功能`:** 支持 MCP & Skill Hub —— 浏览 hub、安装到个人库、再添加到工作区。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
@@ -184,7 +184,7 @@ AgentScope 提供开箱即用的**智能体服务** —— 一个基于 FastAPI 
 |---|---|
 | [**服务**](https://docs.agentscope.io/latest/zh/deploy/agent-service) | 多租户、多会话隔离、FastAPI 后端、预构建 Web UI |
 | [**智能体团队**](https://docs.agentscope.io/latest/zh/deploy/agent-team) | Leader–Worker 编排、内置团队工具、任务规划 |
-| [**消息渠道**](https://docs.agentscope.io/latest/zh/deploy/channel/overview) | 将智能体接入 IM 平台 —— 飞书（Lark）、Discord、自定义渠道、消息路由 |
+| [**消息渠道**](https://docs.agentscope.io/latest/zh/deploy/channel/overview) | 将智能体接入 IM 平台 —— 飞书（Lark）、Discord、Telegram、自定义渠道、消息路由 |
 | [**RAG 服务**](https://docs.agentscope.io/latest/zh/deploy/rag) | Blob 存储、索引 Worker、多租户检索 |
 | [**MCP & 技能 Hub**](https://docs.agentscope.io/latest/zh/deploy/hub/overview) | 浏览 Hub（GitHub MCP Registry、ClawHub）、安装到你的库、添加到工作空间 |
 | [**资源共享**](https://docs.agentscope.io/latest/zh/deploy/sharing) | 面向 group 与 org 的资源管理，共享模型、MCP 服务、技能与工作空间 |

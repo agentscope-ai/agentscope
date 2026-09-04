@@ -93,12 +93,14 @@ class _SeamBus(InMemoryMessageBus):
     def __init__(self) -> None:
         super().__init__()
         self._seam_published = False
+        self.seam_published = asyncio.Event()
 
     async def log_read(self, key: str, **kwargs: object) -> list:
         """Slip one event into the window, then replay as usual."""
         if not self._seam_published:
             self._seam_published = True
             await _publish(self, "s-1", _start())
+            self.seam_published.set()
         return await super().log_read(key, **kwargs)
 
 
@@ -142,7 +144,11 @@ class EventStreamTest(IsolatedAsyncioTestCase):
         await _publish(bus, "s-1", _start())
 
         async def _finish() -> None:
-            await asyncio.sleep(0.02)
+            # Do not assume the subscription and replay seam is reached
+            # within a platform-dependent scheduling delay. In particular,
+            # a slow Windows runner could publish the terminal event first,
+            # making the reader correctly stop before the seam event.
+            await asyncio.wait_for(bus.seam_published.wait(), timeout=2.0)
             await _publish(bus, "s-1", _end())
 
         drained, _ = await asyncio.gather(_drain(bus, "s-1"), _finish())

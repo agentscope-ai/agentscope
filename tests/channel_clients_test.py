@@ -12,9 +12,11 @@ import time
 from datetime import datetime
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from pydantic import BaseModel
 
+from agentscope.app._bus_ops import publish_session_event
 from agentscope.app._service import ChannelService
 from agentscope.app.channel import (
     ChannelBase,
@@ -32,6 +34,7 @@ from agentscope.app.storage import (
     RoutingConfig,
     SessionSettings,
 )
+from agentscope.event import ReplyEndEvent
 
 
 class _FakeChannel(ChannelBase):
@@ -62,7 +65,12 @@ class _FakeChannel(ChannelBase):
         self.listened = False
         self.closed = False
         self.sent_to = ""
+        self.sent_event: dict[str, Any] = {}
+        self.received_events: list[dict] = []
         self.returned = False
+        self.bound_bus: Any = None
+        self.delivery_started = asyncio.Event()
+        self.delivery_finished = asyncio.Event()
 
     @property
     def channel_id(self) -> str:
@@ -80,6 +88,10 @@ class _FakeChannel(ChannelBase):
         """Record that the factory released this instance."""
         self.closed = True
 
+    def bind_message_bus(self, message_bus: Any) -> None:
+        """Record the shared bus supplied by the channel runtime."""
+        self.bound_bus = message_bus
+
     async def send_response(
         self,
         event: ChannelEvent,
@@ -87,9 +99,18 @@ class _FakeChannel(ChannelBase):
     ) -> None:
         """Record the target, then consume the run's events."""
         self.sent_to = event.chat_id
-        async for _ in events:
-            pass
+        self.sent_event = event.model_dump(exclude={"received_at"})
+        self.delivery_started.set()
+        async for payload in events:
+            self.received_events.append(
+                {
+                    key: value
+                    for key, value in payload.items()
+                    if key != "_entry_id"
+                },
+            )
         self.returned = True
+        self.delivery_finished.set()
 
 
 class _Storage:
@@ -129,10 +150,14 @@ def _record(bot_id: str = "bot-1", enabled: bool = True) -> ChannelRecord:
 class ChannelClientsTest(IsolatedAsyncioTestCase):
     """The factory hands out usable channels without connecting."""
 
-    def _clients(self, storage: _Storage) -> ChannelClients:
+    def _clients(
+        self,
+        storage: _Storage,
+        bus: InMemoryMessageBus | None = None,
+    ) -> ChannelClients:
         return ChannelClients(
             storage=storage,
-            message_bus=InMemoryMessageBus(),
+            message_bus=bus if bus is not None else InMemoryMessageBus(),
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         )
 
@@ -146,6 +171,14 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(channel, _FakeChannel)
         self.assertFalse(channel.listened)
         self.assertEqual(channel.bot_id, "bot-1")
+
+    async def test_build_binds_the_shared_message_bus(self) -> None:
+        """Channels can retain shared state across client/listener nodes."""
+        bus = InMemoryMessageBus()
+        channel = await self._clients(_Storage(_record()), bus).get("chan-1")
+
+        self.assertIsInstance(channel, _FakeChannel)
+        self.assertIs(channel.bound_bus, bus)
 
     async def test_cached_until_the_record_changes(self) -> None:
         """A rotated credential takes effect without a restart."""
@@ -273,6 +306,93 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         ) as clients:
             await self._deliver(clients)
+
+    async def test_delivery_waits_for_the_complete_reply_stream(self) -> None:
+        """Only a terminal reply event finishes a channel delivery."""
+        bus = InMemoryMessageBus()
+        async with self._clients(bus) as clients:
+            channel = await clients.get("chan-1")
+            await self._deliver(clients)
+            assert channel is not None
+            real_wait_for = asyncio.wait_for
+            whole_stream_timeouts: list[float] = []
+
+            async def guarded_wait_for(
+                awaitable: Any,
+                timeout: float | None,
+            ) -> Any:
+                if timeout is not None and timeout >= 60.0:
+                    whole_stream_timeouts.append(timeout)
+                    close = getattr(awaitable, "close", None)
+                    if close is not None:
+                        close()
+                    raise TimeoutError
+                return await real_wait_for(awaitable, timeout)
+
+            with patch(
+                "agentscope.app.channel._clients.asyncio.wait_for",
+                new=guarded_wait_for,
+            ):
+                # The delivery task was created immediately before the patch
+                # and cannot run until this coroutine yields. Any old shared
+                # 300-second wait_for therefore passes through the guard.
+                await asyncio.sleep(0)
+                self.assertEqual(whole_stream_timeouts, [])
+                await real_wait_for(
+                    channel.delivery_started.wait(),
+                    timeout=1.0,
+                )
+
+                self.assertEqual(
+                    channel.sent_event,
+                    {
+                        "channel_id": "chan-1",
+                        "channel_user_id": "",
+                        "channel_user_name": "",
+                        "chat_id": "chat-1",
+                        "chat_name": "",
+                        "channel_message_id": None,
+                        "content": [],
+                        "metadata": {
+                            "session_id": "s-1",
+                            "agent_id": "agent-x",
+                        },
+                    },
+                )
+                self.assertFalse(channel.returned)
+
+                terminal = ReplyEndEvent(
+                    id="event-end",
+                    created_at="2026-08-26T00:00:00+00:00",
+                    session_id="s-1",
+                    reply_id="r-1",
+                )
+                await publish_session_event(
+                    bus,
+                    "s-1",
+                    terminal.model_dump(mode="json"),
+                )
+                await real_wait_for(
+                    channel.delivery_finished.wait(),
+                    timeout=1.0,
+                )
+
+                self.assertTrue(channel.returned)
+                self.assertEqual(
+                    channel.received_events,
+                    [
+                        {
+                            "id": "event-end",
+                            "created_at": "2026-08-26T00:00:00+00:00",
+                            "metadata": {},
+                            "type": "REPLY_END",
+                            "session_id": "s-1",
+                            "reply_id": "r-1",
+                            "finished_reason": "completed",
+                            "error": None,
+                        },
+                    ],
+                )
 
 
 class ChannelStatusTest(IsolatedAsyncioTestCase):
