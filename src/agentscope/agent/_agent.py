@@ -738,35 +738,41 @@ class Agent:
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
-            if (
-                res is not None
-                and res.usage is not None
-                and self.state.context
-            ):
-                last_msg = self.state.context[-1]
-                compression_usage = Usage(
-                    input_tokens=res.usage.input_tokens,
-                    output_tokens=res.usage.output_tokens,
-                    cache_input_tokens=res.usage.cache_input_tokens or 0,
-                    cache_creation_input_tokens=(
-                        res.usage.cache_creation_input_tokens or 0
-                    ),
-                )
-                if last_msg.usage is None:
-                    last_msg.usage = compression_usage
+
+            # The compression call is not covered by the model call events,
+            # so record its cost on the last retained message to keep it in
+            # the token accounting
+            if res is not None and res.usage is not None:
+                if not msgs_to_reserve:
+                    logger.warning(
+                        "[AGENT %s]: The whole context is compressed, so the "
+                        "compression usage (%d input, %d output tokens) is "
+                        "dropped.",
+                        self.name,
+                        res.usage.input_tokens,
+                        res.usage.output_tokens,
+                    )
                 else:
-                    last_msg.usage.input_tokens += (
-                        compression_usage.input_tokens
+                    last_msg = msgs_to_reserve[-1]
+                    usage = Usage(
+                        input_tokens=res.usage.input_tokens,
+                        output_tokens=res.usage.output_tokens,
+                        cache_input_tokens=res.usage.cache_input_tokens or 0,
+                        cache_creation_input_tokens=(
+                            res.usage.cache_creation_input_tokens or 0
+                        ),
                     )
-                    last_msg.usage.output_tokens += (
-                        compression_usage.output_tokens
-                    )
-                    last_msg.usage.cache_input_tokens += (
-                        compression_usage.cache_input_tokens
-                    )
-                    last_msg.usage.cache_creation_input_tokens += (
-                        compression_usage.cache_creation_input_tokens
-                    )
+                    if last_msg.usage is None:
+                        last_msg.usage = usage
+                    else:
+                        last_msg.usage.input_tokens += usage.input_tokens
+                        last_msg.usage.output_tokens += usage.output_tokens
+                        last_msg.usage.cache_input_tokens += (
+                            usage.cache_input_tokens
+                        )
+                        last_msg.usage.cache_creation_input_tokens += (
+                            usage.cache_creation_input_tokens
+                        )
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",
