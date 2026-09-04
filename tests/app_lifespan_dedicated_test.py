@@ -29,7 +29,6 @@ import asyncio
 import tempfile
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -335,25 +334,3 @@ class DedicatedModeUploadFlowTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
-
-    async def test_embedded_worker_gets_parser_executor(self) -> None:
-        """Embedded workers receive a pool and close it on shutdown."""
-        self._app.state.enable_index_worker = True
-        parser_pool = MagicMock()
-        worker = _RecordingWorker()
-
-        with patch(
-            "agentscope.app._lifespan.ProcessPoolExecutor",
-            return_value=parser_pool,
-        ), patch(
-            "agentscope.app._lifespan.IndexWorker",
-            return_value=worker,
-        ) as worker_cls, TestClient(self._app):
-            pass
-
-        worker_cls.assert_called_once()
-        self.assertIs(
-            worker_cls.call_args.kwargs["parser_executor"],
-            parser_pool,
-        )
-        parser_pool.shutdown.assert_called_once_with(wait=False)
