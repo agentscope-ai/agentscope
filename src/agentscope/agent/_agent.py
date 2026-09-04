@@ -951,6 +951,10 @@ class Agent:
 
     async def _close_unfinished_tool_calls(
         self,
+        interruption_message: str = (
+            "<system-reminder>The tool call has been interrupted by "
+            "the user.</system-reminder>"
+        ),
     ) -> AsyncGenerator[
         ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
         None,
@@ -972,11 +976,6 @@ class Agent:
                 awaiting_tool_calls[block.id] = index
             elif isinstance(block, ToolResultBlock):
                 awaiting_tool_calls.pop(block.id, None)
-
-        interruption_message = (
-            "<system-reminder>The tool call has been interrupted by "
-            "the user.</system-reminder>"
-        )
 
         for index in awaiting_tool_calls.values():
             call_block = last_msg.content[index]
@@ -1088,6 +1087,21 @@ class Agent:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
             else:
+                # Recover any orphan tool calls left by a prior crashed or
+                # interrupted run (#1888): a call appended to the context
+                # before the failure, with no result, would make the next
+                # provider call fail. Must run while the orphan's assistant
+                # message is still the tail (i.e. before the incoming
+                # message is appended), and silently: tool-result events
+                # may not precede the ReplyStartEvent of the new reply.
+                async for _ in self._close_unfinished_tool_calls(
+                    interruption_message=(
+                        "<system-reminder>The tool call was interrupted "
+                        "before it could complete.</system-reminder>"
+                    ),
+                ):
+                    pass
+
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
                 self.state.reply_context = ReplyContext(
@@ -1261,6 +1275,20 @@ class Agent:
                 # or an external execution, leaves the round unfinished
                 if not self.state.get_unfinished_tool_calls(self.name):
                     self.state.cur_iter += 1
+
+        except Exception:
+            # A mid-stream failure can leave orphan tool calls (a call
+            # appended to the context before the failure, with no result).
+            # Close them so the next run isn't rejected by the provider
+            # for an unpaired tool call (#1888), then re-raise.
+            async for _ in self._close_unfinished_tool_calls(
+                interruption_message=(
+                    "<system-reminder>The tool call was interrupted by "
+                    "a failure before it could complete.</system-reminder>"
+                ),
+            ):
+                yield _
+            raise
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
@@ -3232,6 +3260,80 @@ class Agent:
             result = await mw.on_system_prompt(self, result)
 
         return result
+
+    def _recover_interrupted_tool_calls(self) -> None:
+        """Close orphan tool calls left in the context by a mid-stream failure.
+
+        A tool call is appended to ``self.state.context`` before its tool
+        result is produced. If the run is interrupted in that window (for
+        example by a process crash or a failure outside ``toolkit.call_tool``,
+        whose own exceptions are turned into results), the context is left
+        with a tool call that has no matching tool result. Sending such
+        history back to the model provider is rejected and bricks the session.
+
+        To keep the session recoverable, synthesize an ``interrupted`` tool
+        result for every tool call that still lacks one and attach it to the
+        same message that holds the orphan tool call, mirroring the structure
+        produced by ``_execute_tool_call``. This is the Python counterpart of
+        the ``PendingToolRecoveryHook`` used to fix the same problem in
+        ``agentscope-java``.
+
+        This runs at the start of a fresh reply (a new user message, not an
+        event-driven resume). At that point every tool call in the context
+        belongs to a previous, already-finished run, so any that still lack a
+        result are genuine orphans. Tool calls awaiting an outside event
+        (``asking``/``submitted``) never reach here: a fresh message while the
+        agent is awaiting is rejected before this runs, and an event-driven
+        resume takes a different branch.
+        """
+        # ``get_content_blocks`` always returns an iterable, but pylint cannot
+        # infer this for a message drawn from ``state.context``.
+        # pylint: disable=not-an-iterable
+
+        # Pairing is by tool call id, and a result may live in any message,
+        # so collect every result id across the whole context first.
+        result_ids = {
+            block.id
+            for msg in self.state.context
+            for block in msg.get_content_blocks("tool_result")
+        }
+
+        for msg in self.state.context:
+            # Only assistant messages carry tool calls.
+            if msg.role != "assistant":
+                continue
+
+            orphan_calls = [
+                block
+                for block in msg.get_content_blocks("tool_call")
+                if block.id not in result_ids
+            ]
+            if not orphan_calls:
+                continue
+
+            # ``get_content_blocks`` returned tool calls, so the content is a
+            # mutable list of blocks (never a plain string here).
+            for tool_call in orphan_calls:
+                msg.content.append(
+                    ToolResultBlock(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        output=(
+                            "The tool call was interrupted before it could "
+                            "complete, so no result is available."
+                        ),
+                        state=ToolResultState.INTERRUPTED,
+                    ),
+                )
+                tool_call.state = ToolCallState.FINISHED
+                logger.warning(
+                    "Recovered an interrupted tool call '%s' (id=%s) in "
+                    "agent '%s' with a synthesized tool result to keep the "
+                    "session valid.",
+                    tool_call.name,
+                    tool_call.id,
+                    self.name,
+                )
 
     async def _prepare_model_input(self) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
