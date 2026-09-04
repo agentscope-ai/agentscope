@@ -710,13 +710,22 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									    place the name appears, and it collapses
 									    on mobile — so on a narrow screen this is
 									    the only thing saying which conversation
-									    is on screen. */}
-									<span
-										className="truncate px-2 text-sm font-medium"
-										title={view?.session.config.name}
-									>
-										{view?.session.config.name}
-									</span>
+									    is on screen.
+
+									    Withheld until the session has something
+									    in it: an untouched one is still named
+									    after the timestamp it was created at,
+									    and a date is worse than no title at all.
+									    The first reply replaces that with a real
+									    one. */}
+									{msgs.length > 0 && (
+										<span
+											className="truncate px-2 text-sm text-muted-foreground"
+											title={view?.session.config.name}
+										>
+											{view?.session.config.name}
+										</span>
+									)}
 								</div>
 								{/* Never squeezed by a long session name: the
 								    name truncates instead. */}
