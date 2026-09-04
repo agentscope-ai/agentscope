@@ -3,6 +3,7 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import json
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -313,6 +314,42 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         # Empty
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_chat_formatter_repairs_partial_tool_input(self) -> None:
+        """Historical partial tool arguments are sent as valid JSON."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call-partial",
+                        name="write",
+                        input=(
+                            '{"file_path": "/tmp/test.py", '
+                            '"content": "unfinished'
+                        ),
+                    ),
+                    ToolResultBlock(
+                        id="call-partial",
+                        name="write",
+                        output="The tool call was interrupted.",
+                        state=ToolResultState.INTERRUPTED,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        arguments = res[0]["tool_calls"][0]["function"]["arguments"]
+        self.assertDictEqual(
+            json.loads(arguments),
+            {
+                "file_path": "/tmp/test.py",
+                "content": "unfinished",
+            },
+        )
 
     async def test_chat_formatter_base64_image(self) -> None:
         """Base64-encoded image is inlined as a data URI."""
