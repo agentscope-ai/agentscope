@@ -9,19 +9,23 @@ pipeline.  Forcing RAGFlow underneath :class:`VectorStoreBase` would
 require bypassing its core strengths (its built-in document processing
 and indexing pipeline), so it is exposed instead as a knowledge-layer
 handle that sits *alongside* :class:`~agentscope.rag.KnowledgeBase`
-and implements the same application-level interface.
+rather than beneath :class:`~agentscope.rag.VectorStoreBase`.
 
-:class:`RAGFlowKnowledge` therefore mirrors the public surface of
+:class:`RAGFlowKnowledge` exposes the same *purpose-built operations* as
 :class:`~agentscope.rag.KnowledgeBase` — :meth:`search`,
 :meth:`insert_document`, :meth:`delete_document`, :meth:`list_documents`,
-:meth:`list_chunks` — so code written against one knowledge backend
-keeps working with the other, while delegating the heavy lifting to the
-RAGFlow service.
+:meth:`list_chunks` — so callers consult and manage a knowledge base
+through the same method names while the heavy lifting is delegated to the
+RAGFlow service.  The method signatures are *not* fully interchangeable:
+``search`` accepts only text queries (RAGFlow embeds them server-side, so
+no embedding model or ``DataBlock`` inputs are involved), and
+``insert_document`` takes raw document bytes rather than pre-embedded
+``Chunk`` objects.
 
-The one deliberate divergence from :class:`~agentscope.rag.KnowledgeBase`
-is how a document is added.  ``KnowledgeBase.insert_document`` takes
-pre-embedded ``Chunk`` objects because AgentScope runs the parsing and
-chunking locally.  RAGFlow runs those steps on the server, so
+The deliberate divergence in how a document is added follows from
+the same root cause.  ``KnowledgeBase.insert_document`` takes pre-embedded
+``Chunk`` objects because AgentScope runs the parsing and chunking
+locally.  RAGFlow runs those steps on the server, so
 :meth:`RAGFlowKnowledge.insert_document` accepts raw document bytes plus a
 filename and lets RAGFlow parse, chunk, and index them.
 
@@ -33,11 +37,11 @@ filename and lets RAGFlow parse, chunk, and index them.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from .._utils._common import _generate_id
 from ._document import Chunk
 from ._vdb import DocumentSummary, VectorSearchResult
 from ..message import TextBlock
@@ -258,14 +262,17 @@ class RAGFlowKnowledge:
         Each query is sent to RAGFlow's ``retrieve`` endpoint, which
         combines vector similarity and (optionally) keyword matching and
         returns chunks already ranked by the server.  Hits across all
-        queries are deduplicated by ``(document_id, chunk_index)`` keeping
-        the best similarity score, optionally filtered by
-        ``score_threshold``, and truncated to ``top_k`` — the same
-        normalisation applied by :class:`~agentscope.rag.KnowledgeBase`.
+        queries are deduplicated by the RAGFlow chunk id (kept in
+        ``chunk.metadata["ragflow_chunk_id"]``) inside the same
+        ``document_id``, keeping the best similarity score, optionally
+        filtered by ``score_threshold``, and truncated to ``top_k``.
 
         Unlike :class:`~agentscope.rag.KnowledgeBase`, no embedding model
         is needed: RAGFlow embeds the query server-side with the model
-        configured on the dataset.
+        configured on the dataset.  RAGFlow reports neither the 0-based
+        index nor the total chunk count of a chunk *within* its source
+        document, so ``Chunk.chunk_index`` is a per-document ordinal of
+        the retrieved hits and ``Chunk.total_chunks`` is ``0``.
 
         Args:
             queries (`list[str | TextBlock]`):
@@ -319,10 +326,17 @@ class RAGFlowKnowledge:
             ),
         )
 
-        best: dict[tuple[str, int], VectorSearchResult] = {}
+        # The same underlying chunk can surface from more than one query
+        # (and / or under repeated chunks when RAGFlow splits a document),
+        # so it is deduplicated by its stable ``ragflow_chunk_id``.  The
+        # best (highest-similarity) representation of each chunk is kept.
+        best: dict[tuple[str, str], VectorSearchResult] = {}
+        # Per-document 0-based ordinal, so ``Chunk.chunk_index`` stays a
+        # meaningful index within its source document rather than a rank.
+        document_offsets: dict[str, int] = defaultdict(int)
         for query_results in results_per_query:
-            for index, chunk in enumerate(query_results):
-                score = self._extract_score(chunk)
+            for chunk in query_results:
+                score = chunk.similarity
                 threshold = (
                     self._config.similarity_threshold
                     if score_threshold is None
@@ -330,12 +344,25 @@ class RAGFlowKnowledge:
                 )
                 if threshold is not None and score < threshold:
                     continue
-                document_id = (
-                    getattr(chunk, "dataset_id", None)
-                    or self._config.dataset_id
+                document_id = chunk.document_id
+                # RAGFlow always identifies the source document of a hit;
+                # without it the chunk cannot be cited or deleted, so drop it.
+                if not document_id:
+                    continue
+                chunk_data = chunk.id
+                # ``document_offsets`` keeps a running 0, 1, 2, ... ordinal
+                # per document so ``chunk_index`` is a position within its
+                # document rather than a retrieval rank.
+                chunk_index = document_offsets[document_id]
+                document_offsets[document_id] += 1
+                agent_chunk = Chunk(
+                    content=TextBlock(text=str(chunk.content)),
+                    source=chunk.document_name,
+                    chunk_index=chunk_index,
+                    total_chunks=0,  # RAGFlow does not report a total
+                    metadata={"ragflow_chunk_id": chunk_data},
                 )
-                agent_chunk = self._to_agentscope_chunk(chunk, index)
-                key = (document_id, agent_chunk.chunk_index)
+                key = (document_id, chunk_data)
                 if key not in best or score > best[key].score:
                     best[key] = VectorSearchResult(
                         score=score,
@@ -350,74 +377,11 @@ class RAGFlowKnowledge:
         )
         return merged[:top_k] if top_k > 0 else merged
 
-    @staticmethod
-    def _extract_score(chunk: Any) -> float:
-        """Extract the similarity score from an SDK ``Chunk``.
-
-        RAGFlow exposes the score under a ``similarity`` attribute on the
-        returned chunk objects; the exact attribute may vary across SDK
-        versions, so a small set of candidates is tried and ``0.0`` is
-        returned when none is present.
-
-        Args:
-            chunk (`Any`):
-                A ``ragflow_sdk.Chunk`` returned by ``retrieve``.
-
-        Returns:
-            `float`: The similarity score, or ``0.0`` if unavailable.
-        """
-        for attr in ("similarity", "score"):
-            value = getattr(chunk, attr, None)
-            if value is not None:
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    break
-        return 0.0
-
-    @staticmethod
-    def _to_agentscope_chunk(chunk: Any, index: int) -> Chunk:
-        """Wrap an SDK ``Chunk`` into an :class:`~agentscope.rag.Chunk`.
-
-        RAGFlow's chunks have no dense ``chunk_index`` / ``total_chunks``
-        sequence of their own, so a stable index (the retrieval ordering
-        position) is used for the chunk index.  Document and source names
-        are taken from the SDK chunk fields when available.
-
-        Args:
-            chunk (`Any`):
-                A ``ragflow_sdk.Chunk`` returned by ``retrieve``.
-            index (`int`):
-                The 0-based position of the chunk within this query's
-                results — used as the chunk index for dedup.
-
-        Returns:
-            `Chunk`: The AgentScope chunk.
-        """
-        content = getattr(chunk, "content", None) or ""
-        source = getattr(chunk, "document_name", None) or ""
-        metadata: dict[str, Any] = {}
-        chunk_id = getattr(chunk, "id", None)
-        if chunk_id:
-            metadata["ragflow_chunk_id"] = chunk_id
-        return Chunk(
-            content=TextBlock(text=str(content)),
-            source=source,
-            chunk_index=index,
-            total_chunks=0,
-            metadata=metadata,
-        )
-
     # ------------------------------------------------------------------
     # Document management
     # ------------------------------------------------------------------
 
-    async def insert_document(
-        self,
-        blob: bytes,
-        filename: str,
-        document_id: str | None = None,
-    ) -> str:
+    async def insert_document(self, blob: bytes, filename: str) -> str:
         """Upload a raw document to the bound RAGFlow dataset.
 
         RAGFlow parses, chunks, and indexes the document on the server
@@ -425,20 +389,24 @@ class RAGFlowKnowledge:
         :meth:`~agentscope.rag.KnowledgeBase.insert_document` — this takes
         raw file bytes rather than pre-embedded ``Chunk`` objects.
 
+        .. note:: Indexing is **asynchronous**.  This method uploads the
+            document and asks RAGFlow to parse it (via
+            ``async_parse_documents``), then returns immediately; the
+            document becomes searchable only after RAGFlow finishes
+            parsing, which may lag behind this call.  Poll
+            :meth:`list_documents` (e.g. on ``parse_progress`` / ``run``)
+            to wait for readiness before searching.
+
         Args:
             blob (`bytes`):
                 The raw bytes of the document (PDF, DOCX, TXT, ...).
             filename (`str`):
                 The display filename RAGFlow stores the document under.
                 RAGFlow infers the parser from its extension.
-            document_id (`str | None`, optional):
-                An optional caller-supplied RAGFlow document id.  RAGFlow
-                assigns its own id on upload, so when ``None``, the id of
-                the newly created document is resolved and returned.
 
         Returns:
             `str`:
-                The RAGFlow document id of the uploaded document.
+                The RAGFlow document id assigned to the uploaded document.
         """
         dataset = await self._get_dataset()
         documents = await asyncio.to_thread(
@@ -451,7 +419,11 @@ class RAGFlowKnowledge:
                 f"{filename!r} to dataset {self._config.dataset_id!r}.",
             )
         document = documents[0]
-        return getattr(document, "id", None) or document_id or _generate_id()
+        await asyncio.to_thread(
+            dataset.async_parse_documents,
+            [document.id],
+        )
+        return document.id
 
     async def delete_document(self, document_id: str) -> None:
         """Remove one document from the bound RAGFlow dataset.
@@ -483,22 +455,15 @@ class RAGFlowKnowledge:
         )
         summaries: list[DocumentSummary] = []
         for document in documents:
-            document_id = getattr(document, "id", None) or ""
-            if not document_id:
-                continue
             summaries.append(
                 DocumentSummary(
-                    document_id=document_id,
-                    source=getattr(document, "name", "") or "",
-                    chunk_count=int(getattr(document, "chunk_count", 0) or 0),
+                    document_id=document.id,
+                    source=document.name,
+                    chunk_count=document.chunk_count,
                     metadata={
-                        "parse_progress": getattr(
-                            document,
-                            "progress",
-                            None,
-                        ),
-                        "run": getattr(document, "run", None),
-                        "size": getattr(document, "size", None),
+                        "parse_progress": document.progress,
+                        "run": document.run,
+                        "size": document.size,
                     },
                 ),
             )
@@ -513,9 +478,11 @@ class RAGFlowKnowledge:
     ) -> list[Chunk]:
         """List one document's chunks as indexed by RAGFlow.
 
-        RAGFlow numbers chunks per document from 1; AgentScope numbers
-        them from 0, so the returned :attr:`Chunk.chunk_index` is rebased
-        accordingly to stay consistent with the rest of the RAG module.
+        RAGFlow does not expose a dense ``chunk_index``/``total_chunks``
+        sequence, so ``chunk_index`` is the 0-based ordinal of the chunk
+        within the pages returned so far and ``total_chunks`` is ``0``.
+        The RAGFlow chunk id is preserved in
+        ``metadata["ragflow_chunk_id"]``.
 
         Args:
             document_id (`str`):
@@ -530,7 +497,7 @@ class RAGFlowKnowledge:
                 At most ``limit`` chunks.
         """
         document = await self._get_document(document_id)
-        # RAGFlow pages from 1 and numbers chunks from 1.
+        # RAGFlow pages from 1.
         page = offset // limit + 1 if limit > 0 else 1
         chunk_data = await asyncio.to_thread(
             document.list_chunks,
@@ -540,17 +507,13 @@ class RAGFlowKnowledge:
         chunks: list[Chunk] = []
         base_index = (page - 1) * limit
         for index, chunk in enumerate(chunk_data):
-            content = getattr(chunk, "content", None) or ""
-            chunk_id = getattr(chunk, "id", None)
             chunks.append(
                 Chunk(
-                    content=TextBlock(text=str(content)),
-                    source=getattr(chunk, "document_name", None) or "",
+                    content=TextBlock(text=str(chunk.content)),
+                    source=chunk.document_name,
                     chunk_index=base_index + index,
                     total_chunks=0,
-                    metadata=(
-                        {"ragflow_chunk_id": chunk_id} if chunk_id else {}
-                    ),
+                    metadata={"ragflow_chunk_id": chunk.id},
                 ),
             )
         return chunks
