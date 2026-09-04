@@ -1548,19 +1548,21 @@ class Agent:
                 if chunk.is_last:
                     completed_response = chunk
                     if not has_streamed_content:
-                        # Surface final-only text without replaying aggregate
-                        # tool, thinking, or data content as duplicate deltas.
-                        text_blocks = [
+                        # Surface final-only user-visible content without
+                        # replaying an aggregate response after streamed
+                        # chunks. Tool calls keep their existing acting-path
+                        # event contract.
+                        event_blocks = [
                             block
                             for block in chunk.content
-                            if isinstance(block, TextBlock)
+                            if not isinstance(block, ToolCallBlock)
                         ]
-                        if text_blocks:
+                        if event_blocks:
                             event_stream = (
                                 self._convert_chat_response_to_event(
                                     block_ids,
                                     ChatResponse(
-                                        content=text_blocks,
+                                        content=event_blocks,
                                         is_last=False,
                                     ),
                                 )
@@ -1569,9 +1571,7 @@ class Agent:
                                 yield evt
 
                 else:
-                    has_streamed_content = has_streamed_content or bool(
-                        chunk.content,
-                    )
+                    has_streamed_content = True
                     # Convert the chunk into events
                     async for evt in self._convert_chat_response_to_event(
                         block_ids,

@@ -18,6 +18,8 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    Base64Source,
+    DataBlock,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
@@ -445,7 +447,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             [
                 [
                     ChatResponse(
-                        content=[TextBlock(text="Hello world!")],
+                        content=[
+                            ThinkingBlock(thinking="Considering"),
+                            TextBlock(text="Hello world!"),
+                            DataBlock(
+                                id="data-1",
+                                source=Base64Source(
+                                    data="aW1hZ2U=",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
                         is_last=True,
                     ),
                 ],
@@ -473,6 +485,15 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "model_name": "mock-model",
             },
             {
+                "type": "THINKING_BLOCK_START",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "THINKING_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "Considering",
+            },
+            {
                 "type": "TEXT_BLOCK_START",
                 "block_id": AnyString(),
             },
@@ -482,8 +503,27 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "delta": "Hello world!",
             },
             {
+                "type": "DATA_BLOCK_START",
+                "block_id": "data-1",
+                "media_type": "image/png",
+            },
+            {
+                "type": "DATA_BLOCK_DELTA",
+                "block_id": "data-1",
+                "data": "aW1hZ2U=",
+                "media_type": "image/png",
+            },
+            {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+            },
+            {
+                "type": "THINKING_BLOCK_END",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "DATA_BLOCK_END",
+                "block_id": "data-1",
             },
             {
                 "type": "MODEL_CALL_END",
