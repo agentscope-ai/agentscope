@@ -62,6 +62,8 @@ class MockModel(ChatModelBase):
         mock_chat_responses: list | None = None,
         mock_structured_response: Any = None,
         formatter: FormatterBase | None = None,
+        stream_first_chunk_timeout: float | None = 120.0,
+        stream_idle_timeout: float | None = 30.0,
     ) -> None:
         """Initialize the mock model."""
         super().__init__(
@@ -70,6 +72,8 @@ class MockModel(ChatModelBase):
             stream=stream,
             parameters=MockModel.Parameters(),
             context_size=context_size,
+            stream_first_chunk_timeout=stream_first_chunk_timeout,
+            stream_idle_timeout=stream_idle_timeout,
         )
         # Mirror real models, which each expose a formatter; the agent reads
         # ``formatter.supported_input_media_types`` on every incoming message.

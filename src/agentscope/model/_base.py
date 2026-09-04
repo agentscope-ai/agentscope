@@ -6,7 +6,7 @@ import json
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
-from typing import Type, Any, AsyncGenerator
+from typing import Type, Any, AsyncGenerator, Awaitable
 
 import jsonschema
 from pydantic import BaseModel, ValidationError as PydanticValidationError
@@ -17,7 +17,12 @@ from ._utils import _StreamAccumulator
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..credential import CredentialBase
-from ..exception import StructuredOutputError, ToolJSONDecodeError
+from ..exception import (
+    ModelFirstChunkTimeoutError,
+    ModelStreamIdleTimeoutError,
+    StructuredOutputError,
+    ToolJSONDecodeError,
+)
 from ..message import (
     Msg,
     TextBlock,
@@ -59,6 +64,16 @@ class ChatModelBase:
     context_size: int
     """The model context size that will be used in the context compression."""
 
+    stream_first_chunk_timeout: float | None
+    """Maximum seconds to wait for initial meaningful stream content.
+
+    The deadline starts when the model call begins, so a caller delay before
+    consuming the returned stream counts toward this budget.
+    """
+
+    stream_idle_timeout: float | None
+    """Maximum seconds between meaningful chunks and stream completion."""
+
     def __init__(
         self,
         credential: CredentialBase,
@@ -68,6 +83,8 @@ class ChatModelBase:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 32768,
+        stream_first_chunk_timeout: float | None = 120.0,
+        stream_idle_timeout: float | None = 30.0,
     ) -> None:
         """Initialize the chat model base.
 
@@ -88,7 +105,24 @@ class ChatModelBase:
                 Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
+            stream_first_chunk_timeout (`float | None`, defaults to `120.0`):
+                Maximum seconds from starting a streaming model call until
+                the first meaningful content chunk. A caller delay before
+                first iteration counts toward this budget. ``None`` disables
+                it.
+            stream_idle_timeout (`float | None`, defaults to `30.0`):
+                Maximum seconds between meaningful content chunks after the
+                first one. Empty chunks do not reset the deadline, and stream
+                completion must occur within the same window. ``None``
+                disables it.
         """
+        for name, value in (
+            ("stream_first_chunk_timeout", stream_first_chunk_timeout),
+            ("stream_idle_timeout", stream_idle_timeout),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be greater than 0 or None.")
+
         self.credential = credential
         self.model = model
         self.parameters = parameters
@@ -96,6 +130,88 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self.stream_first_chunk_timeout = stream_first_chunk_timeout
+        self.stream_idle_timeout = stream_idle_timeout
+
+    def _new_first_chunk_deadline(self) -> float | None:
+        """Create an absolute deadline for the current public model call."""
+        if not self.stream or self.stream_first_chunk_timeout is None:
+            return None
+        return (
+            asyncio.get_running_loop().time() + self.stream_first_chunk_timeout
+        )
+
+    async def _await_with_stream_deadline(
+        self,
+        awaitable: Awaitable[Any],
+        deadline: float | None,
+        first_chunk: bool,
+    ) -> Any:
+        """Await an operation under an absolute stream deadline."""
+        if deadline is None:
+            return await awaitable
+
+        timeout = asyncio.timeout_at(deadline)
+        try:
+            async with timeout:
+                return await awaitable
+        except TimeoutError as error:
+            if not timeout.expired():
+                raise
+            if first_chunk:
+                assert self.stream_first_chunk_timeout is not None
+                raise ModelFirstChunkTimeoutError(
+                    self.model,
+                    self.stream_first_chunk_timeout,
+                ) from error
+            assert self.stream_idle_timeout is not None
+            raise ModelStreamIdleTimeoutError(
+                self.model,
+                self.stream_idle_timeout,
+            ) from error
+
+    async def _iterate_stream_with_timeouts(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+        first_chunk_deadline: float | None,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Iterate a stream while enforcing progress-based deadlines.
+
+        After the first meaningful chunk, the stream must either make
+        meaningful progress or finish within each idle window.
+        """
+        iterator = aiter(stream)
+        received_content = False
+        deadline = first_chunk_deadline
+        try:
+            while True:
+                try:
+                    chunk = await self._await_with_stream_deadline(
+                        anext(iterator),
+                        deadline,
+                        first_chunk=not received_content,
+                    )
+                except StopAsyncIteration:
+                    break
+
+                made_progress = bool(chunk.content)
+                if made_progress:
+                    received_content = True
+                yield chunk
+
+                # Start the idle window only when the consumer asks for the
+                # next item. Time spent processing the current chunk is
+                # downstream backpressure, not upstream stream idleness.
+                if made_progress:
+                    if self.stream_idle_timeout is None:
+                        deadline = None
+                    else:
+                        deadline = (
+                            asyncio.get_running_loop().time()
+                            + self.stream_idle_timeout
+                        )
+        finally:
+            await iterator.aclose()
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -205,15 +321,20 @@ class ChatModelBase:
 
         retryable = self._get_retryable_exceptions()
         last_error: Exception | None = None
+        first_chunk_deadline = self._new_first_chunk_deadline()
         for attempt in range(self.max_retries + 1):
             # The accumulated chat response
             try:
-                res = await self._call_api(
-                    self.model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    **kwargs,
+                res = await self._await_with_stream_deadline(
+                    self._call_api(
+                        self.model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        **kwargs,
+                    ),
+                    first_chunk_deadline,
+                    first_chunk=True,
                 )
                 break
             except asyncio.CancelledError:
@@ -236,7 +357,11 @@ class ChatModelBase:
                         str(e),
                         self.retry_delay,
                     )
-                    await asyncio.sleep(self.retry_delay)
+                    await self._await_with_stream_deadline(
+                        asyncio.sleep(self.retry_delay),
+                        first_chunk_deadline,
+                        first_chunk=True,
+                    )
                 else:
                     logger.warning(
                         "All %d attempt(s) failed for model %s.",
@@ -258,12 +383,19 @@ class ChatModelBase:
             return res
 
         async def _stream() -> AsyncGenerator[ChatResponse, None]:
-            """The wrapper around model calling."""
+            """Wrap model streaming and accumulate its incremental chunks.
+
+            Stream timeouts propagate after any emitted deltas and do not
+            produce a synthetic final accumulated response.
+            """
             # For backward compatibility
             yield_acc_res = True
             acc_res = _StreamAccumulator()
             try:
-                async for chunk in res:
+                async for chunk in self._iterate_stream_with_timeouts(
+                    res,
+                    first_chunk_deadline,
+                ):
                     if not chunk.is_last:
                         acc_res.append_chat_response(chunk)
                         acc_res.id = chunk.id
@@ -479,6 +611,9 @@ class ChatModelBase:
         An explicit ``tool_choice`` in ``kwargs`` bypasses the strategy
         ladder and is forwarded unchanged.
 
+        For streaming models, all strategies, attempts, and retry backoffs
+        share one absolute first-chunk deadline for this public call.
+
         Args:
             messages (`list[Msg]`):
                 The context for LLM to generate the structured output.
@@ -522,6 +657,7 @@ class ChatModelBase:
         )
         first_error: Exception | None = None
         last_error: Exception | None = None
+        first_chunk_deadline = self._new_first_chunk_deadline()
         for name, extra_kwargs, tool_choice in strategies:
             # Overlay disable-thinking kwargs; a nested `extra_body` is
             # merged rather than overwritten so caller keys survive.
@@ -537,6 +673,7 @@ class ChatModelBase:
                         messages=messages,
                         structured_model=structured_model,
                         tool_choice=tool_choice,
+                        _first_chunk_deadline=first_chunk_deadline,
                         **merged,
                     )
                     if name not in ("forced", "explicit"):
@@ -567,7 +704,11 @@ class ChatModelBase:
                                 e,
                                 self.retry_delay,
                             )
-                            await asyncio.sleep(self.retry_delay)
+                            await self._await_with_stream_deadline(
+                                asyncio.sleep(self.retry_delay),
+                                first_chunk_deadline,
+                                first_chunk=True,
+                            )
                             continue
                         raise  # retries exhausted -> give up
                     if not isinstance(e, fallback):
@@ -598,6 +739,7 @@ class ChatModelBase:
         messages: list[Msg],
         structured_model: Type[BaseModel] | dict,
         tool_choice: ToolChoice | None = None,
+        _first_chunk_deadline: float | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
         """Run a single structured-output attempt via a forced tool call.
@@ -620,6 +762,8 @@ class ChatModelBase:
                 required output structure.
             tool_choice (`ToolChoice | None`, defaults to `None`):
                 The tool_choice forwarded to ``_call_api``, used as-is.
+            _first_chunk_deadline (`float | None`, defaults to `None`):
+                Absolute deadline shared by all attempts in the public call.
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
         """
@@ -647,23 +791,27 @@ class ChatModelBase:
                 UserMsg(name="user", content=[TextBlock(text=instruction)]),
             )
 
-        res = await self._call_api(
-            model_name=model_name,
-            messages=copied_messages,
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": func_name,
-                        "description": "Call this function to generate "
-                        "structured output required by "
-                        "the user.",
-                        "parameters": input_schema,
+        res = await self._await_with_stream_deadline(
+            self._call_api(
+                model_name=model_name,
+                messages=copied_messages,
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": func_name,
+                            "description": "Call this function to generate "
+                            "structured output required by "
+                            "the user.",
+                            "parameters": input_schema,
+                        },
                     },
-                },
-            ],
-            tool_choice=tool_choice,
-            **kwargs,
+                ],
+                tool_choice=tool_choice,
+                **kwargs,
+            ),
+            _first_chunk_deadline,
+            first_chunk=True,
         )
 
         completed_response: ChatResponse | None = None
@@ -677,7 +825,10 @@ class ChatModelBase:
             # end without ever producing an ``is_last=True`` chunk.
             acc_res = _StreamAccumulator()
 
-            async for chunk in res:
+            async for chunk in self._iterate_stream_with_timeouts(
+                res,
+                _first_chunk_deadline,
+            ):
                 if chunk.is_last:
                     completed_response = chunk
                     break
