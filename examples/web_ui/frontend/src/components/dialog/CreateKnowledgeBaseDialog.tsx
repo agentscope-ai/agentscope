@@ -196,7 +196,7 @@ export function CreateKnowledgeBaseDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-2rem)] !max-w-[500px] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-knowledge-base-create.title')}</DialogTitle>
 					<DialogDescription>
