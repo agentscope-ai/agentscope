@@ -262,7 +262,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				<div className="relative min-w-full max-w-full w-full">
 					<FlipCard
 						visible={toConfirmedToolCalls.length > 0 || footerSlot !== null}
-						className="absolute bottom-full left-0 right-0 mb-2 z-50"
+						className="relative z-10 mb-2 max-h-[40vh] w-full overflow-y-auto"
 					>
 						{toConfirmedToolCalls.length > 0 ? (
 							<ConfirmCard
