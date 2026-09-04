@@ -35,7 +35,6 @@ from fastapi.testclient import TestClient
 
 from agentscope.app import create_app
 from agentscope.app._service import IndexTaskConsumer
-from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.rag.blob_store import LocalBlobStore
 from agentscope.app.rag.knowledge_base_manager import (
     KnowledgeBaseManagerBase,
@@ -45,6 +44,7 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
     DimensionPolicy,
     DimensionPolicyKind,
 )
+from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     ChunkerConfig,
     EmbeddingModelConfig,
@@ -59,6 +59,7 @@ from agentscope.rag._vdb._vector_store import (
     VectorRecord,
     VectorSearchResult,
 )
+
 
 # ----------------------------------------------------------------------
 # Test doubles — borrowed in spirit from service_knowledge_base_upload_test
