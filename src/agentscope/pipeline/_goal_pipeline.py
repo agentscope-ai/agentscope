@@ -77,8 +77,9 @@ class GoalPipeline:
             max_iters (`int`, optional):
                 The maximum number of goal achievement attempts.
             max_retries (`int`, optional):
-                The maximum number of retries for the executor and verifier
-                agents to generate valid structured outputs. Defaults to `3`.
+                The maximum number of retries after the initial attempt for
+                the executor and verifier agents to generate valid structured
+                outputs. Defaults to `3`.
         """
         self.executor = executor
         self.verifier = verifier
@@ -88,6 +89,8 @@ class GoalPipeline:
         # Rounds already judged. On the instance rather than in
         # ``reply_stream``, so a HITL resume does not restart the budget.
         self._iters = 0
+        self._executor_retries = 0
+        self._verifier_retries = 0
         self._goal: None | list[TextBlock | DataBlock] = None
 
     async def reply_stream(
@@ -123,6 +126,8 @@ class GoalPipeline:
             executor_inputs = deepcopy(inputs)
             # A fresh run, so the iteration budget starts over.
             self._iters = 0
+            self._executor_retries = 0
+            self._verifier_retries = 0
 
             hint = (
                 "<system-reminder>When you finish the goal, you should "
@@ -205,6 +210,13 @@ class GoalPipeline:
                         break
 
                     if execution_report is None:
+                        if self._executor_retries >= self.max_retries:
+                            raise RuntimeError(
+                                "executor failed to generate valid structured "
+                                "output after "
+                                f"{self._executor_retries + 1} attempts.",
+                            )
+                        self._executor_retries += 1
                         # Update the instruction
                         executor_inputs = UserMsg(
                             name="system",
@@ -219,6 +231,7 @@ class GoalPipeline:
             if break_loop:
                 # The executor parked, so there is nothing to verify yet.
                 break
+            self._executor_retries = 0
 
             # Verifier
             final_msg = None
@@ -271,9 +284,14 @@ class GoalPipeline:
                 if break_loop:
                     # Escape the loop for hitl events
                     break
-                if final_msg is None:
-                    continue
-                if final_msg.structured_output is None:
+                if final_msg is None or final_msg.structured_output is None:
+                    if self._verifier_retries >= self.max_retries:
+                        raise RuntimeError(
+                            "verifier failed to generate valid structured "
+                            "output after "
+                            f"{self._verifier_retries + 1} attempts.",
+                        )
+                    self._verifier_retries += 1
                     # Update the instruction for valid verification result
                     # TODO: support multimodal verification instruction
                     final_msg = None
@@ -290,7 +308,10 @@ class GoalPipeline:
                             f"{self._goal}</system-reminder>"
                         ),
                     )
-                elif final_msg.structured_output.get("result") in (
+                    continue
+
+                self._verifier_retries = 0
+                if final_msg.structured_output.get("result") in (
                     "pass",
                     "impossible",
                 ):
