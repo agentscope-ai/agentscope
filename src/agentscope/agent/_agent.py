@@ -753,26 +753,18 @@ class Agent:
                         res.usage.output_tokens,
                     )
                 else:
-                    last_msg = msgs_to_reserve[-1]
-                    usage = Usage(
-                        input_tokens=res.usage.input_tokens,
-                        output_tokens=res.usage.output_tokens,
-                        cache_input_tokens=res.usage.cache_input_tokens or 0,
-                        cache_creation_input_tokens=(
-                            res.usage.cache_creation_input_tokens or 0
+                    msgs_to_reserve[-1].append_usage(
+                        Usage(
+                            input_tokens=res.usage.input_tokens,
+                            output_tokens=res.usage.output_tokens,
+                            cache_input_tokens=(
+                                res.usage.cache_input_tokens or 0
+                            ),
+                            cache_creation_input_tokens=(
+                                res.usage.cache_creation_input_tokens or 0
+                            ),
                         ),
                     )
-                    if last_msg.usage is None:
-                        last_msg.usage = usage
-                    else:
-                        last_msg.usage.input_tokens += usage.input_tokens
-                        last_msg.usage.output_tokens += usage.output_tokens
-                        last_msg.usage.cache_input_tokens += (
-                            usage.cache_input_tokens
-                        )
-                        last_msg.usage.cache_creation_input_tokens += (
-                            usage.cache_creation_input_tokens
-                        )
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",
@@ -3484,17 +3476,8 @@ class Agent:
 
         self.state.append_context(self.name, persisted_blocks)
 
-        tail = self.state.context[-1]
         if msg_usage is not None:
-            if tail.usage is None:
-                tail.usage = msg_usage
-            else:
-                tail.usage.input_tokens += msg_usage.input_tokens
-                tail.usage.output_tokens += msg_usage.output_tokens
-                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
-                tail.usage.cache_creation_input_tokens += (
-                    msg_usage.cache_creation_input_tokens
-                )
+            self.state.context[-1].append_usage(msg_usage)
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
