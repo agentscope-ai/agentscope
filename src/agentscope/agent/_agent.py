@@ -740,31 +740,24 @@ class Agent:
             self.state.context = msgs_to_reserve
 
             # The compression call is not covered by the model call events,
-            # so record its cost on the last retained message to keep it in
-            # the token accounting
+            # so record its cost on the context tail to keep it in the token
+            # accounting
             if res is not None and res.usage is not None:
-                if not msgs_to_reserve:
-                    logger.warning(
-                        "[AGENT %s]: The whole context is compressed, so the "
-                        "compression usage (%d input, %d output tokens) is "
-                        "dropped.",
-                        self.name,
-                        res.usage.input_tokens,
-                        res.usage.output_tokens,
-                    )
-                else:
-                    msgs_to_reserve[-1].append_usage(
-                        Usage(
-                            input_tokens=res.usage.input_tokens,
-                            output_tokens=res.usage.output_tokens,
-                            cache_input_tokens=(
-                                res.usage.cache_input_tokens or 0
-                            ),
-                            cache_creation_input_tokens=(
-                                res.usage.cache_creation_input_tokens or 0
-                            ),
+                if not self.state.context:
+                    # The whole context is compressed, so carry the cost by an
+                    # empty message, which is skipped by the formatters
+                    self.state.append_context(self.name, [])
+
+                self.state.context[-1].append_usage(
+                    Usage(
+                        input_tokens=res.usage.input_tokens,
+                        output_tokens=res.usage.output_tokens,
+                        cache_input_tokens=res.usage.cache_input_tokens or 0,
+                        cache_creation_input_tokens=(
+                            res.usage.cache_creation_input_tokens or 0
                         ),
-                    )
+                    ),
+                )
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",

@@ -2597,7 +2597,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
 
     async def test_context_compression_without_reserved_context(self) -> None:
-        """The compression usage is dropped when nothing is retained."""
+        """The compression usage is carried by an empty message when the
+        whole context is compressed."""
         model = MockModel(context_size=100)
         agent = Agent(
             name="Friday",
@@ -2637,15 +2638,32 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
 
         # A reserve ratio above the trigger ratio compresses the whole context
-        with self.assertLogs("as", level="WARNING") as logs:
-            await agent.compress_context(
-                ContextConfig(trigger_ratio=0.7, reserve_ratio=0.89),
-            )
+        await agent.compress_context(
+            ContextConfig(trigger_ratio=0.7, reserve_ratio=0.89),
+        )
 
-        self.assertListEqual(agent.state.context, [])
-        self.assertIn(
-            "the compression usage (123 input, 45 output tokens) is dropped",
-            "\n".join(logs.output),
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": agent.state.reply_id,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 123,
+                        "output_tokens": 45,
+                        "cache_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                },
+            ],
         )
 
     async def test_summary_failure_truncates_context(self) -> None:
