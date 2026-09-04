@@ -102,6 +102,10 @@ workspace = [
 tools = [
     "ripgrep",
 ]
+# ------------ Terminal UI ------------
+tui = [
+    "textual>=8.2,<9",
+]
 # ------------ A2A ------------
 a2a = [
     "a2a-sdk>=1.1.1",
@@ -164,6 +168,7 @@ full = [
     "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[tui]",
     "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[vdb-qdrant]",
