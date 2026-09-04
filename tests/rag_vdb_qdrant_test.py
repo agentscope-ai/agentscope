@@ -163,6 +163,67 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_search_negates_distance_metric_scores(self) -> None:
+        """A distance metric yields higher-is-better scores too."""
+        store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:", distance="Euclid"),
+        )
+        await store.create_collection("kb-1", dimensions=3)
+        await store.insert(
+            "kb-1",
+            [
+                _make_record("Near!", [1.0, 0.0, 0.0], document_id="doc-1"),
+                _make_record("Far!", [10.0, 0.0, 0.0], document_id="doc-2"),
+            ],
+        )
+
+        results = await store.search(
+            "kb-1",
+            query_vector=[0.0, 0.0, 0.0],
+            top_k=2,
+        )
+
+        # Negated distances, so the nearest record still ranks first
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": -1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Near!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+                {
+                    "score": -10.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Far!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+            ],
+        )
+
     async def test_search_top_k(self) -> None:
         """top_k limits the number of returned results."""
         await self.store.create_collection("kb-1", dimensions=3)

@@ -18,6 +18,7 @@ import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
+import { Marker, MarkerContent } from '@/components/ui/marker';
 import {
 	MessageScroller,
 	MessageScrollerButton,
@@ -33,6 +34,30 @@ import { cn } from '@/lib/utils';
 
 /** How long a load may run before it is worth showing a spinner. */
 const SPINNER_DELAY_MS = 150;
+
+/**
+ * A gap this long between two messages gets a marker stamping when the
+ * conversation resumed — long enough that it *was* resumed, rather than
+ * merely paused to read the last reply.
+ */
+const TIME_MARKER_GAP_MS = 10 * 60 * 1000;
+
+/**
+ * Stamp for a resumed conversation. The time alone is enough while the
+ * marker and the message above it share a day; once the gap crosses
+ * midnight the date has to come with it. Both come from `Intl`, so
+ * "Aug 13, 13:03" and "8月13日 13:03" fall out of the active language
+ * rather than out of a hand-written pattern per locale.
+ */
+function markerStamp(at: Date, previous: Date, language: string): string {
+	const sameDay = at.toDateString() === previous.toDateString();
+	return new Intl.DateTimeFormat(language, {
+		...(sameDay ? {} : { month: 'short', day: 'numeric' }),
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	}).format(at);
+}
 
 interface ChatContentProps {
 	msgs: Msg[];
@@ -106,7 +131,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	git,
 	onRefreshGit,
 }) => {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
@@ -158,15 +183,35 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					<MessageScroller>
 						<MessageScrollerViewport>
 							<MessageScrollerContent>
-								{msgs.map((message) => (
-									<MessageScrollerItem key={message.id} messageId={message.id}>
-										<ASMessageBubble
+								{msgs.map((message, index) => {
+									const previous = msgs[index - 1];
+									const at = new Date(message.created_at);
+									const previousAt = previous
+										? new Date(previous.finished_at ?? previous.created_at)
+										: at;
+									return (
+										<MessageScrollerItem
 											key={message.id}
-											message={message}
-											onUserConfirm={onUserConfirm}
-										/>
-									</MessageScrollerItem>
-								))}
+											messageId={message.id}
+										>
+											{at.getTime() - previousAt.getTime() >
+												TIME_MARKER_GAP_MS && (
+												<Marker
+													variant="separator"
+													className="mb-6 font-mono text-xs"
+												>
+													<MarkerContent>
+														{markerStamp(at, previousAt, i18n.language)}
+													</MarkerContent>
+												</Marker>
+											)}
+											<ASMessageBubble
+												message={message}
+												onUserConfirm={onUserConfirm}
+											/>
+										</MessageScrollerItem>
+									);
+								})}
 								{msgs.length > 0 &&
 									msgs[msgs.length - 1].finished_reason ===
 										ReplyFinishedReason.EXCEED_MAX_ITERS &&

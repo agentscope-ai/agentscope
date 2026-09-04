@@ -2,6 +2,7 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
+import json
 import inspect
 import re
 import warnings
@@ -94,6 +95,7 @@ from ..tool import (
     ToolChunk,
     ToolChoice,
     ToolResponse,
+    FunctionTool,
 )
 from ..permission import (
     PermissionBehavior,
@@ -103,6 +105,9 @@ from ..permission import (
 )
 from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
+
+# The name of the tool that the agent uses to compress its own context
+_COMPRESSION_TOOL_NAME = "CompressContext"
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -173,6 +178,16 @@ class Agent:
         self.context_config = context_config or ContextConfig()
         self.react_config = react_config or ReActConfig()
         self.injection_config = injection_config or InjectionConfig()
+        if self.injection_config.context_buffer_ratio is not None:
+            warnings.warn(
+                "The 'context_buffer_ratio' of the injection config is "
+                "deprecated, set it in the context config instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.context_config.context_buffer_ratio = (
+                self.injection_config.context_buffer_ratio
+            )
         self._validate_configs()
 
         # The permission engine
@@ -185,6 +200,18 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        # Built here rather than in ``_prepare_model_input``, so that the
+        # registration can tell this agent's tool from a tool of the same
+        # name, e.g. another agent sharing the toolkit
+        self._compression_tool = FunctionTool(
+            self._compress_context_tool,
+            name=_COMPRESSION_TOOL_NAME,
+            is_concurrency_safe=False,
+            permission=PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"{_COMPRESSION_TOOL_NAME} is always allowed.",
+            ),
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -237,16 +264,21 @@ class Agent:
                 f"{self.context_config.trigger_ratio}.",
             )
 
+        # The buffer is only consumed by the runtime state injection and
+        # the compression tool, so it's checked only when one of them is on
         if (
             self.injection_config.inject_runtime_state
-            and self.injection_config.context_buffer_ratio
+            or self.context_config.compression_tool_enabled
+        ) and (
+            self.context_config.context_buffer_ratio
             >= self.context_config.trigger_ratio
         ):
             raise ValueError(
-                "The 'context_buffer_ratio' of the injection config must be "
-                "smaller than the 'trigger_ratio' of the context config, so "
-                "that the context length is injected before the compression, "
-                f"got {self.injection_config.context_buffer_ratio} and "
+                "The 'context_buffer_ratio' of the context config must be "
+                "smaller than its 'trigger_ratio', so that the context "
+                "length is injected and the compression tool takes effect "
+                "before the hard compression, got "
+                f"{self.context_config.context_buffer_ratio} and "
                 f"{self.context_config.trigger_ratio}.",
             )
 
@@ -407,6 +439,54 @@ class Agent:
                     )
 
             await execute_chain()
+
+    async def _compress_context_tool(self) -> ToolChunk:
+        """Compress the older context into a continuation summary, while
+        preserving the recent context needed for the upcoming work.
+
+        Call it between tasks, where the completed work can be preserved
+        accurately in a summary, rather than in the middle of a task. Keep
+        the current context when the exact earlier details are still needed.
+        The context is replaced only after the summary is generated
+        successfully, and is left as-is when it's not long enough to be
+        worth compressing.
+
+        Returns:
+            `ToolChunk`:
+                Whether the context was compressed.
+        """
+        # The agent decides when to compress, so lower the trigger to the
+        # ratio where the compression is recommended. A context below that
+        # ratio is left untouched.
+        context_config = self.context_config.model_copy(
+            update={
+                "trigger_ratio": self.context_config.trigger_ratio
+                - self.context_config.context_buffer_ratio,
+            },
+        )
+
+        n_msgs = len(self.state.context)
+        try:
+            await self.compress_context(context_config=context_config)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return ToolChunk(
+                content=[TextBlock(text=f"Context compression failed: {e}")],
+                state=ToolResultState.ERROR,
+            )
+
+        if len(self.state.context) == n_msgs:
+            text = (
+                "The context is not long enough to compress, so it remains "
+                "unchanged."
+            )
+        else:
+            text = "Context compressed successfully."
+
+        return ToolChunk(
+            content=[TextBlock(text=text)],
+            state=ToolResultState.SUCCESS,
+        )
 
     async def _compress_context_impl(
         self,
@@ -598,6 +678,8 @@ class Agent:
                     error = retry_error
 
             if res is None:
+                if not cfg.compression_fallback_to_truncation:
+                    raise error
                 logger.warning(
                     "[AGENT %s]: Summary generation failed: %s. "
                     "Falling back to context truncation.",
@@ -657,6 +739,26 @@ class Agent:
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
+
+            # The compression call is not covered by the model call events,
+            # so record its cost on the context tail to keep it in the token
+            # accounting
+            if res is not None and res.usage is not None:
+                if not self.state.context:
+                    # The whole context is compressed, so carry the cost by an
+                    # empty message, which is skipped by the formatters
+                    self.state.append_context(self.name, [])
+
+                self.state.context[-1].append_usage(
+                    Usage(
+                        input_tokens=res.usage.input_tokens,
+                        output_tokens=res.usage.output_tokens,
+                        cache_input_tokens=res.usage.cache_input_tokens or 0,
+                        cache_creation_input_tokens=(
+                            res.usage.cache_creation_input_tokens or 0
+                        ),
+                    ),
+                )
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",
@@ -1198,6 +1300,65 @@ class Agent:
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Detect the same tool call, i.e. the same tool name and arguments,
+        failing in the trailing consecutive tool results.
+
+        Returns:
+            `tuple[str, int] | None`:
+                The tool name and the number of consecutive failures when it
+                reaches ``injection_config.tool_retries_limit``, or ``None``
+                when there is no such streak.
+        """
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        # The agent is only stuck when the latest tool call fails
+        results = last_msg.get_content_blocks("tool_result")
+        if not results or results[-1].state != ToolResultState.ERROR:
+            return None
+
+        # The trailing results that failed on the same tool, latest first
+        tool_name = results[-1].name
+        streak = []
+        for result in reversed(results):
+            if (
+                result.state != ToolResultState.ERROR
+                or result.name != tool_name
+            ):
+                break
+            streak.append(result.id)
+
+        limit = self.injection_config.tool_retries_limit
+        if len(streak) < limit:
+            return None
+
+        # The same tool isn't enough, the arguments must repeat as well. They
+        # live in the tool call blocks, normalized so that the same arguments
+        # in a different key order still match, while invalid JSON, e.g.
+        # truncated by the model, is compared as-is.
+        inputs = {
+            _.id: _.input for _ in last_msg.get_content_blocks("tool_call")
+        }
+        arguments = []
+        for block_id in streak:
+            raw = inputs.get(block_id, "")
+            try:
+                arguments.append(json.dumps(json.loads(raw), sort_keys=True))
+            except (TypeError, ValueError):
+                arguments.append(raw.strip())
+
+        count = 0
+        for value in arguments:
+            if value != arguments[0]:
+                break
+            count += 1
+
+        if count < limit:
+            return None
+        return tool_name, count
+
     async def _inject_runtime_state(
         self,
     ) -> AsyncGenerator[HintBlockEvent, None]:
@@ -1230,9 +1391,15 @@ class Agent:
           they have been compressed away) nor a previous tasks injection.
         - **Context**: injected at the first iteration of a reply when the
           current input tokens are within
-          ``injection_config.context_buffer_ratio`` of the compression
+          ``context_config.context_buffer_ratio`` of the compression
           threshold, letting the agent perceive that a compression is near.
-          This dimension is evaluated independently of the two above.
+          With the compression tool enabled and no task in progress, the
+          agent is also told that it can compress right now. This dimension
+          is evaluated independently of the two above.
+        - **Tool error**: injected when the same tool call, i.e. the same tool
+          name and arguments, has failed in the last
+          ``injection_config.tool_retries_limit`` consecutive tool results, so
+          that the agent stops retrying a call that keeps failing.
 
         The user defined ``injection_config.extra_fields`` are attached to
         every injection, but never trigger one by themselves.
@@ -1386,9 +1553,9 @@ class Agent:
         # =====================================================================
         # Step 4: Context Length
         # =====================================================================
-        # The context length is checked independently of the dimensions above,
-        # and only at the beginning of a reply, where the context has just
-        # grown by the new input
+        # The context length is checked independently of the dimensions
+        # above, and only at the beginning of a reply, where the context has
+        # just grown by the new input
         if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
@@ -1397,21 +1564,48 @@ class Agent:
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
             )
-
             if input_tokens > (
-                max(
-                    0.0,
+                (
                     self.context_config.trigger_ratio
-                    - self.injection_config.context_buffer_ratio,
+                    - self.context_config.context_buffer_ratio
                 )
                 * self.model.context_size
             ):
                 # To trigger memory compress
-                injections["context-length"] = (
+                hint = (
                     f"Your current context contains {input_tokens} "
                     f"tokens. When reaching {trigger_tokens} tokens, "
                     f"your context will be compressed."
                 )
+
+                # No task in progress means a boundary where the agent can
+                # compress by itself, preserving the completed work in a
+                # summary it writes
+                if (
+                    self.context_config.compression_tool_enabled
+                    and task_status["in_progress"] == 0
+                ):
+                    hint += (
+                        " No task is in progress, so judge by yourself "
+                        "whether the context should be compressed now by "
+                        f"calling `{_COMPRESSION_TOOL_NAME}`."
+                    )
+
+                injections["context-length"] = hint
+
+        # =====================================================================
+        # Step 5: Check Repeated Tool Errors
+        # =====================================================================
+        # The agent keeps retrying the same failing call, so remind it to try
+        # something else
+        repeated_error = self._get_repeated_tool_error()
+        if repeated_error is not None:
+            tool_name, count = repeated_error
+            template = self.injection_config.tool_retries_hint
+            injections["tool-error"] = template.replace(
+                "{tool_name}",
+                tool_name,
+            ).replace("{count}", str(count))
 
         if injections:
             # The user defined fields, which don't trigger an injection by
@@ -2731,6 +2925,23 @@ class Agent:
         if msg_index < 0:
             return [], deepcopy(self.state.context)
 
+        # Compression can also be requested from inside the acting loop. In
+        # that case the current tool call has been written to context but its
+        # result has not. Never move an unfinished call into the summary: the
+        # result will be appended after the tool returns and must remain paired
+        # with its call in the retained context.
+        unfinished_tool_call_ids = {
+            block.id
+            for block in self.state.get_unfinished_tool_calls(self.name)
+        }
+        for index, msg in enumerate(self.state.context[: msg_index + 1]):
+            if any(
+                block.id in unfinished_tool_call_ids
+                for block in msg.get_content_blocks("tool_call")
+            ):
+                msg_index = index
+                break
+
         # The msgs that won't exceed the reserved token limit
         msgs_to_compress = self.state.context[:msg_index]
         msgs_to_reserve = self.state.context[msg_index + 1 :]
@@ -2756,6 +2967,15 @@ class Agent:
                 break
             block_index -= 1
 
+        unfinished_block_indexes = [
+            index
+            for index, block in enumerate(boundary_msg_content)
+            if isinstance(block, ToolCallBlock)
+            and block.id in unfinished_tool_call_ids
+        ]
+        if unfinished_block_indexes:
+            block_index = min(block_index, min(unfinished_block_indexes) - 1)
+
         # Adjust the block_index to avoid splitting tool call and result pairs.
         # Moving the boundary can bring another tool call into the compressed
         # part while leaving its result reserved, so repeat until it is stable.
@@ -2780,7 +3000,24 @@ class Agent:
 
             # Move unmatched results into the compressed part and recheck,
             # because this move can split another tool call/result pair.
-            block_index = max(remain_result_ids.values())
+            new_block_index = max(remain_result_ids.values())
+
+            if unfinished_block_indexes and new_block_index >= min(
+                unfinished_block_indexes,
+            ):
+                # The move would compress an unfinished tool call, so reserve
+                # the calls of the unmatched results instead
+                block_index = (
+                    min(
+                        index
+                        for index, block in enumerate(boundary_msg_content)
+                        if isinstance(block, ToolCallBlock)
+                        and block.id in remain_result_ids
+                    )
+                    - 1
+                )
+            else:
+                block_index = new_block_index
 
         # Split the boundary msg content
         boundary_msg_to_compress.content = boundary_msg_content[
@@ -3020,6 +3257,14 @@ class Agent:
         # The conversation context
         messages.extend(self.state.context)
 
+        # Equip the compression tool, whose registration is kept across
+        # replies so that its schema is stable for prompt caching
+        if self.context_config.compression_tool_enabled and (
+            await self.toolkit.get_tool(_COMPRESSION_TOOL_NAME)
+            is not self._compression_tool
+        ):
+            await self.toolkit.add_tool(self._compression_tool)
+
         # Get the tools schemas
         tools = await self.toolkit.get_tool_schemas(
             self.state.tool_context.activated_groups,
@@ -3228,17 +3473,8 @@ class Agent:
 
         self.state.append_context(self.name, persisted_blocks)
 
-        tail = self.state.context[-1]
         if msg_usage is not None:
-            if tail.usage is None:
-                tail.usage = msg_usage
-            else:
-                tail.usage.input_tokens += msg_usage.input_tokens
-                tail.usage.output_tokens += msg_usage.output_tokens
-                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
-                tail.usage.cache_creation_input_tokens += (
-                    msg_usage.cache_creation_input_tokens
-                )
+            self.state.context[-1].append_usage(msg_usage)
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""

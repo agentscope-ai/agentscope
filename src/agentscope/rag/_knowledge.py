@@ -214,9 +214,10 @@ class KnowledgeBase:
                 Maximum number of results returned across all queries
                 (after dedup).
             score_threshold (`float | None`, optional):
-                Minimum similarity score for a hit to be retained.
-                Only meaningful for similarity metrics where higher is
-                better (cosine / dot-product).  ``None`` disables
+                Minimum :attr:`VectorSearchResult.score` for a hit to
+                be retained.  The scale depends on the store's metric —
+                a distance metric reports negated distances, so the
+                threshold is negative there.  ``None`` disables
                 filtering.
 
         Returns:

@@ -43,24 +43,34 @@ class ToolContext(BaseModel):
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
-    async def get_cache(self, file_path: str) -> ReadCacheEntry | None:
+    async def get_cache(
+        self,
+        file_path: str,
+        mtime: float | None = None,
+    ) -> ReadCacheEntry | None:
         """Get cached file content if still valid.
 
         Args:
-            file_path: The absolute path of the file.
+            file_path (`str`):
+                The absolute path of the file.
+            mtime (`float | None`, optional):
+                The file's modification time, obtained from the same
+                filesystem that read the file, e.g. a workspace backend.
+                Falls back to the host filesystem when not provided.
 
         Returns:
-            The cached entry if valid, otherwise None.
+            `ReadCacheEntry | None`:
+                The cached entry if valid, otherwise None.
         """
 
         # Find the cache entry
         for entry in self.read_file_cache:
             if entry.file_path == file_path:
-                # Check if cache is still valid
-                try:
-                    updated_at = await aiofiles.os.path.getmtime(file_path)
-                except Exception:
-                    updated_at = None
+                if mtime is None:
+                    try:
+                        mtime = await aiofiles.os.path.getmtime(file_path)
+                    except Exception:
+                        mtime = None
 
                 # Concurrent calls may have reordered or dropped the entry
                 # while awaiting, so locate it again by the object itself.
@@ -68,7 +78,7 @@ class ToolContext(BaseModel):
                     return None
 
                 self.read_file_cache.remove(entry)
-                if updated_at != entry.updated_at:
+                if mtime != entry.updated_at:
                     # Cache is outdated, or the file no longer exists
                     return None
 
@@ -77,18 +87,30 @@ class ToolContext(BaseModel):
                 return entry
         return None
 
-    async def cache_file(self, file_path: str, lines: list[str]) -> None:
+    async def cache_file(
+        self,
+        file_path: str,
+        lines: list[str],
+        mtime: float | None = None,
+    ) -> None:
         """Cache file content with LRU eviction.
 
         Args:
-            file_path: The absolute path of the file.
-            lines: The lines of the file content.
+            file_path (`str`):
+                The absolute path of the file.
+            lines (`list[str]`):
+                The lines of the file content.
+            mtime (`float | None`, optional):
+                The file's modification time, obtained from the same
+                filesystem that read the file, e.g. a workspace backend.
+                Falls back to the host filesystem when not provided.
         """
-        try:
-            updated_at = await aiofiles.os.path.getmtime(file_path)
-        except Exception:
-            # Cannot get mtime, skip caching
-            return
+        if mtime is None:
+            try:
+                mtime = await aiofiles.os.path.getmtime(file_path)
+            except Exception:
+                # Cannot get mtime, skip caching
+                return
 
         # Calculate size in KB
         new_entry_bytes = (
@@ -119,7 +141,7 @@ class ToolContext(BaseModel):
         self.read_file_cache.append(
             ReadCacheEntry(
                 lines=lines,
-                updated_at=updated_at,
+                updated_at=mtime,
                 bytes=new_entry_bytes,
                 file_path=file_path,
             ),

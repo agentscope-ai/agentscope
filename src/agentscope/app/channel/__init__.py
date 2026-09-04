@@ -21,6 +21,11 @@ from ._clients import ChannelClients
 from ._dispatcher import ChannelLifecycleDispatcher
 from ._errors import ChannelError
 from ._gateway import ChannelGateway
+from ._credential_binding import (
+    BindingState,
+    BindingStep,
+    CredentialBindingBase,
+)
 from ._registry import ChannelTypeRegistry, ChannelTypeSchema
 from ._dingtalk import DingTalkChannel
 from ._discord import DiscordChannel
@@ -39,6 +44,9 @@ __all__ = [
     "ChannelGateway",
     "ChannelLifecycleDispatcher",
     "ChannelTypeRegistry",
+    "BindingState",
+    "BindingStep",
+    "CredentialBindingBase",
     "ChannelTypeSchema",
     "DingTalkChannel",
     "DiscordChannel",

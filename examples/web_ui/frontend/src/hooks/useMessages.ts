@@ -124,6 +124,13 @@ export function useMessages(
 		 * ``tasks_context`` and ``permission_context``.
 		 */
 		onStateUpdated?: (value: Record<string, unknown>) => void;
+		/**
+		 * Called when a ``CUSTOM`` event with ``name="session_updated"``
+		 * arrives — the session record changed server-side, currently
+		 * only when auto-naming replaced its placeholder name. Refetch
+		 * the session list to pick the new one up.
+		 */
+		onSessionUpdated?: () => void;
 	},
 ) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -178,6 +185,8 @@ export function useMessages(
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+				} else if (custom.name === 'session_updated') {
+					optionsRef.current?.onSessionUpdated?.();
 				} else if (custom.name === 'subagent_require_user_confirm') {
 					// A team member is asking for confirmation; show (or
 					// refresh) its card on this leader view. Dedup by
@@ -215,15 +224,27 @@ export function useMessages(
 				}
 				clearInterruptTimer();
 				setPhase('streaming');
-			} else if (event.type === EventType.REPLY_END) {
+			} else {
 				if (currentReplyRef.current) {
-					appendEvent(currentReplyRef.current, event);
+					const reply = currentReplyRef.current;
+					appendEvent(reply, event);
+					// ``appendEvent`` mutates in place, which would leave
+					// every Msg identical across renders and force the whole
+					// list to re-render on each delta. Republish just the
+					// reply that changed under a fresh identity, so the
+					// memoised bubbles of the other messages can skip the
+					// render. Anything holding a Msg reference across events
+					// must re-read it from here — ``currentReplyRef`` below,
+					// everything else looks the reply up by id.
+					const updated = { ...reply, content: [...reply.content] };
+					msgsRef.current = msgsRef.current.map((m) => (m === reply ? updated : m));
+					currentReplyRef.current = updated;
 				}
-				clearInterruptTimer();
-				setPhase('idle');
-				currentReplyRef.current = null;
-			} else if (currentReplyRef.current) {
-				appendEvent(currentReplyRef.current, event);
+				if (event.type === EventType.REPLY_END) {
+					clearInterruptTimer();
+					setPhase('idle');
+					currentReplyRef.current = null;
+				}
 			}
 
 			// Route streaming audio DataBlocks to the audio manager. They still

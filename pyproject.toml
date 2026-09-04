@@ -25,7 +25,7 @@ dependencies = [
     "docstring_parser",
     "filetype",
     "json5",
-    "json_repair",
+    "json_repair[schema]>=0.63.4",
     "mcp<2.0.0",
     "httpx",
     "numpy",
@@ -102,6 +102,10 @@ workspace = [
 tools = [
     "ripgrep",
 ]
+# ------------ A2A ------------
+a2a = [
+    "a2a-sdk>=1.1.1",
+]
 # ------------ Vector stores ------------
 vdb-qdrant = ["qdrant-client"]
 vdb-milvus = [
@@ -160,6 +164,7 @@ full = [
     "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[vdb-qdrant]",
     "agentscope[vdb-milvus]",
@@ -178,7 +183,8 @@ dev = [
     "pytest-forked",
     "myst_parser",
     "matplotlib",
-    "fakeredis",
+    # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
+    "fakeredis[lua]",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3

@@ -313,9 +313,12 @@ class QdrantStore(VectorStoreBase):
             with_payload=True,
             query_filter=self._build_metadata_filter(metadata_filter),
         )
+        # ``Euclid`` / ``Manhattan`` are distances, so negate them to
+        # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
+        sign = -1 if self._distance in ("Euclid", "Manhattan") else 1
         return [
             VectorSearchResult(
-                score=point.score,
+                score=sign * point.score,
                 document_id=point.payload["document_id"],
                 chunk=Chunk.model_validate(point.payload["chunk"]),
             )
