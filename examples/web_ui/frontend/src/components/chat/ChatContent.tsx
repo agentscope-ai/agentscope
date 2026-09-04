@@ -196,7 +196,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 										>
 											{at.getTime() - previousAt.getTime() >
 												TIME_MARKER_GAP_MS && (
-												<Marker variant="separator" className="mb-6">
+												<Marker
+													variant="separator"
+													className="mb-6 font-mono text-xs"
+												>
 													<MarkerContent>
 														{markerStamp(at, previousAt, i18n.language)}
 													</MarkerContent>
