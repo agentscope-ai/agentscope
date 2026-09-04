@@ -50,6 +50,7 @@ class _RecordingChannel(ChannelBase):
     display_name = "Fake"
     platform_bot_id_field = "bot_id"
     instances: list["_RecordingChannel"] = []
+    tool_user_ids: list[str] = []
 
     class Credentials(BaseModel):
         """Credentials for the fake platform."""
@@ -95,6 +96,16 @@ class _RecordingChannel(ChannelBase):
         async for evt in events:
             self.seen.append(evt.get("type", ""))
         self.done.set()
+
+    async def list_tools(
+        self,
+        workspace: object,
+        channel_user_id: str | None = None,
+    ) -> list:
+        """Record the trusted user supplied to channel-bound tools."""
+        del workspace
+        self.tool_user_ids.append(channel_user_id or "")
+        return []
 
 
 class _Storage:
@@ -143,8 +154,13 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         """Isolate the instances each test observes."""
         _RecordingChannel.instances.clear()
+        _RecordingChannel.tool_user_ids.clear()
 
-    def _fixture(self, source: SessionSource) -> tuple:
+    def _fixture(
+        self,
+        source: SessionSource,
+        channel_user_id: str = "",
+    ) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
         user_id = "user-1"
         agent = AgentRecord(
@@ -166,6 +182,11 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             ),
             source_chat_id=(
                 "chat-1" if source is SessionSource.CHANNEL else None
+            ),
+            source_channel_user_id=(
+                channel_user_id
+                if source is SessionSource.CHANNEL and channel_user_id
+                else None
             ),
             config=SessionConfig(
                 workspace_id="ws-1",
@@ -189,9 +210,16 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         return user_id, agent, session, channel
 
-    async def _run(self, source: SessionSource) -> ChannelClients:
+    async def _run(
+        self,
+        source: SessionSource,
+        channel_user_id: str = "",
+    ) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
-        user_id, agent, session, channel = self._fixture(source)
+        user_id, agent, session, channel = self._fixture(
+            source,
+            channel_user_id,
+        )
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
         clients = ChannelClients(
@@ -299,5 +327,19 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         clients = await self._run(SessionSource.USER)
         try:
             self.assertListEqual(_RecordingChannel.instances, [])
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_channel_tools_receive_trusted_current_sender(self) -> None:
+        """Tool assembly uses identity stored on the session record."""
+        clients = await self._run(
+            SessionSource.CHANNEL,
+            channel_user_id="staff-1",
+        )
+        try:
+            self.assertListEqual(
+                _RecordingChannel.tool_user_ids,
+                ["staff-1"],
+            )
         finally:
             await clients.__aexit__(None, None, None)

@@ -905,7 +905,10 @@ class ChatService:
                     else None
                 )
                 channel_tools = (
-                    await channel.list_tools(workspace)
+                    await channel.list_tools(
+                        workspace,
+                        session_record.source_channel_user_id,
+                    )
                     if channel is not None
                     else []
                 )

@@ -877,6 +877,7 @@ class RedisStorage(StorageBase):
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
         source_channel_id: str | None = None,
+        source_channel_user_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -895,6 +896,8 @@ class RedisStorage(StorageBase):
                 record.config = config
                 if state is not None:
                     record.state = state
+                if source_channel_user_id is not None:
+                    record.source_channel_user_id = source_channel_user_id
                 record.updated_at = datetime.now()
                 await self._set_with_ttl(key, record.model_dump_json())
                 return record
@@ -912,6 +915,7 @@ class RedisStorage(StorageBase):
             source_chat_id=source_chat_id,
             source_chat_name=source_chat_name,
             source_channel_id=source_channel_id,
+            source_channel_user_id=source_channel_user_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )

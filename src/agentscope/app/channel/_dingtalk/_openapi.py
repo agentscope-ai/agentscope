@@ -6,14 +6,16 @@ import ipaddress
 import json
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import uuid1, uuid4
 
 from ...._logging import logger
 
-_API = "https://api.dingtalk.com/v1.0"
+_API_ROOT = "https://api.dingtalk.com"
+_API = f"{_API_ROOT}/v1.0"
 _OAPI = "https://oapi.dingtalk.com"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
+_UNION_ID_CACHE_SIZE = 2048
 # Enough of a refusal to name the offending field, not so much that a
 # rejected payload is echoed back into the log.
 _ERROR_BODY_CHARS = 500
@@ -24,6 +26,10 @@ _SUPPORTED_FILE_TYPES = frozenset({"doc", "docx", "pdf", "rar", "xlsx", "zip"})
 # an approval has been decided. Both go over the wire as strings.
 _AI_CARD_RENDERING = "1"
 _AI_CARD_RENDERED = "3"
+
+
+class _DingTalkAPIError(RuntimeError):
+    """A DingTalk OpenAPI request failed in a user-actionable way."""
 
 
 class _DingTalkOpenAPI:
@@ -48,6 +54,170 @@ class _DingTalkOpenAPI:
         self._token: str | None = None
         self._token_expires_at = 0.0
         self._token_lock = asyncio.Lock()
+        self._union_ids: dict[str, str] = {}
+
+    async def resolve_union_id(self, user_id: str) -> str | None:
+        """Resolve a DingTalk staff id to the union id used by Wiki APIs.
+
+        Args:
+            user_id (`str`): Enterprise staff id from the robot callback.
+
+        Returns:
+            `str | None`: User union id, or ``None`` when it cannot be
+            resolved with the application's contact permission.
+        """
+        cached = self._union_ids.get(user_id)
+        if cached:
+            return cached
+        token = await self._access_token()
+        if token is None:
+            return None
+        detail = await self._user_detail(token, user_id)
+        union_id = str((detail or {}).get("union_id") or "")
+        if not union_id:
+            return None
+        if len(self._union_ids) >= _UNION_ID_CACHE_SIZE:
+            self._union_ids.pop(next(iter(self._union_ids)))
+        self._union_ids[user_id] = union_id
+        return union_id
+
+    async def list_knowledge_bases(
+        self,
+        operator_id: str,
+        limit: int,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        """List knowledge bases visible to one DingTalk operator.
+
+        Args:
+            operator_id (`str`): Current user's union id.
+            limit (`int`): Maximum results requested from DingTalk.
+            next_token (`str`): Optional pagination token.
+
+        Returns:
+            `dict[str, Any]`: ``knowledge_bases`` and ``next_token``.
+
+        Raises:
+            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._knowledge_get(
+            "/v2.0/wiki/workspaces",
+            operator_id,
+            {
+                "maxResults": limit,
+                "nextToken": next_token,
+                "withPermissionRole": True,
+            },
+            "knowledge-base listing",
+        )
+        workspaces = payload.get("workspaces")
+        return {
+            "knowledge_bases": (
+                workspaces if isinstance(workspaces, list) else []
+            ),
+            "next_token": str(payload.get("nextToken") or ""),
+        }
+
+    async def list_knowledge_nodes(
+        self,
+        operator_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        """List direct children of one DingTalk knowledge node.
+
+        Args:
+            operator_id (`str`): Current user's union id.
+            parent_node_id (`str`): Knowledge-base root or folder node id.
+            limit (`int`): Maximum results requested from DingTalk.
+            next_token (`str`): Optional pagination token.
+
+        Returns:
+            `dict[str, Any]`: ``nodes`` and ``next_token``.
+
+        Raises:
+            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._knowledge_get(
+            "/v2.0/wiki/nodes",
+            operator_id,
+            {
+                "parentNodeId": parent_node_id,
+                "maxResults": limit,
+                "nextToken": next_token,
+                "withPermissionRole": True,
+            },
+            "knowledge-node listing",
+        )
+        nodes = payload.get("nodes")
+        return {
+            "nodes": nodes if isinstance(nodes, list) else [],
+            "next_token": str(payload.get("nextToken") or ""),
+        }
+
+    async def get_knowledge_node(
+        self,
+        operator_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        """Get metadata for one DingTalk knowledge node.
+
+        Args:
+            operator_id (`str`): Current user's union id.
+            node_id (`str`): Wiki node identifier.
+
+        Returns:
+            `dict[str, Any]`: Node metadata, or an empty mapping if DingTalk
+            returns no node.
+
+        Raises:
+            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._knowledge_get(
+            f"/v2.0/wiki/nodes/{quote(node_id, safe='')}",
+            operator_id,
+            {
+                "withPermissionRole": True,
+                "withStatisticalInfo": True,
+            },
+            "knowledge-node lookup",
+        )
+        node = payload.get("node")
+        return node if isinstance(node, dict) else {}
+
+    async def read_document_blocks(
+        self,
+        operator_id: str,
+        doc_key: str,
+        start_index: int,
+        end_index: int,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded range of DingTalk document blocks.
+
+        Args:
+            operator_id (`str`): Current user's union id.
+            doc_key (`str`): Document key (Wiki node ids normally work).
+            start_index (`int`): First block index, inclusive.
+            end_index (`int`): Last block index, inclusive.
+
+        Returns:
+            `list[dict[str, Any]]`: Raw block objects in document order.
+
+        Raises:
+            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._knowledge_get(
+            f"/v1.0/doc/suites/documents/{quote(doc_key, safe='')}/blocks",
+            operator_id,
+            {"startIndex": start_index, "endIndex": end_index},
+            "document-block reading",
+        )
+        result = payload.get("result")
+        data = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(data, list):
+            return []
+        return [item for item in data if isinstance(item, dict)]
 
     async def download_media(
         self,
@@ -532,6 +702,7 @@ class _DingTalkOpenAPI:
             result = payload.get("result") or {}
             return {
                 "user_id": str(result.get("userid") or user_id),
+                "union_id": str(result.get("unionid") or ""),
                 "name": str(result.get("name") or ""),
                 "title": str(result.get("title") or ""),
                 "department_ids": result.get("dept_id_list") or [],
@@ -594,6 +765,79 @@ class _DingTalkOpenAPI:
         except Exception:  # pylint: disable=broad-except
             logger.exception("DingTalk message send failed")
             return False
+
+    async def _knowledge_get(
+        self,
+        path: str,
+        operator_id: str,
+        params: dict[str, Any],
+        operation: str,
+    ) -> dict[str, Any]:
+        """Issue an authenticated, permission-sensitive knowledge GET.
+
+        Args:
+            path (`str`): Absolute path below ``api.dingtalk.com``.
+            operator_id (`str`): Current user's union id.
+            params (`dict[str, Any]`): Additional query parameters.
+            operation (`str`): Human-readable operation for errors.
+
+        Returns:
+            `dict[str, Any]`: JSON response object.
+
+        Raises:
+            `_DingTalkAPIError`: If authentication, permissions, transport,
+            or response validation fails.
+        """
+        token = await self._access_token()
+        if token is None:
+            raise _DingTalkAPIError(
+                f"DingTalk {operation} failed: no application access token.",
+            )
+        query = {
+            "operatorId": operator_id,
+            **{key: value for key, value in params.items() if value != ""},
+        }
+        try:
+            response = await self._http.get(
+                f"{_API_ROOT}{path}",
+                headers=self._headers(token),
+                params=query,
+            )
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise _DingTalkAPIError(
+                    f"DingTalk {operation} returned invalid JSON.",
+                ) from exc
+            if not isinstance(payload, dict):
+                raise _DingTalkAPIError(
+                    f"DingTalk {operation} returned an invalid response.",
+                )
+            code = payload.get("code") or payload.get("errcode")
+            message = str(
+                payload.get("message")
+                or payload.get("errmsg")
+                or payload.get("errorMessage")
+                or "request rejected",
+            )
+            if (
+                response.status_code >= 400
+                or code not in (None, "", 0, "0")
+                or payload.get("success") is False
+            ):
+                raise _DingTalkAPIError(
+                    f"DingTalk {operation} failed (HTTP "
+                    f"{response.status_code}, code={code or 'unknown'}): "
+                    f"{message[:_ERROR_BODY_CHARS]}",
+                )
+            return payload
+        except _DingTalkAPIError:
+            raise
+        except Exception as exc:
+            logger.exception("DingTalk %s failed", operation)
+            raise _DingTalkAPIError(
+                f"DingTalk {operation} failed: {type(exc).__name__}.",
+            ) from exc
 
     async def _request(
         self,

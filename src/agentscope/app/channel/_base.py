@@ -463,6 +463,7 @@ class ChannelBase(ABC):
     async def list_tools(  # pylint: disable=unused-argument
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Platform tools exposed to the agent — e.g. send a file to a
         different user/group than the conversation. Default: none.
@@ -470,6 +471,9 @@ class ChannelBase(ABC):
         Args:
             workspace (`WorkspaceBase`): The calling session's workspace,
                 so file-sending tools read from it, not the host.
+            channel_user_id (`str | None`, optional): Trusted platform user
+                associated with the channel session. Channels whose tools are
+                not user-scoped may ignore it.
         """
         return []
 

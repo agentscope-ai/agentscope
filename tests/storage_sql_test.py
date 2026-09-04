@@ -378,6 +378,35 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(fetched.team_id, "team-9")
 
+    async def test_session_tracks_latest_channel_user(self) -> None:
+        """Channel-user metadata updates without being cleared implicitly."""
+        agent = _agent_record("user-1")
+        await self.storage.upsert_agent("user-1", agent)
+        session = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=agent.id,
+            config=_session_config(),
+            source=SessionSource.CHANNEL,
+            source_channel_user_id="staff-1",
+        )
+
+        updated = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=agent.id,
+            config=session.config,
+            session_id=session.id,
+            source_channel_user_id="staff-2",
+        )
+        self.assertEqual(updated.source_channel_user_id, "staff-2")
+
+        preserved = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=agent.id,
+            config=session.config,
+            session_id=session.id,
+        )
+        self.assertEqual(preserved.source_channel_user_id, "staff-2")
+
     async def test_update_session_state_missing_raises(self) -> None:
         """Updating an absent session raises :class:`KeyError`."""
         from agentscope.state import AgentState

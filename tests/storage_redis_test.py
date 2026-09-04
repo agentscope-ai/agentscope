@@ -229,6 +229,33 @@ class TestSession(IsolatedAsyncioTestCase):
         self.assertEqual(len(records_after), 1)
         self.assertEqual(records_after[0].id, first_id)
 
+    async def test_upsert_refreshes_source_channel_user_id(self) -> None:
+        """A channel session tracks the user for the latest inbound turn."""
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(self.workspace_id),
+            source=SessionSource.CHANNEL,
+            source_channel_user_id="staff-1",
+        )
+
+        updated = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            session.config,
+            session_id=session.id,
+            source_channel_user_id="staff-2",
+        )
+        self.assertEqual(updated.source_channel_user_id, "staff-2")
+
+        preserved = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            session.config,
+            session_id=session.id,
+        )
+        self.assertEqual(preserved.source_channel_user_id, "staff-2")
+
     async def test_create_with_explicit_session_id_uses_that_key(self) -> None:
         """A caller-provided session_id should be the stored record id."""
         session_id = "session-from-router"

@@ -287,6 +287,14 @@ class ChannelGateway:
             session_id=session_id,
         )
         if existing is not None:
+            if existing.source_channel_user_id != event.channel_user_id:
+                await self._storage.upsert_session(
+                    user_id=record.user_id,
+                    agent_id=agent_id,
+                    config=existing.config,
+                    session_id=session_id,
+                    source_channel_user_id=event.channel_user_id,
+                )
             return
 
         fallback = record.session.fallback_chat_model_config
@@ -319,6 +327,7 @@ class ChannelGateway:
             source_chat_id=event.chat_id,
             source_chat_name=event.chat_name or None,
             source_channel_id=record.id,
+            source_channel_user_id=event.channel_user_id,
         )
 
     @staticmethod

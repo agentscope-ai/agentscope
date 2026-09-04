@@ -233,6 +233,11 @@ class SessionRecord(_RecordBase):
     output forwarder locate the channel adapter + presentation settings
     on a background / scheduled wake."""
 
+    source_channel_user_id: str | None = None
+    """For channel-created sessions, the platform user associated with
+    the latest inbound turn. Channel adapters may use it to equip tools
+    whose permissions depend on the platform user."""
+
     team_id: str | None = None
     """The team this session participates in, if any.
 
