@@ -527,7 +527,6 @@ class MilvusLiteStore(VectorStoreBase):
         lower-is-better, so it is negated to keep ``score`` meaning
         "higher is more relevant" like the similarity metrics.
         """
-        # pylint: disable=unused-argument
         if "distance" in hit:
             score = float(hit["distance"])
         elif "score" in hit:
