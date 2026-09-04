@@ -6,6 +6,8 @@ from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+import anyio
+
 from agentscope.mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 
 
@@ -197,6 +199,63 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(transports), 2)
         self.assertTrue(all(_.enter_count == 1 for _ in transports))
         self.assertTrue(all(_.exit_count == 1 for _ in transports))
+
+    async def test_cancel_scope_does_not_abandon_the_transport(self) -> None:
+        """A cancel scope must not cut the cleanup short."""
+        initialize_started = asyncio.Event()
+        transport_closed = asyncio.Event()
+
+        class _SlowTransport(_OneShotTransport):
+            """Await while closing, the way a real stdio transport does."""
+
+            async def __aexit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                traceback: TracebackType | None,
+            ) -> bool:
+                await asyncio.sleep(0)
+                await super().__aexit__(exc_type, exc, traceback)
+                transport_closed.set()
+                return False
+
+        class _BlockingSession(_FakeSession):
+            """Never finish initializing, so the scope cancels mid-connect."""
+
+            async def initialize(self) -> None:
+                initialize_started.set()
+                await asyncio.Event().wait()
+
+        transport = _SlowTransport()
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=transport,
+        ), patch(
+            "agentscope.mcp._mcp_client.ClientSession",
+            _BlockingSession,
+        ):
+            client = MCPClient(
+                name="cancel_scope",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+
+            with anyio.CancelScope() as scope:
+
+                async def _cancel_once_started() -> None:
+                    """Cancel the scope once the connect is blocked."""
+                    await initialize_started.wait()
+                    scope.cancel()
+
+                canceller = asyncio.create_task(_cancel_once_started())
+                await client.connect()
+            await canceller
+
+        self.assertTrue(scope.cancelled_caught)
+        # Cleanup runs to completion even though the scope keeps cancelling.
+        await asyncio.wait_for(transport_closed.wait(), 1)
+        self.assertEqual(transport.exit_count, 1)
+        self.assertFalse(client.is_connected)
 
     async def test_http_client_can_reconnect_after_close(self) -> None:
         """An HTTP client must get a new transport after close()."""

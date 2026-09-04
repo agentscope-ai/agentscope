@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+import asyncio
 import re
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
 from typing import Any, TYPE_CHECKING
@@ -255,9 +256,12 @@ class MCPClient(BaseModel):
             logger.info("MCP connected: %s", self.name)
         except BaseException:
             # asyncio.CancelledError inherits BaseException, so a cancelled
-            # initialization must close every context entered so far.
+            # initialization must close every context entered so far. The
+            # close is shielded because an anyio cancel scope (a cancelled
+            # FastAPI request, for one) keeps cancelling every await inside
+            # it, which would otherwise abandon a live stdio subprocess.
             try:
-                await stack.aclose()
+                await asyncio.shield(stack.aclose())
             finally:
                 self._client = None
                 self._stack = None
