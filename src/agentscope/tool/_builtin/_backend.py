@@ -39,6 +39,7 @@ import os
 import posixpath
 import shlex
 import shutil
+import signal
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
@@ -721,11 +722,12 @@ def _subprocess_creation_kwargs() -> dict[str, Any]:
     Returns:
         `dict[str, Any]`:
             Extra keyword arguments for ``create_subprocess_shell``.
-            Empty on POSIX; on Windows it sets ``creationflags`` to
+            On POSIX, starts a new process session so descendants can be
+            terminated together. On Windows, sets ``creationflags`` to
             suppress a console window.
     """
     if os.name != "nt":
-        return {}
+        return {"start_new_session": True}
 
     import subprocess
 
@@ -760,6 +762,80 @@ class LocalBackend(BackendBase):
     # The local backend runs commands on the host, so its environment
     # OS is the host OS.
     os_name = os.name
+
+    @staticmethod
+    async def _terminate_process_tree(
+        process: asyncio.subprocess.Process,
+        *,
+        grace: float,
+    ) -> None:
+        """Terminate a local process tree after cancellation or timeout."""
+        if process.returncode is not None:
+            return
+
+        if os.name == "nt":
+            import subprocess
+
+            try:
+                taskkill = await asyncio.create_subprocess_exec(
+                    "taskkill",
+                    "/PID",
+                    f"{process.pid}",
+                    "/T",
+                    "/F",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    creationflags=getattr(
+                        subprocess,
+                        "CREATE_NO_WINDOW",
+                        0x08000000,
+                    ),
+                )
+                try:
+                    await asyncio.wait_for(
+                        taskkill.wait(),
+                        timeout=grace,
+                    )
+                except asyncio.TimeoutError:
+                    try:
+                        taskkill.kill()
+                    except ProcessLookupError:
+                        pass
+            except OSError:
+                pass
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                await asyncio.wait_for(
+                    process.wait(),
+                    timeout=grace,
+                )
+            except asyncio.TimeoutError:
+                pass
+            return
+
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                return
+        try:
+            await asyncio.wait_for(process.wait(), timeout=grace)
+            return
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    return
+            await process.wait()
 
     async def exec_shell(
         self,
@@ -819,9 +895,13 @@ class LocalBackend(BackendBase):
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
+            await self._terminate_process_tree(process, grace=1.0)
             return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+        except BaseException:
+            await asyncio.shield(
+                self._terminate_process_tree(process, grace=1.0),
+            )
+            raise
 
         return ExecResult(
             exit_code=process.returncode or 0,

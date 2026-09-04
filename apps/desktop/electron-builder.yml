@@ -1,0 +1,34 @@
+appId: com.agentscope.desktop
+productName: AgentScope
+directories:
+    output: dist-electron
+asar: true
+files:
+    - electron-dist/**/*
+    - package.json
+extraResources:
+    - from: dist/agentscope-backend
+      to: backend
+electronFuses:
+    runAsNode: false
+    enableCookieEncryption: true
+    enableNodeOptionsEnvironmentVariable: false
+    enableNodeCliInspectArguments: false
+    enableEmbeddedAsarIntegrityValidation: true
+    onlyLoadAppFromAsar: true
+mac:
+    identity: '-'
+    hardenedRuntime: false
+    category: public.app-category.developer-tools
+    target:
+        - dmg
+        - zip
+win:
+    target:
+        - nsis
+        - portable
+linux:
+    target:
+        - AppImage
+        - deb
+    category: Development

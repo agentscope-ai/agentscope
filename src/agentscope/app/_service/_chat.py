@@ -1123,6 +1123,11 @@ class ChatService:
                 if self._skip_parked_wakeup(session_id, agent, input_msg):
                     return
             except Exception as e:  # pylint: disable=broad-except
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.exception(
+                    f"Failed to prepare chat run for session "
+                    f"{session_id!r} and agent {agent_id!r}.",
+                )
                 # Under the session lock, like the reply this run never got
                 # to make: these events share a channel with a live reply's,
                 # so publishing them unserialised would drop a "reply failed"

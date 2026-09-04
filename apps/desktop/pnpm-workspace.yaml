@@ -1,0 +1,3 @@
+allowBuilds:
+    electron: true
+    electron-winstaller: false

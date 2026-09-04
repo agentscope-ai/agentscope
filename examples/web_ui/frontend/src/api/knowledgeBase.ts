@@ -1,4 +1,4 @@
-import { ApiError, client, getBaseUrl, getUserId } from './client';
+import { ApiError, client, getAuthToken, getBaseUrl, getUserId } from './client';
 import type {
 	CreateKnowledgeBaseRequest,
 	CreateKnowledgeBaseResponse,
@@ -102,6 +102,8 @@ function uploadDocumentXhr(
 		const url = new URL(`/knowledge_bases/${knowledgeBaseId}/documents`, getBaseUrl());
 		xhr.open('POST', url.toString(), true);
 		xhr.setRequestHeader('X-User-ID', getUserId());
+		const authToken = getAuthToken();
+		if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
 
 		const onAbort = () => xhr.abort();
 		signal?.addEventListener('abort', onAbort, { once: true });
