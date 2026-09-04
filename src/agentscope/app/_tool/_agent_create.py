@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The AgentCreate tool — spawns a worker into the current team."""
+
 from __future__ import annotations
 
 import copy
@@ -161,8 +162,9 @@ existing member via ``TeamSay`` instead.
 - Use the ``name`` you chose as ``to=<name>`` in ``TeamSay`` to direct \
 messages to this member specifically. Names must be unique within the \
 team (including against the leader's name); duplicates are rejected.
-- Members spawned this way live only as long as the team — they are \
-deleted when ``TeamDelete`` is called.
+- Members spawned this way live only as long as their team membership. \
+Use ``AgentKick`` to delete one member, or ``TeamDelete`` to delete all \
+members when dissolving the team.
 
 ## Important
 - You are responsible for organising the team, assigning tasks, collecting \

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Base class shared by the team tools."""
+
 from typing import Any, TYPE_CHECKING
 
 from ...permission import (
@@ -7,7 +8,8 @@ from ...permission import (
     PermissionContext,
     PermissionDecision,
 )
-from ...tool import ToolBase
+from ...message import TextBlock, ToolResultState
+from ...tool import ToolBase, ToolChunk
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -152,4 +154,20 @@ class _TeamToolBase(ToolBase):
             behavior=PermissionBehavior.ALLOW,
             message=f"{self.name} is always allowed when attached to the "
             f"agent.",
+        )
+
+    def _error(self, text: str) -> ToolChunk:
+        """Build a final error-state tool result.
+
+        Args:
+            text (`str`):
+                The error message to return.
+
+        Returns:
+            `ToolChunk`:
+                An error chunk containing ``text``.
+        """
+        return ToolChunk(
+            content=[TextBlock(text=text)],
+            state=ToolResultState.ERROR,
         )
