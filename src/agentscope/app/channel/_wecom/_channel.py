@@ -309,7 +309,7 @@ class WeComChannel(ChannelBase):
         """sha1 over the sorted [token, timestamp, nonce, encrypt] tuple."""
         expect = hashlib.sha1(
             "".join(
-                sorted([self._cb_token, timestamp, nonce, encrypt])
+                sorted([self._cb_token, timestamp, nonce, encrypt]),
             ).encode(
                 "utf-8",
             ),
