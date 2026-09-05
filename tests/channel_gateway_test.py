@@ -409,7 +409,21 @@ class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
 
         wakeups = await bus.queue_drain(MessageBusKeys.wakeup_queue())
         self.assertEqual(len(wakeups), 1)
-        self.assertEqual(wakeups[0][1]["session_id"], session_id)
+        self.assertDictEqual(
+            wakeups[0][1],
+            {
+                "user_id": "user-1",
+                "session_id": session_id,
+                "agent_id": "agent-x",
+                "kind": MessageBusKeys.WAKEUP_KIND_WAKE,
+                "input": None,
+            },
+        )
+
+        inbox = await bus.queue_drain(MessageBusKeys.inbox(session_id))
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0][1]["type"], "hint")
+        self.assertEqual(inbox[0][1]["hint"][0]["text"], "late message")
 
 
 class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
