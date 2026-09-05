@@ -22,7 +22,7 @@ from ..._logging import logger
 from ...message import DataBlock, HintBlock, TextBlock, UserMsg
 from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox, enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     ChannelRecord,
@@ -205,9 +205,12 @@ class ChannelGateway:
         # A reply already in flight → inject the input as a hint so the
         # live run folds it in. Otherwise start a fresh user turn.
         if await self._bus.is_locked(MessageBusKeys.session_lock(session_id)):
-            await self._bus.queue_push(
-                MessageBusKeys.inbox(session_id),
-                HintBlock(
+            await deliver_to_inbox(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                payload=HintBlock(
                     hint=content,
                     source=json.dumps(
                         {
