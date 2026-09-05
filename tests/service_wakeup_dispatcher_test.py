@@ -302,6 +302,34 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_initial_drain_consumes_backlog_beyond_batch_size(
+        self,
+    ) -> None:
+        """Startup drains every pending entry without a new signal."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        queue_key = MessageBusKeys.wakeup_queue()
+        for index in range(65):
+            await bus.queue_push(
+                queue_key,
+                {
+                    "user_id": "u",
+                    "session_id": f"pre-{index}",
+                    "agent_id": "a",
+                },
+            )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await _yield_a_few_times()
+
+        self.assertEqual(len(chat.calls), 65)
+        self.assertEqual(bus.queues[queue_key], [])
+
     async def test_active_session_not_spawned_while_locked(self) -> None:
         """While the target session holds its run lock, no chat run is
         spawned for it."""
