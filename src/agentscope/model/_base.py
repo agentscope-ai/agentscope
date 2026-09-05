@@ -23,10 +23,6 @@ from ..message import (
     TextBlock,
     UserMsg,
     ToolCallBlock,
-    ThinkingBlock,
-    ToolResultBlock,
-    DataBlock,
-    HintBlock,
 )
 from ..tool import ToolChoice
 
@@ -394,50 +390,11 @@ class ChatModelBase:
         cnt = 0
 
         acc_texts = []
-        data_blocks = []
+        n_data_blocks = 0
         for msg in messages:
             for block in msg.get_content_blocks():
-                if isinstance(block, TextBlock):
-                    acc_texts.append(block.text)
-
-                elif isinstance(block, ThinkingBlock):
-                    acc_texts.append(block.thinking)
-
-                elif isinstance(block, HintBlock):
-                    # ``hint`` may be a plain string or a list of
-                    # ``TextBlock`` / ``DataBlock`` for multimodal
-                    # content; mirror the ``ToolResultBlock.output``
-                    # branching above.
-                    if isinstance(block.hint, str):
-                        acc_texts.append(block.hint)
-                    else:
-                        for item in block.hint:
-                            if isinstance(item, TextBlock):
-                                acc_texts.append(item.text)
-                            elif isinstance(item, DataBlock):
-                                data_blocks.append(item)
-
-                elif isinstance(block, ToolCallBlock):
-                    acc_texts.append(block.input)
-
-                elif isinstance(block, ToolResultBlock):
-                    if isinstance(block.output, str):
-                        acc_texts.append(block.output)
-                    elif isinstance(block.output, list):
-                        for item in block.output:
-                            if isinstance(item, TextBlock):
-                                acc_texts.append(item.text)
-                            elif isinstance(item, DataBlock):
-                                data_blocks.append(item)
-
-                elif isinstance(block, DataBlock):
-                    data_blocks.append(block)
-
-                else:
-                    logger.warning(
-                        "Unknown block type %s in token counting, skipping.",
-                        type(block),
-                    )
+                acc_texts.extend(block.extract_text())
+                n_data_blocks += block.count_data_blocks()
 
         # Count the tokens of the tool JSON schemas
         if tools:
@@ -446,7 +403,7 @@ class ChatModelBase:
         # Add the multimodal tokens. Binary payloads are not consumed by
         # multimodal models as base64 text, and file URLs should not count as
         # only a path string. Use a stable flat estimate for all DataBlocks.
-        cnt += len(data_blocks) * _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE
+        cnt += n_data_blocks * _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE
 
         # Count the text tokens
         acc_text = "".join(acc_texts)
