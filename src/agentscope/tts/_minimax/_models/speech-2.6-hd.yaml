@@ -7,8 +7,5 @@ input_types:
 
 output_types:
   - audio/mpeg
-  - audio/wav
-  - audio/flac
-  - audio/pcm
 
 parameter_overrides: {}

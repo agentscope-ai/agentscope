@@ -7,7 +7,11 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..model import ModelCard
     from ..tts import TTSModelBase
+
+
+_MINIMAX_GLOBAL_BASE_URL = "https://api.minimax.io"
 
 
 class MiniMaxCredential(CredentialBase):  # pylint: disable=abstract-method
@@ -25,6 +29,20 @@ class MiniMaxCredential(CredentialBase):  # pylint: disable=abstract-method
         title="API Key",
     )
     """The API key."""
+
+    base_url: Literal[
+        "https://api.minimax.io",
+        "https://api.minimaxi.com",
+    ] = Field(
+        default=_MINIMAX_GLOBAL_BASE_URL,
+        description="The regional base URL for the MiniMax API.",
+    )
+    """The regional base URL for the MiniMax API."""
+
+    @classmethod
+    def list_models(cls) -> list["ModelCard"]:
+        """Return no chat models for this TTS-only credential."""
+        return []
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:

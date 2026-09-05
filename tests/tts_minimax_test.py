@@ -11,8 +11,9 @@ from agentscope.credential import CredentialFactory, MiniMaxCredential
 from agentscope.tts import MiniMaxTTSModel, TTSResponse
 
 
-_GLOBAL_API_URL = "https://api.minimax.io/v1/t2a_v2"
-_CHINA_API_URL = "https://api.minimaxi.com/v1/t2a_v2"
+_GLOBAL_BASE_URL = "https://api.minimax.io"
+_CHINA_BASE_URL = "https://api.minimaxi.com"
+_TTS_PATH = "/v1/t2a_v2"
 
 
 class _StreamResponse:
@@ -86,7 +87,7 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         )
         self.client.post.assert_awaited_once()
         api_url, call_kwargs = self.client.post.call_args
-        self.assertEqual(api_url[0], _GLOBAL_API_URL)
+        self.assertEqual(api_url[0], _GLOBAL_BASE_URL + _TTS_PATH)
         payload = call_kwargs["json"]
         self.assertEqual(payload["model"], "speech-2.8-hd")
         self.assertEqual(payload["text"], "Hello world")
@@ -101,8 +102,8 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         self.assertIn("voice_modify", payload)
         self.assertTrue(payload["subtitle_enable"])
 
-    async def test_regional_endpoint_and_audio_format(self) -> None:
-        """A regional endpoint and audio format are configurable."""
+    async def test_regional_endpoint_is_credential_owned(self) -> None:
+        """The credential selects an allowlisted regional endpoint."""
         response = Mock()
         response.raise_for_status = Mock()
         response.json.return_value = {
@@ -110,17 +111,25 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
             "base_resp": {"status_code": 0},
         }
         self.client.post = AsyncMock(return_value=response)
-        parameters = MiniMaxTTSModel.Parameters(
-            api_url=_CHINA_API_URL,
-            response_format="wav",
+        model = MiniMaxTTSModel(
+            credential=MiniMaxCredential(
+                api_key="test",
+                base_url=_CHINA_BASE_URL,
+            ),
+            stream=False,
         )
-        model = self._make_model(stream=False, parameters=parameters)
 
         result = await model.synthesize("Hello")
 
         api_url, _ = self.client.post.call_args
-        self.assertEqual(api_url[0], _CHINA_API_URL)
-        self.assertEqual(result.content.source.media_type, "audio/wav")
+        self.assertEqual(api_url[0], _CHINA_BASE_URL + _TTS_PATH)
+        self.assertEqual(result.content.source.media_type, "audio/mpeg")
+
+        with self.assertRaises(ValueError):
+            MiniMaxCredential(
+                api_key="test",
+                base_url="https://example.com",
+            )
 
     async def test_streaming_synthesis(self) -> None:
         """Streaming accepts SSE and plain JSON response lines."""
@@ -136,7 +145,10 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
             ),
             json.dumps(
                 {
-                    "data": {"audio": second.hex(), "status": 2},
+                    "data": {
+                        "audio": (first + second).hex(),
+                        "status": 2,
+                    },
                     "base_resp": {"status_code": 0},
                 },
             ),
@@ -149,7 +161,10 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         self.client.stream = Mock(return_value=stream_context)
         model = self._make_model(stream=True)
 
-        generator = await model.synthesize("Hello")
+        generator = await model.synthesize(
+            "Hello",
+            audio_setting={"format": "wav", "sample_rate": 32000},
+        )
         chunks = [chunk async for chunk in generator]
 
         self.assertEqual(
@@ -159,6 +174,14 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         self.assertEqual([chunk.is_last for chunk in chunks], [False, True])
         _, _, call_kwargs = self.client.stream.mock_calls[0]
         self.assertTrue(call_kwargs["json"]["stream"])
+        self.assertEqual(call_kwargs["json"]["audio_setting"]["format"], "mp3")
+        self.assertEqual(
+            call_kwargs["json"]["audio_setting"]["sample_rate"],
+            32000,
+        )
+        self.assertTrue(
+            call_kwargs["json"]["stream_options"]["exclude_aggregated_audio"],
+        )
 
     async def test_api_error(self) -> None:
         """An unsuccessful API status raises a clear error."""
@@ -210,4 +233,10 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         self.assertEqual(
             MiniMaxCredential.get_tts_model_classes(),
             [MiniMaxTTSModel],
+        )
+        self.assertEqual(MiniMaxCredential.list_models(), [])
+        self.assertNotIn("api_url", MiniMaxTTSModel.Parameters.model_fields)
+        self.assertNotIn(
+            "response_format",
+            MiniMaxTTSModel.Parameters.model_fields,
         )

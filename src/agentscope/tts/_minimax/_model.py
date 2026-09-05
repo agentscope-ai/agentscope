@@ -15,13 +15,8 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
 
 
-_DEFAULT_API_URL = "https://api.minimax.io/v1/t2a_v2"
-_MEDIA_TYPES = {
-    "mp3": "audio/mpeg",
-    "wav": "audio/wav",
-    "flac": "audio/flac",
-    "pcm": "audio/pcm",
-}
+_TTS_PATH = "/v1/t2a_v2"
+_MEDIA_TYPE = "audio/mpeg"
 
 
 def _raise_for_api_error(payload: dict[str, Any]) -> None:
@@ -69,12 +64,6 @@ class MiniMaxTTSModel(TTSModelBase):
             description="The voice pitch adjustment.",
         )
 
-        response_format: Literal["mp3", "wav", "flac", "pcm"] = Field(
-            default="mp3",
-            title="Response Format",
-            description="The audio format of the synthesized speech.",
-        )
-
         sample_rate: int = Field(
             default=32000,
             title="Sample Rate",
@@ -99,15 +88,6 @@ class MiniMaxTTSModel(TTSModelBase):
             description="The language or dialect optimization mode.",
         )
 
-        api_url: str = Field(
-            default=_DEFAULT_API_URL,
-            title="API URL",
-            description=(
-                "The T2A HTTP endpoint. Use the regional endpoint that "
-                "matches the API key."
-            ),
-        )
-
     type: Literal["minimax_tts"] = "minimax_tts"
     """The type of the TTS model."""
 
@@ -129,7 +109,7 @@ class MiniMaxTTSModel(TTSModelBase):
                 The TTS model name.
             parameters (`MiniMaxTTSModel.Parameters | None`, defaults to \
             `None`):
-                The voice, audio, language, and endpoint parameters.
+                The voice, audio, and language parameters.
             stream (`bool`, defaults to `True`):
                 Whether to stream incremental audio responses.
         """
@@ -182,7 +162,7 @@ class MiniMaxTTSModel(TTSModelBase):
             "audio_setting": {
                 "sample_rate": self.parameters.sample_rate,
                 "bitrate": self.parameters.bitrate,
-                "format": self.parameters.response_format,
+                "format": "mp3",
                 "channel": self.parameters.channel,
             },
             **kwargs,
@@ -198,27 +178,33 @@ class MiniMaxTTSModel(TTSModelBase):
             )
 
         audio_setting = payload.get("audio_setting")
-        response_format = self.parameters.response_format
         if isinstance(audio_setting, dict):
-            response_format = audio_setting.get("format", response_format)
-        media_type = _MEDIA_TYPES.get(
-            response_format,
-            f"audio/{response_format}",
-        )
+            payload["audio_setting"] = {
+                **audio_setting,
+                "format": "mp3",
+            }
+        else:
+            payload["audio_setting"] = {"format": "mp3"}
 
         if self.stream:
-            return self._stream(payload, media_type)
+            stream_options = payload.get("stream_options")
+            if not isinstance(stream_options, dict):
+                stream_options = {}
+            payload["stream_options"] = {
+                **stream_options,
+                "exclude_aggregated_audio": True,
+            }
+            return self._stream(payload)
 
-        return await self._aggregate(payload, media_type)
+        return await self._aggregate(payload)
 
     async def _aggregate(
         self,
         payload: dict[str, Any],
-        media_type: str,
     ) -> TTSResponse:
         """Return the complete audio from a non-streaming response."""
         response = await self.client.post(
-            self.parameters.api_url,
+            self.credential.base_url.rstrip("/") + _TTS_PATH,
             json=payload,
         )
         response.raise_for_status()
@@ -236,7 +222,7 @@ class MiniMaxTTSModel(TTSModelBase):
                     data=base64.b64encode(bytes.fromhex(audio)).decode(
                         "ascii",
                     ),
-                    media_type=media_type,
+                    media_type=_MEDIA_TYPE,
                 ),
             ),
         )
@@ -244,14 +230,14 @@ class MiniMaxTTSModel(TTSModelBase):
     async def _stream(
         self,
         payload: dict[str, Any],
-        media_type: str,
     ) -> AsyncGenerator[TTSResponse, None]:
         """Yield incremental audio chunks from a streaming response."""
-        pending: TTSResponse | None = None
+        pending: bytes | None = None
+        emitted = bytearray()
 
         async with self.client.stream(
             "POST",
-            self.parameters.api_url,
+            self.credential.base_url.rstrip("/") + _TTS_PATH,
             json=payload,
         ) as response:
             response.raise_for_status()
@@ -272,24 +258,45 @@ class MiniMaxTTSModel(TTSModelBase):
                 if not audio:
                     continue
 
+                audio_bytes = bytes.fromhex(audio)
+                if data.get("status") != 2:
+                    if pending is not None:
+                        emitted.extend(pending)
+                        yield self._audio_response(pending, is_last=False)
+                    pending = audio_bytes
+                    continue
+
+                received = bytes(emitted) + (pending or b"")
+                if audio_bytes.startswith(received):
+                    final_audio = audio_bytes[len(received) :]
+                else:
+                    final_audio = audio_bytes
+
                 if pending is not None:
-                    yield pending
-                pending = TTSResponse(
-                    content=DataBlock(
-                        source=Base64Source(
-                            data=base64.b64encode(
-                                bytes.fromhex(audio),
-                            ).decode("ascii"),
-                            media_type=media_type,
-                        ),
-                    ),
-                    is_last=False,
-                )
-                if data.get("status") == 2:
-                    break
+                    yield self._audio_response(
+                        pending,
+                        is_last=not final_audio,
+                    )
+                if final_audio:
+                    yield self._audio_response(final_audio, is_last=True)
+                elif pending is None:
+                    yield TTSResponse(content=None, is_last=True)
+                return
 
         if pending is not None:
-            pending.is_last = True
-            yield pending
+            yield self._audio_response(pending, is_last=True)
         else:
             yield TTSResponse(content=None, is_last=True)
+
+    @staticmethod
+    def _audio_response(audio: bytes, is_last: bool) -> TTSResponse:
+        """Build a response for an MP3 audio chunk."""
+        return TTSResponse(
+            content=DataBlock(
+                source=Base64Source(
+                    data=base64.b64encode(audio).decode("ascii"),
+                    media_type=_MEDIA_TYPE,
+                ),
+            ),
+            is_last=is_last,
+        )
