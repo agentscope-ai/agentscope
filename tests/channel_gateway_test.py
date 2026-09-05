@@ -8,10 +8,15 @@ needs a running agent and is exercised end-to-end against a real bot.
 """
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
 # pylint: disable=attribute-defined-outside-init
+import asyncio
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
+from agentscope.app._bus_ops import (
+    has_pending_inbox_or_release,
+    register_inbox_consumer,
+)
 from agentscope.app.channel._base import (
     ChannelBase,
     ChannelConfirmationResultEvent,
@@ -19,6 +24,7 @@ from agentscope.app.channel._base import (
     _EVENT_ADAPTER,
 )
 from agentscope.app.channel._gateway import ChannelGateway
+from agentscope.app.channel._routing import resolve
 from agentscope.message import Msg, ToolCallBlock, ToolCallState
 from agentscope.state import AgentState
 from agentscope.app.message_bus import InMemoryMessageBus
@@ -336,6 +342,88 @@ def _channel_record(user_id: str) -> ChannelRecord:
             },
         ),
     )
+
+
+class _ChannelStorage:
+    """Return one channel record for the gateway hand-off test."""
+
+    def __init__(self, record: ChannelRecord) -> None:
+        self._record = record
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord:
+        del channel_id
+        return self._record
+
+
+class _PausedSessionCheckBus(InMemoryMessageBus):
+    """Pause the gateway after it observes the active session lock."""
+
+    def __init__(self, lock_key: str) -> None:
+        super().__init__()
+        self._lock_key = lock_key
+        self.checked = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def is_locked(self, key: str) -> bool:
+        locked = await super().is_locked(key)
+        if key == self._lock_key:
+            self.checked.set()
+            await self.resume.wait()
+        return locked
+
+
+class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
+    """Channel hints must use the session inbox hand-off protocol."""
+
+    async def test_late_channel_message_enqueues_wakeup(self) -> None:
+        """A message after the final consumer check cannot be stranded."""
+        record = _channel_record("user-1")
+        event = ChannelEvent(
+            channel_id="chan-1",
+            channel_user_id="member-1",
+            chat_id="chat-1",
+            content=[TextBlock(text="late message")],
+        )
+        _agent_id, session_id, _scope = resolve(event, record)
+        bus = _PausedSessionCheckBus(
+            MessageBusKeys.session_lock(session_id),
+        )
+        gateway = ChannelGateway(
+            storage=_ChannelStorage(record),
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await register_inbox_consumer(bus, session_id)
+        async with bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            message_task = asyncio.create_task(gateway.process(event))
+            await asyncio.wait_for(bus.checked.wait(), timeout=2)
+
+            self.assertFalse(
+                await has_pending_inbox_or_release(bus, session_id),
+            )
+            bus.resume.set()
+            await asyncio.wait_for(message_task, timeout=2)
+
+        wakeups = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(wakeups), 1)
+        self.assertDictEqual(
+            wakeups[0][1],
+            {
+                "user_id": "user-1",
+                "session_id": session_id,
+                "agent_id": "agent-x",
+                "kind": MessageBusKeys.WAKEUP_KIND_WAKE,
+                "input": None,
+            },
+        )
+
+        inbox = await bus.queue_drain(MessageBusKeys.inbox(session_id))
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0][1]["type"], "hint")
+        self.assertEqual(inbox[0][1]["hint"][0]["text"], "late message")
 
 
 class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
