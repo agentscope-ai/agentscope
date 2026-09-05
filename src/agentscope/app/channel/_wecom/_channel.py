@@ -20,7 +20,6 @@ import asyncio
 import base64
 import hashlib
 import struct
-import time
 import xml.etree.ElementTree as ET
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
 
@@ -28,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
-from ....message import DataBlock, Msg, TextBlock
+from ....message import Msg, TextBlock
 from .._base import (
     ChannelBase,
     ChannelCapability,
@@ -280,7 +279,9 @@ class WeComChannel(ChannelBase):
         chat_id_node = inner.findtext("ChatId")
         agent_id = inner.findtext("AgentID")
         msg_id = inner.findtext("MsgId") or ""
-        chat_id = f"wecom:{chat_id_node}" if chat_id_node else f"wecom:{from_user}"
+        chat_id = (
+            f"wecom:{chat_id_node}" if chat_id_node else f"wecom:{from_user}"
+        )
         event = ChannelEvent(
             channel_id=self._channel_id,
             channel_user_id=from_user,
@@ -290,7 +291,8 @@ class WeComChannel(ChannelBase):
             metadata={"agent_id": agent_id, "msg_type": msg_type},
         )
         try:
-            await self._emit(event)
+            if self._emit:
+                await self._emit(event)
         except Exception:  # pylint: disable=broad-except
             logger.debug("WeCom emit failed")
         return aiohttp.web.Response(text="success")
@@ -306,7 +308,9 @@ class WeComChannel(ChannelBase):
     ) -> bool:
         """sha1 over the sorted [token, timestamp, nonce, encrypt] tuple."""
         expect = hashlib.sha1(
-            "".join(sorted([self._cb_token, timestamp, nonce, encrypt])).encode(
+            "".join(
+                sorted([self._cb_token, timestamp, nonce, encrypt])
+            ).encode(
                 "utf-8",
             ),
         ).hexdigest()
@@ -434,10 +438,7 @@ class WeComChannel(ChannelBase):
             data = resp.json()
             if data.get("errcode") == 0:
                 return data
-            if (
-                not _retried
-                and data.get("errcode") in _TOKEN_EXPIRED_CODES
-            ):
+            if not _retried and data.get("errcode") in _TOKEN_EXPIRED_CODES:
                 await self._refresh_token()
                 return await self._api(method, url, body, _retried=True)
             logger.warning("WeCom API %s failed: %s", method, data)
