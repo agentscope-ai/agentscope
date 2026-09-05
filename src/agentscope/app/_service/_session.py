@@ -658,6 +658,9 @@ class SessionService:
             MessageBusKeys.inbox(session_id),
         )
         await self._bus.registry_drop(
+            MessageBusKeys.inbox_consumer(session_id),
+        )
+        await self._bus.registry_drop(
             MessageBusKeys.bg_tasks(session_id),
         )
 
