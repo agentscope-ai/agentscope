@@ -99,8 +99,10 @@ workspace = [
 # ------------ Tools ------------
 # Ships the ``rg`` binary for the builtin Grep tool on LocalWorkspace
 # (remote sandboxes install ripgrep inside the sandbox instead).
+# Capped below 15.x: those releases ship no Windows wheels, which breaks
+# `pip install -e ".[dev]"` on Windows (issue #2504).
 tools = [
-    "ripgrep",
+    "ripgrep<15",
 ]
 # ------------ A2A ------------
 a2a = [
