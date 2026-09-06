@@ -2,10 +2,12 @@
 """Discord channel (discord.py, gateway WebSocket).
 
 discord.py is async-native and runs on the app event loop, so — unlike
-Feishu — there is no thread bridging: ``on_message`` and button callbacks
-``await self._emit(...)`` directly. On a button click the channel freezes
-its own card and emits a ``ChannelConfirmationResultEvent`` carrying the
-tool call's id.
+Feishu — there is no thread bridging: ``on_message`` and
+``on_interaction`` ``await self._emit(...)`` directly. Approval cards
+carry explicit button ``custom_id`` values because replies are sent by
+REST-only instances while component interactions arrive on the
+gateway-connected client; on a click the channel freezes its card and
+emits a ``ChannelConfirmationResultEvent`` carrying the tool call's id.
 
 Note: this channel opens one gateway connection per node. Discord's own
 model expects one connection per shard; running many nodes for one bot
@@ -30,6 +32,7 @@ from .._base import (
     ChatKind,
     _EVENT_ADAPTER,
 )
+from ._approval import _approval_custom_id, _parse_approval_custom_id
 
 if TYPE_CHECKING:
     import discord
@@ -186,6 +189,23 @@ class DiscordChannel(ChannelBase):
                 message (`discord.Message`): The inbound message.
             """
             await self._on_message(message)
+
+        @self._client.event
+        async def on_interaction(interaction: "discord.Interaction") -> None:
+            """Route approval-button clicks through the listener client.
+
+            Cards are posted by REST-only instances, so their view
+            callbacks live on a different :class:`discord.Client` than the
+            one that receives the click. Explicit ``custom_id`` values
+            plus this hook restore the approval flow.
+
+            Args:
+                interaction (`discord.Interaction`): The inbound click.
+            """
+            if interaction.type != discord.InteractionType.component:
+                return
+            custom_id = (interaction.data or {}).get("custom_id")
+            await self._on_approval_interaction(interaction, custom_id)
 
         @self._client.event
         async def on_ready() -> None:
@@ -453,14 +473,37 @@ class DiscordChannel(ChannelBase):
         client = await self._ensure_client()
         return client.get_channel(cid) or await client.fetch_channel(cid)
 
+    async def _on_approval_interaction(
+        self,
+        interaction: "discord.Interaction",
+        custom_id: str | None,
+    ) -> None:
+        """Handle an approval-card button click on the listening client.
+
+        Args:
+            interaction (`discord.Interaction`): The inbound click.
+            custom_id (`str | None`): The clicked button's ``custom_id``.
+        """
+        parsed = _parse_approval_custom_id(custom_id)
+        if parsed is None:
+            return
+        tool_call_id, approved, agent_id, session_id = parsed
+        await self._decide(
+            interaction,
+            tool_call_id,
+            approved,
+            agent_id,
+            session_id,
+        )
+
     def _build_view(
         self,
         tool_call_id: str,
         agent_id: str = "",
         session_id: str = "",
     ) -> "discord.ui.View":
-        """Build a two-button approval view whose callbacks freeze the card
-        and emit the decision for ``tool_call_id``.
+        """Build a two-button approval view with explicit ``custom_id``
+        values decoded by :meth:`_on_approval_interaction`.
 
         Args:
             tool_call_id (`str`): The tool call the buttons answer.
@@ -472,62 +515,34 @@ class DiscordChannel(ChannelBase):
         Returns:
             `discord.ui.View`: The allow/deny view for the card message.
         """
-        # pylint: disable=protected-access
         import discord
 
-        channel = self
-
-        class _ApprovalView(discord.ui.View):
-            """A persistent (never-timing-out) allow/deny button view."""
-
-            def __init__(self) -> None:
-                """Build the view with no timeout."""
-                super().__init__(timeout=None)
-
-            @discord.ui.button(
+        view = discord.ui.View(timeout=None)
+        view.add_item(
+            discord.ui.Button(
                 label="✅ Approve",
                 style=discord.ButtonStyle.green,
-            )
-            async def approve(
-                self,
-                interaction: "discord.Interaction",
-                _button: "discord.ui.Button",
-            ) -> None:
-                """Emit an approve decision.
-
-                Args:
-                    interaction (`discord.Interaction`): The click.
-                    _button (`discord.ui.Button`): The clicked button.
-                """
-                await channel._decide(
-                    interaction,
-                    tool_call_id,
+                custom_id=_approval_custom_id(
                     True,
-                    agent_id,
-                    session_id,
-                )
-
-            @discord.ui.button(label="❌ Deny", style=discord.ButtonStyle.red)
-            async def deny(
-                self,
-                interaction: "discord.Interaction",
-                _button: "discord.ui.Button",
-            ) -> None:
-                """Emit a deny decision.
-
-                Args:
-                    interaction (`discord.Interaction`): The click.
-                    _button (`discord.ui.Button`): The clicked button.
-                """
-                await channel._decide(
-                    interaction,
                     tool_call_id,
-                    False,
                     agent_id,
                     session_id,
-                )
-
-        return _ApprovalView()
+                ),
+            ),
+        )
+        view.add_item(
+            discord.ui.Button(
+                label="❌ Deny",
+                style=discord.ButtonStyle.red,
+                custom_id=_approval_custom_id(
+                    False,
+                    tool_call_id,
+                    agent_id,
+                    session_id,
+                ),
+            ),
+        )
+        return view
 
     async def _decide(
         self,
