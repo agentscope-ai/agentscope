@@ -21,7 +21,7 @@ from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
 from .._document import Section
 from ._base import ParserBase
-from ._utils import _guess_image_media_type
+from ._utils import _format_markdown_table_cell, _guess_image_media_type
 
 
 def _get_excel_column_name(col_index: int) -> str:
@@ -192,7 +192,11 @@ class ExcelParser(ParserBase):
                 sheets are never combined into the same section.
             table_format (`Literal["markdown", "json"]``, defaults to
                 ``"markdown"``):
-                How to render tables.
+                How to render tables.  ``"markdown"`` uses pipe-table
+                syntax, escaping pipes and rendering cell line breaks
+                as ``<br>``; ``"json"`` emits a JSON array prefixed with
+                a ``<system-info>`` marker and preserves extracted cell
+                strings without Markdown rendering.
 
         Raises:
             `ValueError`: If ``table_format`` is not ``"markdown"``
@@ -404,7 +408,13 @@ class ExcelParser(ParserBase):
         sheet_name: str,
     ) -> str:
         """Render table data as Markdown with optional sheet header and
-        cell coordinates."""
+        cell coordinates.
+
+        Pipe characters and backslashes are escaped so they remain part
+        of the cell, and line breaks within a cell are rendered as
+        ``<br>`` tags so each table row stays on one physical Markdown
+        line.
+        """
         if not table_data or not table_data[0]:
             return ""
 
@@ -416,7 +426,7 @@ class ExcelParser(ParserBase):
         num_cols = len(table_data[0])
 
         def _fmt(cell: str, row_idx: int, col_idx: int) -> str:
-            escaped = cell.replace("|", "\\|")
+            escaped = _format_markdown_table_cell(cell)
             if self.include_cell_coordinates:
                 coord = f"{_get_excel_column_name(col_idx)}{row_idx + 1}"
                 return f"[{coord}] {escaped}"
