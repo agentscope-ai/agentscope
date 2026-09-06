@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access,missing-function-docstring
 """Unit tests for the ChromaStore class."""
 
 import json
@@ -166,7 +166,9 @@ class ChromaStoreTest(IsolatedAsyncioTestCase):
         self.client.close.assert_called_once_with()
         self.assertIsNone(self.store._client)
 
-    async def test_search_normalizes_cosine_distance_and_filters_metadata(self) -> None:
+    async def test_search_normalizes_cosine_distance_and_filters_metadata(
+        self,
+    ) -> None:
         await self.store.create_collection("kb-1", dimensions=3)
         record = _record("doc-1", 0, {"tenant": "bank-a"})
         collection = self.client.collections["kb-1"]
@@ -230,17 +232,23 @@ class ChromaStoreTest(IsolatedAsyncioTestCase):
         collection.get.side_effect = [
             {
                 "documents": [store._serialize_chunk(r.chunk) for r in first],
-                "metadatas": [{_DOCUMENT_ID_KEY: r.document_id} for r in first],
+                "metadatas": [
+                    {_DOCUMENT_ID_KEY: r.document_id} for r in first
+                ],
             },
             {
                 "documents": [store._serialize_chunk(r.chunk) for r in second],
-                "metadatas": [{_DOCUMENT_ID_KEY: r.document_id} for r in second],
+                "metadatas": [
+                    {_DOCUMENT_ID_KEY: r.document_id} for r in second
+                ],
             },
         ]
 
         summaries = await store.list_documents("kb-1")
 
-        summaries_by_id = {summary.document_id: summary for summary in summaries}
+        summaries_by_id = {
+            summary.document_id: summary for summary in summaries
+        }
         self.assertEqual(summaries_by_id["doc-1"].chunk_count, 2)
         self.assertEqual(summaries_by_id["doc-1"].source, "doc-1.txt")
         self.assertEqual(summaries_by_id["doc-2"].chunk_count, 1)
@@ -256,7 +264,9 @@ class ChromaStoreTest(IsolatedAsyncioTestCase):
             _record("doc-1", 1, {"tenant": "bank-a"}),
         ]
         collection.get.return_value = {
-            "documents": [self.store._serialize_chunk(r.chunk) for r in records],
+            "documents": [
+                self.store._serialize_chunk(r.chunk) for r in records
+            ],
         }
 
         chunks = await self.store.list_chunks(

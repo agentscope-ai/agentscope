@@ -223,7 +223,7 @@ class ChromaStore(VectorStoreBase):
         collection: str,
         records: list[VectorRecord],
     ) -> None:
-        """Upsert records with deterministic IDs derived from document chunks."""
+        """Upsert records with deterministic IDs derived from chunks."""
         if not records:
             return
 
@@ -234,7 +234,9 @@ class ChromaStore(VectorStoreBase):
                 chroma_collection.upsert,
                 ids=[self._record_id(record) for record in batch],
                 embeddings=[record.vector for record in batch],
-                documents=[self._serialize_chunk(record.chunk) for record in batch],
+                documents=[
+                    self._serialize_chunk(record.chunk) for record in batch
+                ],
                 metadatas=[self._record_metadata(record) for record in batch],
             )
 
@@ -469,7 +471,10 @@ class ChromaStore(VectorStoreBase):
         """Validate a dimension declaration stored on a Chroma collection."""
         metadata = collection.metadata or {}
         stored_dimensions = metadata.get(_DIMENSIONS_KEY)
-        if stored_dimensions is not None and int(stored_dimensions) != dimensions:
+        if (
+            stored_dimensions is not None
+            and int(stored_dimensions) != dimensions
+        ):
             raise ValueError(
                 "Chroma collection dimension mismatch: existing collection "
                 f"uses {stored_dimensions}, requested {dimensions}",
