@@ -1086,9 +1086,12 @@ class StorageBase(ABC):
 
         Used by the indexing worker as it walks the lifecycle
         transitions (``parsing`` → ``chunking`` → ``indexing`` →
-        ``ready`` / ``error``).  Cheaper than a full upsert and avoids
-        races with concurrent lease writes by touching only the status
-        / error / chunk_count fields.
+        ``ready`` / ``error``).  ``deleting`` is a terminal marker used
+        by the delete path to fence an already-running worker.  Once a
+        record is marked ``deleting``, later worker-owned transitions
+        must be ignored.  Cheaper than a full upsert and avoids races
+        with concurrent lease writes by touching only the status / error
+        / chunk_count fields.
 
         Args:
             user_id (`str`):
@@ -1228,7 +1231,8 @@ class StorageBase(ABC):
 
         Scans every user / knowledge base — used by the sweeper, not
         by user-facing endpoints.  A document is "expired" when
-        ``data.status`` is not terminal (``ready`` / ``error``),
+        ``data.status`` is not terminal (``deleting`` / ``ready`` /
+        ``error``),
         ``processing_node`` is set, and ``data.lease_expires_at`` is
         in the past.  Implementations are free to skip records that
         match no work and return an unspecified order.

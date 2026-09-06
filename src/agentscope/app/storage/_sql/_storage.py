@@ -1865,10 +1865,14 @@ class AsyncSQLAlchemyStorage(StorageBase):
         """Fast-path column UPDATE + optional payload rewrite.
 
         ``status`` is a column so it can always be updated with a
-        single ``UPDATE``; ``error`` / ``chunk_count`` live inside
-        :attr:`~KnowledgeDocumentRecord.data` (payload) and therefore
-        require the classic read-modify-write when they change.
+        single conditional ``UPDATE``; ``error`` / ``chunk_count`` live
+        inside :attr:`~KnowledgeDocumentRecord.data` (payload) and
+        therefore require the classic read-modify-write when they
+        change.  The condition prevents a worker transition from
+        overwriting the terminal ``deleting`` fence.
         """
+        from sqlalchemy import update
+
         async with self._session() as sess:
             row = await sess.get(KnowledgeDocumentRow, document_id)
             if (
@@ -1885,9 +1889,22 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 record.data.chunk_count = chunk_count
             record.updated_at = _utcnow()
             new_row = _from_record(KnowledgeDocumentRow, record)
-            row.status = new_row.status
-            row.payload = new_row.payload
-            row.updated_at = new_row.updated_at
+            conditions = [
+                KnowledgeDocumentRow.id == document_id,
+                KnowledgeDocumentRow.user_id == user_id,
+                KnowledgeDocumentRow.knowledge_base_id == knowledge_base_id,
+            ]
+            if status != "deleting":
+                conditions.append(KnowledgeDocumentRow.status != "deleting")
+            await sess.execute(
+                update(KnowledgeDocumentRow)
+                .where(*conditions)
+                .values(
+                    status=new_row.status,
+                    payload=new_row.payload,
+                    updated_at=new_row.updated_at,
+                ),
+            )
             await sess.commit()
 
     async def acquire_knowledge_document_lease(
@@ -1913,6 +1930,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     KnowledgeDocumentRow.user_id == user_id,
                     KnowledgeDocumentRow.knowledge_base_id
                     == knowledge_base_id,
+                    KnowledgeDocumentRow.status != "deleting",
                     or_(
                         KnowledgeDocumentRow.processing_node.is_(None),
                         KnowledgeDocumentRow.lease_expires_at.is_(None),
@@ -1995,7 +2013,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         from sqlalchemy import select
 
         now = _to_naive_utc(now) if now is not None else _utcnow()
-        terminal = ("ready", "error")
+        terminal = ("deleting", "ready", "error")
         async with self._session() as sess:
             rows = (
                 (

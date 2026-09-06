@@ -378,6 +378,7 @@
 				"parsing": "解析中",
 				"chunking": "分块中",
 				"indexing": "建立索引",
+				"deleting": "删除中",
 				"ready": "已就绪",
 				"error": "失败",
 				"cancelled": "已取消"

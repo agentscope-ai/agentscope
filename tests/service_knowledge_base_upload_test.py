@@ -16,6 +16,7 @@ delete flow through ``TestClient``.  Verifies that:
 * delete tears down the vector-store and storage records together.
 """
 import asyncio
+import io
 import tempfile
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -24,6 +25,7 @@ import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
 from agentscope.app import create_app
+from agentscope.app._service import IndexWorker
 from agentscope.app.rag.blob_store import LocalBlobStore
 from agentscope.app.rag.knowledge_base_manager import (
     KnowledgeBaseManagerBase,
@@ -42,7 +44,8 @@ from agentscope.app.storage import (
     RedisStorage,
 )
 from agentscope.app.workspace_manager._base import WorkspaceManagerBase
-from agentscope.rag import VectorStoreBase
+from agentscope.message import TextBlock
+from agentscope.rag import ParserBase, Section, VectorStoreBase
 from agentscope.rag._vdb._vector_store import (
     DocumentSummary,
     VectorRecord,
@@ -53,6 +56,31 @@ from agentscope.rag._vdb._vector_store import (
 # ----------------------------------------------------------------------
 # Test doubles
 # ----------------------------------------------------------------------
+
+
+class _BlockingTextParser(ParserBase):
+    """Pause parsing so a test can delete the document mid-pipeline."""
+
+    supported_media_types = ["text/plain"]
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def parse(
+        self,
+        file: bytes | str,
+        filename: str,
+    ) -> list[Section]:
+        self.started.set()
+        await self.release.wait()
+        text = file.decode() if isinstance(file, bytes) else file
+        return [
+            Section(
+                content=TextBlock(text=text),
+                source=filename,
+            ),
+        ]
 
 
 class _FakeVectorStore(VectorStoreBase):
@@ -499,3 +527,58 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["items"], [])
+
+    async def test_delete_during_indexing_does_not_reinsert_vectors(
+        self,
+    ) -> None:
+        """A deleted document must not be written by a stale worker."""
+        parser = _BlockingTextParser()
+        app = create_app(
+            storage=self._app.state.storage,
+            message_bus=self._app.state.message_bus,
+            workspace_manager=self._app.state.workspace_manager,
+            knowledge_base_manager=self._app.state.knowledge_base_manager,
+            blob_store=self._app.state.blob_store,
+            knowledge_parsers=[parser],
+            enable_index_worker=False,
+        )
+
+        async with app.router.lifespan_context(app):
+            service = app.state.knowledge_base_service
+            record = await service.register_document(
+                user_id="user-1",
+                knowledge_base_id=self._kb_id,
+                filename="deleted-during-indexing.txt",
+                stream=io.BytesIO(b"document contents"),
+                size=len(b"document contents"),
+                content_type="text/plain",
+            )
+            worker = IndexWorker(
+                storage=app.state.storage,
+                blob_store=app.state.blob_store,
+                knowledge_base_manager=app.state.knowledge_base_manager,
+                parsers=app.state.knowledge_parsers,
+                node_id="test-worker",
+            )
+            worker_task = asyncio.create_task(
+                worker.process("user-1", self._kb_id, record.id),
+            )
+
+            await asyncio.wait_for(parser.started.wait(), timeout=2)
+            await service.delete_document(
+                user_id="user-1",
+                knowledge_base_id=self._kb_id,
+                document_id=record.id,
+            )
+            parser.release.set()
+            await worker_task
+
+            collection = f"kb_{self._kb_id}"
+            remaining = [
+                vector_record
+                for vector_record in self._vector_store._collections[
+                    collection
+                ]
+                if vector_record.document_id == record.id
+            ]
+            self.assertEqual(remaining, [])

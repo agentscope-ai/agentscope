@@ -949,6 +949,8 @@ export interface UpdateKnowledgeBaseRequest {
  *
  * - `pending` — accepted, blob stored, indexing not yet started.
  * - `parsing` / `chunking` / `indexing` — worker phases.
+ * - `deleting` — deletion is in progress; the record is fenced from
+ *   further indexing writes.
  * - `ready` — chunks committed to the vector store.
  * - `error` — terminal failure; `error` field carries the reason.
  */
@@ -957,6 +959,7 @@ export type KnowledgeDocumentStatus =
 	| 'parsing'
 	| 'chunking'
 	| 'indexing'
+	| 'deleting'
 	| 'ready'
 	| 'error';
 

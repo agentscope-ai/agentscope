@@ -2094,23 +2094,38 @@ class RedisStorage(StorageBase):
     ) -> None:
         """Update only the status-related fields of a document record.
 
-        Reads the record, mutates the status fields in memory, and
-        writes it back.  Not atomic across multiple writers — relies
-        on the indexing worker holding the lease, which serialises
-        status transitions for a single document.
+        Reads and writes the record under a Redis WATCH.  The delete
+        path uses the terminal ``deleting`` state as a fence: a worker
+        that already loaded the record must not overwrite that marker
+        with a later lifecycle transition.
         """
         key = self._document_key(user_id, knowledge_base_id, document_id)
-        raw = await self._client.get(key)
-        if not raw:
-            return
-        record = KnowledgeDocumentRecord.model_validate_json(raw)
-        record.status = status
-        if error is not None:
-            record.data.error = error
-        if chunk_count is not None:
-            record.data.chunk_count = chunk_count
-        record.updated_at = datetime.now()
-        await self._set_with_ttl(key, record.model_dump_json())
+        async with self._client.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        return
+                    record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    if record.status == "deleting" and status != "deleting":
+                        await pipe.unwatch()
+                        return
+                    record.status = status
+                    if error is not None:
+                        record.data.error = error
+                    if chunk_count is not None:
+                        record.data.chunk_count = chunk_count
+                    record.updated_at = datetime.now()
+                    pipe.multi()
+                    pipe.set(key, record.model_dump_json())
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                    await pipe.execute()
+                    return
+                except _watch_error():
+                    continue
 
     async def acquire_knowledge_document_lease(
         self,
@@ -2147,6 +2162,9 @@ class RedisStorage(StorageBase):
                         await pipe.unwatch()
                         return False
                     record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    if record.status == "deleting":
+                        await pipe.unwatch()
+                        return False
                     holder = record.processing_node
                     deadline = record.lease_expires_at
                     if (
@@ -2265,7 +2283,7 @@ class RedisStorage(StorageBase):
         cares about the small subset of non-terminal documents.
         """
         now = now or datetime.now()
-        terminal = {"ready", "error"}
+        terminal = {"deleting", "ready", "error"}
         tokens = await self._client.smembers(
             self.key_config.knowledge_document_global_index,
         )

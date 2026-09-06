@@ -29,14 +29,18 @@ KnowledgeDocumentStatus = Literal[
     "parsing",
     "chunking",
     "indexing",
+    "deleting",
     "ready",
     "error",
 ]
-# The six lifecycle states of a knowledge document.
+# The seven lifecycle states of a knowledge document.
 #
 # ``pending`` — bytes are in the blob store, waiting for a worker to
 # pick the document up. ``parsing`` / ``chunking`` / ``indexing`` are
-# worker-owned transitions; ``ready`` and ``error`` are terminal.
+# worker-owned transitions. ``deleting`` is a terminal marker written
+# before cleanup so a worker that already read the record cannot publish
+# vectors after the user has requested deletion. ``ready`` and ``error``
+# are also terminal.
 
 
 class KnowledgeDocumentData(BaseModel):
