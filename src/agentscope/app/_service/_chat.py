@@ -777,10 +777,21 @@ class ChatService:
                     and self._channel_clients is not None
                     else None
                 )
+                channel_user_id = session_record.source_channel_user_id
+                if (
+                    channel is not None
+                    and channel.channel_type == "dingtalk"
+                    and not (session_record.source_chat_id or "").startswith(
+                        "user:",
+                    )
+                ):
+                    # DingTalk knowledge tools act with the sender's
+                    # permissions. Keep them out of shared group sessions.
+                    channel_user_id = None
                 channel_tools = (
                     await channel.list_tools(
                         workspace,
-                        session_record.source_channel_user_id,
+                        channel_user_id,
                     )
                     if channel is not None
                     else []

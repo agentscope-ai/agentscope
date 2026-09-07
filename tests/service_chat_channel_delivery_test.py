@@ -108,6 +108,12 @@ class _RecordingChannel(ChannelBase):
         return []
 
 
+class _RecordingDingTalkChannel(_RecordingChannel):
+    """DingTalk-shaped test double for private/group tool assembly."""
+
+    channel_type = "dingtalk"
+
+
 class _Storage:
     """Serve one channel-bound session, its agent, and its channel."""
 
@@ -160,6 +166,8 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         self,
         source: SessionSource,
         channel_user_id: str = "",
+        channel_type: str = "fake",
+        source_chat_id: str = "chat-1",
     ) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
         user_id = "user-1"
@@ -181,7 +189,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                 "chan-1" if source is SessionSource.CHANNEL else None
             ),
             source_chat_id=(
-                "chat-1" if source is SessionSource.CHANNEL else None
+                source_chat_id if source is SessionSource.CHANNEL else None
             ),
             source_channel_user_id=(
                 channel_user_id
@@ -200,7 +208,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         channel = ChannelRecord(
             id="chan-1",
-            channel_type="fake",
+            channel_type=channel_type,
             user_id=user_id,
             credentials={"bot_id": "bot-1"},
             routing=RoutingConfig(
@@ -214,18 +222,24 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         self,
         source: SessionSource,
         channel_user_id: str = "",
+        channel_type: str = "fake",
+        source_chat_id: str = "chat-1",
     ) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
         user_id, agent, session, channel = self._fixture(
             source,
             channel_user_id,
+            channel_type,
+            source_chat_id,
         )
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
         clients = ChannelClients(
             storage=storage,
             message_bus=bus,
-            type_registry=ChannelTypeRegistry([_RecordingChannel]),
+            type_registry=ChannelTypeRegistry(
+                [_RecordingChannel, _RecordingDingTalkChannel],
+            ),
         )
 
         class _Agent:
@@ -341,5 +355,34 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                 _RecordingChannel.tool_user_ids,
                 ["staff-1"],
             )
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_dingtalk_private_tools_receive_current_sender(self) -> None:
+        """DingTalk private chats may equip user-scoped knowledge tools."""
+        clients = await self._run(
+            SessionSource.CHANNEL,
+            channel_user_id="staff-1",
+            channel_type="dingtalk",
+            source_chat_id="user:staff-1",
+        )
+        try:
+            self.assertListEqual(
+                _RecordingChannel.tool_user_ids,
+                ["staff-1"],
+            )
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_dingtalk_group_tools_do_not_receive_sender(self) -> None:
+        """DingTalk group chats cannot equip user-scoped knowledge tools."""
+        clients = await self._run(
+            SessionSource.CHANNEL,
+            channel_user_id="staff-1",
+            channel_type="dingtalk",
+            source_chat_id="group:conversation-1",
+        )
+        try:
+            self.assertListEqual(_RecordingChannel.tool_user_ids, [""])
         finally:
             await clients.__aexit__(None, None, None)
