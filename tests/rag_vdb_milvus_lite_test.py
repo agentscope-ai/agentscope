@@ -157,6 +157,70 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_search_negates_l2_distance_scores(self) -> None:
+        """The L2 metric yields higher-is-better scores too."""
+        store = await self._exit_stack.enter_async_context(
+            MilvusLiteStore(
+                uri=str(self._tmpdir / "l2.db"),
+                metric_type="L2",
+            ),
+        )
+        await store.create_collection("kb_2", dimensions=3)
+        await store.insert(
+            "kb_2",
+            [
+                _make_record("Near!", [1.0, 0.0, 0.0], document_id="doc-1"),
+                _make_record("Far!", [10.0, 0.0, 0.0], document_id="doc-2"),
+            ],
+        )
+
+        results = await store.search(
+            "kb_2",
+            query_vector=[0.0, 0.0, 0.0],
+            top_k=2,
+        )
+
+        # Negated squared distances, so the nearest record ranks first
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": -1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Near!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+                {
+                    "score": -100.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Far!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+            ],
+        )
+
     async def test_search_top_k(self) -> None:
         """top_k limits the number of returned results."""
         await self.store.create_collection("kb_1", dimensions=3)

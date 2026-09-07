@@ -5,6 +5,7 @@ import signal
 
 from ._renderer import ConsoleRenderer, Verbosity
 from ..agent import Agent
+from ..pipeline import PipelineProtocol
 from ..event import (
     ConfirmResult,
     RequireUserConfirmEvent,
@@ -15,7 +16,7 @@ from ..message import Msg, UserMsg
 
 
 async def _run_reply(
-    agent: Agent,
+    agent: Agent | PipelineProtocol,
     renderer: ConsoleRenderer,
     inputs: Msg | UserConfirmResultEvent | UserInterruptEvent,
 ) -> RequireUserConfirmEvent | None:
@@ -93,7 +94,7 @@ async def _confirm(
 
 
 async def launch_console(
-    agent: Agent,
+    agent: Agent | PipelineProtocol,
     user_name: str = "user",
     verbosity: Verbosity = "default",
     max_tool_result_lines: int | None = 20,
@@ -114,8 +115,8 @@ async def launch_console(
         await launch_console(agent)
 
     Args:
-        agent (`Agent`):
-            The agent to interact with.
+        agent (`Agent | PipelineProtocol`):
+            The agent or pipeline to interact with.
         user_name (`str`, defaults to `"user"`):
             The name attached to the user's input messages, also used
             as the input prompt.

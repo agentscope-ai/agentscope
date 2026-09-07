@@ -3,6 +3,7 @@
 import asyncio
 import json
 from typing import Any
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
@@ -29,7 +30,11 @@ from agentscope.message import (
     ToolResultState,
     UserMsg,
 )
-from agentscope.model import ChatResponse, ChatUsage
+from agentscope.middleware._tracing._attributes import SpanAttributes
+from agentscope.middleware._tracing._extractor import (
+    _get_llm_response_attributes,
+)
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -135,6 +140,34 @@ class ExternalWeatherTool(ToolBase):
     async def execute(self, city: str) -> str:
         """Stub weather tool for tracing tests."""
         return f"{city}: sunny, 25°C."
+
+
+class TracingExtractorTest(TestCase):
+    """Tests for tracing attribute extraction helpers."""
+
+    def test_llm_response_tracing_uses_chat_response_finish_reason(
+        self,
+    ) -> None:
+        """LLM response tracing should preserve ChatResponse finish reason."""
+        response = ChatResponse(
+            content=[TextBlock(text="partial answer")],
+            is_last=True,
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+
+        attributes = _get_llm_response_attributes(response)
+        output_messages = json.loads(
+            attributes[SpanAttributes.GEN_AI_OUTPUT_MESSAGES],
+        )
+
+        self.assertEqual(
+            attributes[SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS],
+            '["interrupted"]',
+        )
+        self.assertEqual(
+            output_messages[0]["finish_reason"],
+            "interrupted",
+        )
 
 
 def _make_tool_call_response(tool_id: str, city: str) -> ChatResponse:

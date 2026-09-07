@@ -288,12 +288,39 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._INDEX_TASKS_SIGNAL
 
     # ------------------------------------------------------------------
+    # Schedules. Only the node that owns the timers reconciles them;
+    # every node publishes here after writing a schedule to storage.
+    # ------------------------------------------------------------------
+
+    _SCHEDULE_LIFECYCLE = "agentscope:schedule:lifecycle"
+
+    @classmethod
+    def schedule_lifecycle(cls) -> str:
+        """Pub/sub channel that nudges the timer-owning node to
+        reconcile its schedule jobs against storage."""
+        return cls._SCHEDULE_LIFECYCLE
+
+    # ------------------------------------------------------------------
     # Channels. A reply never travels through the bus: delivery is plain
     # REST, so the node running the agent sends it directly. What does
     # cross nodes is coordination — reconcile nudges, the status
     # heartbeat that lets a connection-free replica answer, and the
     # per-chat buffers.
     # ------------------------------------------------------------------
+
+    _CHANNEL_CREDENTIAL_BINDING = "agentscope:channel:binding"
+
+    CREDENTIAL_BINDING_FIELD = "record"
+    """Field holding the serialised binding session."""
+
+    CREDENTIAL_BINDING_CLAIM_TTL_SECS = 300
+    """How long obtained credentials stay claimable. Short on purpose —
+    they sit here in the clear until the channel is created."""
+
+    @classmethod
+    def channel_credential_binding(cls, binding_id: str) -> str:
+        """Registry namespace holding one credential-binding session."""
+        return f"{cls._CHANNEL_CREDENTIAL_BINDING}:{binding_id}"
 
     _CHANNEL_LIFECYCLE = "agentscope:channel:lifecycle"
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"

@@ -45,6 +45,7 @@ from ..storage import (
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionConfig,
+    SessionNaming,
     SessionRecord,
     StorageBase,
     TeamRecord,
@@ -352,6 +353,10 @@ async def create_session(
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
             knowledge_config=body.knowledge_config,
+            # A caller that named the session owns that name; anything
+            # else starts on the creation timestamp and is the server's
+            # to replace once the conversation says what it is about.
+            naming=SessionNaming(auto=body.name is None),
             **({"name": body.name} if body.name is not None else {}),
         ),
     )
@@ -537,6 +542,14 @@ async def update_session(
         exclude_unset=True,
         exclude={"permission_mode"},
     )
+
+    # An explicit rename settles the name for good — auto-naming must
+    # not overwrite what the user just typed.
+    if "name" in config_updates:
+        config_updates["naming"] = {
+            **existing.config.naming.model_dump(),
+            "auto": False,
+        }
 
     return await storage.upsert_session(
         user_id=user_id,

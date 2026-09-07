@@ -15,17 +15,46 @@ else:
     ConnectionPool = Any
     Redis = Any
 
+# Reads and removes a batch in one atomic step. Doing so in two
+# round-trips lets competing consumers on the same key both read an
+# entry before either deletes it, and each dispatch it (#1868).
+_QUEUE_DRAIN_LUA = """
+local entries = redis.call('XRANGE', KEYS[1], '-', '+', 'COUNT', ARGV[1])
+for _, entry in ipairs(entries) do
+  redis.call('XDEL', KEYS[1], entry[1])
+end
+return entries
+"""
 
-class RedisMessageBus(MessageBus):
+
+# Compare-and-set on one hash field, so a caller can write back a value
+# it decided on earlier without holding a lock across the think time.
+_REGISTRY_SET_IF_LUA = """
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
+return 1
+"""
+
+# Read and remove in one step, so a value is consumed exactly once
+# however many callers race for it.
+_REGISTRY_POP_LUA = """
+local value = redis.call('HGET', KEYS[1], ARGV[1])
+if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
+return value
+"""
+
+
+class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     """Redis-backed implementation of :class:`MessageBus`.
 
     Mapping of bus modes to Redis primitives:
 
     - **Mode A (drain queue)** uses a Redis Stream per key. ``XADD``
       appends a payload whose single field ``payload`` carries the
-      JSON-serialised dict. ``queue_drain`` performs ``XRANGE`` followed
-      by per-id ``XDEL`` so the read is destructive and idempotent
-      under the single-consumer-per-key invariant. ``ttl_secs`` is
+      JSON-serialised dict. ``queue_drain`` runs ``XRANGE`` and ``XDEL``
+      in one Lua script, so an entry is handed to exactly one consumer
+      however many drain the key concurrently. ``ttl_secs`` is
       enforced via ``EXPIRE`` after each push (sliding TTL).
     - **Mode C (replay log)** also uses a Redis Stream, but never
       ``XDEL``s on read. Trimming happens via ``XADD … MAXLEN ~N``
@@ -232,10 +261,10 @@ class RedisMessageBus(MessageBus):
     ) -> list[tuple[str, dict]]:
         """Drain up to ``max_count`` entries from the queue at ``key``.
 
-        Implementation: ``XRANGE`` followed by ``XDEL`` of the
-        returned ids, so the operation is destructive in a single
-        round-trip pair. Entries that arrive between ``XRANGE`` and
-        ``XDEL`` are not affected.
+        Implementation: ``XRANGE`` and ``XDEL`` of the returned ids run
+        as one Lua script, so nothing else observes the entries between
+        the read and their removal. Entries that arrive mid-script are
+        not affected.
 
         Args:
             key (`str`):
@@ -248,21 +277,16 @@ class RedisMessageBus(MessageBus):
                 ``(entry_id, payload)`` pairs in arrival order. Empty
                 list when the queue is empty or absent.
         """
-        entries = await self._client.xrange(key, count=max_count)
-        if not entries:
-            return []
+        entries = await self._client.eval(_QUEUE_DRAIN_LUA, 1, key, max_count)
 
         results: list[tuple[str, dict]] = []
-        ids_to_delete: list[str] = []
         for entry_id, fields in entries:
-            ids_to_delete.append(entry_id)
-            raw = fields.get("payload")
+            # Lua flattens an entry's field map into ``[name, value]``;
+            # ``queue_push`` only ever writes the ``payload`` field.
+            raw = dict(zip(fields[::2], fields[1::2])).get("payload")
             if raw is None:
                 continue
             results.append((entry_id, json.loads(raw)))
-
-        if ids_to_delete:
-            await self._client.xdel(key, *ids_to_delete)
 
         return results
 
@@ -406,6 +430,36 @@ class RedisMessageBus(MessageBus):
         await self._client.hset(namespace, field, value)
         if ttl_secs is not None:
             await self._client.expire(namespace, ttl_secs)
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Compare-and-set one Hash field via Lua. See base."""
+        written = await self._client.eval(
+            _REGISTRY_SET_IF_LUA,
+            1,
+            namespace,
+            field,
+            value,
+            expected,
+            ttl_secs or 0,
+        )
+        return bool(written)
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """``HGET`` + ``HDEL`` as one Lua step. See base."""
+        return await self._client.eval(
+            _REGISTRY_POP_LUA,
+            1,
+            namespace,
+            field,
+        )
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the Redis Hash at ``namespace``.
