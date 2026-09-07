@@ -183,8 +183,8 @@ class SessionRow(_JsonRecordMixin):
     # flat field. Same column names and same indexes as before the
     # nesting, so no migration is needed.
     _index_paths: ClassVar[dict[str, str]] = {
-        "source": "source.type",
-        "source_schedule_id": "source.schedule_id",
+        "source": "origin.type",
+        "source_schedule_id": "origin.schedule_id",
     }
 
 

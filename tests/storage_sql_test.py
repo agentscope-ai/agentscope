@@ -20,6 +20,8 @@ from sqlalchemy.dialects import mysql
 
 from utils import AnyString
 
+from agentscope.app.storage._sql._mappers import _to_record
+from agentscope.app.storage._sql._tables import SessionRow
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -37,7 +39,10 @@ from agentscope.app.storage import (
     ScheduleRecord,
     SessionConfig,
     SessionSettings,
+    ChannelOrigin,
+    UserOrigin,
     ScheduleOrigin,
+    SessionRecord,
     SkillRecord,
     AsyncSQLAlchemyStorage,
     TeamData,
@@ -323,9 +328,9 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             user_id="user-1",
             agent_id=agent.id,
             config=_session_config(),
-            source=ScheduleOrigin(schedule_id="sch-1"),
+            origin=ScheduleOrigin(schedule_id="sch-1"),
         )
-        self.assertEqual(session.source, ScheduleOrigin(schedule_id="sch-1"))
+        self.assertEqual(session.origin, ScheduleOrigin(schedule_id="sch-1"))
 
         # Update (same session_id) — config swap
         new_config = _session_config()
@@ -1196,3 +1201,83 @@ class LegacyRecordShapeTest(IsolatedAsyncioTestCase):
                 MCPRecord.model_validate(payload).name,
                 "deepwiki",
             )
+
+
+class SessionOriginLegacyTest(IsolatedAsyncioTestCase):
+    """Rows written before :data:`SessionOrigin` existed still read back.
+
+    Those carry a bare ``source`` string, and — this is the part a
+    round-trip through the new code never exercises — their ids live in
+    promoted columns rather than in the payload.
+    """
+
+    def _legacy_row(self, **columns: object) -> SessionRow:
+        """A row in the shape the old mapper wrote."""
+        now = datetime.now()
+        return SessionRow(
+            id="sess-legacy",
+            created_at=now,
+            updated_at=now,
+            user_id="user-1",
+            agent_id="agent-1",
+            team_id=None,
+            payload={"config": {"name": "n", "workspace_id": "ws-1"}},
+            **columns,
+        )
+
+    async def test_legacy_schedule_row_keeps_its_schedule_id(self) -> None:
+        """The id is in a column, not the payload, and must survive."""
+        record = _to_record(
+            self._legacy_row(source="schedule", source_schedule_id="sch-1"),
+            SessionRecord,
+        )
+        self.assertEqual(record.origin, ScheduleOrigin(schedule_id="sch-1"))
+
+    async def test_legacy_channel_row_keeps_its_ids(self) -> None:
+        """Channel ids were in the payload already, flat rather than nested."""
+        row = self._legacy_row(source="channel", source_schedule_id=None)
+        row.payload = {
+            **row.payload,
+            "source_channel_id": "chan-1",
+            "source_chat_id": "chat-1",
+            "source_chat_name": "产品群",
+        }
+        self.assertEqual(
+            _to_record(row, SessionRecord).origin,
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="chat-1",
+                chat_name="产品群",
+            ),
+        )
+
+    async def test_legacy_user_row_reads_as_user(self) -> None:
+        """The plain case, where every id column is empty."""
+        record = _to_record(
+            self._legacy_row(source="user", source_schedule_id=None),
+            SessionRecord,
+        )
+        self.assertEqual(record.origin, UserOrigin())
+
+    async def test_an_origin_without_its_ids_is_not_that_origin(self) -> None:
+        """A tag carries its ids, so a row missing them cannot claim one.
+
+        The old shape let ``source`` say ``channel`` while the ids were
+        ``None``, and every caller wrote a truthiness guard because of
+        it. Manufacturing blank ids would walk such a row straight past
+        those guards — and index it under the empty string.
+        """
+        self.assertEqual(
+            _to_record(
+                self._legacy_row(source="schedule", source_schedule_id=None),
+                SessionRecord,
+            ).origin,
+            UserOrigin(),
+        )
+        self.assertEqual(
+            _to_record(
+                self._legacy_row(source="channel", source_schedule_id=None),
+                SessionRecord,
+            ).origin,
+            UserOrigin(),
+        )

@@ -1060,7 +1060,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionOrigin | None = None,
+        origin: SessionOrigin | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
         if session_id:
@@ -1079,7 +1079,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source or UserOrigin(),
+            origin=origin or UserOrigin(),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -1240,7 +1240,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                         .where(
                             SessionRow.user_id == user_id,
                             or_(
-                                SessionRow.payload["source"][
+                                SessionRow.payload["origin"][
                                     "channel_id"
                                 ].as_string()
                                 == channel_id,

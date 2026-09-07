@@ -655,7 +655,7 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=ScheduleOrigin(schedule_id=schedule.id),
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         results = await self.storage.list_sessions_by_schedule(
@@ -664,7 +664,10 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].id, session.id)
-        self.assertEqual(results[0].source.schedule_id, schedule.id)
+        self.assertEqual(
+            results[0].origin,
+            ScheduleOrigin(schedule_id=schedule.id),
+        )
 
     async def test_list_sessions_by_schedule_empty(self) -> None:
         """Returns empty list when no sessions exist for a schedule."""
@@ -684,7 +687,7 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=ScheduleOrigin(schedule_id=schedule.id),
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         agent_sessions = await self.storage.list_sessions(
@@ -703,13 +706,13 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=ScheduleOrigin(schedule_id=schedule.id),
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=ScheduleOrigin(schedule_id=schedule.id),
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         await self.storage.delete_schedule(self.user_id, schedule.id)
@@ -735,7 +738,7 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=ScheduleOrigin(schedule_id=schedule.id),
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         await self.storage.delete_session(

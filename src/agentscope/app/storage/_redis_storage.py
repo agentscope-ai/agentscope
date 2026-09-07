@@ -875,7 +875,7 @@ class RedisStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionOrigin | None = None,
+        origin: SessionOrigin | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -906,7 +906,7 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source or UserOrigin(),
+            origin=origin or UserOrigin(),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -923,19 +923,19 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
 
-        if isinstance(record.source, ScheduleOrigin):
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=record.source.schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.sadd(schedule_session_key, record.id)
 
-        if isinstance(record.source, ChannelOrigin):
+        if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
                 self.key_config.channel_session_index,
                 user_id=user_id,
-                channel_id=record.source.channel_id,
+                channel_id=record.origin.channel_id,
             )
             await self._client.sadd(channel_session_key, record.id)
 
@@ -1094,19 +1094,19 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
 
-        if isinstance(record.source, ScheduleOrigin):
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=record.source.schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.srem(schedule_session_key, session_id)
 
-        if isinstance(record.source, ChannelOrigin):
+        if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
                 self.key_config.channel_session_index,
                 user_id=user_id,
-                channel_id=record.source.channel_id,
+                channel_id=record.origin.channel_id,
             )
             await self._client.srem(channel_session_key, session_id)
 

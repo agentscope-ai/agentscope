@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator
+from typing_extensions import deprecated
 
 from ._base import _RecordBase
 from ....state import AgentState
@@ -261,12 +262,16 @@ class SessionRecord(_RecordBase):
     agent_id: str
     """The agent id."""
 
-    source: SessionOrigin = Field(default_factory=UserOrigin)
+    origin: SessionOrigin = Field(default_factory=UserOrigin)
     """How this session came to exist.
 
     A tagged union rather than a bare kind plus a row of nullable ids:
     once the tag says ``channel`` the channel and chat ids are there,
     and no reader has to ask whether the combination makes sense.
+
+    Named apart from the old ``source`` so that name could stay behind as
+    a deprecated property — a rename in place would have turned every
+    ``record.source == "user"`` into a silently false comparison.
     """
 
     team_id: str | None = None
@@ -291,27 +296,41 @@ class SessionRecord(_RecordBase):
         """
         if not isinstance(data, dict):
             return data
-        source = data.get("source")
-        if source is not None and not isinstance(source, str):
-            # Already a member of the union, or a dict shaped like one.
+        if data.get("origin") is not None:
             return data
 
         data = dict(data)
         kind = data.pop("source", None) or "user"
-        if kind == "schedule":
-            data["source"] = {
+        if not isinstance(kind, str):
+            # Built the old way but with a new value — ``source=`` was
+            # the field's name for long enough that callers still reach
+            # for it, and silently dropping one would leave the session
+            # claiming a user opened it.
+            data["origin"] = kind
+            return data
+        schedule_id = data.get("source_schedule_id")
+        channel_id = data.get("source_channel_id")
+        chat_id = data.get("source_chat_id")
+        # A tag carries its ids, so a legacy row missing them cannot be
+        # given one — manufacturing a blank id would let it past every
+        # guard the old nullable fields made callers write, and it would
+        # be indexed under the empty string as well.
+        if kind == "schedule" and schedule_id:
+            data["origin"] = {
                 "type": "schedule",
-                "schedule_id": data.get("source_schedule_id") or "",
+                "schedule_id": schedule_id,
             }
-        elif kind == "channel":
-            data["source"] = {
+        elif kind == "channel" and channel_id and chat_id:
+            data["origin"] = {
                 "type": "channel",
-                "channel_id": data.get("source_channel_id") or "",
-                "chat_id": data.get("source_chat_id") or "",
+                "channel_id": channel_id,
+                "chat_id": chat_id,
                 "chat_name": data.get("source_chat_name"),
             }
+        elif kind in ("user", "team"):
+            data["origin"] = {"type": kind}
         else:
-            data["source"] = {"type": kind}
+            data["origin"] = {"type": "user"}
         for legacy in (
             "source_schedule_id",
             "source_channel_id",
@@ -320,6 +339,52 @@ class SessionRecord(_RecordBase):
         ):
             data.pop(legacy, None)
         return data
+
+    @property
+    @deprecated("Use ``origin.type`` instead.")
+    def source(self) -> str:
+        """The origin's tag, under the name it used to have."""
+        return self.origin.type
+
+    @property
+    @deprecated("Use ``origin.schedule_id`` on a ``ScheduleOrigin``.")
+    def source_schedule_id(self) -> str | None:
+        """The schedule that created this session, if one did."""
+        return (
+            self.origin.schedule_id
+            if isinstance(self.origin, ScheduleOrigin)
+            else None
+        )
+
+    @property
+    @deprecated("Use ``origin.channel_id`` on a ``ChannelOrigin``.")
+    def source_channel_id(self) -> str | None:
+        """The owning channel, if an inbound message created this."""
+        return (
+            self.origin.channel_id
+            if isinstance(self.origin, ChannelOrigin)
+            else None
+        )
+
+    @property
+    @deprecated("Use ``origin.chat_id`` on a ``ChannelOrigin``.")
+    def source_chat_id(self) -> str | None:
+        """The platform chat this session serves, if any."""
+        return (
+            self.origin.chat_id
+            if isinstance(self.origin, ChannelOrigin)
+            else None
+        )
+
+    @property
+    @deprecated("Use ``origin.chat_name`` on a ``ChannelOrigin``.")
+    def source_chat_name(self) -> str | None:
+        """That chat's title, when the platform supplied one."""
+        return (
+            self.origin.chat_name
+            if isinstance(self.origin, ChannelOrigin)
+            else None
+        )
 
     state: AgentState = Field(default_factory=AgentState)
     """Mutable runtime state, updated after each chat turn."""

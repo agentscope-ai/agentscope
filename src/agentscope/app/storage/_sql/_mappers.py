@@ -116,12 +116,16 @@ def _to_record(
     obj["updated_at"] = row.updated_at
     for field in row.__class__.get_indexed_fields():
         obj[field] = getattr(row, field)
-    for column, path in row.__class__.get_index_paths().items():
-        # Index columns are copies, so a row that already carries the
-        # nested value needs nothing. A row written before the nesting
-        # existed does not have it at all — there the column IS the
-        # value, restored under its old flat name for the record's own
-        # legacy validator to fold.
-        if path.split(".", 1)[0] not in obj:
+    paths = row.__class__.get_index_paths()
+    # Index columns are copies, so a row that already carries the nested
+    # value needs nothing. A row written before the nesting existed does
+    # not have it at all — there the columns ARE the values, restored
+    # under their old flat names for the record's own legacy validator
+    # to fold. Legacy-ness is decided once, from the payload as it
+    # arrived: deciding per column would let the first restored column
+    # make the rest look present.
+    roots = {p.split(".", 1)[0] for p in paths.values()}
+    if roots and not roots & obj.keys():
+        for column in paths:
             obj[column] = getattr(row, column)
     return record_cls.model_validate(obj)

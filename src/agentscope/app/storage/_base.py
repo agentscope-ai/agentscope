@@ -370,7 +370,7 @@ class StorageBase(ABC):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionOrigin | None = None,
+        origin: SessionOrigin | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -385,7 +385,7 @@ class StorageBase(ABC):
             session_id (`str | None`, optional): If provided, update the
                 existing session with this id. If ``None``, create a new
                 session.
-            source (`SessionOrigin | None`, optional): How the session came
+            origin (`SessionOrigin | None`, optional): How the session came
                 to exist — a :class:`ScheduleOrigin` also indexes it under
                 its schedule. Defaults to :class:`UserOrigin`.
 

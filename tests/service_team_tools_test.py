@@ -33,6 +33,8 @@ from agentscope.app._tool import (
 from agentscope.app._types import SubAgentTemplate
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    TeamOrigin,
+    UserOrigin,
     AgentData,
     AgentRecord,
     RedisStorage,
@@ -301,6 +303,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         )
         self.assertEqual(len(worker_sessions), 1)
         self.assertEqual(worker_sessions[0].team_id, sess.team_id)
+        # The team minted this session, and the record says so — the
+        # leader's own session stays user-sourced.
+        self.assertEqual(worker_sessions[0].origin, TeamOrigin())
+        self.assertEqual(sess.origin, UserOrigin())
 
         # The initial prompt is in the worker's inbox as a HintBlock
         # wrapped in a <team-message> tag.
@@ -1449,6 +1455,7 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         )
         self.assertEqual(borrowed.config.workspace_id, "ws-monday")
         self.assertEqual(borrowed.team_id, team.id)
+        self.assertEqual(borrowed.origin, TeamOrigin())
 
         # Borrowed session starts with a fresh PermissionContext —
         # no leader / Monday state carried over.

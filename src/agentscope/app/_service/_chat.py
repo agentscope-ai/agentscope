@@ -898,9 +898,9 @@ class ChatService:
                 # -------------------------------------------------------------
                 channel = (
                     await self._channel_clients.get(
-                        session_record.source.channel_id,
+                        session_record.origin.channel_id,
                     )
-                    if isinstance(session_record.source, ChannelOrigin)
+                    if isinstance(session_record.origin, ChannelOrigin)
                     and self._channel_clients is not None
                     else None
                 )
@@ -1066,10 +1066,10 @@ class ChatService:
                 # Channel-bound sessions: tell the agent which chat it serves.
                 if channel is not None:
                     tools = ", ".join(t.name for t in channel_tools)
-                    chat_id = session_record.source.chat_id
+                    chat_id = session_record.origin.chat_id
                     kind = await channel.chat_kind(chat_id)
                     name = (
-                        session_record.source.chat_name
+                        session_record.origin.chat_name
                         or await channel.chat_name(chat_id)
                     )
                     where = f' named "{name}"' if name else ""
@@ -1147,13 +1147,13 @@ class ChatService:
             # channel's connection. Covers scheduled / background wakes,
             # not just inbound channel messages.
             if (
-                isinstance(session_record.source, ChannelOrigin)
+                isinstance(session_record.origin, ChannelOrigin)
                 and self._channel_clients is not None
             ):
                 await self._channel_clients.deliver(
                     session_id=session_id,
-                    channel_id=session_record.source.channel_id,
-                    chat_id=session_record.source.chat_id,
+                    channel_id=session_record.origin.channel_id,
+                    chat_id=session_record.origin.chat_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None

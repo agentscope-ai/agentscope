@@ -133,8 +133,8 @@ class ChannelGateway:
         ):
             target = (session.agent_id, session.id)
             chat_id = (
-                session.source.chat_id
-                if isinstance(session.source, ChannelOrigin)
+                session.origin.chat_id
+                if isinstance(session.origin, ChannelOrigin)
                 else None
             )
             if target == guess or chat_id != event.chat_id:
@@ -320,7 +320,7 @@ class ChannelGateway:
             config=session_config,
             state=initial_state,
             session_id=session_id,
-            source=ChannelOrigin(
+            origin=ChannelOrigin(
                 channel_id=record.id,
                 chat_id=event.chat_id,
                 chat_name=event.chat_name or None,

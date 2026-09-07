@@ -118,7 +118,7 @@ def _make_session(cwd: str | None = None) -> SessionRecord:
         user_id="u",
         agent_id="a",
         id="s",
-        source=UserOrigin(),
+        origin=UserOrigin(),
         state=AgentState(),
         config=SessionConfig(workspace_id="ws-1", name="t", cwd=cwd),
         agent_snapshot=AgentRecord(

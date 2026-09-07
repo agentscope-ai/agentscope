@@ -162,7 +162,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             id="session-1",
             user_id=user_id,
             agent_id=agent.id,
-            source=source,
+            origin=source,
             config=SessionConfig(
                 workspace_id="ws-1",
                 chat_model_config=ChatModelConfig(

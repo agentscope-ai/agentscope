@@ -152,7 +152,7 @@ export type AgentState = Record<string, unknown>;
 export interface SessionRecord extends RecordBase {
 	user_id: string;
 	agent_id: string;
-	source: SessionOrigin;
+	origin: SessionOrigin;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called

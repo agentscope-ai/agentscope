@@ -122,7 +122,7 @@ const ChatPageInner = () => {
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
 	// Show a per-origin icon only when sessions actually mix sources —
 	// a uniform list needs no disambiguation.
-	const showSourceIcons = new Set(sessions.map((v) => v.session.source)).size > 1;
+	const showSourceIcons = new Set(sessions.map((v) => v.session.origin.type)).size > 1;
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -336,7 +336,7 @@ const ChatPageInner = () => {
 													{todaySessions.map((view) => {
 														const session = view.session;
 														const SourceIcon =
-															SOURCE_ICON[session.source.type] ??
+															SOURCE_ICON[session.origin.type] ??
 															BotMessageSquare;
 														return (
 															<SidebarMenuItem key={session.id}>
@@ -428,7 +428,7 @@ const ChatPageInner = () => {
 													{earlierSessions.map((view) => {
 														const session = view.session;
 														const SourceIcon =
-															SOURCE_ICON[session.source.type] ??
+															SOURCE_ICON[session.origin.type] ??
 															BotMessageSquare;
 														return (
 															<SidebarMenuItem key={session.id}>

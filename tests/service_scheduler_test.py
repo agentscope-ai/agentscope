@@ -150,7 +150,7 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
         self.assertEqual(len(sessions), 1)
         session = sessions[0]
         self.assertEqual(
-            session.source,
+            session.origin,
             ScheduleOrigin(schedule_id=record.id),
         )
 

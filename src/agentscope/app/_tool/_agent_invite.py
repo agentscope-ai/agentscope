@@ -391,7 +391,7 @@ class AgentInvite(_TeamToolBase):
                     fallback_chat_model_config=borrowed_fallback_model,
                 ),
                 state=worker_state,
-                source=TeamOrigin(),
+                origin=TeamOrigin(),
             )
             await self._storage.set_session_team_id(
                 self._user_id,
