@@ -71,16 +71,6 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     return text.strip()
 
 
-def _is_truly_blank_paragraph(para: DocxParagraph) -> bool:
-    """Return whether a paragraph has no content beyond properties."""
-    from docx.oxml.ns import qn
-
-    paragraph_properties_tag = qn("w:pPr")
-    return all(
-        child.tag == paragraph_properties_tag for child in para._element
-    )
-
-
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """Extract table data from a python-docx Table, preserving line breaks
     within cells.
@@ -290,6 +280,8 @@ class WordParser(ParserBase):
         text_buffer: list[str] = []
 
         def flush_text() -> None:
+            while text_buffer and text_buffer[-1] == "":
+                text_buffer.pop()
             if not text_buffer:
                 return
             sections.append(
@@ -308,7 +300,9 @@ class WordParser(ParserBase):
                 text = _extract_text_from_paragraph(para)
                 if text:
                     text_buffer.append(text)
-                elif text_buffer and _is_truly_blank_paragraph(para):
+                elif text_buffer and all(
+                    child.tag == qn("w:pPr") for child in para._element
+                ):
                     text_buffer.append("")
 
                 if self.include_image:

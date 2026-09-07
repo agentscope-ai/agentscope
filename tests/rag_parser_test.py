@@ -1240,6 +1240,17 @@ class WordParserTest(IsolatedAsyncioTestCase):
             "Paragraph one.\n\n\nParagraph two.",
         )
 
+    async def test_trailing_empty_paragraphs_do_not_add_newlines(self) -> None:
+        """Trailing blank paragraphs do not leave a trailing newline."""
+        docx_bytes = _make_docx_simple(["Paragraph one.", "", ""])
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].content.text, "Paragraph one.")
+
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
         text."""
