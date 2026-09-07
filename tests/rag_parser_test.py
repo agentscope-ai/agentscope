@@ -221,18 +221,6 @@ def _make_xlsx_simple(
     return buffer.getvalue()
 
 
-def _make_xlsx_with_special_table_cells() -> bytes:
-    """Build an XLSX whose cells carry pipes and a line break."""
-    return _make_xlsx_simple(
-        {
-            "S1": [
-                ["A|B", r"Path \| label"],
-                ["1|2", "Line 1\nLine 2"],
-            ],
-        },
-    )
-
-
 class TextParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`TextParser`."""
 
@@ -926,7 +914,14 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
 
     async def test_markdown_table_escapes_special_cells(self) -> None:
         """Pipes and line breaks do not corrupt Markdown table rows."""
-        xlsx_bytes = _make_xlsx_with_special_table_cells()
+        xlsx_bytes = _make_xlsx_simple(
+            {
+                "S1": [
+                    ["A|B", r"Path \| label"],
+                    ["1|2", "Line 1\nLine 2"],
+                ],
+            },
+        )
         parser = ExcelParser(include_sheet_names=False)
         sections = await parser.parse(xlsx_bytes, "special.xlsx")
 

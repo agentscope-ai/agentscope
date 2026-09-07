@@ -192,11 +192,7 @@ class ExcelParser(ParserBase):
                 sheets are never combined into the same section.
             table_format (`Literal["markdown", "json"]``, defaults to
                 ``"markdown"``):
-                How to render tables.  ``"markdown"`` uses pipe-table
-                syntax, escaping pipes and rendering cell line breaks
-                as ``<br>``; ``"json"`` emits a JSON array prefixed with
-                a ``<system-info>`` marker and preserves extracted cell
-                strings without Markdown rendering.
+                How to render tables.
 
         Raises:
             `ValueError`: If ``table_format`` is not ``"markdown"``
@@ -408,13 +404,7 @@ class ExcelParser(ParserBase):
         sheet_name: str,
     ) -> str:
         """Render table data as Markdown with optional sheet header and
-        cell coordinates.
-
-        Pipe characters and backslashes are escaped so they remain part
-        of the cell, and line breaks within a cell are rendered as
-        ``<br>`` tags so each table row stays on one physical Markdown
-        line.
-        """
+        cell coordinates."""
         if not table_data or not table_data[0]:
             return ""
 
