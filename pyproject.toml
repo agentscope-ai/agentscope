@@ -99,10 +99,12 @@ workspace = [
 # ------------ Tools ------------
 # Ships the ``rg`` binary for the builtin Grep tool on LocalWorkspace
 # (remote sandboxes install ripgrep inside the sandbox instead).
-# Capped below 15.x: those releases ship no Windows wheels, which breaks
-# `pip install -e ".[dev]"` on Windows (issue #2504).
+# 15.x ships wheels only for macOS-arm64 and manylinux_2_39 x86_64, so
+# everything else (Windows, glibc<2.39, musl, aarch64) falls back to the
+# Rust sdist and fails without a toolchain (#2504). 14.0 lacks those
+# wheels too, hence the lower bound. Lift once upstream restores them.
 tools = [
-    "ripgrep<15",
+    "ripgrep>=14.1,<15",
 ]
 # ------------ A2A ------------
 a2a = [
