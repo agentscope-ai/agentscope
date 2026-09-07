@@ -85,10 +85,9 @@ right   1. write, verified by a fact-check  fails -> back to the writer,
 support               policy                 writer
 reads the records     reads the policy       no tools at all
 |                     |                      |
-gate: a model         gate: a supervisor     gate: a model checks the
-holds the records     signs off              draft against the approved
-and audits the                               offer
-account
+gate: an auditor      gate: a supervisor     gate: a safety agent
+agent reads the       signs off              checks the draft against
+records itself                               the approved offer
 ```
 
 Three steps, three different kinds of work, three gates of different
@@ -123,54 +122,76 @@ policy wiki instead — most likely over MCP. **The SOP neither knows nor
 cares.** All it says is that step one must hand over an account that
 survives checking.
 
-### A gate that checks against the same records
+### The engine sees verdicts, never verifiers
 
-The first step is judged by a model that is handed `orders.json` and
-`shipments.json` itself:
+A verifier is not a special kind of object. It satisfies the same
+protocol an agent does, and the step drives it the same way — so the
+first gate is simply an agent that can read the records itself:
 
 ```python
-class FactsMatchRecords(VerifierBase):
-    def __init__(self, model, workspace, files):
-        self._model = model
-        self._backend = workspace.get_backend()
-        self._files = [
-            self._backend.join_path(workspace.workdir, "data", name)
-            for name in files
-        ]
+auditor = Agent(
+    name="auditor",
+    system_prompt=(
+        f"You audit a support agent's account of what happened. The "
+        f"records in {data} are the only source of truth — read them "
+        "and check every factual claim against them."
+    ),
+    model=model(),
+    toolkit=Toolkit(tools=tools),
+    offloader=workspace,
+)
 ```
 
 That is the difference between "the facts were checked" and "the write-up
 read plausibly". A judge without the records can only tell you the second.
 
-Note what it takes at construction — a model *and* a workspace. **Whatever
-a verifier needs, it takes when it is built.** The engine never learns
-what a workspace is, which is what keeps it runnable with no service
-underneath.
-
-(Resolve paths against `workspace.workdir`, not the backend's working
-directory. The latter is wherever the process happens to be, and is a
-reliable way to read nothing at all.)
+The engine never learns what a workspace is, or a model, or an auditor.
+It reads `state.verifications` and decides from that alone: pass, retry,
+or — once `max_attempts` is spent — fail.
 
 ### A gate that waits without waiting
 
-```python
-class SupervisorApproval(VerifierBase):
-    def __init__(self):
-        self.answer = None
+The supervisor is a person, so the second gate is a small object rather
+than an agent. Same protocol, so the step cannot tell:
 
-    async def verify(self, sop, run, step, step_run):
-        answer, self.answer = self.answer, None
-        return answer          # None = no answer yet
+```python
+class SupervisorApproval:
+    async def reply_stream(self, inputs=None, structured_schema=None,
+                           yield_final_msg=False):
+        if not isinstance(inputs, ExternalExecutionResultEvent):
+            yield RequireExternalExecutionEvent(...)     # ask, and stop
+            return
+        answer = str(inputs.execution_results[0].output).strip()
+        yield AssistantMsg(..., structured_output={"passed": ..., ...})
 ```
 
-Answering `None` parks the step. The engine ends the stream rather than
-holding a coroutine open, the demo blocks on `input()` with **no agent
-suspended anywhere behind it**, and the run picks up when a verdict
-arrives — a second later or a week.
+Asked with nothing to go on it posts its question and ends. **The engine
+ends the stream rather than holding a coroutine open**, the demo blocks
+on `input()` with no agent suspended anywhere behind it, and the run
+picks up when the answer arrives — a second later or a week.
 
-Because it is a live object it can remember whether it has already asked —
-**at this layer only**. An object does not survive the process, so a
-verifier that has to outlive one keeps that in its own storage.
+Asked again with an answer, it turns that answer into a verdict. Nothing
+is remembered on the object: which half of the step it is in is worked
+out from the run state, so the same class works after a restart.
+
+### A refusal is a critique
+
+Whatever a verifier says on the way to `passed=False` is handed to the
+executor verbatim on its next attempt, together with which attempt it is:
+
+```
+<system-reminder>You are running one step of the SOP.
+
+## 拟补偿方案
+...
+
+Your last attempt was not accepted:
+补偿金额超出 3.2 条上限，应为 40 元券而非全额退款。
+This is attempt 2 of 3.</system-reminder>
+```
+
+Say `n` at the approval and give a reason: that reason is what the policy
+agent reads next.
 
 ### Why the writer has no tools
 
@@ -184,28 +205,48 @@ boundary that matters**, and this is that boundary.
 
 ### Driving it
 
-The engine is shaped like an agent: it holds its run the way an agent
-holds its state, and you feed it.
+The engine is shaped like an agent, so you feed it and watch:
 
 ```python
 engine = SOPEngine(sop)
-async for event in engine.run_stream([TextBlock(text=complaint)]):
-    show(event)
+async for event in engine.reply_stream(UserMsg(name="user", content=complaint)):
+    renderer.render(event)
 ```
 
-A run stops for two different reasons, and the demo tells them apart by
-what came out of the stream rather than by asking around:
+When it stops, `engine.status` says why. `awaiting` means something is
+waiting on a person; answer whatever came past — a
+`UserConfirmResultEvent` for a tool-call confirmation, an
+`ExternalExecutionResultEvent` for a question — and call again.
 
-- an **agent stopped for permission** — a `RequireUserConfirmEvent` came
-  past, so answer it with a `UserConfirmResultEvent`. The answer names the
-  *reply*, not the agent; the engine hands it to whichever step's agent was
-  waiting on it, so you never have to work out who asked.
-- a **verifier is waiting** — nothing came past, and a step sits in
-  `verifying`.
+### A run outlives its process
 
-Either way `engine.run` says where it stopped, and calling again carries
-on. It is plain data: dump it and the progress outlives the process; hand
-it back with `SOPEngine(sop, run=stored)` and the run resumes.
+`engine.state` is plain data, gathered from the steps:
+
+```python
+stored = engine.state.model_dump_json()
+...
+engine = SOPEngine(sop, SOPRunState.model_validate_json(stored))
+```
+
+It covers the SOP's own state and nothing below it. An executor that
+keeps state of its own — an `Agent` does — is persisted by whoever built
+it, the same way it is built. Loading a run that belongs to a different
+SOP is a `ValueError`, not a surprise.
+
+### Writing a step that is neither
+
+`SOPStep` is a convenience, not a law. Subclass `SOPStepBase`, implement
+`reply_stream`, and file a verdict with `record()` — one call is one
+attempt, and the engine asks no more than that.
+
+```python
+class WaitForCI(SOPStepBase):
+    async def reply_stream(self, inputs=None):
+        run = await self._client.latest(self.state.submission)
+        if run is None:
+            return                          # nothing to say yet
+        self.record(run.passed, run.summary, "ci")
+```
 
 ### What is not here
 

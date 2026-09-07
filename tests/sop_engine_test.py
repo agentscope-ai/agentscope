@@ -1,451 +1,425 @@
 # -*- coding: utf-8 -*-
-"""End-to-end tests for the SOP engine, driven by a scripted model.
+"""Unittests for the SOP engine.
 
-These run real agents — the engine attaches its submit tool, prompts them,
-reads what they submit and hands it to the verifier — with the model's
-replies scripted so the whole thing is deterministic.
+Driven with fake executors rather than a model: what is under test is
+the engine's own reasoning — order, attempt budget, parking, and the
+run state it hands out and takes back.
 """
-import json
+from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 
-from agentscope.agent import Agent
+from utils import AnyString
+
 from agentscope.event import (
     ConfirmResult,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import TextBlock, ToolCallBlock
-from agentscope.permission import (
-    PermissionBehavior,
-    PermissionContext,
-    PermissionDecision,
-)
-from agentscope.tool import ToolBase, ToolChunk, Toolkit
-from agentscope.model import ChatResponse
+from agentscope.message import AssistantMsg, ToolCallBlock, UserMsg
 from agentscope.sop import (
-    VerifierBase,
     SOP,
-    RunSettledEvent,
     SOPEngine,
+    SOPRunState,
     SOPRunStatus,
     SOPStep,
     SOPStepState,
-    StepStateEvent,
-    SubmitStepResult,
-    VerificationRecord,
 )
-
-from tests.utils import MockModel
-
-
-class _Decides(VerifierBase):
-    """A verifier that defers to a plain function, for tests only."""
-
-    def __init__(self, decide) -> None:
-        """Remember what to call."""
-        self._decide = decide
-
-    async def verify(self, sop, run, step, step_run):
-        """Ask the function."""
-        result = self._decide(sop, run, step, step_run)
-        if result is not None and not result.verified_by:
-            result.verified_by = "test"
-        return result
+from agentscope.types import ReplyFinishedReason
 
 
-def _submits(text: str) -> ChatResponse:
-    """A reply that calls the submit tool with ``text``."""
-    return ChatResponse(
-        content=[
+def _finished(name: str, output: dict) -> AssistantMsg:
+    """A reply that ended with structured output."""
+    return AssistantMsg(
+        name=name,
+        content="",
+        finished_reason=ReplyFinishedReason.COMPLETED,
+        structured_output=output,
+    )
+
+
+def _park() -> RequireUserConfirmEvent:
+    """A reply that stopped for a person."""
+    return RequireUserConfirmEvent(
+        reply_id="reply-1",
+        tool_calls=[
             ToolCallBlock(
+                type="tool_call",
                 id="call-1",
-                name=SubmitStepResult.name,
-                input=json.dumps({"result": text}),
+                name="shell",
+                input="{}",
             ),
         ],
-        is_last=True,
     )
 
 
-def _says(text: str) -> ChatResponse:
-    """A reply that just talks, submitting nothing."""
-    return ChatResponse(content=[TextBlock(text=text)], is_last=True)
-
-
-def _agent(
-    model: MockModel,
-    name: str = "worker",
-    toolkit: Toolkit | None = None,
-) -> Agent:
-    """An agent wired to a scripted model."""
-    return Agent(
-        name=name,
-        system_prompt="",
-        model=model,
-        toolkit=toolkit or Toolkit(),
+def _answer() -> UserConfirmResultEvent:
+    """What comes back when the person says yes."""
+    call = ToolCallBlock(
+        type="tool_call",
+        id="call-1",
+        name="shell",
+        input="{}",
+    )
+    return UserConfirmResultEvent(
+        reply_id="reply-1",
+        confirm_results=[ConfirmResult(confirmed=True, tool_call=call)],
     )
 
 
-class NeedsConfirming(ToolBase):
-    """A tool that always stops to ask, so a step parks mid-flight."""
+class _Scripted:
+    """An ``AgentLike`` that replays one scripted reply per call."""
 
-    name: str = "Risky"
-    description: str = "Does something that needs a nod first."
-    input_schema: dict = {"type": "object", "properties": {}}
-    is_concurrency_safe: bool = False
-    is_read_only: bool = False
+    def __init__(self, name: str, script: list[list[Any]]) -> None:
+        """Remember the script, and what it gets asked."""
+        self.name = name
+        self.script = list(script)
+        self.asked: list[Any] = []
 
-    async def call(self) -> ToolChunk:
-        """Report that it ran."""
-        return ToolChunk(content=[TextBlock(text="did the risky thing")])
-
-    async def check_permissions(
+    async def reply_stream(  # pylint: disable=unused-argument
         self,
-        tool_input: dict,
-        context: PermissionContext,
-    ) -> PermissionDecision:
-        """Always ask."""
-        return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message="Risky wants a nod.",
-        )
-
-
-def _calls_risky() -> ChatResponse:
-    """A reply that calls the tool needing confirmation."""
-    return ChatResponse(
-        content=[ToolCallBlock(id="c0", name="Risky", input="{}")],
-        is_last=True,
-    )
+        inputs: Any = None,
+        structured_schema: Any = None,
+        yield_final_msg: bool = False,
+    ) -> AsyncGenerator[Any, None]:
+        """Replay the next scripted reply."""
+        self.asked.append(inputs)
+        for event in self.script.pop(0):
+            yield event
 
 
 class SOPEngineTest(IsolatedAsyncioTestCase):
-    """The engine end to end."""
+    """Test the SOP engine."""
 
-    async def test_a_two_step_run_hands_text_from_one_to_the_next(
-        self,
-    ) -> None:
-        """The submission of the first step reaches the second's prompt."""
-        first, second = MockModel(), MockModel()
-        first.set_responses([_submits("the plan is X"), _says("ok")])
-        second.set_responses([_submits("built it"), _says("ok")])
+    async def _drive(self, engine: SOPEngine, inputs: Any = None) -> list:
+        """Consume one ``reply_stream`` call, collecting its events."""
+        return [event async for event in engine.reply_stream(inputs)]
 
+    async def test_steps_run_in_order_and_hand_over(self) -> None:
+        """A step reads what the one before handed over, and nothing else."""
+        first = _Scripted("one", [[_finished("one", {"handover": "did A"})]])
+        second = _Scripted("two", [[_finished("two", {"handover": "did B"})]])
         sop = SOP(
-            name="two",
+            name="demo",
+            description="d",
             steps=[
-                SOPStep(
-                    id="a",
-                    subject="Plan",
-                    agent=_agent(first, "planner"),
-                ),
-                SOPStep(
-                    id="b",
-                    subject="Build",
-                    agent=_agent(second, "builder"),
-                    blocked_by=["a"],
-                ),
+                SOPStep("A", "do a", first, step_id="a"),
+                SOPStep("B", "do b", second, step_id="b"),
             ],
+            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
 
-        settled = [
-            e
-            async for e in engine.run_stream([TextBlock(text="do the thing")])
-            if isinstance(e, RunSettledEvent)
-        ]
+        await self._drive(engine, UserMsg(name="user", content="go"))
 
-        self.assertEqual(1, len(settled))
-        self.assertEqual(SOPRunStatus.COMPLETED, settled[0].status)
-        self.assertEqual("the plan is X", engine.run.steps["a"].submission)
-        self.assertEqual("built it", engine.run.steps["b"].submission)
-
-        # The second agent was told what the first handed over.
-        prompt = second.formatter and str(
-            [m.get_text_content() for m in sop.steps[1].agent.state.context],
+        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertIn("did A", str(second.asked[0]))
+        self.assertDictEqual(
+            engine.state.model_dump(exclude={"inputs"}),
+            {
+                "sop_id": "sop-1",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "steps": {
+                    "a": {
+                        "step_id": "a",
+                        "state": SOPStepState.COMPLETED,
+                        "given": [
+                            {
+                                "name": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "go",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "role": "user",
+                                "id": AnyString(),
+                                "metadata": {},
+                                "created_at": AnyString(),
+                                "usage": None,
+                                "finished_at": AnyString(),
+                                "finished_reason": None,
+                                "structured_output": None,
+                                "error": None,
+                            },
+                        ],
+                        "submission": "did A",
+                        "verifications": [
+                            {
+                                "passed": True,
+                                "message": "",
+                                "verifier": "",
+                                "created_at": AnyString(),
+                            },
+                        ],
+                    },
+                    "b": {
+                        "step_id": "b",
+                        "state": SOPStepState.COMPLETED,
+                        "given": [
+                            {
+                                "name": "sop",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            '<handover from="A">\n'
+                                            "did A\n</handover>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "role": "user",
+                                "id": AnyString(),
+                                "metadata": {},
+                                "created_at": AnyString(),
+                                "usage": None,
+                                "finished_at": AnyString(),
+                                "finished_reason": None,
+                                "structured_output": None,
+                                "error": None,
+                            },
+                        ],
+                        "submission": "did B",
+                        "verifications": [
+                            {
+                                "passed": True,
+                                "message": "",
+                                "verifier": "",
+                                "created_at": AnyString(),
+                            },
+                        ],
+                    },
+                },
+            },
         )
-        self.assertIn("the plan is X", prompt)
 
-    async def test_a_refused_step_is_told_why_and_tries_again(self) -> None:
-        """The refusal reason reaches the retry, and the count is the
-        verdicts."""
-        model = MockModel()
-        model.set_responses(
+    async def test_refusal_comes_back_as_a_critique(self) -> None:
+        """A refused attempt is retried, told what was wrong and which try."""
+        executor = _Scripted(
+            "ex",
             [
-                _submits("first try"),
-                _says("ok"),
-                _submits("second try"),
-                _says("ok"),
+                [_finished("ex", {"handover": "first draft"})],
+                [_finished("ex", {"handover": "fixed draft"})],
             ],
         )
-
-        def decide(sop, run, step, record) -> VerificationRecord:
-            passed = record.submission == "second try"
-            return VerificationRecord(
-                passed=passed,
-                message="" if passed else "say 'second try'",
-            )
-
-        sop = SOP(
-            name="retry",
-            steps=[
-                SOPStep(
-                    id="a",
-                    subject="Try",
-                    agent=_agent(model),
-                    verifier=_Decides(decide),
-                ),
-            ],
-        )
-        engine = SOPEngine(sop)
-
-        async for _ in engine.run_stream([TextBlock(text="go")]):
-            pass
-
-        record = engine.run.steps["a"]
-        self.assertEqual(SOPStepState.COMPLETED, record.state)
-        self.assertEqual(2, len(record.verifications))
-        self.assertFalse(record.verifications[0].passed)
-        self.assertEqual("say 'second try'", record.verifications[0].message)
-
-        context = " ".join(
-            m.get_text_content() or ""
-            for m in sop.steps[0].agent.state.context
-        )
-        self.assertIn("say 'second try'", context)
-
-    async def test_a_verifier_with_no_answer_ends_the_stream(self) -> None:
-        """Waiting parks the run instead of spinning, and a later pass
-        picks it up — no coroutine held open in between."""
-        model = MockModel()
-        model.set_responses([_submits("please review"), _says("ok")])
-        answer: list[VerificationRecord] = []
-
-        def decide(sop, run, step, record) -> VerificationRecord | None:
-            return answer[0] if answer else None
-
-        sop = SOP(
-            name="review",
-            steps=[
-                SOPStep(
-                    id="a",
-                    subject="Review me",
-                    agent=_agent(model),
-                    verifier=_Decides(decide),
-                ),
-            ],
-        )
-        engine = SOPEngine(sop)
-
-        events = [_ async for _ in engine.run_stream([TextBlock(text="go")])]
-
-        # Parked: no settle event, and the step is still being verified.
-        self.assertFalse(any(isinstance(e, RunSettledEvent) for e in events))
-        self.assertEqual(SOPStepState.VERIFYING, engine.run.steps["a"].state)
-
-        # The answer arrives; carrying on takes no new input.
-        answer.append(VerificationRecord(passed=True, verified_by="lead"))
-        settled = [
-            e
-            async for e in engine.run_stream()
-            if isinstance(e, RunSettledEvent)
-        ]
-
-        self.assertEqual(SOPRunStatus.COMPLETED, settled[0].status)
-        self.assertEqual(SOPStepState.COMPLETED, engine.run.steps["a"].state)
-
-    async def test_a_failing_step_settles_the_run_and_strands_the_rest(
-        self,
-    ) -> None:
-        """The step behind a failure never runs, and needs no state to
-        say so."""
-        first, second = MockModel(), MockModel()
-        first.set_responses([_submits("no good"), _says("ok")])
-        second.set_responses([_submits("never reached"), _says("ok")])
-
-        sop = SOP(
-            name="fails",
-            steps=[
-                SOPStep(
-                    id="a",
-                    subject="Fail",
-                    agent=_agent(first, "one"),
-                    verifier=_Decides(
-                        lambda *_: VerificationRecord(
-                            passed=False,
-                            message="not acceptable",
-                        ),
+        verifier = _Scripted(
+            "ve",
+            [
+                [
+                    _finished(
+                        "ve",
+                        {"passed": False, "message": "amount wrong"},
                     ),
-                    max_attempts=1,
-                ),
-                SOPStep(
-                    id="b",
-                    subject="Never",
-                    agent=_agent(second, "two"),
-                    blocked_by=["a"],
-                ),
+                ],
+                [_finished("ve", {"passed": True})],
             ],
         )
-        engine = SOPEngine(sop)
-
-        settled = [
-            e
-            async for e in engine.run_stream([TextBlock(text="go")])
-            if isinstance(e, RunSettledEvent)
-        ]
-
-        self.assertEqual(SOPRunStatus.FAILED, settled[0].status)
-        self.assertEqual(SOPStepState.FAILED, engine.run.steps["a"].state)
-        self.assertEqual(SOPStepState.PENDING, engine.run.steps["b"].state)
-        self.assertEqual("", engine.run.steps["b"].submission)
-
-    async def test_step_events_label_the_stream(self) -> None:
-        """Agent events are unreadable without knowing whose they are."""
-        model = MockModel()
-        model.set_responses([_submits("done"), _says("ok")])
-
         sop = SOP(
-            name="one",
-            steps=[SOPStep(id="a", subject="Only step", agent=_agent(model))],
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
+            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
 
-        labels = [
-            (e.subject, e.state)
-            async for e in engine.run_stream([TextBlock(text="go")])
-            if isinstance(e, StepStateEvent)
-        ]
+        await self._drive(engine, UserMsg(name="user", content="go"))
 
-        self.assertEqual(
+        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertIn("amount wrong", str(executor.asked[1]))
+        self.assertIn("attempt 2 of 3", str(executor.asked[1]))
+        self.assertListEqual(
+            [_.model_dump() for _ in engine.state.steps["a"].verifications],
             [
-                ("Only step", SOPStepState.RUNNING),
-                ("Only step", SOPStepState.VERIFYING),
-                ("Only step", SOPStepState.COMPLETED),
+                {
+                    "passed": False,
+                    "message": "amount wrong",
+                    "verifier": "ve",
+                    "created_at": AnyString(),
+                },
+                {
+                    "passed": True,
+                    "message": "",
+                    "verifier": "ve",
+                    "created_at": AnyString(),
+                },
             ],
-            labels,
         )
 
-    async def test_an_agent_stopping_for_permission_parks_the_run(
-        self,
-    ) -> None:
-        """The stream ends, nothing is suspended, and the answer finds
-        its own way back to the agent that asked."""
-        model = MockModel()
-        model.set_responses(
-            [_calls_risky(), _submits("did it"), _says("ok")],
+    async def test_run_fails_when_the_attempts_run_out(self) -> None:
+        """Exhausting the budget fails the step, and the run with it."""
+        executor = _Scripted(
+            "ex",
+            [[_finished("ex", {"handover": "nope"})] for _ in range(2)],
         )
-        toolkit = Toolkit(tools=[NeedsConfirming()])
-
+        verifier = _Scripted(
+            "ve",
+            [
+                [_finished("ve", {"passed": False, "message": "no"})]
+                for _ in range(2)
+            ],
+        )
         sop = SOP(
-            name="risky",
+            name="demo",
+            description="d",
             steps=[
                 SOPStep(
-                    id="a",
-                    subject="Do the risky thing",
-                    agent=_agent(model, toolkit=toolkit),
-                ),
-            ],
-        )
-        engine = SOPEngine(sop)
-
-        events = [_ async for _ in engine.run_stream([TextBlock(text="go")])]
-        asked = [
-            e for e in events if isinstance(e, RequireUserConfirmEvent)
-        ]
-
-        self.assertEqual(1, len(asked))
-        self.assertFalse(any(isinstance(e, RunSettledEvent) for e in events))
-        self.assertEqual(SOPStepState.RUNNING, engine.run.steps["a"].state)
-
-        # The answer names the reply, not the agent — the engine works out
-        # who was waiting.
-        answer = UserConfirmResultEvent(
-            reply_id=asked[0].reply_id,
-            confirm_results=[
-                ConfirmResult(confirmed=True, tool_call=tc)
-                for tc in asked[0].tool_calls
-            ],
-        )
-        settled = [
-            e
-            async for e in engine.run_stream(answer)
-            if isinstance(e, RunSettledEvent)
-        ]
-
-        self.assertEqual(SOPRunStatus.COMPLETED, settled[0].status)
-        self.assertEqual("did it", engine.run.steps["a"].submission)
-
-    async def test_an_agent_that_never_submits_is_sent_back_not_stranded(
-        self,
-    ) -> None:
-        """Finishing without handing anything on is a refusal, not a wait.
-
-        Nothing outside is coming to move such a step, so treating it as
-        parked would strand the run for good. It goes back with the reason
-        instead, and the attempt limit still ends it.
-        """
-        model = MockModel()
-        model.set_responses([_says("here is the outline"), _says("and more")])
-
-        sop = SOP(
-            name="forgetful",
-            steps=[
-                SOPStep(
-                    id="a",
-                    subject="Outline it",
-                    agent=_agent(model),
+                    "A",
+                    "do a",
+                    executor,
+                    verifier,
+                    step_id="a",
                     max_attempts=2,
                 ),
+                SOPStep("B", "do b", _Scripted("two", []), step_id="b"),
             ],
+            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
 
-        settled = [
-            e
-            async for e in engine.run_stream([TextBlock(text="go")])
-            if isinstance(e, RunSettledEvent)
-        ]
+        await self._drive(engine, UserMsg(name="user", content="go"))
 
-        # Two attempts, both refused for the same reason, then the run
-        # ends — rather than sitting in RUNNING for ever.
-        record = engine.run.steps["a"]
-        self.assertEqual(SOPStepState.FAILED, record.state)
-        self.assertEqual(2, len(record.verifications))
-        self.assertIn(
-            SubmitStepResult.name,
-            record.verifications[0].message,
+        self.assertEqual(engine.status, SOPRunStatus.FAILED)
+        self.assertEqual(engine.state.steps["a"].state, SOPStepState.FAILED)
+        # The step behind a failure was never reached.
+        self.assertEqual(engine.state.steps["b"].state, SOPStepState.PENDING)
+
+    async def test_parking_in_the_executor_ends_the_stream(self) -> None:
+        """A parked run lets go, and picks up where it stopped."""
+        executor = _Scripted(
+            "ex",
+            [[_park()], [_finished("ex", {"handover": "did A"})]],
         )
-        self.assertEqual(SOPRunStatus.FAILED, settled[0].status)
-
-    async def test_preset_tasks_seed_the_agents_own_list(self) -> None:
-        """A step may narrow how its agent decomposes the work."""
-        from agentscope.state import Task
-
-        model = MockModel()
-        model.set_responses([_submits("done"), _says("ok")])
-        agent = _agent(model)
-
+        verifier = _Scripted("ve", [[_finished("ve", {"passed": True})]])
         sop = SOP(
-            name="seeded",
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
+            sop_id="sop-1",
+        )
+        engine = SOPEngine(sop)
+
+        events = await self._drive(engine, UserMsg(name="user", content="go"))
+
+        self.assertEqual(engine.status, SOPRunStatus.AWAITING)
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], RequireUserConfirmEvent)
+
+        await self._drive(engine, _answer())
+
+        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        # The answer went straight to the executor, not wrapped in a brief.
+        self.assertIsInstance(executor.asked[1], UserConfirmResultEvent)
+
+    async def test_parking_in_the_verifier_does_not_redo_the_work(
+        self,
+    ) -> None:
+        """Resuming a judged step resumes the judging, not the work."""
+        executor = _Scripted("ex", [[_finished("ex", {"handover": "did A"})]])
+        verifier = _Scripted(
+            "ve",
+            [[_park()], [_finished("ve", {"passed": True})]],
+        )
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
+            sop_id="sop-1",
+        )
+        engine = SOPEngine(sop)
+
+        await self._drive(engine, UserMsg(name="user", content="go"))
+        self.assertEqual(engine.status, SOPRunStatus.AWAITING)
+
+        await self._drive(engine, _answer())
+
+        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertEqual(len(executor.asked), 1)
+        self.assertEqual(len(verifier.asked), 2)
+
+    async def test_the_verifier_sees_what_the_step_was_given(self) -> None:
+        """Judging a submission means seeing what was asked for, too."""
+        executor = _Scripted(
+            "ex",
+            [[_finished("ex", {"handover": "a draft"})]],
+        )
+        verifier = _Scripted("ve", [[_finished("ve", {"passed": True})]])
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
+            sop_id="sop-1",
+        )
+        engine = SOPEngine(sop)
+
+        await self._drive(engine, UserMsg(name="user", content="the ask"))
+
+        asked = str(verifier.asked[0])
+        self.assertIn("the ask", asked)
+        self.assertIn("a draft", asked)
+
+    async def test_a_run_survives_the_process_that_started_it(self) -> None:
+        """Export a parked run, rebuild the SOP, and carry on."""
+        sop = SOP(
+            name="demo",
+            description="d",
             steps=[
                 SOPStep(
-                    id="a",
-                    subject="Seeded",
-                    agent=agent,
-                    tasks=[
-                        Task(
-                            subject="Read the spec",
-                            description="",
-                            metadata={},
-                        ),
-                    ],
+                    "A",
+                    "do a",
+                    _Scripted("ex", [[_park()]]),
+                    _Scripted("ve", []),
+                    step_id="a",
                 ),
             ],
+            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
+        await self._drive(engine, UserMsg(name="user", content="go"))
+        stored = engine.state.model_dump_json()
 
-        async for _ in engine.run_stream([TextBlock(text="go")]):
-            pass
+        revived = SOP(
+            name="demo",
+            description="d",
+            steps=[
+                SOPStep(
+                    "A",
+                    "do a",
+                    _Scripted(
+                        "ex",
+                        [[_finished("ex", {"handover": "did A"})]],
+                    ),
+                    _Scripted("ve", [[_finished("ve", {"passed": True})]]),
+                    step_id="a",
+                ),
+            ],
+            sop_id="sop-1",
+        )
+        engine2 = SOPEngine(revived, SOPRunState.model_validate_json(stored))
 
-        seeded = agent.state.tasks_context.tasks
-        self.assertEqual(1, len(seeded))
-        self.assertEqual("Read the spec", seeded[0].subject)
+        self.assertEqual(engine2.status, SOPRunStatus.AWAITING)
+        self.assertEqual(engine2.state.id, engine.state.id)
+
+        await self._drive(engine2, _answer())
+
+        self.assertEqual(engine2.status, SOPRunStatus.COMPLETED)
+
+    async def test_a_run_from_another_sop_is_refused(self) -> None:
+        """Loading somebody else's run is an error, not a surprise."""
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", _Scripted("ex", []), step_id="a")],
+            sop_id="sop-1",
+        )
+        with self.assertRaises(ValueError) as ctx:
+            SOPEngine(sop, SOPRunState(sop_id="other"))
+        self.assertEqual(
+            str(ctx.exception),
+            "State belongs to SOP other, not sop-1.",
+        )
