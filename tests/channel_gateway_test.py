@@ -27,6 +27,7 @@ from agentscope.app.storage import (
     ChannelBinding,
     ChannelRecord,
     RoutingConfig,
+    ChannelOrigin,
     SessionConfig,
     SessionRecord,
     SessionScope,
@@ -446,7 +447,10 @@ class _AwaitingStorage:
                 id=self._session_id,
                 user_id=self._record.user_id,
                 agent_id="agent-x",
-                source_chat_id="group:cid-1",
+                origin=ChannelOrigin(
+                    channel_id="chan-1",
+                    chat_id="group:cid-1",
+                ),
                 config=SessionConfig(workspace_id="ws-1"),
             ),
         ]
@@ -512,14 +516,27 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
     async def test_chat_title_is_recorded_on_the_session(self) -> None:
         upsert = await self._upsert("产品群")
 
-        self.assertEqual(upsert["source_chat_id"], "group:cid-1")
-        self.assertEqual(upsert["source_chat_name"], "产品群")
+        self.assertEqual(
+            upsert["origin"],
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                chat_name="产品群",
+            ),
+        )
 
     async def test_a_nameless_chat_records_no_title(self) -> None:
         """A private chat has no title, and "" is not one."""
         upsert = await self._upsert("")
 
-        self.assertIsNone(upsert["source_chat_name"])
+        self.assertEqual(
+            upsert["origin"],
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                chat_name=None,
+            ),
+        )
 
 
 class DecisionRoutingTest(IsolatedAsyncioTestCase):

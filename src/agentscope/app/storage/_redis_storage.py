@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING, Self
 from pydantic import BaseModel
 
 from ._base import StorageBase
+from ._model._session import _origin_kwargs
 from ._model import (
     AgentRecord,
     ChannelRecord,
@@ -20,7 +21,9 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    ChannelOrigin,
+    ScheduleOrigin,
+    SessionOrigin,
     SkillRecord,
     TeamRecord,
 )
@@ -872,7 +875,8 @@ class RedisStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
@@ -907,11 +911,14 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source,
-            source_schedule_id=source_schedule_id,
-            source_chat_id=source_chat_id,
-            source_chat_name=source_chat_name,
-            source_channel_id=source_channel_id,
+            **_origin_kwargs(
+                origin,
+                source,
+                source_schedule_id,
+                source_channel_id,
+                source_chat_id,
+                source_chat_name,
+            ),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -928,19 +935,19 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
 
-        if source_schedule_id:
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=source_schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.sadd(schedule_session_key, record.id)
 
-        if source_channel_id:
+        if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
                 self.key_config.channel_session_index,
                 user_id=user_id,
-                channel_id=source_channel_id,
+                channel_id=record.origin.channel_id,
             )
             await self._client.sadd(channel_session_key, record.id)
 
@@ -1099,19 +1106,19 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
 
-        if record.source_schedule_id:
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=record.source_schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.srem(schedule_session_key, session_id)
 
-        if record.source_channel_id:
+        if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
                 self.key_config.channel_session_index,
                 user_id=user_id,
-                channel_id=record.source_channel_id,
+                channel_id=record.origin.channel_id,
             )
             await self._client.srem(channel_session_key, session_id)
 

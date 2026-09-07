@@ -25,7 +25,7 @@ from pydantic import Field
 from ._constants import HANDLE_LEN
 from ._team_tool_base import _TeamToolBase
 from .._bus_ops import deliver_to_inbox
-from ..storage import SessionConfig, TeamMember
+from ..storage import SessionConfig, TeamMember, TeamOrigin
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...state import AgentState
@@ -391,6 +391,7 @@ class AgentInvite(_TeamToolBase):
                     fallback_chat_model_config=borrowed_fallback_model,
                 ),
                 state=worker_state,
+                origin=TeamOrigin(),
             )
             await self._storage.set_session_team_id(
                 self._user_id,

@@ -17,7 +17,7 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    SessionOrigin,
     SkillRecord,
     TeamRecord,
 )
@@ -370,7 +370,8 @@ class StorageBase(ABC):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
@@ -389,16 +390,14 @@ class StorageBase(ABC):
             session_id (`str | None`, optional): If provided, update the
                 existing session with this id. If ``None``, create a new
                 session.
-            source (`SessionSource`, optional): The source that created this
-                session. Defaults to ``SessionSource.USER``.
-            source_schedule_id (`str | None`, optional): The schedule that
-                created this session. When set, the session is indexed under
-                the schedule for execution history queries.
-            source_chat_id (`str | None`, optional): The platform chat this
-                session serves.
-            source_chat_name (`str | None`, optional): That chat's title, as
-                supplied by the inbound message.
-            source_channel_id (`str | None`, optional): The owning channel.
+            origin (`SessionOrigin | None`, optional): How the session came
+                to exist — a :class:`ScheduleOrigin` also indexes it under
+                its schedule. Defaults to :class:`UserOrigin`.
+            source / source_schedule_id / source_chat_id /
+                source_chat_name / source_channel_id: **Deprecated** —
+                the flat shape ``origin`` replaced. Passing any of them
+                still builds the matching origin, so callers written
+                against the old signature keep working.
 
         Returns:
             `SessionRecord`: The created or updated record.

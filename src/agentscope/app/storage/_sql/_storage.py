@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
 from .._base import StorageBase
+from .._model._session import _origin_kwargs
 from .._model import (
     AgentRecord,
     ChannelRecord,
@@ -31,7 +32,7 @@ from .._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    SessionOrigin,
     SkillRecord,
     TeamRecord,
 )
@@ -377,6 +378,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         record.created_at = _to_naive_utc(record.created_at)
         new_row = _from_record(row_cls, record)
         indexed = tuple(row_cls.get_indexed_fields())
+        indexed += tuple(row_cls.get_index_paths())
         values = {
             col: getattr(new_row, col)
             for col in ("id", "created_at", "updated_at", "payload") + indexed
@@ -1058,7 +1060,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
@@ -1081,11 +1084,14 @@ class AsyncSQLAlchemyStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source,
-            source_schedule_id=source_schedule_id,
-            source_chat_id=source_chat_id,
-            source_chat_name=source_chat_name,
-            source_channel_id=source_channel_id,
+            **_origin_kwargs(
+                origin,
+                source,
+                source_schedule_id,
+                source_channel_id,
+                source_chat_id,
+                source_chat_name,
+            ),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -1231,10 +1237,12 @@ class AsyncSQLAlchemyStorage(StorageBase):
     ) -> list[SessionRecord]:
         """Sessions derived from *channel_id* — newest first.
 
-        ``source_channel_id`` lives in the JSON payload (not a promoted
-        column), so it is matched inside the payload.
+        The channel id lives in the JSON payload rather than a column,
+        and in two shapes: nested under ``source`` since that became a
+        tagged union, flat for rows written before. Both are matched, so
+        no backfill is needed.
         """
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
 
         async with self._session() as sess:
             rows = (
@@ -1243,8 +1251,16 @@ class AsyncSQLAlchemyStorage(StorageBase):
                         select(SessionRow)
                         .where(
                             SessionRow.user_id == user_id,
-                            SessionRow.payload["source_channel_id"].as_string()
-                            == channel_id,
+                            or_(
+                                SessionRow.payload["origin"][
+                                    "channel_id"
+                                ].as_string()
+                                == channel_id,
+                                SessionRow.payload[
+                                    "source_channel_id"
+                                ].as_string()
+                                == channel_id,
+                            ),
                         )
                         .order_by(SessionRow.created_at.desc()),
                     )
