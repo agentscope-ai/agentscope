@@ -82,8 +82,11 @@ Returns full task details:
         if task.owner:
             lines.append(f"Owner: {task.owner}")
 
-        if task.blocked_by:
-            blocked_by_str = ", ".join([f"#{bid}" for bid in task.blocked_by])
+        active_blocker_ids = self._get_active_blocker_ids(task, _agent_state)
+        if active_blocker_ids:
+            blocked_by_str = ", ".join(
+                [f"#{bid}" for bid in active_blocker_ids],
+            )
             lines.append(f"Blocked by: {blocked_by_str}")
 
         if task.blocks:

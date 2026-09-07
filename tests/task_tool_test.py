@@ -4,8 +4,39 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.state import AgentState
+from agentscope.state import AgentState, Task
 from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate
+
+
+def _add_tasks_with_completed_and_active_blockers(
+    agent_state: AgentState,
+) -> None:
+    """Add a dependent task with completed and active prerequisites."""
+    agent_state.tasks_context.tasks = [
+        Task(
+            id="completed",
+            subject="Completed prerequisite",
+            description="Done",
+            metadata={},
+            state="completed",
+            blocks=["dependent"],
+        ),
+        Task(
+            id="active",
+            subject="Active prerequisite",
+            description="Still running",
+            metadata={},
+            state="in_progress",
+            blocks=["dependent"],
+        ),
+        Task(
+            id="dependent",
+            subject="Dependent task",
+            description="Waiting",
+            metadata={},
+            blocked_by=["completed", "active"],
+        ),
+    ]
 
 
 class TestTaskCreate(IsolatedAsyncioTestCase):
@@ -297,6 +328,21 @@ class TestTaskList(IsolatedAsyncioTestCase):
         }
         self.assertDictEqual(result_dump, expected_result)
 
+    async def test_list_hides_completed_blockers(self) -> None:
+        """Completed prerequisites are not rendered as active blockers."""
+        _add_tasks_with_completed_and_active_blockers(self.agent_state)
+
+        result = await self.task_list(_agent_state=self.agent_state)
+
+        self.assertIn(
+            "dependent [pending] Dependent task[blocked by active]",
+            result.content[0].text,
+        )
+        self.assertEqual(
+            self.agent_state.tasks_context.tasks[2].blocked_by,
+            ["completed", "active"],
+        )
+
 
 class TestTaskGet(IsolatedAsyncioTestCase):
     """Test cases for TaskGet tool."""
@@ -372,6 +418,22 @@ class TestTaskGet(IsolatedAsyncioTestCase):
             "id": AnyString(),
         }
         self.assertDictEqual(result_dump, expected_result)
+
+    async def test_get_hides_completed_blockers(self) -> None:
+        """Completed prerequisites are not returned as active blockers."""
+        _add_tasks_with_completed_and_active_blockers(self.agent_state)
+
+        result = await self.task_get(
+            task_id="dependent",
+            _agent_state=self.agent_state,
+        )
+
+        self.assertIn("Blocked by: #active", result.content[0].text)
+        self.assertNotIn("#completed", result.content[0].text)
+        self.assertEqual(
+            self.agent_state.tasks_context.tasks[2].blocked_by,
+            ["completed", "active"],
+        )
 
 
 class TestTaskUpdate(IsolatedAsyncioTestCase):
