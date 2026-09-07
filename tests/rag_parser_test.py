@@ -1210,6 +1210,36 @@ class WordParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_empty_paragraph_is_preserved_between_text(self) -> None:
+        """A blank paragraph between text paragraphs remains a blank line."""
+        docx_bytes = _make_docx_simple(
+            ["Paragraph one.", "", "Paragraph two."],
+        )
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\nParagraph two.",
+        )
+
+    async def test_consecutive_empty_paragraphs_are_preserved(self) -> None:
+        """Consecutive blank paragraphs preserve each intervening line."""
+        docx_bytes = _make_docx_simple(
+            ["Paragraph one.", "", "", "Paragraph two."],
+        )
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\n\nParagraph two.",
+        )
+
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
         text."""
