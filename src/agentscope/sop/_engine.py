@@ -40,14 +40,31 @@ class SOPEngine:
             sop (`SOP`):
                 The procedure to run.
             state (`SOPRunState | None`, optional):
-                A stored run to carry on from. Omit to start a new one.
+                A stored run to carry on from, as handed out by
+                :attr:`state`. Omit to start a new one. Only the SOP's
+                own state is restored: an executor that keeps state of
+                its own — an :class:`~..agent.Agent` does — is restored
+                by whoever built it, before the SOP is handed here.
+
+        Raises:
+            `ValueError`:
+                If the state belongs to a different SOP.
         """
         self.sop = sop
         self._id = _generate_id()
         self._created_at = _generate_timestamp()
         self._inputs: list[Msg] = []
         if state is not None:
-            self.load_state(state)
+            if state.sop_id != sop.id:
+                raise ValueError(
+                    f"State belongs to SOP {state.sop_id}, not {sop.id}.",
+                )
+            self._id = state.id
+            self._inputs = list(state.inputs)
+            self._created_at = state.created_at
+            for step in sop.steps:
+                if (record := state.steps.get(step.id)) is not None:
+                    step.state = record
 
     @property
     def state(self) -> SOPRunState:
@@ -68,32 +85,6 @@ class SOPEngine:
     def status(self) -> SOPRunStatus:
         """Where the run stands overall."""
         return self.state.status
-
-    def load_state(self, state: SOPRunState) -> None:
-        """Carry on from a stored run, handing each step its record back.
-
-        Only the SOP's own state is restored. An executor that keeps
-        state of its own — an :class:`~..agent.Agent` does — is restored
-        by whoever built it, before the SOP is handed here.
-
-        Args:
-            state (`SOPRunState`):
-                A run of this same SOP, as returned by :attr:`state`.
-
-        Raises:
-            `ValueError`:
-                If the state belongs to a different SOP.
-        """
-        if state.sop_id != self.sop.id:
-            raise ValueError(
-                f"State belongs to SOP {state.sop_id}, not {self.sop.id}.",
-            )
-        self._id = state.id
-        self._inputs = list(state.inputs)
-        self._created_at = state.created_at
-        for step in self.sop.steps:
-            if (record := state.steps.get(step.id)) is not None:
-                step.state = record
 
     async def reply_stream(
         self,

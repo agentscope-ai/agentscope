@@ -97,9 +97,9 @@ class SOPStepRunState(BaseModel):
 class SOPRunState(BaseModel):
     """One execution of a SOP, and the whole of what is worth saving.
 
-    Assembled from the steps on the way out and handed back to them on the
-    way in — see :meth:`~._engine.SOPEngine.state` and
-    :meth:`~._engine.SOPEngine.load_state`.
+    Assembled from the steps on the way out by
+    :attr:`~._engine.SOPEngine.state`, and handed back to them on the way
+    in by the engine's constructor.
 
     It covers the SOP's own state and nothing below it: an executor that
     keeps state of its own (an :class:`~..agent.Agent` does) is persisted
