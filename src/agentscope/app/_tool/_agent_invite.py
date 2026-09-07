@@ -6,10 +6,9 @@ Unlike :class:`AgentCreate`, which spawns a brand-new worker
 **borrows** a pre-existing user-owned agent by minting a fresh
 team-scoped :class:`SessionRecord` on top of the *existing*
 :class:`AgentRecord`. The borrowed agent keeps its definition, including
-its system prompt and context/react configs. An agent owned by the leader
-may reuse its existing session configuration; a cross-owner agent instead
-runs in a fresh leader-owned workspace with the leader's chat model and
-without the owner's MCPs, skills, cache, or session permissions.
+its system prompt and context/react configs. Workspace and model are taken
+from the *caller's* own session of that agent, so a cross-owner borrow
+never picks up the owner's MCPs, skills, cache, or session permissions.
 
 When the team is dissolved or the leader is deleted, only the borrowed
 session is cleaned up — the underlying :class:`AgentRecord` survives
@@ -277,9 +276,23 @@ class AgentInvite(_TeamToolBase):
             team = await self._require_leader_team("invite members")
 
             # Re-fetch fresh — both the invite settings and a cross-owner
-            # access grant may have changed since the toolkit snapshot was
-            # assembled.
-            fresh = await self._resolve_fresh_agent(invited)
+            # access grant may have changed since the toolkit snapshot
+            # was assembled. Without an access service the pool is
+            # trusted to hold only entries the caller may use.
+            access = self._resource_access_service
+            if access is None:
+                fresh = await self._storage.get_agent(
+                    invited.user_id,
+                    invited.id,
+                )
+            else:
+                fresh = await access.try_resolve_agent(
+                    self._user_id,
+                    invited.id,
+                )
+                # Same id under a different owner is a different agent.
+                if fresh is not None and fresh.user_id != invited.user_id:
+                    fresh = None
             if (
                 fresh is None
                 or not fresh.data.invite_config.invitable
@@ -329,12 +342,11 @@ class AgentInvite(_TeamToolBase):
             # not block the invite.
             leader_name = leader.name if leader else leader_session.agent_id
 
-            # A leader-owned invite may reuse its primary session's workspace
-            # and model configuration. Cross-owner sessions are stored under
-            # the leader, so they intentionally never reuse the owner's
-            # session: they get a fresh workspace, the leader's chat model,
-            # and none of the owner's MCPs, skills, cache, or permissions.
-            # The workspace itself is created lazily on first chat.
+            # Reuse the caller's own primary session of this agent for
+            # workspace + model, else a fresh workspace and the leader's
+            # model. The lookup is caller-scoped, so a cross-owner borrow
+            # never reuses the owner's session, MCPs, skills, or cache.
+            # The workspace is created lazily on first chat.
             invited_sessions = await self._storage.list_sessions(
                 self._user_id,
                 invited.id,
@@ -460,29 +472,6 @@ class AgentInvite(_TeamToolBase):
                 content=[TextBlock(text=f"AgentInvite failed: {e}")],
                 state=ToolResultState.ERROR,
             )
-
-    async def _resolve_fresh_agent(
-        self,
-        invited: "AgentRecord",
-    ) -> "AgentRecord | None":
-        """Resolve a snapshot entry without losing its owner namespace.
-
-        Without an access service, the invitable pool is trusted to contain
-        only entries that the caller may use. Production toolkit assembly
-        supplies the service and therefore re-checks current grants here.
-        """
-        if self._resource_access_service is None:
-            return await self._storage.get_agent(invited.user_id, invited.id)
-
-        fresh = await self._resource_access_service.try_resolve_agent(
-            self._user_id,
-            invited.id,
-        )
-        return (
-            fresh
-            if fresh is not None and fresh.user_id == invited.user_id
-            else None
-        )
 
 
 def _resolve_target(
