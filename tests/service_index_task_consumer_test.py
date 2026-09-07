@@ -12,6 +12,8 @@ Verifies the four behaviours callers rely on:
   ``worker.process`` call.
 - Entries left on the queue from before ``__aenter__`` are picked up
   on the initial drain without waiting for a fresh signal.
+- A transient subscription failure is recovered by reconnecting and
+  draining entries queued while the signal channel was unavailable.
 - Malformed entries are logged and skipped, not raised; later valid
   entries still dispatch.
 - An exception inside ``worker.process`` is logged but does not crash
@@ -188,6 +190,31 @@ class _FakeBus(MessageBus):
 
     async def registry_drop(self, namespace: str) -> None:
         raise NotImplementedError
+
+
+class _ReconnectOnceBus(_FakeBus):
+    """Fail the first subscription, then provide a live subscription."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribe_calls = 0
+        self.first_subscription_failed = asyncio.Event()
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        self.subscribe_calls += 1
+        if self.subscribe_calls == 1:
+            if on_ready is not None:
+                on_ready()
+            self.first_subscription_failed.set()
+            raise ConnectionError("simulated Pub/Sub disconnect")
+
+        async for signal in super().subscribe(key, on_ready=on_ready):
+            yield signal
 
 
 class _RecordingWorker:
@@ -374,6 +401,41 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
 
         doc_ids = [c["document_id"] for c in worker.calls]
         self.assertEqual(doc_ids, ["boom", "ok"])
+
+    async def test_reconnect_drains_queue_without_a_new_signal(self) -> None:
+        """A task queued during a disconnect is handled after reconnect."""
+        bus = _ReconnectOnceBus()
+        worker = _RecordingWorker()
+        consumer = IndexTaskConsumer(message_bus=bus, worker=worker)
+
+        # pylint: disable=unnecessary-dunder-call
+        await consumer.__aenter__()
+        await bus.first_subscription_failed.wait()
+        await bus.queue_push(
+            MessageBusKeys.index_tasks_queue(),
+            {
+                "user_id": "u",
+                "knowledge_base_id": "kb",
+                "document_id": "queued-during-disconnect",
+            },
+        )
+
+        try:
+            await asyncio.wait_for(worker.notify.wait(), timeout=3.0)
+        finally:
+            await consumer.__aexit__(None, None, None)
+
+        self.assertGreaterEqual(bus.subscribe_calls, 2)
+        self.assertEqual(
+            worker.calls,
+            [
+                {
+                    "user_id": "u",
+                    "knowledge_base_id": "kb",
+                    "document_id": "queued-during-disconnect",
+                },
+            ],
+        )
 
 
 class TestIndexTaskConsumerLifecycle(IsolatedAsyncioTestCase):
