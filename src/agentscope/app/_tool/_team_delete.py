@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The TeamDelete tool — dissolves the team led by the current session."""
+
 from ._team_tool_base import _TeamToolBase
-from ...message import TextBlock, ToolResultState
+from ...message import TextBlock
 from ...tool import ToolChunk, ParamsBase
 
 
@@ -23,12 +24,13 @@ class TeamDelete(_TeamToolBase):
 
 ## When NOT to Use This Tool
 - Members are still producing useful output and you may want their \
-follow-up; dissolving deletes them and they cannot be revived.
-- You want to remove only one specific member — there is no "remove \
-single member" tool in v1, only whole-team dissolution.
+follow-up; dissolving ends their team sessions and loses in-progress work.
+- You want to remove only one specific member — use ``AgentKick`` instead.
 
 ## Effects
-- Every member agent + its session is deleted.
+- Created members and their sessions are fully deleted.
+- Invited members lose only their team-scoped sessions; their standalone \
+agents remain available.
 - The team record is deleted.
 - Your own session continues to exist but is no longer associated with \
 any team — the team-related tools become unavailable on subsequent \
@@ -72,15 +74,13 @@ This is irreversible.
                 content=[
                     TextBlock(
                         text=(
-                            f"Team {team.id} dissolved. All members "
-                            f"deleted; your session is no longer "
-                            f"leading any team."
+                            f"Team {team.id} dissolved. All member team "
+                            f"sessions were cleaned up; created member "
+                            f"agents were deleted, and your session is "
+                            f"no longer leading any team."
                         ),
                     ),
                 ],
             )
         except Exception as e:  # pylint: disable=broad-except
-            return ToolChunk(
-                content=[TextBlock(text=f"TeamDelete failed: {e}")],
-                state=ToolResultState.ERROR,
-            )
+            return self._error(f"TeamDelete failed: {e}")

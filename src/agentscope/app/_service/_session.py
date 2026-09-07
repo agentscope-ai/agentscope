@@ -18,10 +18,10 @@ to clean its own non-session scope (records, indexes, back-refs).
 
 ::
 
-    delete_session    ← atomic: cancel run, storage.delete_session,
-                        bus.session_purge
+    delete_session    ← per-session lifecycle: cancel run,
+                        storage.delete_session, bus.session_purge
         │
-    delete_team       → service.delete_agent per worker
+    delete_team       → role-aware service cleanup per worker
                       → storage.delete_team    (record + leader detach)
         │
     delete_agent      → service.delete_session per session
@@ -45,11 +45,12 @@ live in different databases in the future. The service is the **only**
 component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
+
 import asyncio
 from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
-from ..storage import StorageBase
+from ..storage import StorageBase, TeamMember
 from ..workspace_manager import WorkspaceManagerBase
 from ..storage._utils import _ensure_team_members
 from ._session_projection import SessionProjection
@@ -331,8 +332,8 @@ class SessionService:
     ) -> bool:
         """Cancel, delete and bus-purge a single session.
 
-        This is the atomic primitive — every other cascade delegates
-        here for per-session work.
+        This is the per-session lifecycle primitive — every other
+        cascade delegates here for per-session work.
 
         Steps:
 
@@ -391,32 +392,157 @@ class SessionService:
             agent_id,
             session_id,
         )
-        await asyncio.gather(
-            *(self._purge_session_bus(sid) for sid in all_sids),
-        )
-
-        # Best-effort: a workspace that cannot be resolved (backend
-        # down, sandbox gone) must not fail a committed deletion.
-        if deleted and self._workspace_manager and workspace_id:
-            try:
-                workspace = await self._workspace_manager.get_workspace(
-                    user_id,
-                    agent_id,
-                    session_id,
-                    workspace_id,
-                )
-                await workspace.purge_session(
-                    agent_id=agent_id,
-                    session_id=session_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to purge workspace %r for session %r: %s",
-                    workspace_id,
-                    session_id,
-                    e,
-                )
+        try:
+            await asyncio.gather(
+                *(self._purge_session_bus(sid) for sid in all_sids),
+            )
+        finally:
+            # Best-effort: a workspace that cannot be resolved (backend
+            # down, sandbox gone) must not fail a committed deletion.
+            # Run this even when bus cleanup raises: after the storage
+            # record is gone, a retry cannot recover ``workspace_id``.
+            if deleted and self._workspace_manager and workspace_id:
+                try:
+                    workspace = await self._workspace_manager.get_workspace(
+                        user_id,
+                        agent_id,
+                        session_id,
+                        workspace_id,
+                    )
+                    await workspace.purge_session(
+                        agent_id=agent_id,
+                        session_id=session_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to purge workspace %r for session %r: %s",
+                        workspace_id,
+                        session_id,
+                        e,
+                    )
         return deleted
+
+    async def delete_team_member(
+        self,
+        user_id: str,
+        team_id: str,
+        member: TeamMember,
+    ) -> bool:
+        """Cancel, delete and remove one member from a team roster.
+
+        The current roster is re-read and matched by both agent and
+        session id so a stale caller cannot remove an unrelated session.
+        Created members are deleted in full; invited members lose only
+        their team-scoped session. The roster entry remains until session
+        and bus cleanup succeed, preserving a durable retry anchor.
+
+        Args:
+            user_id (`str`):
+                The team owner's user id.
+            team_id (`str`):
+                The team containing the member.
+            member (`TeamMember`):
+                The roster entry selected by the caller.
+
+        Returns:
+            `bool`:
+                ``True`` when the member was present and removal was
+                performed, or ``False`` when the team/member was already
+                absent.
+        """
+        team = await self._storage.get_team(user_id, team_id)
+        if team is None:
+            return False
+
+        members = await _ensure_team_members(self._storage, user_id, team)
+        current = next(
+            (
+                candidate
+                for candidate in members
+                if candidate.session_id == member.session_id
+                and candidate.agent_id == member.agent_id
+            ),
+            None,
+        )
+        if current is None:
+            return False
+
+        session = await self._storage.get_session(
+            current.owner_id,
+            current.agent_id,
+            current.session_id,
+        )
+        created_workspace_id = (
+            session.config.workspace_id if session is not None else None
+        )
+        if current.role == "created" and not created_workspace_id:
+            leader_session = await self._storage.get_session(
+                user_id,
+                "",
+                team.session_id,
+            )
+            if leader_session is not None:
+                created_workspace_id = leader_session.config.workspace_id
+
+        # Always use the roster's durable session id first. If an earlier
+        # attempt deleted the session record but failed while purging bus
+        # state, this retries cancellation and bus cleanup before the
+        # AgentRecord and roster entry disappear.
+        await self.delete_session(
+            current.owner_id,
+            current.agent_id,
+            current.session_id,
+        )
+        if current.role == "created":
+            await self.delete_agent(current.owner_id, current.agent_id)
+            # ``delete_agent`` can no longer discover the roster session
+            # removed above, so explicitly clear its agent-scoped skills.
+            if self._workspace_manager and created_workspace_id:
+                try:
+                    workspace = await self._workspace_manager.get_workspace(
+                        current.owner_id,
+                        current.agent_id,
+                        current.session_id,
+                        created_workspace_id,
+                    )
+                    await workspace.purge_agent(agent_id=current.agent_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to purge workspace %r for agent %r: %s",
+                        created_workspace_id,
+                        current.agent_id,
+                        e,
+                    )
+
+        # ``delete_agent`` removes created-member back-references, while
+        # deleting an invited member's borrowed session does not. Re-read
+        # the latest team and compensate only when the target remains.
+        latest = await self._storage.get_team(user_id, team_id)
+        if latest is None:
+            return True
+        latest_members = await _ensure_team_members(
+            self._storage,
+            user_id,
+            latest,
+        )
+        remaining_members = [
+            candidate
+            for candidate in latest_members
+            if candidate.session_id != current.session_id
+        ]
+        remaining_ids = [
+            agent_id
+            for agent_id in latest.data.member_ids
+            if agent_id != current.agent_id
+        ]
+        if (
+            remaining_members != latest.data.members
+            or remaining_ids != latest.data.member_ids
+        ):
+            latest.data.members = remaining_members
+            latest.data.member_ids = remaining_ids
+            await self._storage.upsert_team(user_id, latest)
+        return True
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Cancel, delete and bus-purge a team.
@@ -483,19 +609,10 @@ class SessionService:
         storage to clean the remaining agent-scoped state (the agent
         record, the agent index entry, and any team back-references).
 
-        **Reverse-cascade for invited members.** When an agent is
-        borrowed into a team (``AgentInvite``), it has a session with
-        ``team_id`` set that it does not lead. Deleting the agent while
-        such a borrowed session exists would leave a stale
-        :class:`TeamMember` entry behind, and — worse — trigger the
-        storage cascade in that team's next ``delete_team``, which
-        iterates the team roster (via ``_ensure_team_members``) and
-        would try to re-delete this already-gone agent. So before
-        deleting each session, this method extracts the corresponding
-        entry from the borrowing team's roster (matched by
-        ``session_id``, not ``agent_id``, so a leader session that
-        happens to share the agent id — impossible today but cheap to
-        be careful about — is not touched).
+        Team back-references remain intact until session cleanup has
+        succeeded. This keeps the agent reachable through its team roster
+        if cancellation or session deletion raises. The final storage
+        deletion removes the agent record and its team back-references.
 
         Args:
             user_id (`str`): The owner user id.
@@ -511,31 +628,6 @@ class SessionService:
         for session in await self._storage.list_sessions(user_id, agent_id):
             if session.config.workspace_id:
                 workspaces[session.config.workspace_id] = session.id
-            if session.team_id is not None:
-                team = await self._storage.get_team(
-                    user_id,
-                    session.team_id,
-                )
-                # Only worker sessions require the extraction — a leader
-                # session dropping its team is handled by
-                # ``storage.delete_session -> delete_team`` further down.
-                if team is not None and team.session_id != session.id:
-                    members = await _ensure_team_members(
-                        self._storage,
-                        user_id,
-                        team,
-                    )
-                    filtered = [
-                        m for m in members if m.session_id != session.id
-                    ]
-                    if len(filtered) != len(members):
-                        team.data.members = filtered
-                        team.data.member_ids = [
-                            mid
-                            for mid in team.data.member_ids
-                            if mid != agent_id
-                        ]
-                        await self._storage.upsert_team(user_id, team)
             await self.delete_session(user_id, agent_id, session.id)
 
         for schedule in await self._storage.list_schedules(user_id):

@@ -11,11 +11,12 @@ Verifies the assembly rules:
 - :class:`ToolStop` (from ``BackgroundTaskManager``) is always included;
 - the four ``Schedule*`` tools only when ``session.config.chat_model_config``
   is set (they need a model to fire new runs with);
-- team tools are role-gated by ``agent_record.source``: ``"team"`` →
-  one ``TeamSay`` (worker variant); anything else → the full
-  leader-side toolset of four;
+- team tools are role-gated by the session's current team role: workers
+  get only ``TeamSay`` while leaders and sessions outside a team get the
+  full leader-side toolset;
 - caller-supplied ``extra_factory`` results land at the end.
 """
+
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
@@ -188,7 +189,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
 
     async def test_user_agent_gets_all_sources(self) -> None:
         """A user-owned agent receives workspace, planning, scheduling,
-        ToolStop, and the four leader-side team tools."""
+        ToolStop, and the leader-side team tools."""
         agent = _make_agent(source="user")
         session = _make_session(
             user_id="u",
@@ -245,9 +246,16 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             }
             <= names,
         )
-        # Leader-side team tools (4 of them).
+        # Leader-side team tools.
         self.assertTrue(
-            {"TeamCreate", "AgentCreate", "TeamSay", "TeamDelete"} <= names,
+            {
+                "TeamCreate",
+                "AgentCreate",
+                "AgentKick",
+                "TeamSay",
+                "TeamDelete",
+            }
+            <= names,
         )
 
 
@@ -292,6 +300,7 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
         for missing in (
             "TeamCreate",
             "AgentCreate",
+            "AgentKick",
             "TeamDelete",
             "AgentInvite",
         ):
