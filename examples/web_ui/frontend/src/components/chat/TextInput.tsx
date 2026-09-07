@@ -218,7 +218,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const handleSend = () => {
-			if (!value.trim() || disabled || hasProcessing) return;
+			// ``phase`` is guarded here rather than only on the button, since Enter
+			// calls this directly and would otherwise send during a running reply.
+			if (phase !== 'idle' || !value.trim() || disabled || hasProcessing) return;
 
 			const blocks: ContentBlock[] = [];
 
