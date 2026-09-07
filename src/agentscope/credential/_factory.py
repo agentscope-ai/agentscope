@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The credential factory class."""
+
 from typing import Annotated, Type, Union, get_args, get_type_hints
 
 from pydantic import TypeAdapter, Field
@@ -12,6 +13,7 @@ from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
 from ._openai import OpenAICredential
 from ._xai import XAICredential
+from ._volcengine import VolcengineCredential
 from ._base import CredentialBase
 
 
@@ -42,6 +44,7 @@ class CredentialFactory:
         OllamaCredential,
         OpenAICredential,
         XAICredential,
+        VolcengineCredential,
     ]
     _adapter: TypeAdapter[CredentialBase] | None = None
 

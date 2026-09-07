@@ -10,8 +10,8 @@ from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
 from ._openai import OpenAICredential
 from ._xai import XAICredential
+from ._volcengine import VolcengineCredential
 from ._factory import CredentialFactory
-
 
 __all__ = [
     "CredentialBase",
@@ -23,5 +23,6 @@ __all__ = [
     "OllamaCredential",
     "OpenAICredential",
     "XAICredential",
+    "VolcengineCredential",
     "CredentialFactory",
 ]

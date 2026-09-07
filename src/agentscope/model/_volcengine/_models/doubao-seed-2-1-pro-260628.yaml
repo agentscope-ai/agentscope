@@ -1,0 +1,22 @@
+name: doubao-seed-2-1-pro-260628
+label: Doubao Seed 2.1 Pro
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 256000
+output_size: 256000
+
+parameter_overrides:
+  reasoning_effort:
+    enum:
+      - minimal
+      - low
+      - medium
+      - high

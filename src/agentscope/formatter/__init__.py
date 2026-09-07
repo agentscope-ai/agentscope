@@ -38,6 +38,10 @@ from ._xai_formatter import (
     XAIChatFormatter,
     XAIMultiAgentFormatter,
 )
+from ._volcengine_formatter import (
+    VolcengineChatFormatter,
+    VolcengineMultiAgentFormatter,
+)
 
 __all__ = [
     "FormatterBase",
@@ -59,4 +63,6 @@ __all__ = [
     "MoonshotMultiAgentFormatter",
     "XAIChatFormatter",
     "XAIMultiAgentFormatter",
+    "VolcengineChatFormatter",
+    "VolcengineMultiAgentFormatter",
 ]
