@@ -1,20 +1,70 @@
 # -*- coding: utf-8 -*-
 """The session data class for storage."""
 from datetime import datetime
-from enum import Enum
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ._base import _RecordBase
 from ....state import AgentState
 
 
-class SessionSource(str, Enum):
-    """The source that created the session."""
+class UserOrigin(BaseModel):
+    """A session a person opened themselves."""
 
-    USER = "user"
-    SCHEDULE = "schedule"
-    CHANNEL = "channel"
+    type: Literal["user"] = "user"
+
+
+class ScheduleOrigin(BaseModel):
+    """A session a schedule opened on its due date."""
+
+    type: Literal["schedule"] = "schedule"
+
+    schedule_id: str
+    """The schedule that created it."""
+
+
+class ChannelOrigin(BaseModel):
+    """A session an inbound platform message opened."""
+
+    type: Literal["channel"] = "channel"
+
+    channel_id: str
+    """The owning channel. Lets the output forwarder locate the channel
+    adapter and its presentation settings on a background or scheduled
+    wake, where no inbound message is available to supply it."""
+
+    chat_id: str
+    """The platform chat this session maps to, so agent output can be
+    delivered back to the right place."""
+
+    chat_name: str | None = None
+    """That chat's title when the platform supplied one. Recorded
+    because the name arrives with the inbound message: a node that never
+    holds the connection cannot look it up."""
+
+
+class TeamOrigin(BaseModel):
+    """A session a team minted for one of its members.
+
+    Carries no team id on purpose. Which team a session belongs to is
+    :attr:`SessionRecord.team_id`, which every reader already uses and
+    which a session can also lose — this only records that a team is why
+    the session exists at all, which nothing could tell before.
+    """
+
+    type: Literal["team"] = "team"
+
+
+# How a session came to exist. Fixed when the session is created and
+# never rewritten, which is what separates it from
+# ``SessionRecord.team_id``: team membership is granted by a tool call
+# inside an existing session and can be revoked, so it is a field of its
+# own rather than a member of this union.
+SessionOrigin = Annotated[
+    Union[UserOrigin, ScheduleOrigin, ChannelOrigin, TeamOrigin],
+    Field(discriminator="type"),
+]
 
 
 class ChatModelConfig(BaseModel):
@@ -211,27 +261,13 @@ class SessionRecord(_RecordBase):
     agent_id: str
     """The agent id."""
 
-    source: SessionSource = SessionSource.USER
-    """The source that created this session."""
+    source: SessionOrigin = Field(default_factory=UserOrigin)
+    """How this session came to exist.
 
-    source_schedule_id: str | None = None
-    """The source schedule Id."""
-
-    source_chat_id: str | None = None
-    """For channel-created sessions, the platform chat this session maps
-    to. Recorded so agent output can be delivered back to the right chat
-    even on a background / scheduled wake, where no inbound message is
-    available to supply it."""
-
-    source_chat_name: str | None = None
-    """For channel-created sessions, that chat's title when the platform
-    supplied one. Recorded because the name arrives with the inbound
-    message: a node that never holds the connection cannot look it up."""
-
-    source_channel_id: str | None = None
-    """For channel-created sessions, the owning channel id. Lets the
-    output forwarder locate the channel adapter + presentation settings
-    on a background / scheduled wake."""
+    A tagged union rather than a bare kind plus a row of nullable ids:
+    once the tag says ``channel`` the channel and chat ids are there,
+    and no reader has to ask whether the combination makes sense.
+    """
 
     team_id: str | None = None
     """The team this session participates in, if any.
@@ -243,6 +279,47 @@ class SessionRecord(_RecordBase):
 
     config: SessionConfig
     """Session configuration (workspace, name, model)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_source(cls, data: Any) -> Any:
+        """Read rows written before :data:`SessionOrigin` existed.
+
+        Those carry a bare ``source`` string beside a set of nullable
+        ``source_*`` ids. Nothing migrates them in the database; they are
+        folded here and written back in the new shape on the next save.
+        """
+        if not isinstance(data, dict):
+            return data
+        source = data.get("source")
+        if source is not None and not isinstance(source, str):
+            # Already a member of the union, or a dict shaped like one.
+            return data
+
+        data = dict(data)
+        kind = data.pop("source", None) or "user"
+        if kind == "schedule":
+            data["source"] = {
+                "type": "schedule",
+                "schedule_id": data.get("source_schedule_id") or "",
+            }
+        elif kind == "channel":
+            data["source"] = {
+                "type": "channel",
+                "channel_id": data.get("source_channel_id") or "",
+                "chat_id": data.get("source_chat_id") or "",
+                "chat_name": data.get("source_chat_name"),
+            }
+        else:
+            data["source"] = {"type": kind}
+        for legacy in (
+            "source_schedule_id",
+            "source_channel_id",
+            "source_chat_id",
+            "source_chat_name",
+        ):
+            data.pop(legacy, None)
+        return data
 
     state: AgentState = Field(default_factory=AgentState)
     """Mutable runtime state, updated after each chat turn."""

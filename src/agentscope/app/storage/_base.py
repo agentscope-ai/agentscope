@@ -17,7 +17,7 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    SessionOrigin,
     SkillRecord,
     TeamRecord,
 )
@@ -370,11 +370,7 @@ class StorageBase(ABC):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
-        source_schedule_id: str | None = None,
-        source_chat_id: str | None = None,
-        source_chat_name: str | None = None,
-        source_channel_id: str | None = None,
+        source: SessionOrigin | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -389,16 +385,9 @@ class StorageBase(ABC):
             session_id (`str | None`, optional): If provided, update the
                 existing session with this id. If ``None``, create a new
                 session.
-            source (`SessionSource`, optional): The source that created this
-                session. Defaults to ``SessionSource.USER``.
-            source_schedule_id (`str | None`, optional): The schedule that
-                created this session. When set, the session is indexed under
-                the schedule for execution history queries.
-            source_chat_id (`str | None`, optional): The platform chat this
-                session serves.
-            source_chat_name (`str | None`, optional): That chat's title, as
-                supplied by the inbound message.
-            source_channel_id (`str | None`, optional): The owning channel.
+            source (`SessionOrigin | None`, optional): How the session came
+                to exist — a :class:`ScheduleOrigin` also indexes it under
+                its schedule. Defaults to :class:`UserOrigin`.
 
         Returns:
             `SessionRecord`: The created or updated record.

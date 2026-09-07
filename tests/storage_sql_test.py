@@ -37,7 +37,7 @@ from agentscope.app.storage import (
     ScheduleRecord,
     SessionConfig,
     SessionSettings,
-    SessionSource,
+    ScheduleOrigin,
     SkillRecord,
     AsyncSQLAlchemyStorage,
     TeamData,
@@ -323,10 +323,9 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             user_id="user-1",
             agent_id=agent.id,
             config=_session_config(),
-            source=SessionSource.SCHEDULE,
-            source_schedule_id="sch-1",
+            source=ScheduleOrigin(schedule_id="sch-1"),
         )
-        self.assertEqual(session.source, SessionSource.SCHEDULE)
+        self.assertEqual(session.source, ScheduleOrigin(schedule_id="sch-1"))
 
         # Update (same session_id) — config swap
         new_config = _session_config()
