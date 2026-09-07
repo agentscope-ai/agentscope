@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING, Self
 from pydantic import BaseModel
 
 from ._base import StorageBase
+from ._model._session import _origin_kwargs
 from ._model import (
     AgentRecord,
     ChannelRecord,
@@ -23,7 +24,6 @@ from ._model import (
     ChannelOrigin,
     ScheduleOrigin,
     SessionOrigin,
-    UserOrigin,
     SkillRecord,
     TeamRecord,
 )
@@ -876,6 +876,11 @@ class RedisStorage(StorageBase):
         state: AgentState | None = None,
         session_id: str | None = None,
         origin: SessionOrigin | None = None,
+        source: str | None = None,
+        source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -906,7 +911,14 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            origin=origin or UserOrigin(),
+            **_origin_kwargs(
+                origin,
+                source,
+                source_schedule_id,
+                source_channel_id,
+                source_chat_id,
+                source_chat_name,
+            ),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The session data class for storage."""
+import warnings
 from datetime import datetime
+from enum import Enum
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -8,6 +10,20 @@ from typing_extensions import deprecated
 
 from ._base import _RecordBase
 from ....state import AgentState
+
+
+class SessionSource(str, Enum):
+    """The kinds a session's source used to come in.
+
+    Superseded by :data:`SessionOrigin`, whose tag carries the same
+    values. Kept importable, and comparable to
+    :attr:`SessionRecord.source`, so integrations pinned to the old name
+    keep working while they move.
+    """
+
+    USER = "user"
+    SCHEDULE = "schedule"
+    CHANNEL = "channel"
 
 
 class UserOrigin(BaseModel):
@@ -388,3 +404,37 @@ class SessionRecord(_RecordBase):
 
     state: AgentState = Field(default_factory=AgentState)
     """Mutable runtime state, updated after each chat turn."""
+
+
+def _origin_kwargs(
+    origin: SessionOrigin | None,
+    source: str | None,
+    schedule_id: str | None,
+    channel_id: str | None,
+    chat_id: str | None,
+    chat_name: str | None,
+) -> dict:
+    """Build the ``SessionRecord`` keyword that says where a session came
+    from, accepting either the union or the flat arguments it replaced.
+
+    The flat ones are folded by the record's own legacy validator rather
+    than here, so both entry points agree on what an incomplete set
+    means.
+    """
+    if origin is not None:
+        return {"origin": origin}
+    if not any((source, schedule_id, channel_id, chat_id, chat_name)):
+        return {"origin": UserOrigin()}
+    warnings.warn(
+        "The flat source arguments are deprecated; pass ``origin`` with "
+        "a SessionOrigin instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return {
+        "source": source or "user",
+        "source_schedule_id": schedule_id,
+        "source_channel_id": channel_id,
+        "source_chat_id": chat_id,
+        "source_chat_name": chat_name,
+    }
