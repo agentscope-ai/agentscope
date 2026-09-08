@@ -34,12 +34,14 @@ from ._transport import (
     TransportFrame,
 )
 from ._vad import SpeechTransition, VADBase
+from ._xai import XAIRealtimeModel
 
 __all__ = [
     # Model
     "RealtimeModelBase",
     "DashScopeRealtimeModel",
     "DashScopeAudioRealtimeModel",
+    "XAIRealtimeModel",
     "RealtimeModelCard",
     "TruncationSupport",
     "ModelDisconnectedError",
