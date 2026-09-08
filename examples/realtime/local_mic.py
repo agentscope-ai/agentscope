@@ -27,6 +27,7 @@ from agentscope.realtime import (
     LocalAudioTransport,
     RealtimeAgent,
 )
+from agentscope.tool import Toolkit, Bash, Edit, Write, Read
 
 
 async def main() -> None:
@@ -39,21 +40,34 @@ async def main() -> None:
         os.environ.get("REALTIME_MODEL", "qwen3-omni-flash-realtime"),
         credential=DashScopeCredential(api_key=api_key),
     )
+
+    toolkit = Toolkit(
+        tools=[
+            Bash(),
+            Edit(), 
+            Write(), 
+            Read(),
+        ]
+    )
+
     agent = RealtimeAgent(
         name="Friday",
         sys_prompt="你是一个中文语音助手，回答尽量简短。",
         model=model,
-        transport=LocalAudioTransport(
-            input_sample_rate=model.input_sample_rate,
-            output_sample_rate=model.output_sample_rate,
-            input_device=_device("REALTIME_INPUT_DEVICE"),
-            output_device=_device("REALTIME_OUTPUT_DEVICE"),
-        ),
+        toolkit=toolkit,
+    )
+    transport = LocalAudioTransport(
+        input_sample_rate=model.input_sample_rate,
+        output_sample_rate=model.output_sample_rate,
+        input_device=_device("REALTIME_INPUT_DEVICE"),
+        output_device=_device("REALTIME_OUTPUT_DEVICE"),
     )
 
     print(f"[{model.model_name}] listening... (Ctrl-C to quit)")
-    async with agent:
-        async for event in agent.events():
+    # The agent owns the model session, we own the transport, and one
+    # run() borrows both until the transport ends.
+    async with agent, transport:
+        async for event in agent.run(transport):
             match event:
                 case UserInputAudioStartEvent():
                     print("\n[you] ...", end="", flush=True)

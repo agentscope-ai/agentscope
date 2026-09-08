@@ -2,23 +2,7 @@
 """Turn aggregation."""
 import time
 
-from pydantic import BaseModel, Field
-
 _TRAILING = " 。，,.!?！？、"
-
-
-class TurnAggregatorConfig(BaseModel):
-    """How raw transcripts are collapsed into clean user turns."""
-
-    merge_window_ms: int = Field(default=800, ge=0)
-    """A transcript arriving this soon after the previous turn continues
-    it rather than starting a new one."""
-
-    backchannels: frozenset[str] = frozenset()
-    """Acknowledgements that never constitute a turn. Language specific,
-    so empty by default."""
-
-    min_chars: int = Field(default=1, ge=0)
 
 
 class TurnAggregator:
@@ -31,14 +15,27 @@ class TurnAggregator:
     end up in our own context, where they outlive the call.
     """
 
-    def __init__(self, config: TurnAggregatorConfig | None = None) -> None:
+    def __init__(
+        self,
+        merge_window_ms: int = 800,
+        backchannels: frozenset[str] = frozenset(),
+        min_chars: int = 1,
+    ) -> None:
         """Initialize the aggregator.
 
         Args:
-            config (`TurnAggregatorConfig | None`, optional):
-                Merge window and backchannel list.
+            merge_window_ms (`int`, defaults to `800`):
+                A transcript arriving this soon after the previous turn
+                continues it rather than starting a new one.
+            backchannels (`frozenset[str]`, optional):
+                Acknowledgements that never constitute a turn. Language
+                specific, so empty by default.
+            min_chars (`int`, defaults to `1`):
+                Transcripts shorter than this are dropped.
         """
-        self.config = config or TurnAggregatorConfig()
+        self.merge_window_ms = merge_window_ms
+        self.backchannels = frozenset(backchannels)
+        self.min_chars = min_chars
         self._last_at: float | None = None
         self._merges = False
 
@@ -55,15 +52,15 @@ class TurnAggregator:
                 bare acknowledgement.
         """
         text = transcript.strip()
-        if len(text) < self.config.min_chars:
+        if len(text) < self.min_chars:
             return None
-        if text.strip(_TRAILING) in self.config.backchannels:
+        if text.strip(_TRAILING) in self.backchannels:
             return None
 
         now = time.monotonic()
         self._merges = (
             self._last_at is not None
-            and (now - self._last_at) * 1000 <= self.config.merge_window_ms
+            and (now - self._last_at) * 1000 <= self.merge_window_ms
         )
         self._last_at = now
         return text

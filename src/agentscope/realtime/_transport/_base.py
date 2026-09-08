@@ -7,7 +7,6 @@ from typing import AsyncIterator
 from pydantic import BaseModel
 
 from .._playout import PlayoutPosition
-from .._vad import SpeechEvent
 
 
 class AudioFrame(BaseModel):
@@ -15,11 +14,6 @@ class AudioFrame(BaseModel):
 
     pcm: bytes
     """PCM16 mono at the transport's :attr:`input_sample_rate`."""
-
-    speech: SpeechEvent | None = None
-    """A VAD transition reported by the client, carried on the very audio
-    it describes so the two cannot race. ``None`` when the client runs no
-    VAD and the agent must detect speech itself."""
 
 
 class ControlFrameType(StrEnum):
@@ -40,6 +34,9 @@ class ControlFrameType(StrEnum):
     INTERRUPT = "interrupt"
     """The user pressed stop, as opposed to speaking over the reply."""
 
+    EXTERNAL_EXECUTION_RESULT = "external_execution_result"
+    """The result of a tool the client ran itself."""
+
 
 class ControlFrame(BaseModel):
     """One upstream control event."""
@@ -56,7 +53,9 @@ class TransportBase(ABC):
     goes to.
 
     A transport is a browser connection, a local sound card, or a queue
-    the caller drives — the session cannot tell the difference.
+    the caller drives — the agent cannot tell the difference. It is owned
+    by whoever created it, not by the agent; :meth:`RealtimeAgent.run`
+    only borrows it.
     """
 
     input_sample_rate: int
@@ -64,6 +63,15 @@ class TransportBase(ABC):
 
     output_sample_rate: int
     """The rate :meth:`send_audio` expects."""
+
+    async def __aenter__(self) -> "TransportBase":
+        """Start on entry; the transport's owner is whoever entered."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Close on exit."""
+        await self.close()
 
     @abstractmethod
     async def start(self) -> None:
@@ -96,11 +104,11 @@ class TransportBase(ABC):
         """Send one control event downstream."""
 
     @abstractmethod
-    async def clear_audio(self, fade_ms: int = 30) -> PlayoutPosition:
+    async def clear_audio(self) -> PlayoutPosition:
         """Cut playback short and report how much was actually heard.
 
-        Fades out over *fade_ms* to avoid an audible click, discards
-        queued and in-flight audio, and bumps the interruption generation.
+        Fades out briefly to avoid an audible click, then discards queued
+        and in-flight audio.
 
         Clearing and reporting are one call on purpose: the returned
         position is what the caller must feed to

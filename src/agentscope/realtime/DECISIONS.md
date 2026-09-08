@@ -17,6 +17,15 @@
 | `TurnAggregator` 在 M1 做上下文合并那一半 | SERVER 模式无提交权，但脏历史会进持久化/重连/压缩 |
 | M1 只做 DashScope，不做 OpenAI | 打断闭环除 provider RPC 外整条链 DashScope 都会跑到 |
 | 不复用 `Agent` 实现级联 | 用户决定 |
+| VAD 归 agent（`RealtimeAgent(vad=)`），不归 transport；无客户端上报的 speech 字段 | livekit 放 session 层、pipecat 主动从 transport 搬出、无一家采信浏览器 speech |
+| 给了 `vad=` 就关 provider 的 turn detection，一个来源判回合；`TurnMode` 枚举删除，由 `vad is None` 推导 | livekit `_resolve_rt_turn_detection_enabled`；pipecat 警告双源发重复帧 |
+| transport 由创建者拥有，`run(transport)` 只借用，不 start/close | livekit `start(room=)` 不关 room；三者平级：agent / transport / run |
+| 下行泵归 agent（`connect()` 起），上行泵归 `run()`；两次 run 之间模型队列照常消费 | 否则空档里工具结果、模型帧无人处理 |
+| 模型会话被 provider 关掉后**不主动重连**，下一帧用户音频触发 `connect()`（可重入，带退避，攒帧） | 静默时挂着 API 连接没必要 |
+| 离散输入统一为 `send(inputs)`，镜像 `Agent.reply(inputs=)`；`interrupt()` 为快捷方式 | `send_text` / `send_confirm` 合并；`ExternalExecutionResultEvent` 入口留着，M1 抛 NotImplementedError |
+| 流式接口叫 `run`，async generator，起动即迭代 | 与 `reply_stream` 结束条件不同（连接断才结束），不复用其名 |
+| `TurnAggregator` 作为实体注入（`aggregator=`），不经 config；pydantic `TurnConfig` 只存在于 app 层 | 它不依赖 agent 内部件，可子类化（pipecat 的 turn strategy 家族） |
+| `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |
 | `PlayoutPosition.first_played_at` 由 transport 在音频线程记录，agent 在回合结束时读取 | e2e_latency 的唯一真实来源；随 `LocalAudioTransport` 落地 |
 | 用户打字先打断当前回复 | livekit / pipecat 默认；不打断需要额外的待处理状态 |
 
@@ -35,3 +44,5 @@
 ## 待定
 
 - `SessionConfig` 二分改造单独 PR 的时机
+- 模型重连后 UI 提示事件（M1 只记日志）
+- `AudioDelta` 事件的 base64 惰性编码（local 场景全部白做）

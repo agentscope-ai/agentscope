@@ -104,6 +104,11 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 len(context),
             )
 
+        if kwargs.get("turn_detection_disabled"):
+            self.parameters = self.parameters.model_copy(
+                update={"turn_detection": "none"},
+            )
+
         credential: DashScopeCredential = self.credential  # type: ignore
         self._ws = await websockets.connect(
             f"{_REALTIME_URL}?model={self.model_name}",

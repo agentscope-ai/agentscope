@@ -28,6 +28,7 @@ class LocalAudioTransport(TransportBase):
         input_device: int | str | None = None,
         output_device: int | str | None = None,
         chunk_ms: int = 100,
+        fade_ms: int = 30,
     ) -> None:
         """Initialize the transport.
 
@@ -42,12 +43,15 @@ class LocalAudioTransport(TransportBase):
                 ``sounddevice`` output device, default if ``None``.
             chunk_ms (`int`, defaults to `100`):
                 Capture chunk length handed to :meth:`incoming`.
+            fade_ms (`int`, defaults to `30`):
+                Fade-out applied by :meth:`clear_audio` to avoid a click.
         """
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
         self._input_device = input_device
         self._output_device = output_device
         self._chunk_frames = input_sample_rate * chunk_ms // 1000
+        self._fade_ms = fade_ms
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._in_queue: asyncio.Queue[AudioFrame | None] = asyncio.Queue()
@@ -163,11 +167,11 @@ class LocalAudioTransport(TransportBase):
         outdata[:n] = np.frombuffer(chunk, dtype=np.int16).reshape(-1, 1)
         outdata[n:] = 0
 
-    async def clear_audio(self, fade_ms: int = 30) -> PlayoutPosition:
+    async def clear_audio(self) -> PlayoutPosition:
         """Fade the head of the queue out, drop the rest, report the cut."""
         with self._lock:
             position = self._position()
-            fade_bytes = self.output_sample_rate * fade_ms // 1000 * 2
+            fade_bytes = self.output_sample_rate * self._fade_ms // 1000 * 2
             head = np.frombuffer(bytes(self._pending[:fade_bytes]), np.int16)
             self._pending.clear()
             if len(head):

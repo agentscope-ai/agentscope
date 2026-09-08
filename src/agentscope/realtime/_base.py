@@ -156,7 +156,9 @@ class RealtimeModelBase(ABC):
                 Tool JSON schemas. Ignored unless the card declares
                 ``supports_tools``.
             **kwargs (`Any`):
-                Extra provider fields, e.g. a resumption handle.
+                Extra provider fields. ``turn_detection_disabled=True``
+                asks the provider not to detect turns because the caller
+                runs its own VAD; a resumption handle may also be passed.
         """
 
     @abstractmethod

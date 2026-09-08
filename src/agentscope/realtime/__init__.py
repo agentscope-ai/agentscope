@@ -7,13 +7,9 @@ machine between them. Only the model knows whether the reply came from a
 speech-to-speech API or, later, a cascaded chain.
 """
 from ._agent import RealtimeAgent
-from ._aggregator import TurnAggregator, TurnAggregatorConfig
+from ._aggregator import TurnAggregator
 from ._base import RealtimeModelBase, TruncationSupport
 from ._dashscope import DashScopeRealtimeModel
-from ._config import (
-    RealtimeAgentConfig,
-    TurnMode,
-)
 from ._events import (
     AudioDelta,
     InputTranscription,
@@ -44,7 +40,6 @@ __all__ = [
     # Agent
     "RealtimeAgent",
     "TurnAggregator",
-    "TurnAggregatorConfig",
     # Model
     "RealtimeModelBase",
     "DashScopeRealtimeModel",
@@ -61,9 +56,6 @@ __all__ = [
     # Turn taking
     "VADBase",
     "SpeechEvent",
-    "TurnMode",
-    # Config
-    "RealtimeAgentConfig",
     # Metrics
     "TurnMetrics",
     # Model events

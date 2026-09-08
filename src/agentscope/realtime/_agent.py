@@ -8,9 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from . import _events as me
-from ._aggregator import TurnAggregator, TurnAggregatorConfig
+from ._aggregator import TurnAggregator
 from ._base import RealtimeModelBase
-from ._config import RealtimeAgentConfig
 from ._metrics import TurnMetrics
 from ._transport._base import (
     AudioFrame,
@@ -27,6 +26,7 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
+    ExternalExecutionResultEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -43,8 +43,10 @@ from ..event import (
     UserConfirmResultEvent,
     UserInputAudioStartEvent,
     UserInputTranscriptionEvent,
+    UserInterruptEvent,
 )
 from ..message import (
+    Msg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
@@ -56,8 +58,11 @@ from ..state import AgentState
 from ..tool import ToolChunk, ToolResponse, Toolkit
 from ..types import ReplyFinishedReason
 
-# Sentinel closing the public event stream.
+# Sentinel closing one run's event stream.
 _END = object()
+
+# Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
+_BACKLOG_FRAMES = 100
 
 
 @dataclass
@@ -98,12 +103,19 @@ class _Reply:
 
 
 class RealtimeAgent:
-    """A voice agent: a transport on one side, a realtime model on the
+    """A voice agent: a realtime model on one side, a transport on the
     other, and the turn-taking state machine in between.
 
     Unlike :class:`~agentscope.agent.Agent` it is bidirectional and has no
     request/reply boundary — audio flows in continuously while events flow
-    out of :meth:`events`.
+    out of :meth:`run`.
+
+    Three lifetimes are kept apart on purpose. The agent owns the model
+    session and the state; a transport is owned by whoever created it; a
+    :meth:`run` borrows both for as long as both are alive. So a client
+    can drop and reconnect without losing the model session, and the model
+    session can time out during a long silence and be re-established on
+    the next word without touching the transport.
 
     The public methods are the only entry point for discrete input. A
     transport carrying a browser's ``ControlFrame`` calls exactly those
@@ -114,15 +126,11 @@ class RealtimeAgent:
     Example:
         .. code-block:: python
 
-            async with RealtimeAgent(
-                name="Friday",
-                sys_prompt="You are a helpful assistant.",
-                model=DashScopeRealtimeModel("qwen3-omni-flash-realtime",
-                                             credential=cred),
-                transport=LocalAudioTransport(),
-            ) as agent:
-                async for event in agent.events():
-                    print(event)
+            agent = RealtimeAgent("Friday", "Be brief.", model)
+            async with agent:                              # model session
+                async with LocalAudioTransport() as t:     # sound card
+                    async for event in agent.run(t):       # this call
+                        print(event)
     """
 
     def __init__(
@@ -130,48 +138,55 @@ class RealtimeAgent:
         name: str,
         sys_prompt: str,
         model: RealtimeModelBase,
-        transport: TransportBase,
         toolkit: Toolkit | None = None,
         state: AgentState | None = None,
         vad: VADBase | None = None,
-        config: RealtimeAgentConfig | None = None,
-        aggregator: TurnAggregatorConfig | None = None,
+        aggregator: TurnAggregator | None = None,
     ) -> None:
         """Initialize the realtime agent.
 
         Args:
             name (`str`):
-                Display name, stamped on assistant messages and events.
+                Display name stamped on assistant messages and events.
             sys_prompt (`str`):
-                System instructions forwarded to the model on connect.
+                System instructions sent to the model on connect, with the
+                toolkit's skill instructions appended.
             model (`RealtimeModelBase`):
-                The realtime model.
-            transport (`TransportBase`):
-                Where audio comes from and goes to.
+                The realtime model. Its session is opened by
+                :meth:`connect` and lives as long as this agent — not as
+                long as any one transport — and is re-established on the
+                next user audio if the provider closes it.
             toolkit (`Toolkit | None`, optional):
-                Tools available to the model. Ignored if the model card
-                does not declare tool support.
+                Tools the model may call. Executed here, with permission
+                checks against ``state.permission_context``.
             state (`AgentState | None`, optional):
-                Conversation state; a new one is created if omitted.
+                Conversation history, permission rules and tool context.
+                A new one is created if omitted.
             vad (`VADBase | None`, optional):
-                Server-side VAD. Only needed when the transport does not
-                report speech transitions itself.
-            config (`RealtimeAgentConfig | None`, optional):
-                Turn mode and fade length.
-            aggregator (`TurnAggregatorConfig | None`, optional):
-                Merge window and backchannel list for turn aggregation.
+                Server-side voice activity detection over the audio
+                arriving from the transport. ``STARTED`` cuts off a reply
+                the user speaks over; ``ENDED`` closes the user's turn and
+                hands it to the model. When given, the provider's own turn
+                detection is switched off so that exactly one source
+                decides turn boundaries; when ``None``, the provider
+                decides and this agent only reacts to what it reports.
+            aggregator (`TurnAggregator | None`, optional):
+                Collapses the provider's transcripts into clean user turns:
+                merging one that endpointing split, dropping bare
+                acknowledgements. Subclass it to change what counts as a
+                turn. A default with no backchannel list is used if
+                omitted.
         """
         self.name = name
         self.sys_prompt = sys_prompt
         self.model = model
-        self.transport = transport
         self.toolkit = toolkit
         self.state = state or AgentState()
         self.vad = vad
-        self.config = config or RealtimeAgentConfig()
-        self._aggregator = TurnAggregator(aggregator)
+        self.aggregator = aggregator or TurnAggregator()
 
         self._engine = PermissionEngine(self.state.permission_context)
+        self._transport: TransportBase | None = None
         self._out: asyncio.Queue = asyncio.Queue()
         self._reply: _Reply | None = None
         self._metrics = TurnMetrics()
@@ -179,10 +194,18 @@ class RealtimeAgent:
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._barge_lock = asyncio.Lock()
-        self._runner: asyncio.Task | None = None
+
+        # Model session: connected flag, the downlink pump that outlives
+        # any transport, and reconnect bookkeeping.
+        self._connected = False
+        self._connected_event = asyncio.Event()
+        self._downlink: asyncio.Task | None = None
+        self._backlog: list[bytes] = []
+        self._retry_at = 0.0
+        self._backoff = 1.0
 
     # ------------------------------------------------------------------
-    # Lifecycle
+    # Lifecycle: the model session
     # ------------------------------------------------------------------
 
     async def __aenter__(self) -> "RealtimeAgent":
@@ -195,20 +218,10 @@ class RealtimeAgent:
         await self.close()
 
     async def connect(self) -> None:
-        """Open the model session and start pumping audio.
-
-        Raises:
-            `ValueError`: If the VAD and the transport disagree on the
-                input sample rate, which would fail silently otherwise.
-        """
-        if self.vad is not None:
-            if self.vad.sample_rate != self.transport.input_sample_rate:
-                raise ValueError(
-                    f"VAD expects {self.vad.sample_rate} Hz but the "
-                    f"transport delivers "
-                    f"{self.transport.input_sample_rate} Hz.",
-                )
-            self.vad.reset()
+        """Open the model session. Safe to call again after the provider
+        closed it; a no-op while connected."""
+        if self._connected:
+            return
 
         instructions = self.sys_prompt
         tools = None
@@ -237,12 +250,22 @@ class RealtimeAgent:
             context=self.state.context,
             instructions=instructions,
             tools=tools,
+            turn_detection_disabled=self.vad is not None,
         )
-        await self.transport.start()
-        self._runner = asyncio.create_task(self._run(), name="rt-run")
+        if self.vad is not None:
+            self.vad.reset()
+        self.aggregator.reset()
+        self._connected = True
+        self._connected_event.set()
+        self._backoff = 1.0
+        if self._downlink is None:
+            self._downlink = asyncio.create_task(
+                self._pump_downlink(),
+                name="rt-downlink",
+            )
 
     async def close(self) -> None:
-        """Cancel everything in flight and close both ends."""
+        """Cancel everything in flight and close the model session."""
         for future in self._confirmations.values():
             future.cancel()
         self._confirmations.clear()
@@ -250,59 +273,126 @@ class RealtimeAgent:
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
-        if self._runner:
-            self._runner.cancel()
-            await asyncio.gather(self._runner, return_exceptions=True)
-        await self.transport.close()
+        if self._downlink is not None:
+            self._downlink.cancel()
+            await asyncio.gather(self._downlink, return_exceptions=True)
+            self._downlink = None
+        self._connected = False
+        self._connected_event.clear()
         await self.model.close()
 
-    async def _run(self) -> None:
-        """Run both pumps until either side ends the session."""
+    async def _try_connect(self) -> bool:
+        """Reconnect the model with backoff; ``False`` while still down."""
+        now = time.monotonic()
+        if now < self._retry_at:
+            return False
         try:
-            async with asyncio.TaskGroup() as group:
-                group.create_task(self._pump_uplink(), name="rt-up")
-                group.create_task(self._pump_downlink(), name="rt-down")
-        except* Exception:
-            logger.exception("RealtimeAgent: pump failed")
+            await self.connect()
+        except Exception as exc:  # noqa: BLE001
+            self._retry_at = now + self._backoff
+            self._backoff = min(self._backoff * 2, 30.0)
+            logger.warning(
+                "RealtimeAgent: reconnect failed (%s); retrying in %.0fs",
+                exc,
+                self._backoff,
+            )
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Lifecycle: one transport
+    # ------------------------------------------------------------------
+
+    async def run(self, transport: TransportBase) -> AsyncIterator[AgentEvent]:
+        """Pump *transport* and yield agent events until it ends.
+
+        The transport is borrowed, not owned: it must already be started
+        and is not closed here, so the caller can keep it, reuse it or hand
+        it on. The stream ends when the transport's input ends — a client
+        disconnecting — not when a reply ends; there may be many replies.
+        Call again with a new transport to resume the same session.
+
+        Breaking out of the loop early does not run cleanup immediately;
+        wrap the generator in :func:`contextlib.aclosing` when that
+        matters.
+        """
+        if self._transport is not None:
+            raise RuntimeError("RealtimeAgent.run is already active.")
+        self._transport = transport
+        uplink = asyncio.create_task(self._pump_uplink(transport), name="rt-up")
+        uplink.add_done_callback(lambda _: self._out.put_nowait(_END))
+        try:
+            while True:
+                event = await self._out.get()
+                if event is _END:
+                    return
+                yield event
         finally:
-            self._out.put_nowait(_END)
+            if not uplink.done():
+                uplink.cancel()
+                await asyncio.gather(uplink, return_exceptions=True)
+            # Nobody is listening any more; do not let the model talk on.
+            await self._barge_in()
+            self._transport = None
 
     # ------------------------------------------------------------------
-    # Public IO
+    # Discrete input
     # ------------------------------------------------------------------
 
-    async def events(self) -> AsyncIterator[AgentEvent]:
-        """Yield agent events until the session ends."""
-        while True:
-            event = await self._out.get()
-            if event is _END:
-                return
-            yield event
+    async def send(
+        self,
+        inputs: (
+            str
+            | Msg
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+        ),
+    ) -> None:
+        """Feed the agent anything that is not audio.
 
-    async def send_text(self, text: str) -> None:
-        """Send a typed user turn, cutting off any reply in progress.
+        Mirrors :meth:`Agent.reply`'s ``inputs``: a text turn (which cuts
+        off any reply in progress first), the outcome of a permission
+        prompt, an interrupt, or the result of a tool run elsewhere.
 
         Raises:
-            `NotImplementedError`: If the provider takes no text input.
+            `NotImplementedError`: For a text turn when the provider takes
+                no text input, or for external execution results, which
+                are not supported yet.
         """
-        if not self.model.supports_text_input:
-            raise NotImplementedError(
-                f"{type(self.model).__name__} accepts no text input.",
-            )
-        await self._barge_in()
-        self.state.context.append(UserMsg(name="user", content=text))
-        await self.model.push_text(text)
+        match inputs:
+            case UserInterruptEvent():
+                await self._barge_in()
 
-    def send_confirm(self, event: UserConfirmResultEvent) -> None:
-        """Resolve pending tool confirmations from the user."""
-        for result in event.confirm_results:
-            future = self._confirmations.get(result.tool_call.id)
-            if future and not future.done():
-                future.set_result(result)
+            case UserConfirmResultEvent():
+                for result in inputs.confirm_results:
+                    future = self._confirmations.get(result.tool_call.id)
+                    if future and not future.done():
+                        future.set_result(result)
+
+            case ExternalExecutionResultEvent():
+                raise NotImplementedError(
+                    "External tool execution is not supported yet.",
+                )
+
+            case str() | Msg():
+                if not self.model.supports_text_input:
+                    raise NotImplementedError(
+                        f"{type(self.model).__name__} accepts no text input.",
+                    )
+                msg = (
+                    UserMsg(name="user", content=inputs)
+                    if isinstance(inputs, str)
+                    else inputs
+                )
+                text = msg.get_text_content() or ""
+                await self._barge_in()
+                self.state.context.append(msg)
+                await self.model.push_text(text)
 
     async def interrupt(self) -> None:
         """Stop the active reply, as when the user presses stop."""
-        await self._barge_in()
+        await self.send(UserInterruptEvent())
 
     @property
     def last_turn_metrics(self) -> TurnMetrics:
@@ -313,39 +403,51 @@ class RealtimeAgent:
     # Uplink: transport -> model
     # ------------------------------------------------------------------
 
-    async def _pump_uplink(self) -> None:
-        """Forward user audio and control frames to the model."""
-        async for frame in self.transport.incoming():
+    async def _pump_uplink(self, transport: TransportBase) -> None:
+        """Forward user audio and control frames until *transport* ends."""
+        async for frame in transport.incoming():
             if isinstance(frame, AudioFrame):
                 await self._on_audio(frame)
             else:
                 await self._on_control(frame)
 
     async def _on_audio(self, frame: AudioFrame) -> None:
-        """Run VAD if we own it, then forward the audio."""
-        speech = frame.speech
-        if speech is None and self.vad is not None:
-            speech = self.vad.push(frame.pcm)
+        """Run our VAD if we own it, reconnect if needed, forward audio."""
+        speech = self.vad.push(frame.pcm) if self.vad is not None else None
+
+        pushed = False
+        if not self._connected:
+            self._backlog.append(frame.pcm)
+            del self._backlog[:-_BACKLOG_FRAMES]
+            if not await self._try_connect():
+                return
+            for pcm in self._backlog:
+                await self.model.push_audio(pcm)
+            self._backlog.clear()
+            pushed = True
 
         if speech is SpeechEvent.STARTED:
             await self._barge_in()
         elif speech is SpeechEvent.ENDED:
-            self._metrics.user_speech_end_at = time.monotonic()
-            if not self.model.turn_detection_enabled:
-                await self.model.commit_turn()
-                self._metrics.turn_committed_at = time.monotonic()
+            now = time.monotonic()
+            self._metrics.user_speech_end_at = now
+            await self.model.commit_turn()
+            self._metrics.turn_committed_at = time.monotonic()
 
-        await self.model.push_audio(frame.pcm)
+        if not pushed:
+            await self.model.push_audio(frame.pcm)
 
     async def _on_control(self, frame: ControlFrame) -> None:
-        """Handle one upstream control frame."""
+        """Translate one upstream control frame into :meth:`send`."""
         match frame.type:
             case ControlFrameType.TEXT:
-                await self.send_text(frame.data.get("text", ""))
+                await self.send(frame.data.get("text", ""))
             case ControlFrameType.USER_CONFIRM:
-                self.send_confirm(UserConfirmResultEvent(**frame.data))
+                await self.send(UserConfirmResultEvent(**frame.data))
             case ControlFrameType.INTERRUPT:
-                await self._barge_in()
+                await self.send(UserInterruptEvent())
+            case ControlFrameType.EXTERNAL_EXECUTION_RESULT:
+                await self.send(ExternalExecutionResultEvent(**frame.data))
             case _:
                 logger.debug("RealtimeAgent: ignoring %s frame", frame.type)
 
@@ -357,12 +459,12 @@ class RealtimeAgent:
         """Cut the reply short and correct both contexts to what was heard.
 
         Whether a given overlap counts as an interruption is decided
-        before this is called — by the provider in ``SERVER`` mode, and by
-        the VAD's own debounce otherwise.
+        before this is called — by the provider when it owns turn
+        detection, by the VAD's own debounce otherwise.
 
-        Reached from three concurrent callers — the uplink pump, the
-        downlink pump and :meth:`interrupt` — so it is serialised; the
-        losers find the reply already closed and return.
+        Reached from the uplink pump, the downlink pump, :meth:`send` and
+        :meth:`run`'s exit, so it is serialised; the losers find the reply
+        already closed and return.
         """
         async with self._barge_lock:
             await self._barge_in_locked()
@@ -373,20 +475,25 @@ class RealtimeAgent:
         if reply is None:
             return
 
-        position = await self.transport.clear_audio(self.config.fade_ms)
-        if position.item_id and position.item_id != reply.item_id:
-            logger.warning(
-                "RealtimeAgent: playout reports %s but %s is open; not "
-                "truncating.",
-                position.item_id,
-                reply.item_id,
-            )
-            return
-        spoken = reply.spoken_prefix(position.played_ms)
+        spoken = reply.text
+        played_ms = int(reply.audio_ms)
+        if self._transport is not None:
+            position = await self._transport.clear_audio()
+            if position.item_id and position.item_id != reply.item_id:
+                logger.warning(
+                    "RealtimeAgent: playout reports %s but %s is open; "
+                    "not truncating.",
+                    position.item_id,
+                    reply.item_id,
+                )
+                return
+            played_ms = position.played_ms
+            spoken = reply.spoken_prefix(played_ms)
 
         self._truncate_reply(spoken)
-        await self.model.truncate(reply.item_id, position.played_ms, spoken)
-        await self.model.cancel_response()
+        if self._connected:
+            await self.model.truncate(reply.item_id, played_ms, spoken)
+            await self.model.cancel_response()
         self._finish_reply(ReplyFinishedReason.INTERRUPTED)
 
     def _truncate_reply(self, spoken: str) -> None:
@@ -414,80 +521,97 @@ class RealtimeAgent:
             self.state.context.pop()
 
     # ------------------------------------------------------------------
-    # Downlink: model -> transport + events
+    # Downlink: model -> transport + events (lives with the agent)
     # ------------------------------------------------------------------
 
     async def _pump_downlink(self) -> None:
-        """Translate model events into audio out and agent events."""
+        """Translate model events for as long as the agent is open.
+
+        When the provider closes the session the pump does not exit: it
+        marks the model disconnected and waits for :meth:`connect` to be
+        called again, which the uplink does on the next user audio.
+        """
+        while True:
+            await self._connected_event.wait()
+            async for event in self.model.events():
+                await self._on_model_event(event)
+            self._connected = False
+            self._connected_event.clear()
+            self._finish_reply(ReplyFinishedReason.ERROR)
+            logger.info("RealtimeAgent: model session ended; will reconnect")
+
+    async def _on_model_event(self, event: me.ModelEvent) -> None:
+        """Handle one model event."""
         rate = self.model.output_sample_rate
-        async for event in self.model.events():
-            match event:
-                case me.SpeechStarted():
-                    self._emit(
-                        UserInputAudioStartEvent(
-                            session_id=self.state.session_id,
-                            item_id=event.item_id,
-                        ),
-                    )
-                    await self._barge_in()
+        match event:
+            case me.SpeechStarted():
+                self._emit(
+                    UserInputAudioStartEvent(
+                        session_id=self.state.session_id,
+                        item_id=event.item_id,
+                    ),
+                )
+                await self._barge_in()
 
-                case me.SpeechEnded():
-                    # With server VAD this is also the provider's commit.
-                    now = time.monotonic()
-                    self._metrics.user_speech_end_at = now
-                    if self.model.turn_detection_enabled:
-                        self._metrics.turn_committed_at = now
+            case me.SpeechEnded():
+                # With provider turn detection this is also its commit.
+                now = time.monotonic()
+                self._metrics.user_speech_end_at = now
+                if self.vad is None:
+                    self._metrics.turn_committed_at = now
 
-                case me.InputTranscription():
-                    self._on_transcription(event)
+            case me.InputTranscription():
+                self._on_transcription(event)
 
-                case me.ResponseCreated():
-                    self._start_reply(event.item_id)
+            case me.ResponseCreated():
+                self._start_reply(event.item_id)
 
-                case me.AudioDelta():
-                    reply = self._start_reply(event.item_id)
-                    reply.on_audio(event.pcm, rate)
-                    await self.transport.send_audio(event.pcm, reply.item_id)
-                    self._emit_audio(reply, event.pcm, rate)
-                    self._metrics.backend_first_audio_at = (
-                        self._metrics.backend_first_audio_at
-                        or time.monotonic()
-                    )
-
-                case me.TranscriptDelta():
-                    reply = self._start_reply(event.item_id)
-                    reply.on_text(event.delta)
-                    self._emit_text(reply, event.delta)
-
-                case me.ToolCall():
-                    self._start_reply(event.item_id)
-                    self._pending_tools[event.tool_call.id] = event.tool_call
-
-                case me.ResponseDone():
-                    self._metrics.input_tokens = event.input_tokens
-                    self._metrics.output_tokens = event.output_tokens
-                    self._finish_reply(ReplyFinishedReason.COMPLETED)
-                    self._schedule_tools()
-
-                case me.ModelError():
-                    logger.error(
-                        "RealtimeAgent: model error %s: %s",
-                        event.code,
-                        event.message,
-                    )
-                    self._finish_reply(ReplyFinishedReason.ERROR)
-
-                case me.SessionEnded():
+            case me.AudioDelta():
+                if self._transport is None:
+                    await self._barge_in()  # nobody listening
                     return
+                reply = self._start_reply(event.item_id)
+                reply.on_audio(event.pcm, rate)
+                await self._transport.send_audio(event.pcm, reply.item_id)
+                self._emit_audio(reply, event.pcm, rate)
+                self._metrics.backend_first_audio_at = (
+                    self._metrics.backend_first_audio_at or time.monotonic()
+                )
+
+            case me.TranscriptDelta():
+                reply = self._start_reply(event.item_id)
+                reply.on_text(event.delta)
+                self._emit_text(reply, event.delta)
+
+            case me.ToolCall():
+                self._start_reply(event.item_id)
+                self._pending_tools[event.tool_call.id] = event.tool_call
+
+            case me.ResponseDone():
+                self._metrics.input_tokens = event.input_tokens
+                self._metrics.output_tokens = event.output_tokens
+                self._finish_reply(ReplyFinishedReason.COMPLETED)
+                self._schedule_tools()
+
+            case me.ModelError():
+                logger.error(
+                    "RealtimeAgent: model error %s: %s",
+                    event.code,
+                    event.message,
+                )
+                self._finish_reply(ReplyFinishedReason.ERROR)
+
+            case me.SessionEnded():
+                pass  # the events() iterator ends right after this
 
     def _on_transcription(self, event: me.InputTranscription) -> None:
         """Record a settled user turn, merging a split one back together."""
-        turn = self._aggregator.take(event.text)
+        turn = self.aggregator.take(event.text)
         if turn is None:
             logger.debug("RealtimeAgent: dropping %r", event.text)
             return
 
-        if self._aggregator.merges_with_previous() and self._merge_user(turn):
+        if self.aggregator.merges_with_previous() and self._merge_user(turn):
             transcript = self.state.context[-1].get_text_content() or turn
         else:
             self.state.context.append(UserMsg(name="user", content=turn))
@@ -549,9 +673,10 @@ class RealtimeAgent:
         reply = self._reply
         if reply is None:
             return
-        position = self.transport.playout()
-        if position.item_id == reply.item_id:
-            self._metrics.first_audio_played_at = position.first_played_at
+        if self._transport is not None:
+            position = self._transport.playout()
+            if position.item_id == reply.item_id:
+                self._metrics.first_audio_played_at = position.first_played_at
         if reply.text_started:
             self._emit(
                 TextBlockEndEvent(
@@ -636,7 +761,7 @@ class RealtimeAgent:
         )
 
     def _emit(self, event: AgentEvent) -> None:
-        """Queue one event for :meth:`events`."""
+        """Queue one event for :meth:`run`."""
         self._out.put_nowait(event)
 
     # ------------------------------------------------------------------
@@ -758,9 +883,9 @@ class RealtimeAgent:
         self._emit(
             RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),
         )
-        future: asyncio.Future[
-            ConfirmResult
-        ] = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[ConfirmResult] = (
+            asyncio.get_running_loop().create_future()
+        )
         self._confirmations[call.id] = future
         try:
             result = await asyncio.wait_for(future, timeout=300)
