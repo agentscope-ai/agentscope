@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """Unit tests for RealtimeAgent, driven by a scripted model and a fake
 transport — no network, no sound card."""
+# pylint: disable=protected-access, unused-argument
 import asyncio
 from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.credential import DashScopeCredential
-from agentscope.event import ReplyEndEvent, UserInputTranscriptionEvent
+from agentscope.event import (
+    ReplyEndEvent,
+    UserInputTranscriptionEvent,
+)
 from agentscope.realtime import (
     AudioFrame,
     PlayoutPosition,
@@ -18,6 +22,7 @@ from agentscope.realtime import (
     TruncationSupport,
     VADBase,
 )
+from agentscope.message import Msg, ToolResultBlock
 from agentscope.realtime import _events as me
 
 PCM_100MS = b"\x01\x00" * 2400
@@ -67,21 +72,31 @@ class ScriptedModel(RealtimeModelBase):
 
     @property
     def turn_detection_enabled(self) -> bool:
+        """The provider owns turn boundaries unless a VAD is given."""
         return True
 
-    async def connect(self, context, instructions, tools=None, **kw):
+    async def connect(
+        self,
+        context: list[Msg],
+        instructions: str,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Record a session open and the turn-detection request."""
         self.sessions += 1
         self._open.clear()
         self.calls.append(
             f"connect(session={self.sessions},ctx={len(context)},"
-            f"td_off={kw.get('turn_detection_disabled')})",
+            f"td_off={kwargs.get('turn_detection_disabled')})",
         )
 
     async def close(self) -> None:
+        """Record the close and release a live session."""
         self.calls.append("close")
         self._open.set()
 
     async def events(self) -> AsyncIterator[me.ModelEvent]:
+        """Play the script for the current session."""
         script = self.scripts[self.sessions - 1]
         for event in script:
             yield event
@@ -90,24 +105,36 @@ class ScriptedModel(RealtimeModelBase):
             await self._open.wait()  # a live session stays open
 
     async def push_audio(self, pcm: bytes) -> None:
+        """Count audio pushes."""
         self.calls.append("push_audio")
 
     async def push_text(self, text: str) -> None:
+        """This provider takes no text."""
         raise NotImplementedError
 
-    async def push_tool_result(self, block) -> None:
+    async def push_tool_result(self, block: ToolResultBlock) -> None:
+        """Record the tool result."""
         self.calls.append(f"tool_result({block.id})")
 
     async def commit_turn(self) -> None:
+        """Record the commit."""
         self.calls.append("commit_turn")
 
     async def request_response(self) -> None:
+        """Record the request."""
         self.calls.append("request_response")
 
     async def cancel_response(self) -> None:
+        """Record the cancel."""
         self.calls.append("cancel")
 
-    async def truncate(self, item_id, played_ms, played_text) -> None:
+    async def truncate(
+        self,
+        item_id: str,
+        played_ms: int,
+        played_text: str,
+    ) -> None:
+        """Record what the agent thinks the user heard."""
         self.calls.append(f"truncate({item_id},{played_ms}ms,{played_text!r})")
 
 
@@ -125,27 +152,34 @@ class FakeTransport(TransportBase):
         self.closed = 0
 
     async def start(self) -> None:
+        """Count starts; the owner is the test."""
         self.started += 1
 
     async def close(self) -> None:
+        """Count closes."""
         self.closed += 1
 
-    async def incoming(self) -> AsyncIterator[Any]:
+    async def incoming(self) -> AsyncIterator[AudioFrame]:
+        """Emit silence on a 20 ms clock."""
         for _ in range(self.frames):
             await asyncio.sleep(0.02)
             yield AudioFrame(pcm=b"\x00" * 3200)
 
     async def send_audio(self, pcm: bytes, item_id: str) -> None:
+        """Remember which item is playing."""
         self.item = item_id
 
     async def send_event(self, event: dict) -> None:
+        """No peer to send to."""
         pass
 
     async def clear_audio(self) -> PlayoutPosition:
+        """Count cuts and report the fixed playout position."""
         self.cleared += 1
         return self.playout()
 
     def playout(self) -> PlayoutPosition:
+        """Always 320 ms into the current item."""
         return PlayoutPosition(
             item_id=self.item,
             played_ms=320,
@@ -162,18 +196,25 @@ class EndOnSecondFrameVAD(VADBase):
         self.seen = 0
 
     def push(self, pcm: bytes) -> SpeechTransition | None:
+        """ENDED on the second chunk, otherwise nothing."""
         self.seen += 1
         return SpeechTransition.ENDED if self.seen == 2 else None
 
     def reset(self) -> None:
+        """Start counting again."""
         self.seen = 0
 
 
 class RealtimeAgentTest(IsolatedAsyncioTestCase):
     """Behaviour of the turn-taking state machine."""
 
-    async def _collect(self, agent, transport):
-        summary = []
+    async def _collect(
+        self,
+        agent: RealtimeAgent,
+        transport: FakeTransport,
+    ) -> list[tuple[str, Any]]:
+        """Run the agent over *transport* and summarise the events."""
+        summary: list[tuple[str, Any]] = []
         async with transport:
             async for event in agent.run(transport):
                 if isinstance(event, ReplyEndEvent):
