@@ -388,9 +388,9 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
         class ClosedSocket:
             """Raises like a socket the provider already closed."""
 
-            async def send(self, payload: str) -> None:
+            async def send(self, _payload: str) -> None:
                 """Fail with the provider's close frame."""
-                close = Close(1007, "no response for 180 seconds")
+                close = Close(1007, "idle 180s")
                 raise ConnectionClosedError(close, close, True)
 
         model = DashScopeRealtimeModel("qwen3.5-omni-flash-realtime", CRED)
@@ -401,7 +401,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             (str(ctx.exception), model._ws),
             (
-                "1007 (invalid frame payload data) no response for 180 seconds",
+                "1007 (invalid frame payload data) idle 180s",
                 None,
             ),
         )

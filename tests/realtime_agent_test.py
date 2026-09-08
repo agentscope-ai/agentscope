@@ -5,6 +5,7 @@ transport — no network, no sound card."""
 import asyncio
 from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
+from utils import AnyString
 
 from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.credential import DashScopeCredential
@@ -41,7 +42,6 @@ from agentscope.permission import (
 )
 from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
 from agentscope.realtime import _events as me
-from utils import AnyString
 
 PCM_100MS = b"\x01\x00" * 2400
 
@@ -131,8 +131,9 @@ class ScriptedModel(RealtimeModelBase):
         self.calls.append("push_audio")
 
     async def push_text(self, text: str) -> None:
-        """This provider takes no text."""
-        raise NotImplementedError
+        """Record a text turn; the agent gates on ``supports_text_input``
+        before ever calling this."""
+        self.calls.append(f"push_text({text!r})")
 
     async def push_tool_result(self, block: ToolResultBlock) -> None:
         """Record exactly what the provider would receive."""
