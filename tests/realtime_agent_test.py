@@ -14,6 +14,7 @@ from agentscope.event import (
     ReplyStartEvent,
     TextBlockDeltaEvent,
 )
+from agentscope.message import Msg
 from agentscope.realtime import (
     AudioFrame,
     ModelDisconnectedError,
@@ -261,13 +262,35 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         agent = RealtimeAgent("Friday", "be brief", model)
         transport = FakeTransport(frames=3)
 
-        async with agent:
-            summary = await self._collect(agent, transport)
+        # Rebuild the agent's message from its events the way a client
+        # does; the text deltas ran ahead of what was heard.
+        summary = []
+        rebuilt = Msg(id="r1", role="assistant", name="Friday", content=[])
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if getattr(event, "reply_id", None) == "r1":
+                    rebuilt.append_event(event)
+                if isinstance(event, TextBlockDeltaEvent):
+                    summary.append(event.delta)
+                elif isinstance(event, ReplyEndEvent):
+                    summary.append(("reply_end", event.finished_reason))
 
         self.assertListEqual(
             summary,
-            [("user", "讲个故事"), ("reply_end", "interrupted")],
+            [
+                "讲个故事",
+                ("reply_end", "completed"),  # the user's turn
+                "从前",
+                "有座山",
+                "山里",
+                "有座庙",
+                "庙里",
+                "有个",
+                "老和尚",
+                ("reply_end", "interrupted"),
+            ],
         )
+        self.assertEqual(rebuilt.get_text_content(), "从前有座山山里有座庙")
         self.assertEqual(transport.cleared, 1)
         # Audio frames interleave with model events on the transport's
         # clock, so they are counted rather than positioned.
@@ -732,6 +755,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "type": "TEXT_BLOCK_END",
                     "reply_id": "u1",
                     "block_id": AnyString(),
+                    "text": None,
                 },
                 {
                     "id": AnyString(),
@@ -806,6 +830,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "type": "TEXT_BLOCK_END",
                     "reply_id": "r1",
                     "block_id": AnyString(),
+                    "text": None,
                 },
                 {
                     "id": AnyString(),
@@ -933,6 +958,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "type": "TEXT_BLOCK_END",
                     "reply_id": "r1",
                     "block_id": AnyString(),
+                    "text": None,
                 },
                 {
                     "id": AnyString(),

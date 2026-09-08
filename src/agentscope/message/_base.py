@@ -307,6 +307,8 @@ class Msg(BaseModel):
                 elif event.type == EventType.TEXT_BLOCK_DELTA:
                     block.text += event.delta
                 else:
+                    if event.text is not None:
+                        block.text = event.text
                     block.finished_at = event.created_at
 
             case EventType.DATA_BLOCK_START:

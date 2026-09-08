@@ -74,6 +74,8 @@ class _Reply:
     text_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     audio_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     text: str = ""
+    final_text: str | None = None
+    """Set on a barge-in: the text block is truncated to this."""
     audio_ms: float = 0.0
     text_started: bool = False
     audio_started: bool = False
@@ -577,6 +579,7 @@ class RealtimeAgent:
             spoken = reply.spoken_prefix(played_ms)
 
         self._truncate_reply(spoken)
+        reply.final_text = spoken
         if self._connected:
             await self.model.truncate(reply.item_id, played_ms, spoken)
             await self.model.cancel_response()
@@ -844,6 +847,7 @@ class RealtimeAgent:
                 TextBlockEndEvent(
                     reply_id=reply.reply_id,
                     block_id=reply.text_block_id,
+                    text=reply.final_text,
                 ),
             )
         if reply.audio_started:
