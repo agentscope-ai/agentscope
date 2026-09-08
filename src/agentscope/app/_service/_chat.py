@@ -1091,7 +1091,7 @@ class ChatService:
                     chat_id = channel_origin.chat_id
                     kind = chat_kind
                     name = channel_origin.chat_name or await channel.chat_name(
-                        chat_id
+                        chat_id,
                     )
                     where = f' named "{name}"' if name else ""
                     attachment += (
