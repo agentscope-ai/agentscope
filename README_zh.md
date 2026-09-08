@@ -127,7 +127,7 @@ SDK 层 —— 用一整套丰富的构建模块组合出你的智能体：
 |---|---|
 | [**ReAct**](https://docs.agentscope.io/latest/zh/building-blocks/agent/overview) | 推理-行动循环，支持结构化输出、实时中断与恢复、以及批量（顺序 / 并发）工具执行 |
 | [**工具集**](https://docs.agentscope.io/latest/zh/building-blocks/tool/overview) | 智能体自主工具管理（囊括 Python 工具、MCP 与 Skill）；内置编码工具（Shell、文件编辑、搜索）与任务/规划工具开箱即用 |
-| [**模型**](https://docs.agentscope.io/latest/zh/building-blocks/model/overview) | LLM、Embedding、TTS，覆盖主流厂商（OpenAI、Anthropic、Gemini、DashScope、DeepSeek、Moonshot、xAI、Ollama） |
+| [**模型**](https://docs.agentscope.io/latest/zh/building-blocks/model/overview) | LLM、Embedding、TTS，覆盖主流厂商（OpenAI、Anthropic、Gemini、DashScope、DeepSeek、Moonshot、Volcengine、xAI、Ollama） |
 | [**上下文**](https://docs.agentscope.io/latest/zh/building-blocks/context/overview) | 自动压缩、工具结果卸载、以及上下文注入（系统提示、RAG、记忆），均由内置中间件实现 |
 | [**事件系统**](https://docs.agentscope.io/latest/zh/building-blocks/message-and-event) | 统一事件总线，将推理、工具调用与多模态内容（文本、图像、音频）流式推送到前端 |
 | [**权限与 HITL**](https://docs.agentscope.io/latest/zh/building-blocks/permission-system/overview) | 对工具和资源的细粒度控制、确认、bypass 模式 |
