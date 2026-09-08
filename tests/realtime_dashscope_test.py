@@ -186,7 +186,6 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
         )
         session = model._session_update("x", None)["session"]
         self.assertIsNone(session["turn_detection"])
-        self.assertFalse(model.turn_detection_enabled)
 
     def test_adapter_facts(self) -> None:
         """Protocol facts differ per adapter, not per model."""

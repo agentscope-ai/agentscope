@@ -15,7 +15,6 @@ output_sample_rate: 24000
 
 # The model page lists "Function Calling: 不支持".
 supports_tools: false
-supports_session_resumption: false
 
 # The model page states the context in tokens; the realtime guide's
 # turn/duration table does not cover this model.

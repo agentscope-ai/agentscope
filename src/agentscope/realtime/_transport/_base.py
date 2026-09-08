@@ -34,9 +34,6 @@ class ControlFrameType(StrEnum):
     INTERRUPT = "interrupt"
     """The user pressed stop, as opposed to speaking over the reply."""
 
-    EXTERNAL_EXECUTION_RESULT = "external_execution_result"
-    """The result of a tool the client ran itself."""
-
 
 class ControlFrame(BaseModel):
     """One upstream control event."""

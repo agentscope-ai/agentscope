@@ -22,7 +22,7 @@
 | transport 由创建者拥有，`reply_stream(transport)` 只借用，不 start/close | livekit `start(room=)` 不关 room；三者平级：agent / transport / run |
 | 下行泵归 agent（`connect()` 起），上行泵归 `reply_stream()`；两次 reply_stream 之间模型队列照常消费 | 否则空档里工具结果、模型帧无人处理 |
 | 模型会话被 provider 关掉后**不主动重连**，下一帧用户音频触发 `connect()`（可重入，带退避，攒帧） | 静默时挂着 API 连接没必要 |
-| 离散输入统一为 `send(inputs)`，镜像 `Agent.reply(inputs=)`；`interrupt()` 为快捷方式 | `send_text` / `send_confirm` 合并；`ExternalExecutionResultEvent` 入口留着，M1 抛 NotImplementedError |
+| 离散输入统一为 `send(inputs)`，镜像 `Agent.reply(inputs=)`；`interrupt()` 为快捷方式 | `send_text` / `send_confirm` 合并；`ExternalExecutionResultEvent` 与对应控制帧已移除，外部执行落地时再加 |
 | 流式接口叫 `reply_stream(transport)`，async generator，起动即迭代 | 与 `Agent` 同名保持一致；结束条件不同（连接断才结束），文档中说明 |
 | `TurnAggregator` 作为实体注入（`aggregator=`），不经 config；pydantic `TurnConfig` 只存在于 app 层 | 它不依赖 agent 内部件，可子类化（pipecat 的 turn strategy 家族） |
 | `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |

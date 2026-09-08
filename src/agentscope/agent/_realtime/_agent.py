@@ -26,7 +26,6 @@ from ...event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
-    ExternalExecutionResultEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -390,24 +389,17 @@ class RealtimeAgent:
 
     async def send(
         self,
-        inputs: (
-            str
-            | Msg
-            | UserConfirmResultEvent
-            | UserInterruptEvent
-            | ExternalExecutionResultEvent
-        ),
+        inputs: (str | Msg | UserConfirmResultEvent | UserInterruptEvent),
     ) -> None:
         """Feed the agent anything that is not audio.
 
         Mirrors :meth:`Agent.reply`'s ``inputs``: a text turn (which cuts
         off any reply in progress first), the outcome of a permission
-        prompt, an interrupt, or the result of a tool run elsewhere.
+        prompt, or an interrupt.
 
         Raises:
             `NotImplementedError`: For a text turn when the provider takes
-                no text input, or for external execution results, which
-                are not supported yet.
+                no text input.
         """
         match inputs:
             case UserInterruptEvent():
@@ -418,11 +410,6 @@ class RealtimeAgent:
                     future = self._confirmations.get(result.tool_call.id)
                     if future and not future.done():
                         future.set_result(result)
-
-            case ExternalExecutionResultEvent():
-                raise NotImplementedError(
-                    "External tool execution is not supported yet.",
-                )
 
             case str() | Msg():
                 if not self.model.supports_text_input:
@@ -519,8 +506,6 @@ class RealtimeAgent:
                 await self.send(UserConfirmResultEvent(**frame.data))
             case ControlFrameType.INTERRUPT:
                 await self.send(UserInterruptEvent())
-            case ControlFrameType.EXTERNAL_EXECUTION_RESULT:
-                await self.send(ExternalExecutionResultEvent(**frame.data))
             case _:
                 logger.debug("RealtimeAgent: ignoring %s frame", frame.type)
 
@@ -683,7 +668,11 @@ class RealtimeAgent:
                 self._finish_reply(ReplyFinishedReason.ERROR)
 
             case me.SessionEndedEvent():
-                pass  # the events() iterator ends right after this
+                # The events() iterator ends right after this.
+                logger.info(
+                    "RealtimeAgent: model closed the session (%s)",
+                    event.reason,
+                )
 
     def _on_transcription(self, event: me.InputTranscriptionEvent) -> None:
         """Record a settled user turn, merging a split one back together."""

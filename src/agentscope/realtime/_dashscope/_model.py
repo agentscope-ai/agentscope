@@ -79,11 +79,6 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         self._tool_args: dict[str, str] = {}
         self._tool_names: dict[str, str] = {}
 
-    @property
-    def turn_detection_enabled(self) -> bool:
-        """Whether the provider decides turn boundaries."""
-        return self.parameters.turn_detection != "none"
-
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

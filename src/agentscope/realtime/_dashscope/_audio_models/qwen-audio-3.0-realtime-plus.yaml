@@ -14,7 +14,6 @@ input_sample_rate: 16000
 output_sample_rate: 24000
 
 supports_tools: true
-supports_session_resumption: false
 
 # Turns and cumulative audio seconds both apply; the provider discards
 # the oldest turn once either is exceeded.

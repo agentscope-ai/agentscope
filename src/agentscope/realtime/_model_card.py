@@ -60,10 +60,6 @@ class RealtimeModelCard(BaseModel):
         default=False,
         description="Whether this model accepts tool schemas.",
     )
-    supports_session_resumption: bool = Field(
-        default=False,
-        description="Whether a previous session can be resumed by handle.",
-    )
 
     # Context limits. Providers use different units and several can apply
     # at once, so all are optional; ``None`` means unlimited or unknown.

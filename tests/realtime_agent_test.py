@@ -89,11 +89,6 @@ class ScriptedModel(RealtimeModelBase):
         self._open = asyncio.Event()
         self._requested = asyncio.Event()
 
-    @property
-    def turn_detection_enabled(self) -> bool:
-        """The provider owns turn boundaries unless a VAD is given."""
-        return True
-
     async def connect(
         self,
         context: list[Msg],

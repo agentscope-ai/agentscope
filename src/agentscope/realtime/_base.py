@@ -138,12 +138,6 @@ class RealtimeModelBase(ABC):
         """The PCM rate of the audio in :class:`AudioDelta`, in Hz."""
         return self.card.output_sample_rate
 
-    @property
-    @abstractmethod
-    def turn_detection_enabled(self) -> bool:
-        """Whether the provider decides turn boundaries. When ``False``
-        the caller owns endpointing and must call :meth:`commit_turn`."""
-
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -205,10 +199,8 @@ class RealtimeModelBase(ABC):
 
     @abstractmethod
     async def commit_turn(self) -> None:
-        """Declare the user turn finished.
-
-        Only called when :attr:`turn_detection_enabled` is ``False``.
-        """
+        """Declare the user turn finished. Only called when the caller owns
+        endpointing, i.e. the session was opened with turn detection off."""
 
     # ------------------------------------------------------------------
     # Response control
