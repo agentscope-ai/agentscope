@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The credential factory class."""
-
 from typing import Annotated, Type, Union, get_args, get_type_hints
 
 from pydantic import TypeAdapter, Field
