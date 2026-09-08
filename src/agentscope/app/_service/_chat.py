@@ -941,14 +941,17 @@ class ChatService:
                     tools = ", ".join(t.name for t in channel_tools)
                     chat_id = session_record.source_chat_id or ""
                     kind = await channel.chat_kind(chat_id)
-                    name = await channel.chat_name(chat_id)
+                    name = (
+                        session_record.source_chat_name
+                        or await channel.chat_name(chat_id)
+                    )
                     where = f' named "{name}"' if name else ""
                     attachment += (
-                        f" This session is bound to a chat{where} on the "
-                        f"{channel.display_name} platform: the messages, "
-                        f"images and files people send there are relayed "
-                        f"to you here, and your replies are delivered "
-                        f"back to that same chat."
+                        f" This session is bound to a chat{where} (id "
+                        f"{chat_id!r}) on the {channel.display_name} "
+                        f"platform: the messages, images and files people "
+                        f"send there are relayed to you here, and your "
+                        f"replies are delivered back to that same chat."
                     )
                     if kind is ChatKind.GROUP:
                         attachment += (
@@ -964,7 +967,8 @@ class ChatService:
                     if tools:
                         attachment += (
                             f" You also have these {channel.display_name} "
-                            f"tools available: {tools}."
+                            f"tools available: {tools}. Pass this chat's id "
+                            f"as their target to act on this chat."
                         )
 
                 attachment = (

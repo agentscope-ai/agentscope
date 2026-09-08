@@ -1,20 +1,19 @@
 # -*- coding: utf-8 -*-
 """DingTalk channel using the official Stream SDK.
 
-The Stream SDK owns the long-lived inbound connection. Markdown replies use
-the short-lived ``sessionWebhook`` included in an inbound callback. Stable
-target sends, media transfer, cards, and user search use DingTalk OpenAPI.
+The Stream SDK owns the long-lived inbound connection. Everything outbound
+— replies, media transfer, cards, and user search — is DingTalk OpenAPI, so
+an instance that never connects can still send.
 """
 
 import asyncio
 import base64
 import binascii
-from dataclasses import dataclass
 import json
 import mimetypes
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +41,7 @@ from ._card import (
     _approval_card_data,
     _parse_card_callback,
     _resolved_card_data,
+    _tracking_id,
 )
 from ._openapi import _DingTalkOpenAPI
 
@@ -53,10 +53,15 @@ _CHATBOT_TOPIC = "/v1.0/im/bot/messages/get"
 _CARD_CALLBACK_TOPIC = "/v1.0/card/instances/callback"
 _GROUP_CONVERSATION = "2"
 _MAX_LEN = 4000
-_MARKDOWN_TITLE = "AgentScope"
+# The streaming AI card DingTalk publishes, and its Markdown variable —
+# the template the official typewriter example streams into.
+_AI_CARD_TEMPLATE_ID = "8aebdfb9-28f4-4a98-98f5-396c3dde41a0.schema"
+_AI_CARD_CONTENT_KEY = "content"
+# The general-purpose AI card, the published template that takes its
+# layout and buttons at send time — see ``_card`` for what it is sent.
+_APPROVAL_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
 _STATUS_POLL_INTERVAL = 0.2
 _STREAM_MIN_INTERVAL = 0.3
-_STREAM_MAX_CONTENT_BYTES = 1024
 _STREAM_FALLBACK_NOTICE = (
     "Streaming stopped. The complete reply follows as a Markdown message."
 )
@@ -64,14 +69,6 @@ _DEFAULT_MAX_MEDIA_BYTES = 10 * 1024 * 1024
 _MEDIA_MESSAGE_TYPES = frozenset(
     {"audio", "file", "picture", "richText", "video"},
 )
-
-
-@dataclass(frozen=True, slots=True)
-class _SessionWebhook:
-    """A callback-scoped reply URL and its expiration time."""
-
-    url: str
-    expires_at_ms: int | None
 
 
 class DingTalkChannel(ChannelBase):
@@ -124,19 +121,22 @@ class DingTalkChannel(ChannelBase):
             "outbound attachment",
         )
         approval_card_template_id: str = Field(
-            default="",
+            default=_APPROVAL_CARD_TEMPLATE_ID,
             title="Approval card template ID",
             description="DingTalk Card Platform template used for tool "
-            "approval. Send tools are available only when configured.",
+            "approval. Defaults to the published card the channel builds "
+            "its own layout on; tool calls needing approval stall if it "
+            "is cleared.",
         )
         streaming_card_template_id: str = Field(
-            default="",
+            default=_AI_CARD_TEMPLATE_ID,
             title="Streaming card template ID",
-            description="Optional DingTalk AI Card template used for "
-            "streaming replies. Replies use normal Markdown when empty.",
+            description="DingTalk AI Card template used for streaming "
+            "replies. Defaults to the public template the official SDK "
+            "uses; clear it to reply in plain Markdown instead.",
         )
         streaming_card_key: str = Field(
-            default="content",
+            default=_AI_CARD_CONTENT_KEY,
             min_length=1,
             title="Streaming card content key",
             description="Template variable key of the AI Card streaming "
@@ -188,7 +188,6 @@ class DingTalkChannel(ChannelBase):
             ]
             | None
         ) = None
-        self._session_webhooks: dict[str, _SessionWebhook] = {}
         self._chat_names: dict[str, str] = {}
 
     @property
@@ -218,12 +217,7 @@ class DingTalkChannel(ChannelBase):
         stream_task: asyncio.Task[Any] | None = None
         ever_connected = False
         try:
-            self._http = self._new_http_client()
-            self._openapi = _DingTalkOpenAPI(
-                self._client_id,
-                self._client_secret,
-                self._http,
-            )
+            self._api()
             self._stream_client = self._new_stream_client()
             stream_task = asyncio.create_task(self._stream_client.start())
             while not stream_task.done():
@@ -268,6 +262,32 @@ class DingTalkChannel(ChannelBase):
             self._openapi = None
             self.status.state = "stopped"
 
+    def _api(self) -> _DingTalkOpenAPI:
+        """Return the OpenAPI client, building it on first use.
+
+        Everything outbound is plain REST, so an instance built by
+        :class:`~agentscope.app.channel.ChannelClients` — one that never
+        runs ``start_listening`` — must reach DingTalk too.
+
+        Returns:
+            `_DingTalkOpenAPI`: This channel's OpenAPI client.
+        """
+        if self._openapi is None:
+            self._http = self._new_http_client()
+            self._openapi = _DingTalkOpenAPI(
+                self._client_id,
+                self._client_secret,
+                self._http,
+            )
+        return self._openapi
+
+    async def aclose(self) -> None:
+        """Close an HTTP client opened outside the connection loop."""
+        if self._http is not None:
+            await self._http.aclose()
+        self._http = None
+        self._openapi = None
+
     async def send_response(
         self,
         event: ChannelEvent,
@@ -296,8 +316,10 @@ class DingTalkChannel(ChannelBase):
             reply_id = getattr(agent_event, "reply_id", None)
             if reply_id is not None:
                 if reply is None:
+                    # The reply opens with the agent's own name; keep it,
+                    # an approval card names who asked.
                     reply = Msg(
-                        name="assistant",
+                        name=getattr(agent_event, "name", "") or "assistant",
                         role="assistant",
                         content=[],
                     )
@@ -324,9 +346,6 @@ class DingTalkChannel(ChannelBase):
                 if isinstance(block, TextBlock)
             )
             if not text:
-                continue
-            if not self._fits_streaming_card(text):
-                stream_failed = True
                 continue
             if stream_ref is None:
                 stream_ref = await self._open_streaming_card(event.chat_id)
@@ -357,16 +376,15 @@ class DingTalkChannel(ChannelBase):
                     continue
                 for part in self._split_long_message(block.text):
                     if part:
-                        await self._send_text(event.chat_id, part)
+                        await self._api().send_text(event.chat_id, part)
             elif isinstance(block, DataBlock):
                 await self._send_data(event.chat_id, block)
         if confirm is not None:
-            await self._present_confirm(event, confirm)
-
-    @staticmethod
-    def _fits_streaming_card(text: str) -> bool:
-        """Whether a full Markdown update fits DingTalk's request limit."""
-        return len(text.encode("utf-8")) <= _STREAM_MAX_CONTENT_BYTES
+            await self._present_confirm(
+                event,
+                confirm,
+                reply.name if reply else "",
+            )
 
     def _has_streaming_text(self, reply: Msg) -> bool:
         """Whether the partial reply contains text enabled for display."""
@@ -395,9 +413,7 @@ class DingTalkChannel(ChannelBase):
 
     async def _open_streaming_card(self, chat_id: str) -> str | None:
         """Create and deliver a configured AI streaming card."""
-        if self._openapi is None:
-            return None
-        return await self._openapi.create_streaming_card(
+        return await self._api().create_streaming_card(
             chat_id,
             self._config.streaming_card_template_id,
             self._config.streaming_card_key,
@@ -412,9 +428,7 @@ class DingTalkChannel(ChannelBase):
         is_error: bool = False,
     ) -> bool:
         """Write the complete Markdown value to one AI streaming card."""
-        if self._openapi is None or not self._fits_streaming_card(text):
-            return False
-        return await self._openapi.stream_card(
+        return await self._api().stream_card(
             out_track_id,
             self._config.streaming_card_key,
             text,
@@ -515,19 +529,13 @@ class DingTalkChannel(ChannelBase):
         )
 
         backend = workspace.get_backend()
-        tools: list["ToolBase"] = [
+        return [
             ListConversations(self, backend),
             ListUsers(self, backend),
+            SendMessage(self, backend),
+            SendFile(self, backend),
+            SendImage(self, backend),
         ]
-        if self._config.approval_card_template_id:
-            tools.extend(
-                [
-                    SendMessage(self, backend),
-                    SendFile(self, backend),
-                    SendImage(self, backend),
-                ],
-            )
-        return tools
 
     async def search_users(
         self,
@@ -543,10 +551,7 @@ class DingTalkChannel(ChannelBase):
         Returns:
             `list[dict[str, Any]]`: Basic visible user profiles.
         """
-        if self._openapi is None:
-            logger.warning("DingTalk OpenAPI client is not running")
-            return []
-        return await self._openapi.search_users(query, limit)
+        return await self._api().search_users(query, limit)
 
     async def send_message_to(self, target: str, text: str) -> bool:
         """Send Markdown text to an encoded DingTalk target.
@@ -558,10 +563,7 @@ class DingTalkChannel(ChannelBase):
         Returns:
             `bool`: Whether DingTalk accepted the message.
         """
-        if self._openapi is None:
-            logger.warning("DingTalk OpenAPI client is not running")
-            return False
-        return await self._openapi.send_text(target, text)
+        return await self._api().send_text(target, text)
 
     async def send_file_to(
         self,
@@ -579,13 +581,10 @@ class DingTalkChannel(ChannelBase):
         Returns:
             `bool`: Whether DingTalk accepted the file.
         """
-        if self._openapi is None:
-            logger.warning("DingTalk OpenAPI client is not running")
-            return False
         if len(data) > self._config.max_media_bytes:
             logger.warning("DingTalk outbound media exceeds the size limit")
             return False
-        return await self._openapi.send_media(
+        return await self._api().send_media(
             target,
             data,
             self._safe_file_name(file_name),
@@ -608,9 +607,6 @@ class DingTalkChannel(ChannelBase):
         Returns:
             `bool`: Whether DingTalk accepted the image.
         """
-        if self._openapi is None:
-            logger.warning("DingTalk OpenAPI client is not running")
-            return False
         if len(data) > self._config.max_media_bytes:
             logger.warning("DingTalk outbound media exceeds the size limit")
             return False
@@ -619,7 +615,7 @@ class DingTalkChannel(ChannelBase):
         if not media_type.startswith("image/"):
             logger.warning("DingTalk SendImage requires an image file")
             return False
-        return await self._openapi.send_media(
+        return await self._api().send_media(
             target,
             data,
             safe_name,
@@ -810,18 +806,26 @@ class DingTalkChannel(ChannelBase):
         self,
         event: ChannelEvent,
         request: RequireUserConfirmEvent,
+        agent_name: str,
     ) -> None:
         """Create one approval card for each pending tool call.
 
         Args:
             event (`ChannelEvent`): Chat receiving the cards.
             request (`RequireUserConfirmEvent`): Pending tool calls.
+            agent_name (`str`): The agent that asked for approval.
         """
         template_id = self._config.approval_card_template_id
-        if not template_id or self._openapi is None:
+        if not template_id:
             logger.error(
                 "DingTalk '%s' cannot deliver tool approval cards",
                 self._channel_id,
+            )
+            # The run is parked on an approval nobody can give. Say so
+            # here, or the chat simply goes quiet.
+            await self._api().send_text(
+                event.chat_id,
+                "无法展示工具审批卡片：审批卡片模板为空，请管理员配置。",
             )
             return
         approver_id = (
@@ -830,27 +834,17 @@ class DingTalkChannel(ChannelBase):
             else ""
         )
         for tool in request.tool_calls:
-            card_data = _approval_card_data(
-                tool.id,
-                event.chat_id,
-                tool.name,
-                tool.input,
-                approver_id,
-                str(event.metadata.get("agent_id") or ""),
-                str(event.metadata.get("session_id") or ""),
-            )
-            out_track_id = await self._openapi.create_approval_card(
+            out_track_id = await self._api().create_approval_card(
                 event.chat_id,
                 approver_id,
                 template_id,
-                card_data,
+                _approval_card_data(tool, agent_name),
+                _tracking_id(tool.id),
             )
             if out_track_id is None:
-                await self._send_text(
+                await self._api().send_text(
                     event.chat_id,
-                    "DingTalk could not present the tool approval card. "
-                    "Please ask the administrator to verify the card "
-                    "template and application permissions.",
+                    "工具审批卡片投放失败，请管理员检查卡片模板与应用权限。",
                 )
 
     async def _on_card_callback(self, payload: dict[str, Any]) -> None:
@@ -861,11 +855,13 @@ class DingTalkChannel(ChannelBase):
         """
         decision = _parse_card_callback(payload)
         if decision is None:
-            logger.warning("DingTalk ignored an invalid card callback")
-            return
-        if decision.approver_id and decision.user_id != decision.approver_id:
+            # The payload carries the clicker, the conversation and
+            # whatever the card was built with; name the card instead.
             logger.warning(
-                "DingTalk ignored an approval from an unexpected user",
+                "DingTalk '%s' ignored a card callback on '%s' from '%s'",
+                self._channel_id,
+                payload.get("outTrackId"),
+                payload.get("userId"),
             )
             return
         if self._emit is None:
@@ -882,11 +878,10 @@ class DingTalkChannel(ChannelBase):
                 actor=decision.user_id,
             ),
         )
-        if self._openapi is not None:
-            await self._openapi.update_approval_card(
-                decision.out_track_id,
-                _resolved_card_data(decision.approved),
-            )
+        await self._api().update_approval_card(
+            decision.out_track_id,
+            _resolved_card_data(decision.approved),
+        )
 
     async def _on_callback(self, payload: dict[str, Any]) -> None:
         """Normalise a DingTalk robot callback and emit it.
@@ -920,7 +915,6 @@ class DingTalkChannel(ChannelBase):
         title = str(payload.get("conversationTitle") or "")
         sender_name = str(payload.get("senderNick") or "")
         self._chat_names[chat_id] = title if is_group else sender_name
-        self._cache_session_webhook(chat_id, payload)
         content = await self._parse_content(payload)
         if not content or self._emit is None:
             return
@@ -1035,10 +1029,7 @@ class DingTalkChannel(ChannelBase):
         Returns:
             `DataBlock | None`: Downloaded media, or ``None`` on failure.
         """
-        if self._openapi is None:
-            logger.warning("DingTalk OpenAPI client is not running")
-            return None
-        result = await self._openapi.download_media(
+        result = await self._api().download_media(
             download_code,
             self._config.max_media_bytes,
         )
@@ -1068,9 +1059,6 @@ class DingTalkChannel(ChannelBase):
         if not isinstance(block.source, Base64Source):
             logger.warning("DingTalk cannot send URL data blocks as files")
             return False
-        if self._openapi is None:
-            logger.warning("DingTalk OpenAPI client is not running")
-            return False
         try:
             data = base64.b64decode(block.source.data, validate=True)
         except (binascii.Error, ValueError):
@@ -1086,7 +1074,7 @@ class DingTalkChannel(ChannelBase):
             extension = mimetypes.guess_extension(media_type) or ""
             fallback_name = f"file{extension}"
         file_name = self._safe_file_name(block.name or fallback_name)
-        return await self._openapi.send_media(
+        return await self._api().send_media(
             chat_id,
             data,
             file_name,
@@ -1116,111 +1104,3 @@ class DingTalkChannel(ChannelBase):
     def _safe_file_name(file_name: str) -> str:
         """Strip directory components from a platform filename."""
         return file_name.replace("\\", "/").rsplit("/", 1)[-1] or "file"
-
-    def _cache_session_webhook(
-        self,
-        chat_id: str,
-        payload: dict[str, Any],
-    ) -> None:
-        """Cache a trusted callback reply URL for the current process.
-
-        Args:
-            chat_id (`str`): Encoded DingTalk destination.
-            payload (`dict[str, Any]`): Inbound callback data.
-        """
-        url = str(payload.get("sessionWebhook") or "")
-        if not self._is_dingtalk_url(url):
-            return
-        raw_expiry = payload.get("sessionWebhookExpiredTime")
-        expires_at_ms: int | None = None
-        if raw_expiry not in (None, ""):
-            try:
-                expires_at_ms = int(str(raw_expiry))
-                if expires_at_ms < 100_000_000_000:
-                    expires_at_ms *= 1000
-            except (TypeError, ValueError):
-                logger.warning(
-                    "DingTalk '%s' received an invalid webhook expiration",
-                    self._channel_id,
-                )
-                return
-        self._session_webhooks[chat_id] = _SessionWebhook(
-            url=url,
-            expires_at_ms=expires_at_ms,
-        )
-
-    async def _send_text(self, chat_id: str, text: str) -> bool:
-        """Send Markdown through a webhook or stable OpenAPI target.
-
-        Args:
-            chat_id (`str`): Encoded DingTalk destination.
-            text (`str`): Markdown-formatted text to send.
-
-        Returns:
-            `bool`: Whether DingTalk accepted the request.
-        """
-        webhook = self._session_webhooks.get(chat_id)
-        now_ms = int(time.time() * 1000)
-        if webhook is None or (
-            webhook.expires_at_ms is not None
-            and webhook.expires_at_ms <= now_ms
-        ):
-            self._session_webhooks.pop(chat_id, None)
-            if self._openapi is not None:
-                return await self._openapi.send_text(chat_id, text)
-            logger.warning(
-                "DingTalk '%s' has no valid reply webhook for '%s'",
-                self._channel_id,
-                chat_id,
-            )
-            return False
-        if self._http is None:
-            logger.warning(
-                "DingTalk '%s' HTTP client is not running",
-                self._channel_id,
-            )
-            return False
-
-        try:
-            response = await self._http.post(
-                webhook.url,
-                json={
-                    "msgtype": "markdown",
-                    "markdown": {
-                        "title": _MARKDOWN_TITLE,
-                        "text": text,
-                    },
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            if result.get("errcode", 0) != 0:
-                logger.warning(
-                    "DingTalk '%s' rejected a session reply: code=%s",
-                    self._channel_id,
-                    result.get("errcode"),
-                )
-                return False
-            return True
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "DingTalk '%s' session reply failed",
-                self._channel_id,
-            )
-            return False
-
-    @staticmethod
-    def _is_dingtalk_url(url: str) -> bool:
-        """Return whether a callback URL belongs to DingTalk over HTTPS.
-
-        Args:
-            url (`str`): URL supplied in an inbound callback.
-
-        Returns:
-            `bool`: Whether the URL is safe to use as a session webhook.
-        """
-        parsed = urlparse(url)
-        hostname = (parsed.hostname or "").lower()
-        return parsed.scheme == "https" and (
-            hostname == "dingtalk.com" or hostname.endswith(".dingtalk.com")
-        )

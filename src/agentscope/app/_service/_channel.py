@@ -81,7 +81,7 @@ class ChannelService:
             )
 
         channel_id = _generate_id()
-        now = datetime.now().isoformat()
+        now = datetime.now()
         record = ChannelRecord(
             id=channel_id,
             channel_type=channel_type,
@@ -111,7 +111,7 @@ class ChannelService:
         updates.pop("credentials", None)
         updates.pop("channel_type", None)
         updated = record.model_copy(
-            update={**updates, "updated_at": datetime.now().isoformat()},
+            update={**updates, "updated_at": datetime.now()},
         )
         bot_id = self._types.extract_platform_bot_id(
             updated.channel_type,

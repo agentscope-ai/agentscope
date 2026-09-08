@@ -186,8 +186,6 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                 bindings=[ChannelBinding(match_value="*", agent_id=agent.id)],
             ),
             session=SessionSettings(chat_model_config={"type": "test"}),
-            created_at="t",
-            updated_at="t",
         )
         return user_id, agent, session, channel
 

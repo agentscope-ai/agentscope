@@ -197,6 +197,11 @@ class SessionRecord(_RecordBase):
     even on a background / scheduled wake, where no inbound message is
     available to supply it."""
 
+    source_chat_name: str | None = None
+    """For channel-created sessions, that chat's title when the platform
+    supplied one. Recorded because the name arrives with the inbound
+    message: a node that never holds the connection cannot look it up."""
+
     source_channel_id: str | None = None
     """For channel-created sessions, the owning channel id. Lets the
     output forwarder locate the channel adapter + presentation settings

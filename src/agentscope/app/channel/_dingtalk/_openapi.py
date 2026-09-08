@@ -14,7 +14,16 @@ from ...._logging import logger
 _API = "https://api.dingtalk.com/v1.0"
 _OAPI = "https://oapi.dingtalk.com"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
+# Enough of a refusal to name the offending field, not so much that a
+# rejected payload is echoed back into the log.
+_ERROR_BODY_CHARS = 500
 _SUPPORTED_FILE_TYPES = frozenset({"doc", "docx", "pdf", "rar", "xlsx", "zip"})
+# An AI card's creation call carries no content: it opens the card in
+# a running state, and the update that follows tells it what to render.
+# "Done rendering" is about the card's own progress, not about whether
+# an approval has been decided. Both go over the wire as strings.
+_AI_CARD_RENDERING = "1"
+_AI_CARD_RENDERED = "3"
 
 
 class _DingTalkOpenAPI:
@@ -150,6 +159,7 @@ class _DingTalkOpenAPI:
         approver_id: str,
         template_id: str,
         card_data: dict[str, str],
+        out_track_id: str = "",
     ) -> str | None:
         """Create and deliver one Stream-callback approval card.
 
@@ -159,17 +169,27 @@ class _DingTalkOpenAPI:
                 the card. Empty means normal audience visibility.
             template_id (`str`): Card Platform template identifier.
             card_data (`dict[str, str]`): Template parameter map.
+            out_track_id (`str`): Tracking id to pin on the card; a random
+                one when empty.
 
         Returns:
             `str | None`: The card's outbound tracking id, or ``None`` when
             creation or delivery fails.
         """
-        return await self._create_and_deliver_card(
+        track = await self._create_and_deliver_card(
             chat_id,
             template_id,
-            card_data,
+            {"flowStatus": _AI_CARD_RENDERING},
             approver_id,
+            out_track_id,
         )
+        if track is None:
+            return None
+        settled = await self.update_approval_card(
+            track,
+            {**card_data, "flowStatus": _AI_CARD_RENDERED},
+        )
+        return track if settled else None
 
     async def create_streaming_card(
         self,
@@ -257,6 +277,10 @@ class _DingTalkOpenAPI:
             {
                 "outTrackId": out_track_id,
                 "cardData": {"cardParamMap": card_data},
+                # Without this the map replaces the card's whole data, so
+                # every variable this update does not name comes back
+                # empty — the tool and its arguments included.
+                "cardUpdateOptions": {"updateCardDataByKey": True},
             },
             "card update",
         )
@@ -267,6 +291,7 @@ class _DingTalkOpenAPI:
         template_id: str,
         card_data: dict[str, str],
         recipient_id: str = "",
+        out_track_id: str = "",
     ) -> str | None:
         """Create a Card Platform instance and deliver it to a target."""
         if chat_id.startswith("group:"):
@@ -293,7 +318,7 @@ class _DingTalkOpenAPI:
         token = await self._access_token()
         if token is None:
             return None
-        out_track_id = uuid4().hex
+        out_track_id = out_track_id or uuid4().hex
         created = await self._request(
             "POST",
             f"{_API}/card/instances",
@@ -547,7 +572,16 @@ class _DingTalkOpenAPI:
                 headers=self._headers(token),
                 json=body,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # The status alone never says which field was wrong;
+                # DingTalk puts that in the body.
+                logger.warning(
+                    "DingTalk rejected %s with HTTP %s: %s",
+                    msg_key,
+                    response.status_code,
+                    response.text[:_ERROR_BODY_CHARS],
+                )
+                return False
             result = response.json()
             code = result.get("code")
             if code not in (None, "", 0, "0"):
@@ -577,7 +611,14 @@ class _DingTalkOpenAPI:
                 headers=self._headers(token),
                 json=body,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                logger.warning(
+                    "DingTalk rejected %s with HTTP %s: %s",
+                    operation,
+                    response.status_code,
+                    response.text[:_ERROR_BODY_CHARS],
+                )
+                return False
             result = response.json()
             code = result.get("code")
             if code not in (None, "", 0, "0"):
