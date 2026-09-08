@@ -2,6 +2,7 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-09] `INTE`:** OpenAI Realtime API supported in `RealtimeAgent` — `gpt-realtime` models with barge-in, truncation and tool calls.
 - **[2026-09] `FEAT` `Experimental`:** Realtime voice agent supported — full-duplex speech-to-speech via `RealtimeAgent` on the DashScope Realtime API (Qwen-Omni, Qwen-Audio-3.0), with barge-in and tool calls. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime)
 - **[2026-09] `FEAT`:** A2A protocol supported — chat with any remote A2A agent via `A2AAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/a2a)
 - **[2026-08] `FEAT`:** Pipeline supported — run multiple agents by a fixed logic behind one event stream. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/overview)
