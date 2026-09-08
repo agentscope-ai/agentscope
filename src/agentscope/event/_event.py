@@ -65,6 +65,7 @@ class EventType(StrEnum):
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
     USER_INPUT_AUDIO_START = "USER_INPUT_AUDIO_START"
+    USER_INPUT_AUDIO_END = "USER_INPUT_AUDIO_END"
     USER_INPUT_TRANSCRIPTION = "USER_INPUT_TRANSCRIPTION"
 
     CUSTOM = "CUSTOM"
@@ -578,6 +579,21 @@ class UserInputAudioStartEvent(EventBase):
     """ID of the user input item the provider assigned."""
 
 
+class UserInputAudioEndEvent(EventBase):
+    """The user stopped speaking, as detected by VAD. The transcript of
+    the turn follows in a :class:`UserInputTranscriptionEvent`."""
+
+    type: Literal[
+        EventType.USER_INPUT_AUDIO_END
+    ] = EventType.USER_INPUT_AUDIO_END
+    """Event type."""
+    session_id: str
+    """ID of the session this input belongs to."""
+    item_id: str
+    """ID of the user input item the provider assigned; empty when a local
+    VAD detected the end before the provider created the item."""
+
+
 class UserInputTranscriptionEvent(EventBase):
     """The settled transcript of one spoken user turn."""
 
@@ -622,6 +638,7 @@ AgentEvent: TypeAlias = (
     | UserInterruptEvent
     | ExternalExecutionResultEvent
     | UserInputAudioStartEvent
+    | UserInputAudioEndEvent
     | UserInputTranscriptionEvent
     | CustomEvent
 )

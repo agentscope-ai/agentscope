@@ -11,6 +11,8 @@ from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     ReplyEndEvent,
+    UserInputAudioEndEvent,
+    UserInputAudioStartEvent,
     UserInputTranscriptionEvent,
 )
 from agentscope.realtime import (
@@ -205,7 +207,8 @@ class FakeTransport(TransportBase):
 
 
 class EndOnSecondFrameVAD(VADBase):
-    """Reports the user stopping on the second chunk."""
+    """Reports the user starting on the first chunk and stopping on the
+    second."""
 
     sample_rate = 16000
 
@@ -213,8 +216,10 @@ class EndOnSecondFrameVAD(VADBase):
         self.seen = 0
 
     def push(self, pcm: bytes) -> SpeechTransition | None:
-        """ENDED on the second chunk, otherwise nothing."""
+        """STARTED on the first chunk, ENDED on the second, else nothing."""
         self.seen += 1
+        if self.seen == 1:
+            return SpeechTransition.STARTED
         return SpeechTransition.ENDED if self.seen == 2 else None
 
     def reset(self) -> None:
@@ -327,8 +332,9 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         )
 
     async def test_local_vad_owns_turns(self) -> None:
-        """Passing a VAD disables provider turn detection and commits the
-        turn when the VAD reports the user stopped."""
+        """Passing a VAD disables provider turn detection, reports the
+        user's speech as events and commits the turn when the VAD reports
+        the user stopped."""
         model = ScriptedModel([[]])
         agent = RealtimeAgent(
             "Friday",
@@ -336,9 +342,22 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             model,
             vad=EndOnSecondFrameVAD(),
         )
+        speech = []
         async with agent:
-            await self._collect(agent, FakeTransport(frames=3))
+            transport = FakeTransport(frames=3)
+            async with transport:
+                async for event in agent.reply_stream(transport):
+                    if isinstance(
+                        event,
+                        (UserInputAudioStartEvent, UserInputAudioEndEvent),
+                    ):
+                        speech.append((event.type, event.item_id))
 
+        # No provider item exists yet, so the local VAD's events carry none.
+        self.assertListEqual(
+            speech,
+            [("USER_INPUT_AUDIO_START", ""), ("USER_INPUT_AUDIO_END", "")],
+        )
         self.assertListEqual(
             model.calls,
             [
@@ -664,6 +683,14 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             events,
             [
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "USER_INPUT_AUDIO_END",
+                    "session_id": AnyString(),
+                    "item_id": "u1",
+                },
                 {
                     "id": AnyString(),
                     "created_at": AnyString(),

@@ -40,6 +40,7 @@ from ...event import (
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
+    UserInputAudioEndEvent,
     UserInputAudioStartEvent,
     UserInputTranscriptionEvent,
     UserInterruptEvent,
@@ -498,9 +499,23 @@ class RealtimeAgent:
             self._backlog.clear()
             pushed = True
 
+        # A local VAD sees the turn before the provider creates its item,
+        # so these carry no item id.
         if speech is SpeechTransition.STARTED:
+            self._emit(
+                UserInputAudioStartEvent(
+                    session_id=self.state.session_id,
+                    item_id="",
+                ),
+            )
             await self._barge_in()
         elif speech is SpeechTransition.ENDED:
+            self._emit(
+                UserInputAudioEndEvent(
+                    session_id=self.state.session_id,
+                    item_id="",
+                ),
+            )
             now = time.monotonic()
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
@@ -628,6 +643,12 @@ class RealtimeAgent:
                 await self._barge_in()
 
             case me.SpeechEndedEvent():
+                self._emit(
+                    UserInputAudioEndEvent(
+                        session_id=self.state.session_id,
+                        item_id=event.item_id,
+                    ),
+                )
                 # With provider turn detection this is also its commit.
                 now = time.monotonic()
                 self._metrics.user_speech_end_at = now

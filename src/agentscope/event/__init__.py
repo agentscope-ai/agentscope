@@ -36,6 +36,7 @@ from ._event import (
     CustomEvent,
     AgentEvent,
     UserInputAudioStartEvent,
+    UserInputAudioEndEvent,
     UserInputTranscriptionEvent,
     ConfirmResult,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "CustomEvent",
     "AgentEvent",
     "UserInputAudioStartEvent",
+    "UserInputAudioEndEvent",
     "UserInputTranscriptionEvent",
     "ConfirmResult",
 ]
