@@ -46,10 +46,12 @@ def _no_output(name: str) -> Msg:
     )
 
 
-def _confirm_request() -> RequireUserConfirmEvent:
+def _confirm_request(
+    reply_id: str = "executor-reply",
+) -> RequireUserConfirmEvent:
     """A tool call parked on a human."""
     return RequireUserConfirmEvent(
-        reply_id="executor-reply",
+        reply_id=reply_id,
         tool_calls=[
             ToolCallBlock(id="call-1", name="write_file", input="{}"),
         ],
@@ -63,10 +65,16 @@ class StubAgent:
     reminders the pipeline built reached the right agent.
     """
 
-    def __init__(self, name: str, script: list[list[Any]]) -> None:
+    def __init__(
+        self,
+        name: str,
+        script: list[list[Any]],
+        max_calls: int | None = None,
+    ) -> None:
         """Initialize the stub with one script entry per call."""
         self.name = name
         self.script = script
+        self.max_calls = max_calls
         self.state = SimpleNamespace(reply_id=f"{name}-reply")
         self.received: list[Any] = []
 
@@ -79,6 +87,8 @@ class StubAgent:
     ) -> AsyncGenerator[Any, None]:
         """Yield the next batch, holding the final message back unless it
         was asked for, the way ``Agent.reply_stream`` does."""
+        if self.max_calls is not None and len(self.received) >= self.max_calls:
+            raise AssertionError(f"{self.name} exceeded its call limit")
         self.received.append(inputs)
         batch = self.script[min(len(self.received) - 1, len(self.script) - 1)]
         for chunk in batch:
@@ -157,6 +167,132 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(executor.received), 1)
         self.assertEqual(len(verifier.received), 1)
 
+    async def test_executor_stops_after_structured_output_retries(
+        self,
+    ) -> None:
+        """An executor cannot retry a missing report indefinitely."""
+        executor = StubAgent(
+            "executor",
+            [[_no_output("executor")]],
+            max_calls=2,
+        )
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "executor failed to generate valid structured output "
+            "after 2 attempts",
+        ):
+            await self._run(pipe, self.query)
+
+        self.assertEqual(len(executor.received), 2)
+        self.assertListEqual(verifier.received, [])
+
+    async def test_verifier_stops_after_structured_output_retries(
+        self,
+    ) -> None:
+        """A verifier cannot retry a missing verdict indefinitely."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_no_output("verifier")]],
+            max_calls=2,
+        )
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "verifier failed to generate valid structured output "
+            "after 2 attempts",
+        ):
+            await self._run(pipe, self.query)
+
+        self.assertEqual(len(executor.received), 1)
+        self.assertEqual(len(verifier.received), 2)
+
+    async def test_verifier_counts_a_missing_final_message_as_retry(
+        self,
+    ) -> None:
+        """An empty verifier stream consumes the same retry budget."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[]], max_calls=2)
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "verifier failed to generate valid structured output "
+            "after 2 attempts",
+        ):
+            await self._run(pipe, self.query)
+
+        self.assertEqual(len(executor.received), 1)
+        self.assertEqual(len(verifier.received), 2)
+
+    async def test_executor_retry_budget_survives_hitl_resume(self) -> None:
+        """Parking does not reset the executor's consumed retry budget."""
+        request = _confirm_request()
+        executor = StubAgent(
+            "executor",
+            [
+                [_no_output("executor")],
+                [request],
+                [_no_output("executor")],
+            ],
+            max_calls=3,
+        )
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        await self._run(pipe, self.query)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "executor failed to generate valid structured output "
+            "after 2 attempts",
+        ):
+            await self._run(
+                pipe,
+                UserConfirmResultEvent(
+                    reply_id="executor-reply",
+                    confirm_results=[],
+                ),
+            )
+
+        self.assertEqual(len(executor.received), 3)
+        self.assertListEqual(verifier.received, [])
+
+    async def test_verifier_retry_budget_survives_hitl_resume(self) -> None:
+        """Parking does not reset the verifier's consumed retry budget."""
+        request = _confirm_request("verifier-reply")
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [
+                [_no_output("verifier")],
+                [request],
+                [_no_output("verifier")],
+            ],
+            max_calls=3,
+        )
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        await self._run(pipe, self.query)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "verifier failed to generate valid structured output "
+            "after 2 attempts",
+        ):
+            await self._run(
+                pipe,
+                UserConfirmResultEvent(
+                    reply_id="verifier-reply",
+                    confirm_results=[],
+                ),
+            )
+
+        self.assertEqual(len(executor.received), 1)
+        self.assertEqual(len(verifier.received), 3)
+
     async def test_reprompts_a_verifier_that_skips_the_tool(self) -> None:
         """A final message with no verdict is not a refusal: the verifier
         is reminded rather than the executor being sent back."""
@@ -165,7 +301,7 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             "verifier",
             [[_no_output("verifier")], [_verdict("pass")]],
         )
-        pipe = GoalPipeline(executor, verifier)
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
 
         await self._run(pipe, self.query)
 
@@ -185,7 +321,7 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             [[_no_output("executor")], [_report()]],
         )
         verifier = StubAgent("verifier", [[_verdict("pass")]])
-        pipe = GoalPipeline(executor, verifier)
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
 
         await self._run(pipe, self.query)
 
