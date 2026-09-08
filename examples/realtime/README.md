@@ -11,7 +11,7 @@ Talk to a DashScope speech-to-speech model through your microphone.
   tool calls with permission prompts, per-turn latency metrics.
 
 The agent owns the model session, you own the transport, and one
-`agent.run(transport)` borrows both until the transport ends.
+`agent.reply_stream(transport)` borrows both until the transport ends.
 
 ## Prerequisites
 

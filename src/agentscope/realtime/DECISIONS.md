@@ -19,15 +19,16 @@
 | 不复用 `Agent` 实现级联 | 用户决定 |
 | VAD 归 agent（`RealtimeAgent(vad=)`），不归 transport；无客户端上报的 speech 字段 | livekit 放 session 层、pipecat 主动从 transport 搬出、无一家采信浏览器 speech |
 | 给了 `vad=` 就关 provider 的 turn detection，一个来源判回合；`TurnMode` 枚举删除，由 `vad is None` 推导 | livekit `_resolve_rt_turn_detection_enabled`；pipecat 警告双源发重复帧 |
-| transport 由创建者拥有，`run(transport)` 只借用，不 start/close | livekit `start(room=)` 不关 room；三者平级：agent / transport / run |
-| 下行泵归 agent（`connect()` 起），上行泵归 `run()`；两次 run 之间模型队列照常消费 | 否则空档里工具结果、模型帧无人处理 |
+| transport 由创建者拥有，`reply_stream(transport)` 只借用，不 start/close | livekit `start(room=)` 不关 room；三者平级：agent / transport / run |
+| 下行泵归 agent（`connect()` 起），上行泵归 `reply_stream()`；两次 reply_stream 之间模型队列照常消费 | 否则空档里工具结果、模型帧无人处理 |
 | 模型会话被 provider 关掉后**不主动重连**，下一帧用户音频触发 `connect()`（可重入，带退避，攒帧） | 静默时挂着 API 连接没必要 |
 | 离散输入统一为 `send(inputs)`，镜像 `Agent.reply(inputs=)`；`interrupt()` 为快捷方式 | `send_text` / `send_confirm` 合并；`ExternalExecutionResultEvent` 入口留着，M1 抛 NotImplementedError |
-| 流式接口叫 `run`，async generator，起动即迭代 | 与 `reply_stream` 结束条件不同（连接断才结束），不复用其名 |
+| 流式接口叫 `reply_stream(transport)`，async generator，起动即迭代 | 与 `Agent` 同名保持一致；结束条件不同（连接断才结束），文档中说明 |
 | `TurnAggregator` 作为实体注入（`aggregator=`），不经 config；pydantic `TurnConfig` 只存在于 app 层 | 它不依赖 agent 内部件，可子类化（pipecat 的 turn strategy 家族） |
 | `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |
 | provider 连接异常由 adapter 翻译成 `ModelDisconnectedError`，agent 只认它、不 import websockets；发送失败 = 断开，攒帧等下一帧重连，上行泵不死 | 真机复现：DashScope 180s 空闲关闭后 `push_audio` 撞上已关 socket，比下行泵察觉更早 |
-| `run()` 入口校验 transport / VAD 与 model 的采样率，不一致直接拒绝；agent 不做重采样 | Copilot review；重采样归 transport |
+| transport 没有 `send_event`：下行给客户端的智能体事件由 `reply_stream()` 的消费者（服务层）转发，transport 只管音频与上行控制帧 | 原 `send_event(dict)` 无调用方、类型也不明；浏览器 transport 落地时若确需经 transport 下发再加，且类型为 `AgentEvent` |
+| `reply_stream()` 入口校验 transport / VAD 与 model 的采样率，不一致直接拒绝；agent 不做重采样 | Copilot review；重采样归 transport |
 | 工具结果只取 `ToolResponse.content`，`ToolChunk` 仅用于展示 | `ToolResponse` 是完整结果（与 `Agent` 一致），否则流式工具的文本会重复 |
 | `RealtimeAgent` / `TurnAggregator` / `TurnMetrics` 放 `agent/_realtime/`；`realtime/` 只放模型侧（model、card、事件、transport、VAD） | 与 `Agent` 同目录；`agent/` 单向依赖 `realtime/` |
 | 模型事件统一 `Event` 后缀（`AudioDeltaEvent` 等），基类 `ModelEvent` | 对齐 `agentscope.event` 的命名 |

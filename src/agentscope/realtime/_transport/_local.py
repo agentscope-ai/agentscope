@@ -151,9 +151,6 @@ class LocalAudioTransport(TransportBase):
                 self._first_played_at = None
             self._pending.extend(pcm)
 
-    async def send_event(self, event: dict) -> None:
-        """No peer to send to; events are consumed via the agent."""
-
     def _on_output(
         self,
         outdata: Any,

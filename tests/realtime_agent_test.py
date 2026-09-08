@@ -193,9 +193,6 @@ class FakeTransport(TransportBase):
         """Remember which item is playing."""
         self.item = item_id
 
-    async def send_event(self, event: dict) -> None:
-        """No peer to send to."""
-
     async def clear_audio(self) -> PlayoutPosition:
         """Count cuts and report the fixed playout position."""
         self.cleared += 1
@@ -239,7 +236,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         """Run the agent over *transport* and summarise the events."""
         summary: list[tuple[str, Any]] = []
         async with transport:
-            async for event in agent.run(transport):
+            async for event in agent.reply_stream(transport):
                 if isinstance(event, ReplyEndEvent):
                     summary.append(("reply_end", event.finished_reason))
                 elif isinstance(event, UserInputTranscriptionEvent):
@@ -488,7 +485,7 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
         async with agent:
             transport = FakeTransport(frames=4)
             async with transport:
-                async for event in agent.run(transport):
+                async for event in agent.reply_stream(transport):
                     match event:
                         case ToolCallStartEvent():
                             events.append(("call_start", event.tool_call_name))
@@ -659,7 +656,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
         async with agent:
             transport = FakeTransport(frames=6)
             async with transport:
-                async for event in agent.run(transport):
+                async for event in agent.reply_stream(transport):
                     events.append(event.model_dump(mode="json"))
 
         self.assertListEqual(
@@ -966,7 +963,7 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
             transport = FakeTransport(frames=3)
             with self.assertLogs("as", level="INFO") as logs:
                 async with transport:
-                    async for _ in agent.run(transport):
+                    async for _ in agent.reply_stream(transport):
                         pass
 
         self.assertEqual(model.sessions, 2)

@@ -105,14 +105,14 @@ class RealtimeAgent:
 
     Unlike :class:`~agentscope.agent.Agent` it is bidirectional and has no
     request/reply boundary — audio flows in continuously while events flow
-    out of :meth:`run`.
+    out of :meth:`reply_stream`.
 
     Three lifetimes are kept apart on purpose. The agent owns the model
     session and the state; a transport is owned by whoever created it; a
-    :meth:`run` borrows both for as long as both are alive. So a client
-    can drop and reconnect without losing the model session, and the model
-    session can time out during a long silence and be re-established on
-    the next word without touching the transport.
+    :meth:`reply_stream` borrows both for as long as both are alive. So a
+    client can drop and reconnect without losing the model session, and
+    the model session can time out during a long silence and be
+    re-established on the next word without touching the transport.
 
     The public methods are the only entry point for discrete input. A
     transport carrying a browser's ``ControlFrame`` calls exactly those
@@ -126,14 +126,14 @@ class RealtimeAgent:
             agent = RealtimeAgent("Friday", "Be brief.", model)
             async with agent:                              # model session
                 async with LocalAudioTransport() as t:     # sound card
-                    async for event in agent.run(t):       # this call
+                    async for event in agent.reply_stream(t):       # this call
                         print(event)
     """
 
     def __init__(
         self,
         name: str,
-        sys_prompt: str,
+        system_prompt: str,
         model: RealtimeModelBase,
         toolkit: Toolkit | None = None,
         state: AgentState | None = None,
@@ -145,7 +145,7 @@ class RealtimeAgent:
         Args:
             name (`str`):
                 Display name stamped on assistant messages and events.
-            sys_prompt (`str`):
+            system_prompt (`str`):
                 System instructions sent to the model on connect, with the
                 toolkit's skill instructions appended.
             model (`RealtimeModelBase`):
@@ -175,7 +175,7 @@ class RealtimeAgent:
                 omitted.
         """
         self.name = name
-        self.sys_prompt = sys_prompt
+        self.system_prompt = system_prompt
         self.model = model
         self.toolkit = toolkit
         self.state = state or AgentState()
@@ -221,7 +221,7 @@ class RealtimeAgent:
         if self._connected:
             return
 
-        instructions = self.sys_prompt
+        instructions = self.system_prompt
         tools = None
         if self.toolkit is not None:
             groups = self.state.tool_context.activated_groups
@@ -313,7 +313,10 @@ class RealtimeAgent:
     # Lifecycle: one transport
     # ------------------------------------------------------------------
 
-    async def run(self, transport: TransportBase) -> AsyncIterator[AgentEvent]:
+    async def reply_stream(
+        self,
+        transport: TransportBase,
+    ) -> AsyncIterator[AgentEvent]:
         """Pump *transport* and yield agent events until it ends.
 
         The transport is borrowed, not owned: it must already be started
@@ -327,7 +330,7 @@ class RealtimeAgent:
         matters.
         """
         if self._transport is not None:
-            raise RuntimeError("RealtimeAgent.run is already active.")
+            raise RuntimeError("RealtimeAgent.reply_stream is already active.")
         # Audio is forwarded as-is in both directions, so the rates must
         # already agree; resampling belongs to the transport, not here.
         pairs = {
@@ -533,8 +536,8 @@ class RealtimeAgent:
         detection, by the VAD's own debounce otherwise.
 
         Reached from the uplink pump, the downlink pump, :meth:`send` and
-        :meth:`run`'s exit, so it is serialised; the losers find the reply
-        already closed and return.
+        the exit of :meth:`reply_stream`, so it is serialised; the losers
+        find the reply already closed and return.
         """
         async with self._barge_lock:
             await self._barge_in_locked()
@@ -848,7 +851,7 @@ class RealtimeAgent:
         )
 
     def _emit(self, event: AgentEvent) -> None:
-        """Queue one event for :meth:`run`."""
+        """Queue one event for :meth:`reply_stream`."""
         self._out.put_nowait(event)
 
     # ------------------------------------------------------------------

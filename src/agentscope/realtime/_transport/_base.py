@@ -100,10 +100,6 @@ class TransportBase(ABC):
         """
 
     @abstractmethod
-    async def send_event(self, event: dict) -> None:
-        """Send one control event downstream."""
-
-    @abstractmethod
     async def clear_audio(self) -> PlayoutPosition:
         """Cut playback short and report how much was actually heard.
 

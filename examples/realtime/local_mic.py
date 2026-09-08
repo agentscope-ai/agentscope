@@ -59,7 +59,7 @@ async def main() -> None:
 
     agent = RealtimeAgent(
         name="Friday",
-        sys_prompt="你是一个中文语音助手，回答尽量简短。",
+        system_prompt="你是一个中文语音助手，回答尽量简短。",
         model=model,
         toolkit=Toolkit(tools=[Bash(), Edit(), Write(), Read()]),
     )
@@ -72,9 +72,9 @@ async def main() -> None:
 
     print(f"[{name}] listening... (Ctrl-C to quit)")
     # The agent owns the model session, we own the transport, and one
-    # run() borrows both until the transport ends.
+    # reply_stream() borrows both until the transport ends.
     async with agent, transport:
-        async for event in agent.run(transport):
+        async for event in agent.reply_stream(transport):
             match event:
                 case UserInputAudioStartEvent():
                     print("\n[you] ...", end="", flush=True)
