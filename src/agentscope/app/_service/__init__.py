@@ -8,6 +8,10 @@ from ._access import (
     ResourceAccessService,
 )
 from ._channel import ChannelService
+from ._credential_binding import (
+    CredentialBindingError,
+    CredentialBindingService,
+)
 from ._chat import ChatService
 from ._embedding import get_embedding_model
 from ._index_sweeper import IndexSweeper
@@ -27,6 +31,8 @@ from ._workspace import GitStatus, WorkspaceService, WorkspaceStatus
 __all__ = [
     "AgentView",
     "ChannelService",
+    "CredentialBindingService",
+    "CredentialBindingError",
     "ChatService",
     "CredentialView",
     "GitStatus",

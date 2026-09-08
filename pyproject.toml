@@ -25,7 +25,7 @@ dependencies = [
     "docstring_parser",
     "filetype",
     "json5",
-    "json_repair",
+    "json_repair[schema]>=0.63.4",
     "mcp<2.0.0",
     "httpx",
     "numpy",
@@ -99,8 +99,16 @@ workspace = [
 # ------------ Tools ------------
 # Ships the ``rg`` binary for the builtin Grep tool on LocalWorkspace
 # (remote sandboxes install ripgrep inside the sandbox instead).
+# 15.x ships wheels only for macOS-arm64 and manylinux_2_39 x86_64, so
+# everything else (Windows, glibc<2.39, musl, aarch64) falls back to the
+# Rust sdist and fails without a toolchain (#2504). 14.0 lacks those
+# wheels too, hence the lower bound. Lift once upstream restores them.
 tools = [
-    "ripgrep",
+    "ripgrep>=14.1,<15",
+]
+# ------------ A2A ------------
+a2a = [
+    "a2a-sdk>=1.1.1",
 ]
 # ------------ Vector stores ------------
 vdb-qdrant = ["qdrant-client"]
@@ -160,6 +168,7 @@ full = [
     "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[vdb-qdrant]",
     "agentscope[vdb-milvus]",
@@ -178,7 +187,8 @@ dev = [
     "pytest-forked",
     "myst_parser",
     "matplotlib",
-    "fakeredis",
+    # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
+    "fakeredis[lua]",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3

@@ -40,7 +40,10 @@ function MessageScrollerViewport({
 		<MessageScrollerPrimitive.Viewport
 			data-slot="message-scroller-viewport"
 			className={cn(
-				'size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent',
+				// `no-scrollbar`: the stock thin scrollbar is hidden while
+				// autoscrolling and shown otherwise, so a streaming reply
+				// blinks it on and off down the right edge.
+				'size-full min-h-0 min-w-0 scroll-fade-b no-scrollbar overflow-y-auto overscroll-contain contain-content',
 				className,
 			)}
 			{...props}

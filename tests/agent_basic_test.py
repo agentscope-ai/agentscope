@@ -183,8 +183,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         )
 
     async def test_inconsistent_ratios_are_rejected(self) -> None:
-        """The ratios across the context and injection configs must leave room
-        ahead of the compression threshold."""
+        """The ratios of the context config must leave room ahead of the
+        compression threshold."""
         with self.assertRaises(ValueError):
             Agent(
                 name="agent",
@@ -201,9 +201,26 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 name="agent",
                 system_prompt="You are an agent.",
                 model=MockModel(),
-                context_config=ContextConfig(trigger_ratio=0.5),
-                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+                context_config=ContextConfig(
+                    trigger_ratio=0.5,
+                    context_buffer_ratio=0.5,
+                ),
             )
+
+    async def test_deprecated_context_buffer_ratio_is_migrated(self) -> None:
+        """The buffer ratio of the injection config still takes effect, and
+        overrides the one in the context config."""
+        context_config = ContextConfig(context_buffer_ratio=0.1)
+        with self.assertWarns(DeprecationWarning):
+            agent = Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.3),
+            )
+
+        self.assertEqual(agent.context_config.context_buffer_ratio, 0.3)
 
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
@@ -980,6 +997,129 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context)
+
+    async def test_last_thinking_only_response_forces_final_text(self) -> None:
+        """A final thinking-only round gets one text-only model call."""
+        received_tool_choices: list = []
+
+        class TrackingModel(MockModel):
+            """A mock model that records tool choice arguments."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                """Record the tool choice and return the next response."""
+                received_tool_choices.append(kwargs.get("tool_choice"))
+                return await super()._call_api(*args, **kwargs)
+
+        model = TrackingModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final summary")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(max_iters=1),
+        )
+
+        items = []
+        async for item in agent.reply_stream(
+            UserMsg(name="user", content="Think"),
+            yield_final_msg=True,
+        ):
+            items.append(item)
+        msg = items[-1]
+
+        self.assertEqual(model.cnt, 2)
+        self.assertEqual(agent.state.cur_iter, 2)
+        self.assertEqual(received_tool_choices[0], None)
+        self.assertEqual(received_tool_choices[1].mode, "none")
+        event_base = self._get_event_base(agent.state.reply_id)
+        self.assertListEqual(
+            [item.model_dump() for item in items[-3:-1]],
+            [
+                {
+                    **event_base,
+                    "type": "EXCEED_MAX_ITERS",
+                    "name": "Friday",
+                },
+                {
+                    **event_base,
+                    "type": "REPLY_END",
+                    "error": None,
+                    "session_id": agent.state.session_id,
+                    "finished_reason": (ReplyFinishedReason.EXCEED_MAX_ITERS),
+                },
+            ],
+        )
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Final summary",
+                    },
+                ],
+            },
+        )
+
+    async def test_forced_final_text_call_is_bounded(self) -> None:
+        """The forced final text call runs at most once."""
+        self.agent.react_config = ReActConfig(max_iters=1)
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="First thought")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Second thought")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Think"))
+
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "The maximum reasoning-acting iterations "
+                        "are exceeded.",
+                    },
+                ],
+            },
+        )
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.

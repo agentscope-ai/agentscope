@@ -39,7 +39,9 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionRecord,
     SessionSettings,
-    SessionSource,
+    ChannelOrigin,
+    SessionOrigin,
+    UserOrigin,
 )
 
 
@@ -144,7 +146,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         """Isolate the instances each test observes."""
         _RecordingChannel.instances.clear()
 
-    def _fixture(self, source: SessionSource) -> tuple:
+    def _fixture(self, source: SessionOrigin) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
         user_id = "user-1"
         agent = AgentRecord(
@@ -160,13 +162,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             id="session-1",
             user_id=user_id,
             agent_id=agent.id,
-            source=source,
-            source_channel_id=(
-                "chan-1" if source is SessionSource.CHANNEL else None
-            ),
-            source_chat_id=(
-                "chat-1" if source is SessionSource.CHANNEL else None
-            ),
+            origin=source,
             config=SessionConfig(
                 workspace_id="ws-1",
                 chat_model_config=ChatModelConfig(
@@ -189,7 +185,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         return user_id, agent, session, channel
 
-    async def _run(self, source: SessionSource) -> ChannelClients:
+    async def _run(self, source: SessionOrigin) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
         user_id, agent, session, channel = self._fixture(source)
         storage = _Storage(session, agent, channel)
@@ -267,7 +263,9 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
     ) -> None:
         """The run finishes before the channel starts reading, so the
         delivery has to replay the log rather than miss the reply."""
-        clients = await self._run(SessionSource.CHANNEL)
+        clients = await self._run(
+            ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
+        )
         try:
             self.assertEqual(len(_RecordingChannel.instances), 1)
             channel = _RecordingChannel.instances[0]
@@ -296,7 +294,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
 
     async def test_a_web_session_delivers_nothing(self) -> None:
         """Only a channel-originated run has a chat to reply into."""
-        clients = await self._run(SessionSource.USER)
+        clients = await self._run(UserOrigin())
         try:
             self.assertListEqual(_RecordingChannel.instances, [])
         finally:

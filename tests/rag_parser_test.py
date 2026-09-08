@@ -912,6 +912,46 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_markdown_table_escapes_special_cells(self) -> None:
+        """Pipes and line breaks do not corrupt Markdown table rows."""
+        xlsx_bytes = _make_xlsx_simple(
+            {
+                "S1": [
+                    ["A|B", r"Path \| label"],
+                    ["1|2", "Line 1\nLine 2"],
+                ],
+            },
+        )
+        parser = ExcelParser(include_sheet_names=False)
+        sections = await parser.parse(xlsx_bytes, "special.xlsx")
+
+        expected_text = (
+            "\n".join(
+                [
+                    r"| A\|B | Path \\\| label |",
+                    "| --- | --- |",
+                    r"| 1\|2 | Line 1<br>Line 2 |",
+                ],
+            )
+            + "\n"
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": expected_text,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "special.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
     async def test_single_sheet_json(self) -> None:
         """``table_format="json"`` emits JSON rows."""
         xlsx_bytes = _make_xlsx_simple(

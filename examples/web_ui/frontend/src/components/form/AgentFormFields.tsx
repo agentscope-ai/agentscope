@@ -120,6 +120,15 @@ export function AgentFormFields({ schema, values, onChange }: Props) {
 										defaultValue: prop.description ?? '',
 									}) || undefined
 								}
+								// Only for fields whose label cannot carry the
+								// whole story on its own — hence no fallback to
+								// `prop.description`, which is English-only and
+								// already serves as the placeholder.
+								descriptionFor={(k) =>
+									t(`agent-form.${sectionI18n}.${toKebab(k)}.description`, {
+										defaultValue: '',
+									}) || undefined
+								}
 							/>
 						</FieldSet>
 					</div>

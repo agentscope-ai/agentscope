@@ -11,16 +11,18 @@ import type {
 import {
 	ArrowDown,
 	ArrowUp,
+	Check,
 	CheckCircle,
 	ChevronRight,
 	CirclePlay,
+	Copy,
 	FileText,
 	FileVideo2,
 	Loader2,
 	TriangleAlert,
 } from 'lucide-react';
 import * as mime from 'mime-types';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
@@ -37,6 +39,7 @@ import {
 } from '@/components/ui/attachment.tsx';
 import { Badge } from '@/components/ui/badge';
 import { Bubble, BubbleContent } from '@/components/ui/bubble.tsx';
+import { Button } from '@/components/ui/button';
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -46,7 +49,7 @@ import { Message, MessageFooter, MessageContent } from '@/components/ui/message'
 import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
-import { formatNumber, formatTime } from '@/utils/common';
+import { copyToClipboard, formatNumber, formatTime } from '@/utils/common';
 import 'streamdown/styles.css';
 
 /**
@@ -290,6 +293,35 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 	);
 }
 
+/**
+ * Copies the message's text to the clipboard, flipping to a check mark
+ * for a moment so the click has visible feedback. Hidden until the
+ * message is hovered on pointer devices; always visible on touch.
+ */
+function CopyButton({ text }: { text: string }) {
+	const { t } = useTranslation();
+	const [copied, setCopied] = useState(false);
+
+	const handleCopy = async () => {
+		if (!(await copyToClipboard(text))) return;
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	};
+
+	return (
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			className="text-muted-foreground md:opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100"
+			tooltip={t('messageBubble.copy')}
+			aria-label={t('messageBubble.copy')}
+			onClick={handleCopy}
+		>
+			{copied ? <Check /> : <Copy />}
+		</Button>
+	);
+}
+
 const MCP_TOOL_PREFIX = 'mcp__';
 
 // Task-management tools are all surfaced under one "updated todos" summary.
@@ -383,7 +415,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-export function ASMessageBubble({ message }: MessageBubbleProps) {
+function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -409,6 +441,13 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 	);
 
 	const blocks = groupToolCalls(message.content);
+
+	// What the copy button hands over — the prose of the message, without
+	// the tool calls and attachments around it.
+	const plainText = message.content
+		.filter((b): b is TextBlock => b.type === 'text')
+		.map((b) => b.text)
+		.join('\n\n');
 
 	const startMs = new Date(message.created_at).getTime();
 	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
@@ -449,8 +488,14 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 							<ASBlock block={block} key={index} />
 						))}
 				</AttachmentGroup>
-				{message.role !== 'user' && (
-					<MessageFooter className="font-mono">
+				{message.role === 'user' ? (
+					plainText && (
+						<MessageFooter>
+							<CopyButton text={plainText} />
+						</MessageFooter>
+					)
+				) : (
+					<MessageFooter className="gap-1 font-mono">
 						<Badge
 							variant="secondary"
 							aria-label={isRunning ? t('messageBubble.running') : undefined}
@@ -477,12 +522,22 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 								<AudioInlineControl key={block.id} block={block} />
 							))}
 						</Badge>
+						{plainText && <CopyButton text={plainText} />}
 					</MessageFooter>
 				)}
 			</MessageContent>
 		</Message>
 	);
 }
+
+/**
+ * Memoised: a streaming reply publishes a new `Msg` object on every delta
+ * (see ``useMessages``) while the messages around it keep their identity,
+ * so only the bubble that actually changed re-renders. A message mutated
+ * in place would therefore *not* repaint — new content has to arrive as a
+ * new object.
+ */
+export const ASMessageBubble = memo(ASMessageBubbleComponent);
 
 /**
  * A thinking block with a live-ticking "thinking for Xs" header. Kept as its
@@ -623,10 +678,19 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 						label?: string;
 						sublabel?: string;
 					};
+					// Both halves go through the same i18n table, falling
+					// back to the raw text for sources it doesn't cover.
 					hintLabel = parsed.label
-						? t(`messageBubble.hintSource.${parsed.label.toLowerCase()}`)
+						? t(`messageBubble.hintSource.${parsed.label.toLowerCase()}`, {
+								defaultValue: parsed.label,
+							})
 						: block.source;
-					hintSublabel = parsed.sublabel ?? null;
+					hintSublabel = parsed.sublabel
+						? t(
+								`messageBubble.hintSource.${parsed.sublabel.toLowerCase().replace(/\s+/g, '_')}`,
+								{ defaultValue: parsed.sublabel },
+							)
+						: null;
 				} catch {
 					hintLabel = block.source;
 				}
