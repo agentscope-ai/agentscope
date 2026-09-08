@@ -29,7 +29,7 @@ from ..storage import (
     ChatModelConfig,
     SessionConfig,
     SessionScope,
-    SessionSource,
+    ChannelOrigin,
     StorageBase,
 )
 from ..workspace_manager import WorkspaceManagerBase
@@ -132,7 +132,12 @@ class ChannelGateway:
             event.channel_id,
         ):
             target = (session.agent_id, session.id)
-            if target == guess or session.source_chat_id != event.chat_id:
+            chat_id = (
+                session.origin.chat_id
+                if isinstance(session.origin, ChannelOrigin)
+                else None
+            )
+            if target == guess or chat_id != event.chat_id:
                 continue
             if await self._resume(record.user_id, target, event):
                 return
@@ -315,10 +320,11 @@ class ChannelGateway:
             config=session_config,
             state=initial_state,
             session_id=session_id,
-            source=SessionSource.CHANNEL,
-            source_chat_id=event.chat_id,
-            source_chat_name=event.chat_name or None,
-            source_channel_id=record.id,
+            origin=ChannelOrigin(
+                channel_id=record.id,
+                chat_id=event.chat_id,
+                chat_name=event.chat_name or None,
+            ),
         )
 
     @staticmethod

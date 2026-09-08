@@ -216,6 +216,7 @@ time or interval"
                 AgentInvite(
                     **team_tool_kwargs,
                     invitable_pool=invitable_pool,
+                    resource_access_service=resource_access_service,
                 ),
             )
 
