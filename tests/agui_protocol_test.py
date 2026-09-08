@@ -105,6 +105,21 @@ class AGUIProtocolStreamTest(IsolatedAsyncioTestCase):
         self.assertEqual(data["runId"], "reply_1")
         self.assertNotIn("session_id", data)
 
+    async def test_sse_tool_result_with_separator_is_converted(self) -> None:
+        """Test tool-result IDs with separators survive stream conversion."""
+        event = ToolResultEndEvent(
+            reply_id="reply:1",
+            tool_call_id="tc:1",
+            state=ToolResultState.SUCCESS,
+        )
+
+        body = await _collect_stream(self.mw, [event.model_dump_json()])
+        data = json.loads(body)
+
+        self.assertEqual(data["type"], "TOOL_CALL_RESULT")
+        self.assertEqual(data["toolCallId"], "tc:1")
+        self.assertEqual(data["messageId"], "reply%3A1:tc%3A1")
+
     async def test_sse_heartbeat_is_passed_through(self) -> None:
         """Test SSE heartbeat frames are not modified."""
         self.assertEqual(
@@ -466,7 +481,7 @@ class AGUIProtocolToolResultTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["type"], "TOOL_CALL_RESULT")
         self.assertEqual(result["toolCallId"], "tc_1")
-        self.assertEqual(result["messageId"], "reply_1")
+        self.assertEqual(result["messageId"], "reply_1:tc_1")
         self.assertEqual(result["content"], "partial result")
 
     async def test_tool_result_end_fallback_to_state(self) -> None:
@@ -480,7 +495,109 @@ class AGUIProtocolToolResultTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["type"], "TOOL_CALL_RESULT")
+        self.assertEqual(result["messageId"], "reply_1:tc_1")
         self.assertEqual(result["content"], "error")
+
+    async def test_tool_result_message_id_escapes_separator(self) -> None:
+        """Test that composite tool result IDs escape the separator."""
+        self.mw._convert_to_protocol(
+            ToolResultTextDeltaEvent(
+                reply_id="reply:1",
+                tool_call_id="tc:1",
+                delta="preserved",
+            ),
+        )
+
+        result = self.mw._convert_to_protocol(
+            ToolResultEndEvent(
+                reply_id="reply:1",
+                tool_call_id="tc:1",
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+
+        self.assertEqual(result["messageId"], "reply%3A1:tc%3A1")
+        self.assertEqual(result["content"], "preserved")
+        self.assertEqual(self.mw._tool_result_buffers, {})
+
+        left = self.mw._convert_to_protocol(
+            ToolResultEndEvent(
+                reply_id="reply:1",
+                tool_call_id="tc_1",
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+        right = self.mw._convert_to_protocol(
+            ToolResultEndEvent(
+                reply_id="reply",
+                tool_call_id="1:tc_1",
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+        self.assertNotEqual(left["messageId"], right["messageId"])
+
+    async def test_multiple_tool_results_use_unique_message_ids(self) -> None:
+        """Test that multiple tool results in one reply get unique ids."""
+        self.mw._convert_to_protocol(
+            ToolResultTextDeltaEvent(
+                reply_id="reply_1",
+                tool_call_id="tc_1",
+                delta="result A",
+            ),
+        )
+        self.mw._convert_to_protocol(
+            ToolResultTextDeltaEvent(
+                reply_id="reply_1",
+                tool_call_id="tc_2",
+                delta="result B",
+            ),
+        )
+        self.mw._convert_to_protocol(
+            ToolResultTextDeltaEvent(
+                reply_id="reply_2",
+                tool_call_id="tc_1",
+                delta="result C",
+            ),
+        )
+
+        # Complete a result from the second reply first to verify that
+        # interleaved replies keep their per-tool buffers independent.
+        result_3 = self.mw._convert_to_protocol(
+            ToolResultEndEvent(
+                reply_id="reply_2",
+                tool_call_id="tc_1",
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+        result_2 = self.mw._convert_to_protocol(
+            ToolResultEndEvent(
+                reply_id="reply_1",
+                tool_call_id="tc_2",
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+        result_1 = self.mw._convert_to_protocol(
+            ToolResultEndEvent(
+                reply_id="reply_1",
+                tool_call_id="tc_1",
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+
+        self.assertEqual(result_1["type"], "TOOL_CALL_RESULT")
+        self.assertEqual(result_2["type"], "TOOL_CALL_RESULT")
+        self.assertEqual(result_3["type"], "TOOL_CALL_RESULT")
+        self.assertEqual(result_1["toolCallId"], "tc_1")
+        self.assertEqual(result_2["toolCallId"], "tc_2")
+        self.assertEqual(result_3["toolCallId"], "tc_1")
+        self.assertEqual(result_1["content"], "result A")
+        self.assertEqual(result_2["content"], "result B")
+        self.assertEqual(result_3["content"], "result C")
+        self.assertNotEqual(result_1["messageId"], result_2["messageId"])
+        self.assertNotEqual(result_1["messageId"], result_3["messageId"])
+        self.assertEqual(result_1["messageId"], "reply_1:tc_1")
+        self.assertEqual(result_2["messageId"], "reply_1:tc_2")
+        self.assertEqual(result_3["messageId"], "reply_2:tc_1")
 
     async def test_tool_result_start_to_custom(self) -> None:
         """Test ToolResultStartEvent -> CUSTOM."""

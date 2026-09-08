@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The AGUI middleware class."""
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from starlette.types import ASGIApp
 
@@ -41,6 +42,9 @@ else:
     AGUIBaseEvent = Any
 
 
+_TOOL_RESULT_MESSAGE_ID_SEPARATOR = ":"
+
+
 class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
     """The middleware that converts the AgentScope events into AGUI
     protocol."""
@@ -56,7 +60,7 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
         # but not across concurrent requests.  Use contextvars if
         # concurrency is needed.
         self._last_model_name: str = "model_call"
-        self._tool_result_buffers: dict[str, list[str]] = {}
+        self._tool_result_buffers: dict[tuple[str, str], list[str]] = {}
 
     def _convert_to_protocol(self, event: AgentEvent) -> dict:
         """Convert the AgentScope events into AGUI protocol."""
@@ -194,7 +198,7 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
 
         if isinstance(event, ToolResultTextDeltaEvent):
             self._tool_result_buffers.setdefault(
-                event.tool_call_id,
+                (event.reply_id, event.tool_call_id),
                 [],
             ).append(event.delta)
             return AGUICustomEvent(
@@ -210,11 +214,22 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
 
         if isinstance(event, ToolResultEndEvent):
             content = "".join(
-                self._tool_result_buffers.pop(event.tool_call_id, []),
+                self._tool_result_buffers.pop(
+                    (event.reply_id, event.tool_call_id),
+                    [],
+                ),
             )
+            # ``reply_id`` is shared by all tool results of one reply, so
+            # combine encoded IDs with the per-tool ``tool_call_id`` for the
+            # result message ID. The separator stays unambiguous because it is
+            # not emitted by ``quote(..., safe="")``.
             return AGUIToolCallResultEvent(
                 tool_call_id=event.tool_call_id,
-                message_id=event.reply_id,
+                message_id=(
+                    f"{quote(event.reply_id, safe='')}"
+                    f"{_TOOL_RESULT_MESSAGE_ID_SEPARATOR}"
+                    f"{quote(event.tool_call_id, safe='')}"
+                ),
                 content=content or str(event.state),
             )
 
