@@ -636,10 +636,10 @@ class TestVolcengineModelParameters(unittest.TestCase):
         )
         self.assertEqual(model.parameters.reasoning_effort, "high")
 
-        max_parameters = VolcengineChatModel.Parameters(
-            reasoning_effort="max",
-        )
-        self.assertEqual(max_parameters.reasoning_effort, "max")
+        with self.assertRaises(ValueError):
+            VolcengineChatModel.Parameters.model_validate(
+                {"reasoning_effort": "max"},
+            )
 
     def test_verified_model_card(self) -> None:
         """The versioned model ID is discoverable with Ark capabilities."""
@@ -650,12 +650,14 @@ class TestVolcengineModelParameters(unittest.TestCase):
         self.assertEqual(cards[0].context_size, 256000)
         self.assertEqual(cards[0].output_size, 256000)
         self.assertIn("application/x-thinking", cards[0].output_types)
+        reasoning_schema = cards[0].parameter_schema["properties"][
+            "reasoning_effort"
+        ]
         self.assertEqual(
-            cards[0].parameter_schema["properties"]["reasoning_effort"][
-                "enum"
-            ],
+            reasoning_schema["anyOf"][0]["enum"],
             ["minimal", "low", "medium", "high"],
         )
+        self.assertNotIn("enum", reasoning_schema)
 
 
 class TestVolcengineRequestParameters(IsolatedAsyncioTestCase):

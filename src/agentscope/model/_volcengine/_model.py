@@ -48,15 +48,14 @@ class VolcengineChatModel(ChatModelBase):
         )
 
         reasoning_effort: (
-            Literal["minimal", "low", "medium", "high", "max"] | None
+            Literal["minimal", "low", "medium", "high"] | None
         ) = Field(
             default=None,
             title="Reasoning Effort",
             description=(
                 "Controls the depth of reasoning in thinking mode. "
-                "Supported values are minimal, low, medium, high, and max. "
-                "The minimal level disables reasoning; max is only accepted "
-                "by models that advertise support for it."
+                "Supported values are minimal, low, medium, and high. "
+                "The minimal level disables reasoning."
             ),
         )
 

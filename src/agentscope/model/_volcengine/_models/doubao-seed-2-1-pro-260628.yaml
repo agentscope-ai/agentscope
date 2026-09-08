@@ -12,11 +12,3 @@ output_types:
 
 context_size: 256000
 output_size: 256000
-
-parameter_overrides:
-  reasoning_effort:
-    enum:
-      - minimal
-      - low
-      - medium
-      - high
