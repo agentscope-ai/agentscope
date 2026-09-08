@@ -23,6 +23,7 @@ from ._events import (
     ToolCallEvent,
     TranscriptDeltaEvent,
 )
+from ._gemini import GeminiRealtimeModel
 from ._model_card import RealtimeModelCard
 from ._playout import PlayoutPosition
 from ._transport import (
@@ -40,6 +41,7 @@ __all__ = [
     "RealtimeModelBase",
     "DashScopeRealtimeModel",
     "DashScopeAudioRealtimeModel",
+    "GeminiRealtimeModel",
     "RealtimeModelCard",
     "TruncationSupport",
     "ModelDisconnectedError",
