@@ -270,14 +270,18 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             async for event in agent.reply_stream(transport):
                 if getattr(event, "reply_id", None) == "r1":
                     rebuilt.append_event(event)
-                if isinstance(event, TextBlockDeltaEvent):
+                if isinstance(event, ReplyStartEvent) and event.role == "user":
+                    summary.append(("user_start", event.reply_id))
+                elif isinstance(event, TextBlockDeltaEvent):
                     summary.append(event.delta)
                 elif isinstance(event, ReplyEndEvent):
                     summary.append(("reply_end", event.finished_reason))
 
+        # The duplicate speech_started opens the user's turn only once.
         self.assertListEqual(
             summary,
             [
+                ("user_start", "u1"),
                 "讲个故事",
                 ("reply_end", "completed"),  # the user's turn
                 "从前",
@@ -287,6 +291,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "庙里",
                 "有个",
                 "老和尚",
+                ("user_start", "u2"),
                 ("reply_end", "interrupted"),
             ],
         )

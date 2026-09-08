@@ -717,6 +717,8 @@ class RealtimeAgent:
     def _start_user_turn(self, item_id: str = "") -> None:
         """Open the user's turn as a reply of its own. A local VAD sees it
         before the provider creates an item, hence the generated id."""
+        if self._user_turn_open:
+            return  # providers repeat speech_started; one turn, one reply
         self._user_turn = item_id or uuid.uuid4().hex
         self._user_turn_open = True
         self._emit(
@@ -966,6 +968,8 @@ class RealtimeAgent:
                 await self.model.request_response()
         except Exception:  # noqa: BLE001
             logger.exception("RealtimeAgent: tool execution failed")
+            if self._reply_id == reply_id:
+                self._finish_reply(ReplyFinishedReason.ERROR)
 
     async def _run_tool(self, reply_id: str, call: ToolCallBlock) -> None:
         """Check permission for one call, run it, and report the result."""
@@ -1127,5 +1131,12 @@ class RealtimeAgent:
             output=output,
             state=state,
         )
-        self.state.append_context(self.name, [block])
+        # The result belongs to the reply that made the call, which may no
+        # longer be the current one if the user interrupted a slow tool.
+        for msg in reversed(self.state.context):
+            if msg.id == reply_id:
+                msg.content.append(block)
+                break
+        else:
+            self.state.append_context(self.name, [block])
         await self.model.push_tool_result(block)
