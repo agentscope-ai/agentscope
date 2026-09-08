@@ -432,7 +432,11 @@ class RealtimeAgent:
                     await self._barge_in()
 
                 case me.SpeechEnded():
-                    self._metrics.user_speech_end_at = time.monotonic()
+                    # With server VAD this is also the provider's commit.
+                    now = time.monotonic()
+                    self._metrics.user_speech_end_at = now
+                    if self.model.turn_detection_enabled:
+                        self._metrics.turn_committed_at = now
 
                 case me.InputTranscription():
                     self._on_transcription(event)
@@ -588,7 +592,20 @@ class RealtimeAgent:
                     block_id=reply.text_block_id,
                 ),
             )
-        self.state.append_context(self.name, [TextBlock(text=delta)])
+        # Grow the tail text block rather than appending one per delta,
+        # or the context ends up as dozens of one-word blocks.
+        tail = self.state.context[-1] if self.state.context else None
+        if (
+            tail is not None
+            and tail.role == "assistant"
+            and tail.id == reply.item_id
+            and isinstance(tail.content, list)
+            and tail.content
+            and isinstance(tail.content[-1], TextBlock)
+        ):
+            tail.content[-1].text += delta
+        else:
+            self.state.append_context(self.name, [TextBlock(text=delta)])
         self._emit(
             TextBlockDeltaEvent(
                 reply_id=reply.item_id,
