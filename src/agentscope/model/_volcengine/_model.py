@@ -37,13 +37,12 @@ class VolcengineChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable thinking mode. When enabled, the model "
-                "outputs a chain-of-thought reasoning before the final "
-                "answer via the reasoning_content field."
+                "Whether to enable or disable thinking mode. When unset, "
+                "Ark uses its default auto mode."
             ),
         )
 
@@ -207,12 +206,16 @@ class VolcengineChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        thinking_type = (
-            "enabled" if self.parameters.thinking_enable else "disabled"
-        )
-        kwargs.setdefault("extra_body", {})
-        kwargs["extra_body"].setdefault("thinking", {})
-        kwargs["extra_body"]["thinking"].setdefault("type", thinking_type)
+        if self.parameters.thinking_enable is not None:
+            thinking_type = (
+                "enabled" if self.parameters.thinking_enable else "disabled"
+            )
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"].setdefault("thinking", {})
+            kwargs["extra_body"]["thinking"].setdefault(
+                "type",
+                thinking_type,
+            )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

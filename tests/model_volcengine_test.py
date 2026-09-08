@@ -624,6 +624,7 @@ class TestVolcengineModelParameters(unittest.TestCase):
             parameters=VolcengineChatModel.Parameters(thinking_enable=True),
         )
         self.assertTrue(model.parameters.thinking_enable)
+        self.assertIsNone(VolcengineChatModel.Parameters().thinking_enable)
 
     def test_reasoning_effort_stored_on_model(self) -> None:
         """reasoning_effort is accessible through model.parameters."""
@@ -689,8 +690,8 @@ class TestVolcengineRequestParameters(IsolatedAsyncioTestCase):
             {"thinking": {"type": "enabled"}},
         )
 
-    async def test_thinking_is_disabled_by_default(self) -> None:
-        """Ark does not receive the broadly unsupported auto mode."""
+    async def test_thinking_uses_ark_default_when_unspecified(self) -> None:
+        """An unspecified thinking mode should preserve Ark's auto default."""
         model = _make_model(stream=False)
         mock_create = AsyncMock(
             return_value=_mock_completion(text="answer"),
@@ -702,6 +703,27 @@ class TestVolcengineRequestParameters(IsolatedAsyncioTestCase):
 
         kwargs = mock_create.await_args.kwargs
         self.assertNotIn("reasoning_effort", kwargs)
+        self.assertNotIn("extra_body", kwargs)
+
+    async def test_thinking_can_be_explicitly_disabled(self) -> None:
+        """An explicit false value should disable Ark thinking mode."""
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model="doubao-seed-2-1-pro-260628",
+            stream=False,
+            parameters=VolcengineChatModel.Parameters(
+                thinking_enable=False,
+            ),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="answer"),
+        )
+        model.client = MagicMock()
+        model.client.chat.completions.create = mock_create
+
+        await model([])
+
+        kwargs = mock_create.await_args.kwargs
         self.assertEqual(
             kwargs["extra_body"],
             {"thinking": {"type": "disabled"}},
