@@ -15,6 +15,8 @@ from agentscope.realtime import (
 from agentscope.realtime import _events as me
 
 CRED = DashScopeCredential(api_key="sk-x")
+TRANSCRIPTION_DONE = "conversation.item.input_audio_transcription.completed"
+AMBIENT_DELTA = "conversation.item.ambient_audio_transcription.delta"
 
 
 class DashScopeCardsTest(unittest.TestCase):
@@ -173,6 +175,7 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
         )
 
     def test_turn_detection_none_hands_endpointing_to_caller(self) -> None:
+        """``none`` sends null and marks endpointing as ours."""
         model = DashScopeAudioRealtimeModel(
             "qwen-audio-3.0-realtime-flash",
             CRED,
@@ -230,7 +233,7 @@ class DashScopeParseTest(unittest.TestCase):
                 "audio_start_ms": 120,
             },
             {
-                "type": "conversation.item.input_audio_transcription.completed",
+                "type": TRANSCRIPTION_DONE,
                 "item_id": "u1",
                 "transcript": "天气",
             },
@@ -320,7 +323,7 @@ class DashScopeParseTest(unittest.TestCase):
             [
                 model._parse(
                     {
-                        "type": "conversation.item.ambient_audio_transcription.delta",
+                        "type": AMBIENT_DELTA,
                         "delta": "x",
                     },
                 ),

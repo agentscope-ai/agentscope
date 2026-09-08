@@ -171,7 +171,6 @@ class FakeTransport(TransportBase):
 
     async def send_event(self, event: dict) -> None:
         """No peer to send to."""
-        pass
 
     async def clear_audio(self) -> PlayoutPosition:
         """Count cuts and report the fixed playout position."""
