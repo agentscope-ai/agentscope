@@ -265,7 +265,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         except Exception as exc:  # noqa: BLE001
             logger.error("DashScopeRealtimeModel: connection lost: %s", exc)
         finally:
-            self._queue.put_nowait(me.SessionEnded(reason="closed"))
+            self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
             self._queue.put_nowait(None)
 
     # pylint: disable=too-many-return-statements
@@ -277,12 +277,12 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         match kind:
             case "response.created":
                 self._item_id = data.get("response", {}).get("id", "")
-                return me.ResponseCreated(item_id=self._item_id)
+                return me.ResponseCreatedEvent(item_id=self._item_id)
 
             case "response.done":
                 response = data.get("response", {})
                 usage = response.get("usage") or {}
-                event = me.ResponseDone(
+                event = me.ResponseDoneEvent(
                     item_id=response.get("id") or self._item_id,
                     input_tokens=usage.get("input_tokens", 0),
                     output_tokens=usage.get("output_tokens", 0),
@@ -294,7 +294,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 delta = data.get("delta")
                 if not delta:
                     return None
-                return me.AudioDelta(
+                return me.AudioDeltaEvent(
                     item_id=self._item_id,
                     pcm=base64.b64decode(delta),
                     sample_rate=self.output_sample_rate,
@@ -304,22 +304,22 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 delta = data.get("delta")
                 if not delta:
                     return None
-                return me.TranscriptDelta(item_id=self._item_id, delta=delta)
+                return me.TranscriptDeltaEvent(item_id=self._item_id, delta=delta)
 
             case "conversation.item.input_audio_transcription.completed":
-                return me.InputTranscription(
+                return me.InputTranscriptionEvent(
                     item_id=item_id,
                     text=data.get("transcript", ""),
                 )
 
             case "input_audio_buffer.speech_started":
-                return me.SpeechStarted(
+                return me.SpeechStartedEvent(
                     item_id=item_id,
                     at_ms=data.get("audio_start_ms", 0),
                 )
 
             case "input_audio_buffer.speech_stopped":
-                return me.SpeechEnded(
+                return me.SpeechEndedEvent(
                     item_id=item_id,
                     at_ms=data.get("audio_end_ms", 0),
                 )
@@ -347,7 +347,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 accumulated = self._tool_args.pop(call_id, "")
                 arguments = data.get("arguments") or accumulated
                 name = data.get("name") or self._tool_names.pop(call_id, "")
-                return me.ToolCall(
+                return me.ToolCallEvent(
                     item_id=self._item_id,
                     tool_call=ToolCallBlock(
                         id=call_id,
@@ -358,7 +358,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
 
             case "error":
                 err = data.get("error", {})
-                return me.ModelError(
+                return me.ModelErrorEvent(
                     code=err.get("code", ""),
                     message=err.get("message", ""),
                 )

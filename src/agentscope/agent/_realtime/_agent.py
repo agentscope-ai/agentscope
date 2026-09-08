@@ -7,20 +7,20 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
-from . import _events as me
+from ...realtime import _events as me
 from ._aggregator import TurnAggregator
-from ._base import RealtimeModelBase
+from ...realtime._base import RealtimeModelBase
 from ._metrics import TurnMetrics
-from ._transport._base import (
+from ...realtime._transport._base import (
     AudioFrame,
     ControlFrame,
     ControlFrameType,
     TransportBase,
 )
-from ._vad import SpeechEvent, VADBase
-from .._logging import logger
-from .._utils._common import _json_loads_with_repair
-from ..event import (
+from ...realtime._vad import SpeechEvent, VADBase
+from ..._logging import logger
+from ..._utils._common import _json_loads_with_repair
+from ...event import (
     AgentEvent,
     ConfirmResult,
     DataBlockDeltaEvent,
@@ -45,7 +45,7 @@ from ..event import (
     UserInputTranscriptionEvent,
     UserInterruptEvent,
 )
-from ..message import (
+from ...message import (
     Msg,
     TextBlock,
     ToolCallBlock,
@@ -53,10 +53,10 @@ from ..message import (
     ToolResultState,
     UserMsg,
 )
-from ..permission import PermissionBehavior, PermissionEngine
-from ..state import AgentState
-from ..tool import ToolChunk, ToolResponse, Toolkit
-from ..types import ReplyFinishedReason
+from ...permission import PermissionBehavior, PermissionEngine
+from ...state import AgentState
+from ...tool import ToolChunk, ToolResponse, Toolkit
+from ...types import ReplyFinishedReason
 
 # Sentinel closing one run's event stream.
 _END = object()
@@ -544,7 +544,7 @@ class RealtimeAgent:
         """Handle one model event."""
         rate = self.model.output_sample_rate
         match event:
-            case me.SpeechStarted():
+            case me.SpeechStartedEvent():
                 self._emit(
                     UserInputAudioStartEvent(
                         session_id=self.state.session_id,
@@ -553,20 +553,20 @@ class RealtimeAgent:
                 )
                 await self._barge_in()
 
-            case me.SpeechEnded():
+            case me.SpeechEndedEvent():
                 # With provider turn detection this is also its commit.
                 now = time.monotonic()
                 self._metrics.user_speech_end_at = now
                 if self.vad is None:
                     self._metrics.turn_committed_at = now
 
-            case me.InputTranscription():
+            case me.InputTranscriptionEvent():
                 self._on_transcription(event)
 
-            case me.ResponseCreated():
+            case me.ResponseCreatedEvent():
                 self._start_reply(event.item_id)
 
-            case me.AudioDelta():
+            case me.AudioDeltaEvent():
                 if self._transport is None:
                     await self._barge_in()  # nobody listening
                     return
@@ -578,22 +578,22 @@ class RealtimeAgent:
                     self._metrics.backend_first_audio_at or time.monotonic()
                 )
 
-            case me.TranscriptDelta():
+            case me.TranscriptDeltaEvent():
                 reply = self._start_reply(event.item_id)
                 reply.on_text(event.delta)
                 self._emit_text(reply, event.delta)
 
-            case me.ToolCall():
+            case me.ToolCallEvent():
                 self._start_reply(event.item_id)
                 self._pending_tools[event.tool_call.id] = event.tool_call
 
-            case me.ResponseDone():
+            case me.ResponseDoneEvent():
                 self._metrics.input_tokens = event.input_tokens
                 self._metrics.output_tokens = event.output_tokens
                 self._finish_reply(ReplyFinishedReason.COMPLETED)
                 self._schedule_tools()
 
-            case me.ModelError():
+            case me.ModelErrorEvent():
                 logger.error(
                     "RealtimeAgent: model error %s: %s",
                     event.code,
@@ -601,10 +601,10 @@ class RealtimeAgent:
                 )
                 self._finish_reply(ReplyFinishedReason.ERROR)
 
-            case me.SessionEnded():
+            case me.SessionEndedEvent():
                 pass  # the events() iterator ends right after this
 
-    def _on_transcription(self, event: me.InputTranscription) -> None:
+    def _on_transcription(self, event: me.InputTranscriptionEvent) -> None:
         """Record a settled user turn, merging a split one back together."""
         turn = self.aggregator.take(event.text)
         if turn is None:

@@ -22,11 +22,8 @@ from agentscope.event import (
     UserInputAudioStartEvent,
     UserInputTranscriptionEvent,
 )
-from agentscope.realtime import (
-    DashScopeRealtimeModel,
-    LocalAudioTransport,
-    RealtimeAgent,
-)
+from agentscope.agent import RealtimeAgent
+from agentscope.realtime import DashScopeRealtimeModel, LocalAudioTransport
 from agentscope.tool import Toolkit, Bash, Edit, Write, Read
 
 

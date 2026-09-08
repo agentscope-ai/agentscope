@@ -14,40 +14,40 @@ class ModelEvent(BaseModel):
     """Common base class, for type hinting only."""
 
 
-class SessionEnded(ModelEvent):
+class SessionEndedEvent(ModelEvent):
     """The provider session is gone; no further events will arrive."""
 
     reason: str = ""
 
 
-class SpeechStarted(ModelEvent):
+class SpeechStartedEvent(ModelEvent):
     """The provider's own VAD detected the user starting to speak."""
 
     item_id: str = ""
     at_ms: int = 0
 
 
-class SpeechEnded(ModelEvent):
+class SpeechEndedEvent(ModelEvent):
     """The provider's own VAD detected the user stopping."""
 
     item_id: str = ""
     at_ms: int = 0
 
 
-class InputTranscription(ModelEvent):
+class InputTranscriptionEvent(ModelEvent):
     """The settled transcript of one user turn."""
 
     item_id: str = ""
     text: str
 
 
-class ResponseCreated(ModelEvent):
+class ResponseCreatedEvent(ModelEvent):
     """The provider started producing a reply."""
 
     item_id: str
 
 
-class AudioDelta(ModelEvent):
+class AudioDeltaEvent(ModelEvent):
     """A chunk of assistant speech."""
 
     item_id: str
@@ -55,21 +55,21 @@ class AudioDelta(ModelEvent):
     sample_rate: int
 
 
-class TranscriptDelta(ModelEvent):
+class TranscriptDeltaEvent(ModelEvent):
     """A chunk of the assistant's spoken text."""
 
     item_id: str
     delta: str
 
 
-class ToolCall(ModelEvent):
+class ToolCallEvent(ModelEvent):
     """A complete tool call requested by the provider."""
 
     item_id: str
     tool_call: ToolCallBlock
 
 
-class ResponseDone(ModelEvent):
+class ResponseDoneEvent(ModelEvent):
     """The provider finished producing a reply."""
 
     item_id: str
@@ -77,7 +77,7 @@ class ResponseDone(ModelEvent):
     output_tokens: int = Field(default=0, ge=0)
 
 
-class ModelError(ModelEvent):
+class ModelErrorEvent(ModelEvent):
     """An error reported by the provider."""
 
     code: str = ""

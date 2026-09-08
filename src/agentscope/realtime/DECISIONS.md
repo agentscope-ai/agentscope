@@ -26,6 +26,9 @@
 | 流式接口叫 `run`，async generator，起动即迭代 | 与 `reply_stream` 结束条件不同（连接断才结束），不复用其名 |
 | `TurnAggregator` 作为实体注入（`aggregator=`），不经 config；pydantic `TurnConfig` 只存在于 app 层 | 它不依赖 agent 内部件，可子类化（pipecat 的 turn strategy 家族） |
 | `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |
+| `RealtimeAgent` / `TurnAggregator` / `TurnMetrics` 放 `agent/_realtime/`；`realtime/` 只放模型侧（model、card、事件、transport、VAD） | 与 `Agent` 同目录；`agent/` 单向依赖 `realtime/` |
+| 模型事件统一 `Event` 后缀（`AudioDeltaEvent` 等），基类 `ModelEvent` | 对齐 `agentscope.event` 的命名 |
+| `TurnMetrics` 是 agent 的**产出**（四个时刻），不是配置，不进构造函数；`last_turn_metrics` 读取 | 每回合的指标事件（livekit `metrics_collected`）待前端需要时再加 |
 | `PlayoutPosition.first_played_at` 由 transport 在音频线程记录，agent 在回合结束时读取 | e2e_latency 的唯一真实来源；随 `LocalAudioTransport` 落地 |
 | 用户打字先打断当前回复 | livekit / pipecat 默认；不打断需要额外的待处理状态 |
 
