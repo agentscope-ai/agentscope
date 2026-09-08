@@ -104,7 +104,10 @@ async def main() -> None:
                     )
 
 
-async def confirm(agent: RealtimeAgent, event: RequireUserConfirmEvent) -> None:
+async def confirm(
+    agent: RealtimeAgent,
+    event: RequireUserConfirmEvent,
+) -> None:
     """Ask on the terminal whether each pending tool call may run.
 
     The prompt runs in a thread so the audio pumps keep going while we

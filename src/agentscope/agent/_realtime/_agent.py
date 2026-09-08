@@ -58,9 +58,6 @@ from ...state import AgentState
 from ...tool import ToolChunk, ToolResponse, Toolkit
 from ...types import ReplyFinishedReason
 
-# Sentinel closing one run's event stream.
-_END = object()
-
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
 
@@ -189,6 +186,7 @@ class RealtimeAgent:
         self._transport: TransportBase | None = None
         self._out: asyncio.Queue = asyncio.Queue()
         self._reply: _Reply | None = None
+        self._finished_item = ""
         self._metrics = TurnMetrics()
         self._pending_tools: dict[str, ToolCallBlock] = {}
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
@@ -319,20 +317,32 @@ class RealtimeAgent:
         if self._transport is not None:
             raise RuntimeError("RealtimeAgent.run is already active.")
         self._transport = transport
-        uplink = asyncio.create_task(self._pump_uplink(transport), name="rt-up")
-        uplink.add_done_callback(lambda _: self._out.put_nowait(_END))
+        uplink = asyncio.create_task(
+            self._pump_uplink(transport),
+            name="rt-up",
+        )
         try:
-            while True:
-                event = await self._out.get()
-                if event is _END:
-                    return
-                yield event
+            while not uplink.done():
+                getter = asyncio.ensure_future(self._out.get())
+                done, _ = await asyncio.wait(
+                    {getter, uplink},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if getter in done:
+                    yield getter.result()
+                else:
+                    getter.cancel()
+            # The transport is gone: cut off any reply still in flight so
+            # the model stops talking to nobody, then hand the caller the
+            # events that produced (the interrupted ReplyEnd) before the
+            # stream ends rather than leaking them into the next run.
+            await self._barge_in()
+            while not self._out.empty():
+                yield self._out.get_nowait()
         finally:
             if not uplink.done():
                 uplink.cancel()
                 await asyncio.gather(uplink, return_exceptions=True)
-            # Nobody is listening any more; do not let the model talk on.
-            await self._barge_in()
             self._transport = None
 
     # ------------------------------------------------------------------
@@ -475,8 +485,10 @@ class RealtimeAgent:
         if reply is None:
             return
 
-        spoken = reply.text
-        played_ms = int(reply.audio_ms)
+        spoken, played_ms = (
+            "",
+            0,
+        )  # nothing reaches the ear without a transport
         if self._transport is not None:
             position = await self._transport.clear_audio()
             if position.item_id and position.item_id != reply.item_id:
@@ -571,6 +583,8 @@ class RealtimeAgent:
                     await self._barge_in()  # nobody listening
                     return
                 reply = self._start_reply(event.item_id)
+                if reply is None:
+                    return
                 reply.on_audio(event.pcm, rate)
                 await self._transport.send_audio(event.pcm, reply.item_id)
                 self._emit_audio(reply, event.pcm, rate)
@@ -580,12 +594,14 @@ class RealtimeAgent:
 
             case me.TranscriptDeltaEvent():
                 reply = self._start_reply(event.item_id)
+                if reply is None:
+                    return
                 reply.on_text(event.delta)
                 self._emit_text(reply, event.delta)
 
             case me.ToolCallEvent():
-                self._start_reply(event.item_id)
-                self._pending_tools[event.tool_call.id] = event.tool_call
+                if self._start_reply(event.item_id) is not None:
+                    self._pending_tools[event.tool_call.id] = event.tool_call
 
             case me.ResponseDoneEvent():
                 self._metrics.input_tokens = event.input_tokens
@@ -642,10 +658,16 @@ class RealtimeAgent:
         context[-1].content = [TextBlock(text=f"{previous}{text}")]
         return True
 
-    def _start_reply(self, item_id: str) -> _Reply:
-        """Open a reply for *item_id*, emitting its start events once."""
+    def _start_reply(self, item_id: str) -> _Reply | None:
+        """Open a reply for *item_id*, emitting its start events once.
+
+        Returns ``None`` for an item already closed — deltas still in
+        flight after a barge-in must not reopen it.
+        """
         if self._reply is not None and self._reply.item_id == item_id:
             return self._reply
+        if item_id == self._finished_item:
+            return None
 
         self._reply = _Reply(item_id=item_id)
         self.state.reply_id = item_id
@@ -705,6 +727,7 @@ class RealtimeAgent:
                 finished_reason=reason,
             ),
         )
+        self._finished_item = reply.item_id
         self._reply = None
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
@@ -720,15 +743,17 @@ class RealtimeAgent:
         # Grow the tail text block rather than appending one per delta,
         # or the context ends up as dozens of one-word blocks.
         tail = self.state.context[-1] if self.state.context else None
+        blocks = (
+            tail.content
+            if tail is not None and tail.id == reply.item_id
+            else None
+        )
         if (
-            tail is not None
-            and tail.role == "assistant"
-            and tail.id == reply.item_id
-            and isinstance(tail.content, list)
-            and tail.content
-            and isinstance(tail.content[-1], TextBlock)
+            isinstance(blocks, list)
+            and blocks
+            and isinstance(blocks[-1], TextBlock)
         ):
-            tail.content[-1].text += delta
+            blocks[-1].text += delta
         else:
             self.state.append_context(self.name, [TextBlock(text=delta)])
         self._emit(
@@ -883,9 +908,9 @@ class RealtimeAgent:
         self._emit(
             RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),
         )
-        future: asyncio.Future[ConfirmResult] = (
-            asyncio.get_running_loop().create_future()
-        )
+        future: asyncio.Future[
+            ConfirmResult
+        ] = asyncio.get_running_loop().create_future()
         self._confirmations[call.id] = future
         try:
             result = await asyncio.wait_for(future, timeout=300)
