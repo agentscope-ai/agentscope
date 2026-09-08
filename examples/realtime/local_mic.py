@@ -97,11 +97,12 @@ async def main() -> None:
                         f" | ttfb={_ms(m.backend_ttfb)}"
                         f" | e2e={_ms(m.e2e_latency)})",
                     )
-                    tail = agent.state.context[-1]
-                    print(
-                        f"  context[-1] = {tail.role}: "
-                        f"{tail.get_text_content()!r}",
-                    )
+                    if agent.state.context:
+                        tail = agent.state.context[-1]
+                        print(
+                            f"  context[-1] = {tail.role}: "
+                            f"{tail.get_text_content()!r}",
+                        )
 
 
 async def confirm(
@@ -124,7 +125,12 @@ async def confirm(
                 confirmed=answer.strip().lower() in ("y", "yes"),
             ),
         )
-    await agent.send(UserConfirmResultEvent(confirm_results=results))
+    await agent.send(
+        UserConfirmResultEvent(
+            reply_id=event.reply_id,
+            confirm_results=results,
+        ),
+    )
 
 
 def _device(env: str) -> int | str | None:

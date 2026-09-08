@@ -10,6 +10,7 @@ from agentscope.credential import DashScopeCredential
 from agentscope.realtime import (
     DashScopeAudioRealtimeModel,
     DashScopeRealtimeModel,
+    ModelDisconnectedError,
     TruncationSupport,
 )
 from agentscope.realtime import _events as me
@@ -373,3 +374,40 @@ class DashScopeAudioTextInputTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+
+class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
+    """A closed WebSocket surfaces as ModelDisconnectedError."""
+
+    async def test_send_on_closed_socket(self) -> None:
+        """websockets' ConnectionClosed becomes the realtime-level error
+        and the socket reference is dropped."""
+        from websockets.exceptions import ConnectionClosedError
+        from websockets.frames import Close
+
+        class ClosedSocket:
+            """Raises like a socket the provider already closed."""
+
+            async def send(self, payload: str) -> None:
+                """Fail with the provider's close frame."""
+                close = Close(1007, "no response for 180 seconds")
+                raise ConnectionClosedError(close, close, True)
+
+        model = DashScopeRealtimeModel("qwen3.5-omni-flash-realtime", CRED)
+        model._ws = ClosedSocket()
+
+        with self.assertRaises(ModelDisconnectedError) as ctx:
+            await model.push_audio(b"\x00\x00")
+        self.assertEqual(
+            (str(ctx.exception), model._ws),
+            (
+                "1007 (invalid frame payload data) no response for 180 seconds",
+                None,
+            ),
+        )
+
+    async def test_send_before_connect(self) -> None:
+        """No socket at all is the same condition."""
+        model = DashScopeRealtimeModel("qwen3.5-omni-flash-realtime", CRED)
+        with self.assertRaises(ModelDisconnectedError):
+            await model.commit_turn()

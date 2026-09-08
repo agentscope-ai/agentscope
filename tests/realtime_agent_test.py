@@ -14,6 +14,7 @@ from agentscope.event import (
 )
 from agentscope.realtime import (
     AudioFrame,
+    ModelDisconnectedError,
     PlayoutPosition,
     RealtimeModelBase,
     RealtimeModelCard,
@@ -22,8 +23,25 @@ from agentscope.realtime import (
     TruncationSupport,
     VADBase,
 )
-from agentscope.message import Msg, ToolResultBlock
+from agentscope.event import (
+    ConfirmResult,
+    RequireUserConfirmEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+    ToolResultEndEvent,
+    ToolResultStartEvent,
+    ToolResultTextDeltaEvent,
+    UserConfirmResultEvent,
+)
+from agentscope.message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
+from agentscope.permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionDecision,
+)
+from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
 from agentscope.realtime import _events as me
+from utils import AnyString
 
 PCM_100MS = b"\x01\x00" * 2400
 
@@ -53,7 +71,7 @@ class ScriptedModel(RealtimeModelBase):
     truncation = TruncationSupport.NONE
     type = "scripted"
 
-    def __init__(self, scripts: list[list[me.ModelEvent]]) -> None:
+    def __init__(self, scripts: list[list[Any]]) -> None:
         card = RealtimeModelCard(
             name="scripted",
             label="scripted",
@@ -69,6 +87,7 @@ class ScriptedModel(RealtimeModelBase):
         self.calls: list[str] = []
         self.sessions = 0
         self._open = asyncio.Event()
+        self._requested = asyncio.Event()
 
     @property
     def turn_detection_enabled(self) -> bool:
@@ -99,6 +118,9 @@ class ScriptedModel(RealtimeModelBase):
         """Play the script for the current session."""
         script = self.scripts[self.sessions - 1]
         for event in script:
+            if event == "WAIT":  # the follow-up reply after a tool call
+                await self._requested.wait()
+                continue
             yield event
             await asyncio.sleep(0)
         if not script or not isinstance(script[-1], me.SessionEndedEvent):
@@ -113,16 +135,17 @@ class ScriptedModel(RealtimeModelBase):
         raise NotImplementedError
 
     async def push_tool_result(self, block: ToolResultBlock) -> None:
-        """Record the tool result."""
-        self.calls.append(f"tool_result({block.id})")
+        """Record exactly what the provider would receive."""
+        self.calls.append(f"tool_result({block.id},{block.output!r})")
 
     async def commit_turn(self) -> None:
         """Record the commit."""
         self.calls.append("commit_turn")
 
     async def request_response(self) -> None:
-        """Record the request."""
+        """Record the request and let a script waiting on it continue."""
         self.calls.append("request_response")
+        self._requested.set()
 
     async def cancel_response(self) -> None:
         """Record the cancel."""
@@ -364,3 +387,600 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 
         self.assertListEqual(summary, [])
         self.assertListEqual(agent.state.context, [])
+
+
+class StreamTool(ToolBase):
+    """Streams two chunks, then the completed result."""
+
+    name: str = "stream_tool"
+    description: str = "streams"
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"q": {"type": "string"}},
+        "required": ["q"],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Run freely."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="test",
+            message="test",
+        )
+
+    async def __call__(self, q: str, **kwargs: Any) -> Any:
+        """Yield chunks then the final response."""
+        yield ToolChunk(content=[TextBlock(text=f"{q}-a")])
+        yield ToolChunk(content=[TextBlock(text=f"{q}-b")])
+        yield ToolResponse(content=[TextBlock(text=f"{q}-final")])
+
+
+class AskTool(StreamTool):
+    """Requires user confirmation before running. Not read-only, or the
+    permission engine's read-only fast path would allow it unasked."""
+
+    name: str = "ask_tool"
+    is_read_only: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always ask."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            decision_reason="test",
+            message="test",
+        )
+
+
+class BrokenTool(StreamTool):
+    """Raises while running."""
+
+    name: str = "broken_tool"
+
+    async def __call__(self, q: str, **kwargs: Any) -> Any:
+        """Fail."""
+        raise RuntimeError("boom")
+        yield  # pylint: disable=unreachable
+
+
+def _tool_script(name: str) -> list[me.ModelEvent]:
+    """A reply that only calls *name* and completes."""
+    return [
+        me.ResponseCreatedEvent(item_id="r1"),
+        me.ToolCallEvent(
+            item_id="r1",
+            tool_call=ToolCallBlock(id="c1", name=name, input='{"q": "x"}'),
+        ),
+        me.ResponseDoneEvent(item_id="r1"),
+    ]
+
+
+class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
+    """Tool calls: permission, execution, result delivery."""
+
+    async def _run_tool_scenario(
+        self,
+        tool: ToolBase,
+        confirm: bool | None = None,
+    ) -> tuple[list[tuple[str, Any]], ScriptedModel]:
+        """Run one tool-calling reply; answer a permission prompt with
+        *confirm* if one appears. Returns the tool-related events."""
+        model = ScriptedModel([_tool_script(tool.name)])
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            toolkit=Toolkit(tools=[tool]),
+        )
+        events: list[tuple[str, Any]] = []
+        async with agent:
+            transport = FakeTransport(frames=4)
+            async with transport:
+                async for event in agent.run(transport):
+                    match event:
+                        case ToolCallStartEvent():
+                            events.append(("call_start", event.tool_call_name))
+                        case ToolCallEndEvent():
+                            events.append(("call_end", event.tool_call_id))
+                        case RequireUserConfirmEvent():
+                            events.append(
+                                ("ask", [c.name for c in event.tool_calls]),
+                            )
+                            await agent.send(
+                                UserConfirmResultEvent(
+                                    reply_id=event.reply_id,
+                                    confirm_results=[
+                                        ConfirmResult(
+                                            tool_call=event.tool_calls[0],
+                                            confirmed=bool(confirm),
+                                        ),
+                                    ],
+                                ),
+                            )
+                        case ToolResultStartEvent():
+                            events.append(
+                                ("result_start", event.tool_call_name),
+                            )
+                        case ToolResultTextDeltaEvent():
+                            events.append(("delta", event.delta))
+                        case ToolResultEndEvent():
+                            events.append(("result_end", event.state))
+        return events, model
+
+    async def test_streamed_tool_result_is_not_duplicated(self) -> None:
+        """Chunks are shown as they come; the provider gets only the
+        completed result, once."""
+        events, model = await self._run_tool_scenario(StreamTool())
+
+        self.assertListEqual(
+            events,
+            [
+                ("call_start", "stream_tool"),
+                ("call_end", "c1"),
+                ("result_start", "stream_tool"),
+                ("delta", "x-a"),
+                ("delta", "x-b"),
+                ("result_end", "success"),
+            ],
+        )
+        self.assertListEqual(
+            [c for c in model.calls if not c.startswith("push_audio")],
+            [
+                "connect(session=1,ctx=0,td_off=False)",
+                "tool_result(c1,'x-final')",
+                "request_response",
+                "close",
+            ],
+        )
+
+    async def test_confirmed_tool_runs(self) -> None:
+        """A confirmed permission prompt lets the tool run."""
+        events, model = await self._run_tool_scenario(AskTool(), confirm=True)
+
+        self.assertListEqual(
+            events,
+            [
+                ("call_start", "ask_tool"),
+                ("call_end", "c1"),
+                ("ask", ["ask_tool"]),
+                ("result_start", "ask_tool"),
+                ("delta", "x-a"),
+                ("delta", "x-b"),
+                ("result_end", "success"),
+            ],
+        )
+        self.assertIn("tool_result(c1,'x-final')", model.calls)
+
+    async def test_denied_tool_reports_denial(self) -> None:
+        """A refused prompt sends a denial to the provider, runs nothing."""
+        events, model = await self._run_tool_scenario(AskTool(), confirm=False)
+
+        self.assertListEqual(
+            events,
+            [
+                ("call_start", "ask_tool"),
+                ("call_end", "c1"),
+                ("ask", ["ask_tool"]),
+                ("result_start", "ask_tool"),
+                ("delta", 'Tool "ask_tool" denied by user.'),
+                ("result_end", "denied"),
+            ],
+        )
+        self.assertIn(
+            "tool_result(c1,'Tool \"ask_tool\" denied by user.')",
+            model.calls,
+        )
+
+    async def test_failing_tool_reports_error(self) -> None:
+        """The toolkit turns an exception into an error response, which
+        is forwarded as-is."""
+        events, model = await self._run_tool_scenario(BrokenTool())
+
+        self.assertListEqual(
+            events,
+            [
+                ("call_start", "broken_tool"),
+                ("call_end", "c1"),
+                ("result_start", "broken_tool"),
+                ("delta", "boom"),
+                ("result_end", "error"),
+            ],
+        )
+        self.assertIn("tool_result(c1,'boom')", model.calls)
+
+
+class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
+    """The complete event stream of a turn that calls a tool and then
+    answers with speech, asserted as one structure."""
+
+    async def test_tool_call_then_spoken_reply(self) -> None:
+        """User asks → model speaks, calls a tool → tool runs → model
+        speaks the answer. Every event, in order."""
+        model = ScriptedModel(
+            [
+                [
+                    me.SpeechEndedEvent(item_id="u1"),
+                    me.InputTranscriptionEvent(item_id="u1", text="查天气"),
+                    me.ResponseCreatedEvent(item_id="r1"),
+                    me.TranscriptDeltaEvent(item_id="r1", delta="我查一下"),
+                    me.AudioDeltaEvent(
+                        item_id="r1",
+                        pcm=b"\x01\x00",
+                        sample_rate=24000,
+                    ),
+                    me.ToolCallEvent(
+                        item_id="r1",
+                        tool_call=ToolCallBlock(
+                            id="c1",
+                            name="stream_tool",
+                            input='{"q": "x"}',
+                        ),
+                    ),
+                    me.ResponseDoneEvent(
+                        item_id="r1",
+                        input_tokens=5,
+                        output_tokens=2,
+                    ),
+                    "WAIT",
+                    me.ResponseCreatedEvent(item_id="r2"),
+                    me.TranscriptDeltaEvent(item_id="r2", delta="今天晴"),
+                    me.AudioDeltaEvent(
+                        item_id="r2",
+                        pcm=b"\x01\x00",
+                        sample_rate=24000,
+                    ),
+                    me.ResponseDoneEvent(
+                        item_id="r2",
+                        input_tokens=9,
+                        output_tokens=3,
+                    ),
+                ],
+            ],
+        )
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            toolkit=Toolkit(tools=[StreamTool()]),
+        )
+        events = []
+        async with agent:
+            transport = FakeTransport(frames=6)
+            async with transport:
+                async for event in agent.run(transport):
+                    events.append(event.model_dump(mode="json"))
+
+        self.assertListEqual(
+            events,
+            [
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "USER_INPUT_TRANSCRIPTION",
+                    "session_id": AnyString(),
+                    "item_id": "u1",
+                    "transcript": "查天气",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "REPLY_START",
+                    "session_id": AnyString(),
+                    "reply_id": "r1",
+                    "name": "Friday",
+                    "role": "assistant",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "MODEL_CALL_START",
+                    "reply_id": "r1",
+                    "model_name": "scripted",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_START",
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_DELTA",
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "delta": "我查一下",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "DATA_BLOCK_START",
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "media_type": "audio/pcm;rate=24000",
+                    "name": None,
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "DATA_BLOCK_DELTA",
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "media_type": "audio/pcm;rate=24000",
+                    "data": "AQA=",
+                    "url": None,
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_END",
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "DATA_BLOCK_END",
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "MODEL_CALL_END",
+                    "reply_id": "r1",
+                    "input_tokens": 5,
+                    "output_tokens": 2,
+                    "cache_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "finished_reason": "completed",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "REPLY_END",
+                    "session_id": AnyString(),
+                    "reply_id": "r1",
+                    "finished_reason": "completed",
+                    "error": None,
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_CALL_START",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                    "tool_call_name": "stream_tool",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_CALL_END",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_RESULT_START",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                    "tool_call_name": "stream_tool",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_RESULT_TEXT_DELTA",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                    "delta": "x-a",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_RESULT_TEXT_DELTA",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                    "delta": "x-b",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_RESULT_END",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                    "state": "success",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "REPLY_START",
+                    "session_id": AnyString(),
+                    "reply_id": "r2",
+                    "name": "Friday",
+                    "role": "assistant",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "MODEL_CALL_START",
+                    "reply_id": "r2",
+                    "model_name": "scripted",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_START",
+                    "reply_id": "r2",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_DELTA",
+                    "reply_id": "r2",
+                    "block_id": AnyString(),
+                    "delta": "今天晴",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "DATA_BLOCK_START",
+                    "reply_id": "r2",
+                    "block_id": AnyString(),
+                    "media_type": "audio/pcm;rate=24000",
+                    "name": None,
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "DATA_BLOCK_DELTA",
+                    "reply_id": "r2",
+                    "block_id": AnyString(),
+                    "media_type": "audio/pcm;rate=24000",
+                    "data": "AQA=",
+                    "url": None,
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_END",
+                    "reply_id": "r2",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "DATA_BLOCK_END",
+                    "reply_id": "r2",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "MODEL_CALL_END",
+                    "reply_id": "r2",
+                    "input_tokens": 9,
+                    "output_tokens": 3,
+                    "cache_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "finished_reason": "completed",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "REPLY_END",
+                    "session_id": AnyString(),
+                    "reply_id": "r2",
+                    "finished_reason": "completed",
+                    "error": None,
+                },
+            ],
+        )
+        self.assertListEqual(
+            [(m.role, m.get_text_content()) for m in agent.state.context],
+            [
+                ("user", "查天气"),
+                ("assistant", "我查一下"),
+                ("assistant", "今天晴"),
+            ],
+        )
+        self.assertListEqual(
+            [c for c in model.calls if c != "push_audio"],
+            [
+                "connect(session=1,ctx=0,td_off=False)",
+                "tool_result(c1,'x-final')",
+                "request_response",
+                "close",
+            ],
+        )
+
+
+class DropsSocketModel(ScriptedModel):
+    """Raises on the first push after the provider closed the socket,
+    the way a real WebSocket does before the reader notices."""
+
+    def __init__(self) -> None:
+        super().__init__([[], []])
+        self.dropped = False
+
+    async def push_audio(self, pcm: bytes) -> None:
+        """Fail exactly once, then behave."""
+        if self.sessions == 1 and not self.dropped:
+            self.dropped = True
+            raise ModelDisconnectedError("idle for 180 seconds")
+        await super().push_audio(pcm)
+
+
+class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
+    """A send that hits a closed provider socket must not kill the run."""
+
+    async def test_send_on_closed_socket_reconnects_on_next_audio(
+        self,
+    ) -> None:
+        """The failing frame is kept, the run survives, and the next frame
+        reconnects and flushes it."""
+        model = DropsSocketModel()
+        agent = RealtimeAgent("Friday", "be brief", model)
+        async with agent:
+            transport = FakeTransport(frames=3)
+            with self.assertLogs("as", level="INFO") as logs:
+                async with transport:
+                    async for _ in agent.run(transport):
+                        pass
+
+        self.assertEqual(model.sessions, 2)
+        self.assertListEqual(
+            [c for c in model.calls if c != "push_audio"],
+            [
+                "connect(session=1,ctx=0,td_off=False)",
+                "connect(session=2,ctx=0,td_off=False)",
+                "close",
+            ],
+        )
+        # Three frames captured; the failed one was replayed, so all
+        # three reach the provider in the end.
+        self.assertEqual(model.calls.count("push_audio"), 3)
+        self.assertTrue(
+            any("keep talking" in line for line in logs.output),
+            logs.output,
+        )

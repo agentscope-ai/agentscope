@@ -26,6 +26,9 @@
 | 流式接口叫 `run`，async generator，起动即迭代 | 与 `reply_stream` 结束条件不同（连接断才结束），不复用其名 |
 | `TurnAggregator` 作为实体注入（`aggregator=`），不经 config；pydantic `TurnConfig` 只存在于 app 层 | 它不依赖 agent 内部件，可子类化（pipecat 的 turn strategy 家族） |
 | `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |
+| provider 连接异常由 adapter 翻译成 `ModelDisconnectedError`，agent 只认它、不 import websockets；发送失败 = 断开，攒帧等下一帧重连，上行泵不死 | 真机复现：DashScope 180s 空闲关闭后 `push_audio` 撞上已关 socket，比下行泵察觉更早 |
+| `run()` 入口校验 transport / VAD 与 model 的采样率，不一致直接拒绝；agent 不做重采样 | Copilot review；重采样归 transport |
+| 工具结果只取 `ToolResponse.content`，`ToolChunk` 仅用于展示 | `ToolResponse` 是完整结果（与 `Agent` 一致），否则流式工具的文本会重复 |
 | `RealtimeAgent` / `TurnAggregator` / `TurnMetrics` 放 `agent/_realtime/`；`realtime/` 只放模型侧（model、card、事件、transport、VAD） | 与 `Agent` 同目录；`agent/` 单向依赖 `realtime/` |
 | 模型事件统一 `Event` 后缀（`AudioDeltaEvent` 等），基类 `ModelEvent` | 对齐 `agentscope.event` 的命名 |
 | 命名保留 `realtime`，不改 `live`；agent 层将来挂级联后端时再评估 `VoiceAgent` | 六家里五家叫 Realtime，M1 的 provider 产品名就是 Qwen-Omni-Realtime |

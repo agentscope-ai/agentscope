@@ -8,7 +8,11 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import Field
 
 from .. import _events as me
-from .._base import RealtimeModelBase, TruncationSupport
+from .._base import (
+    ModelDisconnectedError,
+    RealtimeModelBase,
+    TruncationSupport,
+)
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ...credential import DashScopeCredential
@@ -245,10 +249,21 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         return {"type": "session.update", "session": session}
 
     async def _send(self, payload: dict) -> None:
-        """Send one JSON frame."""
+        """Send one JSON frame.
+
+        Raises:
+            `ModelDisconnectedError`: If the provider has closed the
+                session, e.g. after its idle timeout.
+        """
+        from websockets.exceptions import ConnectionClosed
+
         if self._ws is None:
-            raise RuntimeError("Not connected; call `connect` first.")
-        await self._ws.send(json.dumps(payload, ensure_ascii=False))
+            raise ModelDisconnectedError("Not connected.")
+        try:
+            await self._ws.send(json.dumps(payload, ensure_ascii=False))
+        except ConnectionClosed as exc:
+            self._ws = None
+            raise ModelDisconnectedError(str(exc.rcvd or exc)) from exc
 
     async def _read(self) -> None:
         """Drain the WebSocket into the event queue until it closes."""

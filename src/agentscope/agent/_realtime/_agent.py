@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator
 
 from ...realtime import _events as me
 from ._aggregator import TurnAggregator
-from ...realtime._base import RealtimeModelBase
+from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
 from ._metrics import TurnMetrics
 from ...realtime._transport._base import (
     AudioFrame,
@@ -261,6 +261,7 @@ class RealtimeAgent:
                 self._pump_downlink(),
                 name="rt-downlink",
             )
+            self._downlink.add_done_callback(self._on_downlink_done)
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""
@@ -278,6 +279,17 @@ class RealtimeAgent:
         self._connected = False
         self._connected_event.clear()
         await self.model.close()
+
+    def _on_downlink_done(self, task: asyncio.Task) -> None:
+        """Surface a crashed downlink instead of a silently dead session."""
+        if task.cancelled() or task.exception() is None:
+            return
+        self._connected = False
+        self._connected_event.clear()
+        logger.error(
+            "RealtimeAgent: downlink pump crashed",
+            exc_info=task.exception(),
+        )
 
     async def _try_connect(self) -> bool:
         """Reconnect the model with backoff; ``False`` while still down."""
@@ -316,6 +328,27 @@ class RealtimeAgent:
         """
         if self._transport is not None:
             raise RuntimeError("RealtimeAgent.run is already active.")
+        # Audio is forwarded as-is in both directions, so the rates must
+        # already agree; resampling belongs to the transport, not here.
+        pairs = {
+            "input": (
+                transport.input_sample_rate,
+                self.model.input_sample_rate,
+            ),
+            "output": (
+                transport.output_sample_rate,
+                self.model.output_sample_rate,
+            ),
+        }
+        if self.vad is not None:
+            pairs["vad"] = (self.vad.sample_rate, transport.input_sample_rate)
+        for what, (got, want) in pairs.items():
+            if got != want:
+                raise ValueError(
+                    f"{what} sample rate mismatch: {got} Hz delivered, "
+                    f"{want} Hz expected.",
+                )
+
         self._transport = transport
         uplink = asyncio.create_task(
             self._pump_uplink(transport),
@@ -339,6 +372,9 @@ class RealtimeAgent:
             await self._barge_in()
             while not self._out.empty():
                 yield self._out.get_nowait()
+            # A transport failure must not look like a clean disconnect.
+            if not uplink.cancelled() and uplink.exception() is not None:
+                raise uplink.exception()  # type: ignore[misc]
         finally:
             if not uplink.done():
                 uplink.cancel()
@@ -424,15 +460,39 @@ class RealtimeAgent:
     async def _on_audio(self, frame: AudioFrame) -> None:
         """Run our VAD if we own it, reconnect if needed, forward audio."""
         speech = self.vad.push(frame.pcm) if self.vad is not None else None
+        try:
+            await self._forward_audio(frame.pcm, speech)
+        except ModelDisconnectedError as exc:
+            # The provider closed on us between two frames; the downlink
+            # may not have noticed yet. Keep the frame and reconnect on
+            # the next one — this is the idle-timeout path, not an error.
+            self._mark_disconnected()
+            self._backlog.append(frame.pcm)
+            logger.info(
+                "RealtimeAgent: model session closed (%s); keep talking "
+                "and it reconnects on the next audio.",
+                exc,
+            )
 
+    def _mark_disconnected(self) -> None:
+        """Forget the model session so the next audio reconnects."""
+        self._connected = False
+        self._connected_event.clear()
+
+    async def _forward_audio(
+        self,
+        pcm: bytes,
+        speech: SpeechTransition | None,
+    ) -> None:
+        """Body of :meth:`_on_audio`; raises on a closed model session."""
         pushed = False
         if not self._connected:
-            self._backlog.append(frame.pcm)
+            self._backlog.append(pcm)
             del self._backlog[:-_BACKLOG_FRAMES]
             if not await self._try_connect():
                 return
-            for pcm in self._backlog:
-                await self.model.push_audio(pcm)
+            for buffered in self._backlog:
+                await self.model.push_audio(buffered)
             self._backlog.clear()
             pushed = True
 
@@ -445,7 +505,7 @@ class RealtimeAgent:
             self._metrics.turn_committed_at = time.monotonic()
 
         if not pushed:
-            await self.model.push_audio(frame.pcm)
+            await self.model.push_audio(pcm)
 
     async def _on_control(self, frame: ControlFrame) -> None:
         """Translate one upstream control frame into :meth:`send`."""
@@ -547,10 +607,12 @@ class RealtimeAgent:
             await self._connected_event.wait()
             async for event in self.model.events():
                 await self._on_model_event(event)
-            self._connected = False
-            self._connected_event.clear()
+            self._mark_disconnected()
             self._finish_reply(ReplyFinishedReason.ERROR)
-            logger.info("RealtimeAgent: model session ended; will reconnect")
+            logger.info(
+                "RealtimeAgent: model session ended; keep talking and it "
+                "reconnects on the next audio.",
+            )
 
     async def _on_model_event(self, event: me.ModelEvent) -> None:
         """Handle one model event."""
@@ -866,24 +928,27 @@ class RealtimeAgent:
             ),
         )
         parts: list[str] = []
+        streamed = False
         result_state = ToolResultState.SUCCESS
         try:
             async for chunk in self.toolkit.call_tool(call, self.state):
-                for block in chunk.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
-                        self._emit(
-                            ToolResultTextDeltaEvent(
-                                reply_id=reply_id,
-                                tool_call_id=call.id,
-                                delta=block.text,
-                            ),
-                        )
+                texts = [
+                    b.text for b in chunk.content if isinstance(b, TextBlock)
+                ]
                 if isinstance(chunk, ToolResponse):
+                    # The completed result. Chunks before it were display
+                    # only, so this alone is what the provider receives.
+                    parts = texts
                     result_state = chunk.state
+                    if not streamed:
+                        for text in texts:
+                            self._emit_tool_delta(reply_id, call.id, text)
                     break
                 if not isinstance(chunk, ToolChunk):
                     break
+                streamed = True
+                for text in texts:
+                    self._emit_tool_delta(reply_id, call.id, text)
         except Exception:  # noqa: BLE001
             logger.exception("RealtimeAgent: tool %s failed", call.name)
             parts = [f"Error executing tool {call.name}."]
@@ -895,6 +960,16 @@ class RealtimeAgent:
             "".join(parts) or "Tool executed successfully.",
             state=result_state,
             started=True,
+        )
+
+    def _emit_tool_delta(self, reply_id: str, call_id: str, text: str) -> None:
+        """Emit one fragment of tool output."""
+        self._emit(
+            ToolResultTextDeltaEvent(
+                reply_id=reply_id,
+                tool_call_id=call_id,
+                delta=text,
+            ),
         )
 
     async def _ask_user(

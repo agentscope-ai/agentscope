@@ -14,6 +14,10 @@ from ..credential import CredentialBase
 from ..message import Msg, ToolResultBlock
 
 
+class ModelDisconnectedError(ConnectionError):
+    """The provider closed the session; the next user audio reconnects."""
+
+
 class TruncationSupport(StrEnum):
     """How the provider lets an interrupted turn be corrected. A protocol
     property, constant across the models of one API."""

@@ -52,6 +52,8 @@ class LocalAudioTransport(TransportBase):
         self._output_device = output_device
         self._chunk_frames = input_sample_rate * chunk_ms // 1000
         self._fade_ms = fade_ms
+        # Ten seconds of capture; beyond that the oldest chunk is dropped.
+        self._max_queued = max(1, 10_000 // chunk_ms)
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._in_queue: asyncio.Queue[AudioFrame | None] = asyncio.Queue()
@@ -126,7 +128,14 @@ class LocalAudioTransport(TransportBase):
         if self._loop is None:
             return
         frame = AudioFrame(pcm=bytes(indata))
-        self._loop.call_soon_threadsafe(self._in_queue.put_nowait, frame)
+        self._loop.call_soon_threadsafe(self._enqueue, frame)
+
+    def _enqueue(self, frame: AudioFrame) -> None:
+        """Loop thread: queue a chunk, dropping the oldest when nobody drains
+        fast enough, so a stalled consumer never replays stale audio."""
+        if self._in_queue.qsize() >= self._max_queued:
+            self._in_queue.get_nowait()
+        self._in_queue.put_nowait(frame)
 
     # ------------------------------------------------------------------
     # Downstream

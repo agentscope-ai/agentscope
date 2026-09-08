@@ -5,7 +5,7 @@ The model side of a voice session: realtime models, their cards and
 events, transports and VAD. The agent that ties them together is
 :class:`agentscope.agent.RealtimeAgent`.
 """
-from ._base import RealtimeModelBase, TruncationSupport
+from ._base import ModelDisconnectedError, RealtimeModelBase, TruncationSupport
 from ._dashscope import (
     DashScopeAudioRealtimeModel,
     DashScopeRealtimeModel,
@@ -42,6 +42,7 @@ __all__ = [
     "DashScopeAudioRealtimeModel",
     "RealtimeModelCard",
     "TruncationSupport",
+    "ModelDisconnectedError",
     # Transport
     "TransportBase",
     "LocalAudioTransport",
