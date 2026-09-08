@@ -664,6 +664,7 @@ class RealtimeAgent:
             case me.ToolCallEvent():
                 if self._start_reply(event.item_id) is not None:
                     self._pending_tools[event.tool_call.id] = event.tool_call
+                    self.state.append_context(self.name, [event.tool_call])
 
             case me.ResponseDoneEvent():
                 self._metrics.input_tokens = event.input_tokens
@@ -724,7 +725,10 @@ class RealtimeAgent:
         """
         context = self.state.context
         if context and context[-1].role == "assistant":
-            if not (context[-1].get_text_content() or "").strip():
+            tail = context[-1]
+            if not (tail.get_text_content() or "").strip() and all(
+                isinstance(b, TextBlock) for b in tail.content
+            ):
                 context.pop()
         if not context or context[-1].role != "user":
             return False
@@ -1041,6 +1045,11 @@ class RealtimeAgent:
                 state=state,
             ),
         )
-        await self.model.push_tool_result(
-            ToolResultBlock(id=call.id, name=call.name, output=output),
+        block = ToolResultBlock(
+            id=call.id,
+            name=call.name,
+            output=output,
+            state=state,
         )
+        self.state.append_context(self.name, [block])
+        await self.model.push_tool_result(block)

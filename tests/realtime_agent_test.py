@@ -916,12 +916,104 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+        # The context records the whole turn: user text, the tool call
+        # and its result on the first reply, the spoken answer on the second.
         self.assertListEqual(
-            [(m.role, m.get_text_content()) for m in agent.state.context],
+            [m.model_dump() for m in agent.state.context],
             [
-                ("user", "查天气"),
-                ("assistant", "我查一下"),
-                ("assistant", "今天晴"),
+                {
+                    "name": "user",
+                    "role": "user",
+                    "id": AnyString(),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "查天气",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "Friday",
+                    "role": "assistant",
+                    "id": "r1",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "我查一下",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "tool_call",
+                            "id": "c1",
+                            "name": "stream_tool",
+                            "input": '{"q": "x"}',
+                            "state": "pending",
+                            "suggested_rules": [],
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "tool_result",
+                            "id": "c1",
+                            "name": "stream_tool",
+                            "output": "x-final",
+                            "state": "success",
+                            "metadata": {},
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": {
+                        "input_tokens": 5,
+                        "output_tokens": 2,
+                        "cache_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "Friday",
+                    "role": "assistant",
+                    "id": "r2",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "今天晴",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": {
+                        "input_tokens": 9,
+                        "output_tokens": 3,
+                        "cache_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
             ],
         )
         self.assertListEqual(
