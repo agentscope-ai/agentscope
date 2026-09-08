@@ -650,6 +650,8 @@ class TestVolcengineModelParameters(unittest.TestCase):
         self.assertEqual(cards[0].name, "doubao-seed-2-1-pro-260628")
         self.assertEqual(cards[0].context_size, 256000)
         self.assertEqual(cards[0].output_size, 256000)
+        self.assertIn("image/*", cards[0].input_types)
+        self.assertIn("video/*", cards[0].input_types)
         self.assertIn("application/x-thinking", cards[0].output_types)
         reasoning_schema = cards[0].parameter_schema["properties"][
             "reasoning_effort"

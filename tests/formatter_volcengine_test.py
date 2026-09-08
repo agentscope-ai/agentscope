@@ -16,6 +16,7 @@ from agentscope.message import (
     TextBlock,
     DataBlock,
     Base64Source,
+    URLSource,
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
@@ -486,8 +487,7 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
         )
 
     async def test_chat_formatter_hint_block_multimodal(self) -> None:
-        """Volcengine is text-only — DataBlock degrades to a placeholder
-        string."""
+        """HintBlock preserves supported image data."""
         fmt = VolcengineChatFormatter()
         msgs = [
             AssistantMsg(
@@ -512,11 +512,122 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             [
                 {
                     "role": "user",
-                    "content": (
-                        "Inspect this screenshot:\n"
-                        "[image/png attached, not supported by this provider]"
-                    ),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Inspect this screenshot:",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": (
+                                    "data:image/png;base64,"
+                                    "ZmFrZSBpbWFnZSBkYXRh"
+                                ),
+                            },
+                        },
+                    ],
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_multimodal_url_and_base64(self) -> None:
+        """Ark image/video input accepts URLs and base64 data URIs."""
+        fmt = VolcengineChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Compare these images."),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/first.png",
+                            media_type="image/png",
+                        ),
+                    ),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZQ==",
+                            media_type="image/jpeg",
+                        ),
+                    ),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/video.mp4",
+                            media_type="video/mp4",
+                        ),
+                    ),
+                    DataBlock(
+                        source=Base64Source(
+                            data="dmlkZW8=",
+                            media_type="video/quicktime",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Compare these images."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/first.png",
+                            },
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/jpeg;base64,ZmFrZQ==",
+                            },
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": "https://example.com/video.mp4",
+                            },
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": "data:video/quicktime;base64,dmlkZW8=",
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
+
+    async def test_multiagent_formatter_preserves_images(self) -> None:
+        """Multi-agent history should retain supported image blocks."""
+        fmt = VolcengineMultiAgentFormatter()
+        msgs = [
+            UserMsg(
+                name="alice",
+                content=[
+                    TextBlock(text="Describe this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/image.png",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        result = await fmt.format(msgs)
+        self.assertEqual(result[0]["role"], "user")
+        self.assertEqual(
+            result[0]["content"][-1],
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://example.com/image.png"},
+            },
         )
