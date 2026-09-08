@@ -4,6 +4,11 @@
     export DASHSCOPE_API_KEY=sk-...
     python examples/realtime/local_mic.py
 
+Pick devices by index from ``python -m sounddevice`` when the defaults
+are wrong, e.g. a Bluetooth headset used for both directions:
+
+    REALTIME_INPUT_DEVICE=3 REALTIME_OUTPUT_DEVICE=2 python ...
+
 Speak, hear the reply, and speak over it to interrupt. Ctrl-C to quit.
 """
 import asyncio
@@ -41,6 +46,8 @@ async def main() -> None:
         transport=LocalAudioTransport(
             input_sample_rate=model.input_sample_rate,
             output_sample_rate=model.output_sample_rate,
+            input_device=_device("REALTIME_INPUT_DEVICE"),
+            output_device=_device("REALTIME_OUTPUT_DEVICE"),
         ),
     )
 
@@ -68,6 +75,14 @@ async def main() -> None:
                         f"  context[-1] = {tail.role}: "
                         f"{tail.get_text_content()!r}",
                     )
+
+
+def _device(env: str) -> int | str | None:
+    """A sounddevice index or name from the environment, if given."""
+    value = os.environ.get(env)
+    if value is None:
+        return None
+    return int(value) if value.isdigit() else value
 
 
 def _ms(seconds: float | None) -> str:
