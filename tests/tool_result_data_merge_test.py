@@ -141,9 +141,10 @@ class ConvertToolChunkIdentityTest(IsolatedAsyncioTestCase):
                 ),
             ),
         ]
+        # pylint: disable=protected-access
         events = [
             event
-            async for event in agent._convert_tool_chunk_to_event(  # pylint: disable=protected-access
+            async for event in agent._convert_tool_chunk_to_event(
                 "tc-1",
                 chunks,
             )
