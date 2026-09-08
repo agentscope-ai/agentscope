@@ -14,6 +14,7 @@ from ._manager import (
 )
 from ._service import (
     ChannelService,
+    CredentialBindingService,
     ChatService,
     IndexSweeper,
     IndexTaskConsumer,
@@ -134,6 +135,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             app.state.channel_service = ChannelService(
                 storage=storage,
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+            )
+            # Binding sessions live in the bus and hold no connection,
+            # so this is available wherever the channel API is.
+            app.state.credential_binding_service = CredentialBindingService(
                 message_bus=message_bus,
                 type_registry=channel_type_registry,
             )

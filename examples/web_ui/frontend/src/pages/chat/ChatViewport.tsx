@@ -70,12 +70,12 @@ interface ChatViewportProps {
 	 */
 	sessionId: string | null;
 	/**
-	 * Optional hook invoked when a team membership change arrives on
-	 * this viewport's SSE stream. The outer page owns the session list
-	 * that backs the team sidebar, so it must be told to refetch too;
-	 * passing this callback wires that signal up.
+	 * Optional hook invoked when a server-side change to this session
+	 * or its team arrives on the SSE stream. The outer page owns the
+	 * session list that backs the sidebar, so it must be told to
+	 * refetch too; passing this callback wires that signal up.
 	 */
-	onTeamUpdated?: () => void;
+	onSessionsChanged?: () => void;
 }
 
 /** Maximum number of panels stacked in a single dock column. */
@@ -168,7 +168,7 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
@@ -212,17 +212,40 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			// close a panel the user already has open.
 			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
 		}
-		onTeamUpdated?.();
-	}, [refetchSessions, sessionId, onTeamUpdated]);
+		onSessionsChanged?.();
+	}, [refetchSessions, sessionId, onSessionsChanged]);
 
-	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
-		if (value.tasks_context) {
-			setTasksContext(value.tasks_context as TaskContext);
-		}
-		if (value.permission_context) {
-			setPermissionContext(value.permission_context as PermissionContext);
-		}
-	}, []);
+	// Auto-naming replaced the session's placeholder name. The outer
+	// page shares this cached list whenever both are looking at the same
+	// agent; when they are not — drilled into a team member — it needs
+	// its own nudge.
+	const handleSessionUpdated = useCallback(async () => {
+		await refetchSessions();
+		onSessionsChanged?.();
+	}, [refetchSessions, onSessionsChanged]);
+
+	// Surface the plan panel the first time a session's tasks arrive over
+	// the stream, and only then — reopening it on every update would undo
+	// the user closing it. `state_updated` also fires for permission-only
+	// changes and always carries `tasks_context`, hence gating on a
+	// non-empty task list rather than the field being present.
+	const taskPanelOpenedForRef = useRef<string | null>(null);
+	const handleStateUpdated = useCallback(
+		(value: Record<string, unknown>) => {
+			if (value.tasks_context) {
+				const incoming = value.tasks_context as TaskContext;
+				setTasksContext(incoming);
+				if (incoming.tasks.length > 0 && taskPanelOpenedForRef.current !== sessionId) {
+					taskPanelOpenedForRef.current = sessionId;
+					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+				}
+			}
+			if (value.permission_context) {
+				setPermissionContext(value.permission_context as PermissionContext);
+			}
+		},
+		[sessionId],
+	);
 
 	const {
 		msgs,
@@ -236,6 +259,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
+		onSessionUpdated: handleSessionUpdated,
 	});
 	const {
 		mcps,
@@ -465,14 +489,13 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		],
 	);
 
-	// ChatViewport keeps its own `useSessions(agentId)` instance (the
-	// outer page has a separate one). Its built-in fetch only fires on
-	// `agentId` change, so when the outer page creates a new session
-	// under the same agent, this list doesn't auto-refresh. Without
-	// this refetch, `view` would stay `null` for the brand-new session
-	// id and every effect below would early-return on `!view`,
-	// leaving the model select and friends pinned to whatever the
-	// previously-viewed session had configured.
+	// Safety net for a `view` that never arrives. A session created from
+	// the outer page reaches this list on its own, since both mount the
+	// same cached query — but not when the two are looking at different
+	// agents (drilled into a team member), and not for a write that
+	// happened outside either. Without a `view` every effect below
+	// early-returns on `!view`, leaving the model select and friends
+	// pinned to whatever the previously-viewed session had configured.
 	useEffect(() => {
 		if (!sessionId) return;
 		if (view) return;
@@ -695,10 +718,33 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div className="flex flex-row items-center gap-x-1">
+								<div className="flex min-w-0 flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
+									{/* The open session, named opposite its own
+									    settings. The sidebar is the only other
+									    place the name appears, and it collapses
+									    on mobile — so on a narrow screen this is
+									    the only thing saying which conversation
+									    is on screen.
+
+									    Withheld until the session has something
+									    in it: an untouched one is still named
+									    after the timestamp it was created at,
+									    and a date is worse than no title at all.
+									    The first reply replaces that with a real
+									    one. */}
+									{msgs.length > 0 && (
+										<span
+											className="truncate px-2 text-sm text-muted-foreground"
+											title={view?.session.config.name}
+										>
+											{view?.session.config.name}
+										</span>
+									)}
 								</div>
-								<div className="flex flex-row gap-x-1">
+								{/* Never squeezed by a long session name: the
+								    name truncates instead. */}
+								<div className="flex shrink-0 flex-row gap-x-1">
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"

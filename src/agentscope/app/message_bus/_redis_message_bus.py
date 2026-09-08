@@ -27,7 +27,25 @@ return entries
 """
 
 
-class RedisMessageBus(MessageBus):
+# Compare-and-set on one hash field, so a caller can write back a value
+# it decided on earlier without holding a lock across the think time.
+_REGISTRY_SET_IF_LUA = """
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
+return 1
+"""
+
+# Read and remove in one step, so a value is consumed exactly once
+# however many callers race for it.
+_REGISTRY_POP_LUA = """
+local value = redis.call('HGET', KEYS[1], ARGV[1])
+if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
+return value
+"""
+
+
+class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     """Redis-backed implementation of :class:`MessageBus`.
 
     Mapping of bus modes to Redis primitives:
@@ -412,6 +430,36 @@ class RedisMessageBus(MessageBus):
         await self._client.hset(namespace, field, value)
         if ttl_secs is not None:
             await self._client.expire(namespace, ttl_secs)
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Compare-and-set one Hash field via Lua. See base."""
+        written = await self._client.eval(
+            _REGISTRY_SET_IF_LUA,
+            1,
+            namespace,
+            field,
+            value,
+            expected,
+            ttl_secs or 0,
+        )
+        return bool(written)
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """``HGET`` + ``HDEL`` as one Lua step. See base."""
+        return await self._client.eval(
+            _REGISTRY_POP_LUA,
+            1,
+            namespace,
+            field,
+        )
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the Redis Hash at ``namespace``.

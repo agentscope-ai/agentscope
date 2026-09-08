@@ -308,6 +308,20 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # per-chat buffers.
     # ------------------------------------------------------------------
 
+    _CHANNEL_CREDENTIAL_BINDING = "agentscope:channel:binding"
+
+    CREDENTIAL_BINDING_FIELD = "record"
+    """Field holding the serialised binding session."""
+
+    CREDENTIAL_BINDING_CLAIM_TTL_SECS = 300
+    """How long obtained credentials stay claimable. Short on purpose —
+    they sit here in the clear until the channel is created."""
+
+    @classmethod
+    def channel_credential_binding(cls, binding_id: str) -> str:
+        """Registry namespace holding one credential-binding session."""
+        return f"{cls._CHANNEL_CREDENTIAL_BINDING}:{binding_id}"
+
     _CHANNEL_LIFECYCLE = "agentscope:channel:lifecycle"
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"

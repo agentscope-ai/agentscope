@@ -2,6 +2,7 @@
 """Schema models for the agent service."""
 
 from ._channel import (
+    StartCredentialBindingRequest,
     ChannelActionResponse,
     ChannelChatId,
     ChannelChatIdsResponse,
@@ -123,6 +124,7 @@ __all__ = [
     "ChannelResponse",
     "ChannelSessionsResponse",
     "CreateChannelRequest",
+    "StartCredentialBindingRequest",
     "UpdateChannelRequest",
     # Chat
     "ChatRequest",

@@ -14,8 +14,10 @@ from agentscope.app.storage import (
     ChatModelConfig,
     ScheduleRecord,
     ScheduleData,
-    SessionSource,
+    ChannelOrigin,
+    ScheduleOrigin,
     TeamData,
+    TeamMember,
     TeamRecord,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
@@ -235,7 +237,10 @@ class TestSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(self.workspace_id),
-            source=SessionSource.CHANNEL,
+            origin=ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="chat-1",
+            ),
             source_channel_user_id="staff-1",
         )
 
@@ -682,8 +687,7 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=SessionSource.SCHEDULE,
-            source_schedule_id=schedule.id,
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         results = await self.storage.list_sessions_by_schedule(
@@ -692,7 +696,10 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].id, session.id)
-        self.assertEqual(results[0].source_schedule_id, schedule.id)
+        self.assertEqual(
+            results[0].origin,
+            ScheduleOrigin(schedule_id=schedule.id),
+        )
 
     async def test_list_sessions_by_schedule_empty(self) -> None:
         """Returns empty list when no sessions exist for a schedule."""
@@ -712,8 +719,7 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=SessionSource.SCHEDULE,
-            source_schedule_id=schedule.id,
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         agent_sessions = await self.storage.list_sessions(
@@ -732,15 +738,13 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=SessionSource.SCHEDULE,
-            source_schedule_id=schedule.id,
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=SessionSource.SCHEDULE,
-            source_schedule_id=schedule.id,
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         await self.storage.delete_schedule(self.user_id, schedule.id)
@@ -766,8 +770,7 @@ class TestScheduleSession(IsolatedAsyncioTestCase):
             self.user_id,
             self.agent_id,
             make_session_config(),
-            source=SessionSource.SCHEDULE,
-            source_schedule_id=schedule.id,
+            origin=ScheduleOrigin(schedule_id=schedule.id),
         )
 
         await self.storage.delete_session(
@@ -1161,6 +1164,55 @@ class TestTeamCascade(IsolatedAsyncioTestCase):
         self.assertIsNotNone(leader)
         self.assertIsNone(leader.team_id)
 
+    async def test_delete_team_removes_cross_owner_borrowed_session(
+        self,
+    ) -> None:
+        """An invited definition owner differs from its session owner."""
+        definition_owner = "user-2"
+        invited = make_agent_record(definition_owner)
+        await self.storage.upsert_agent(definition_owner, invited)
+        owner_session = await self.storage.upsert_session(
+            definition_owner,
+            invited.id,
+            make_session_config("owner-private-workspace"),
+        )
+        borrowed = await self.storage.upsert_session(
+            self.user_id,
+            invited.id,
+            make_session_config("viewer-borrowed-workspace"),
+        )
+        self.team.data.members = [
+            TeamMember(
+                owner_id=definition_owner,
+                agent_id=invited.id,
+                session_id=borrowed.id,
+                role="invited",
+            ),
+        ]
+        self.team.data.member_ids = [invited.id]
+        await self.storage.upsert_team(self.user_id, self.team)
+
+        self.assertTrue(
+            await self.storage.delete_team(self.user_id, self.team.id),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                invited.id,
+                borrowed.id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                definition_owner,
+                invited.id,
+                owner_session.id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(definition_owner, invited.id),
+        )
+
     async def test_delete_leader_session_dissolves_team(self) -> None:
         """Deleting a leader session auto-dissolves its team."""
         await self.storage.delete_session(
@@ -1544,4 +1596,76 @@ class TestSkill(IsolatedAsyncioTestCase):
         self.assertEqual(
             len(await self.storage.list_skills(self.user_id)),
             1,
+        )
+
+
+class TestChannelSessionIndex(IsolatedAsyncioTestCase):
+    """The channel index, which the tagged union now drives.
+
+    It used to be written from a nullable ``source_channel_id``; it is
+    now written from a ``ChannelOrigin``, and the schedule path's
+    coverage says nothing about it.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-1"
+        self.agent_id = "agent-1"
+
+    async def test_a_channel_session_is_indexed_and_unindexed(self) -> None:
+        """It is found by its channel, and gone once the session is."""
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+            origin=ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="chat-1",
+                chat_name="产品群",
+            ),
+        )
+
+        found = await self.storage.list_sessions_by_channel(
+            self.user_id,
+            "chan-1",
+        )
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].id, session.id)
+        self.assertEqual(
+            found[0].origin,
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="chat-1",
+                chat_name="产品群",
+            ),
+        )
+
+        await self.storage.delete_session(
+            self.user_id,
+            self.agent_id,
+            session.id,
+        )
+
+        self.assertEqual(
+            await self.storage.list_sessions_by_channel(
+                self.user_id,
+                "chan-1",
+            ),
+            [],
+        )
+
+    async def test_a_session_from_elsewhere_is_not_indexed(self) -> None:
+        """Only a ChannelOrigin goes into the channel index."""
+        await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+        )
+        self.assertEqual(
+            await self.storage.list_sessions_by_channel(
+                self.user_id,
+                "chan-1",
+            ),
+            [],
         )

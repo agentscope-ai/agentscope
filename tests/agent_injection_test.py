@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the runtime state injection of the agent, i.e. the
 ``Agent._inject_runtime_state`` method."""
+# pylint: disable=too-many-public-methods
 from datetime import datetime, tzinfo
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -9,7 +10,7 @@ from pydantic import ValidationError
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.message import (
     HintBlock,
     ToolCallBlock,
@@ -360,6 +361,80 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             [self._expected_event(expected_hint)],
             [evt.model_dump() for evt in events],
         )
+
+    async def test_compression_tool_is_recommended_between_tasks(self) -> None:
+        """A long context at a task boundary recommends the agent tool."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<context-length>Your current context contains 700 tokens. "
+            "When reaching 800 tokens, your context will be compressed. "
+            "No task is in progress, so judge by yourself whether the "
+            "context should be compressed now by calling `CompressContext`."
+            "</context-length>\n"
+            "</system-reminder>"
+        )
+        self.agent.context_config = ContextConfig(
+            trigger_ratio=0.8,
+            reserve_ratio=0.1,
+            compression_tool_enabled=True,
+        )
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        self.model.count_tokens = AsyncMock(return_value=700)
+
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_compression_tool_is_not_recommended_within_a_task(
+        self,
+    ) -> None:
+        """An in-progress task isn't a boundary to compress at."""
+        self.agent.context_config = ContextConfig(
+            trigger_ratio=0.8,
+            reserve_ratio=0.1,
+            compression_tool_enabled=True,
+        )
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        self.agent.state.tasks_context.tasks = [
+            Task(
+                subject="Write the report",
+                description="Draft the quarterly report.",
+                metadata={},
+                state="in_progress",
+            ),
+        ]
+        self.model.count_tokens = AsyncMock(return_value=700)
+
+        events = await self._run_injection()
+
+        self.assertNotIn("CompressContext", events[0].hint)
+        self.assertIn(
+            "<context-length>Your current context contains 700 tokens. "
+            "When reaching 800 tokens, your context will be compressed."
+            "</context-length>",
+            events[0].hint,
+        )
+
+    async def test_disabled_compression_tool_keeps_awareness_boundary(
+        self,
+    ) -> None:
+        """The regular context reminder retains its strict boundary."""
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        # Exactly max(0, 0.8 - 0.2) * 1000; the original behavior requires
+        # token usage to be strictly greater than this boundary.
+        self.model.count_tokens = AsyncMock(return_value=600)
+
+        events = await self._run_injection()
+
+        self.assertEqual([], events)
 
     async def test_template_without_placeholder_is_rejected(self) -> None:
         """A template that would silently drop the injected fields should be
