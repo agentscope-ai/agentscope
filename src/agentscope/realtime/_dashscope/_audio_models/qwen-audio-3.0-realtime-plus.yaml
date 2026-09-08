@@ -1,0 +1,32 @@
+type: realtime_model
+name: qwen-audio-3.0-realtime-plus
+label: Qwen-Audio-3.0-Realtime-Plus
+status: active
+
+input_types:
+  - audio/pcm
+  - text/plain
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+supports_tools: true
+supports_session_resumption: false
+
+# Turns and cumulative audio seconds both apply; the provider discards
+# the oldest turn once either is exceeded.
+max_audio_turns: 50
+max_audio_duration_s: 300
+
+parameter_overrides:
+  voice:
+    default: "longanqian"
+    enum:
+      - "longanqian"
+      - "longanlingxin"
+      - "longanlingxi"
+      - "longanxiaoxin"
+      - "longanlufeng"

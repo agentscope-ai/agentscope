@@ -42,6 +42,10 @@ class RealtimeModelBase(ABC):
     # Adapter facts — constant across every model of this API
     # ------------------------------------------------------------------
 
+    type: str = ""
+    """Identifies the adapter; stamped onto every card it lists so a stored
+    config can be mapped back to this class."""
+
     truncation: TruncationSupport = TruncationSupport.NONE
     """Whether and how an interrupted turn can be corrected."""
 
@@ -111,7 +115,10 @@ class RealtimeModelBase(ABC):
             if custom_yaml_dir
             else Path(inspect.getfile(cls)).parent / "_models"
         )
-        return RealtimeModelCard.list_from_directory(yaml_dir, cls.Parameters)
+        cards = RealtimeModelCard.list_from_directory(yaml_dir, cls.Parameters)
+        for card in cards:
+            card.model_type = cls.type
+        return cards
 
     # ------------------------------------------------------------------
     # Facts that are constant on some providers and tuneable on others

@@ -43,6 +43,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
             description="Whether to transcribe the user's speech.",
         )
 
+    type = "dashscope_omni_realtime"
     truncation = TruncationSupport.NONE
     supports_text_input = False
 
@@ -304,7 +305,10 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 delta = data.get("delta")
                 if not delta:
                     return None
-                return me.TranscriptDeltaEvent(item_id=self._item_id, delta=delta)
+                return me.TranscriptDeltaEvent(
+                    item_id=self._item_id,
+                    delta=delta,
+                )
 
             case "conversation.item.input_audio_transcription.completed":
                 return me.InputTranscriptionEvent(

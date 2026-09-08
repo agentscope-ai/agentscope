@@ -65,9 +65,12 @@ class DashScopeCredential(CredentialBase):
         cls,
     ) -> list[Type["RealtimeModelBase"]]:
         """Return the DashScope realtime model classes."""
-        from ..realtime import DashScopeRealtimeModel
+        from ..realtime import (
+            DashScopeAudioRealtimeModel,
+            DashScopeRealtimeModel,
+        )
 
-        return [DashScopeRealtimeModel]
+        return [DashScopeRealtimeModel, DashScopeAudioRealtimeModel]
 
     @classmethod
     def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:

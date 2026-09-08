@@ -28,6 +28,9 @@
 | `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |
 | `RealtimeAgent` / `TurnAggregator` / `TurnMetrics` 放 `agent/_realtime/`；`realtime/` 只放模型侧（model、card、事件、transport、VAD） | 与 `Agent` 同目录；`agent/` 单向依赖 `realtime/` |
 | 模型事件统一 `Event` 后缀（`AudioDeltaEvent` 等），基类 `ModelEvent` | 对齐 `agentscope.event` 的命名 |
+| 命名保留 `realtime`，不改 `live`；agent 层将来挂级联后端时再评估 `VoiceAgent` | 六家里五家叫 Realtime，M1 的 provider 产品名就是 Qwen-Omni-Realtime |
+| DashScope 的 Omni 和 Audio-3.0 两个 S2S API 用两个类，不在一个类里按模型名路由 | `supports_text_input` 等是 per-API 事实；`tts/_dashscope/` 一个 provider 三个类的先例 |
+| 反向查找靠 card 上的 `model_type`（产出它的 class 的 `type` tag），服务层建 `{cls.type: cls}` dict，不扫名字 | 同名模型可出现在两个 class 的 card 里（OpenAI chat/responses）|
 | `TurnMetrics` 是 agent 的**产出**（四个时刻），不是配置，不进构造函数；`last_turn_metrics` 读取 | 每回合的指标事件（livekit `metrics_collected`）待前端需要时再加 |
 | `PlayoutPosition.first_played_at` 由 transport 在音频线程记录，agent 在回合结束时读取 | e2e_latency 的唯一真实来源；随 `LocalAudioTransport` 落地 |
 | 用户打字先打断当前回复 | livekit / pipecat 默认；不打断需要额外的待处理状态 |

@@ -18,6 +18,12 @@ class RealtimeModelCard(BaseModel):
 
     type: Literal["realtime_model"] = "realtime_model"
 
+    model_type: str = Field(
+        default="",
+        description="The adapter class this model belongs to, e.g. "
+        "``dashscope_omni_realtime``.",
+    )
+
     name: str = Field(description="The model identifier.")
     label: str = Field(description="Human-readable label for the UI.")
 
