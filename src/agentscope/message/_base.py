@@ -465,23 +465,27 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    # Group same-id Base64 chunks of one multimodal payload,
-                    # mirroring ToolResponse.append_chunk. Previously every
-                    # delta was appended as a separate block, splitting one
-                    # resource into multiple partial blocks on replay.
-                    existing = block.output[-1] if block.output else None
-                    if (
-                        isinstance(existing, DataBlock)
-                        and existing.id == event.block_id
-                        and isinstance(existing.source, Base64Source)
-                        and isinstance(src, Base64Source)
-                    ):
-                        existing.source.data = _merge_base64_delta(
+                    # Merge same-id Base64 chunks, mirroring ToolResponse.append_chunk.
+                    existing = next(
+                        (
+                            b
+                            for b in block.output
+                            if isinstance(b, DataBlock)
+                            and b.id == event.block_id
+                            and isinstance(b.source, Base64Source)
+                        ),
+                        None,
+                    )
+                    if existing is not None and isinstance(src, Base64Source):
+                        # Each delta is an independently encoded chunk (with
+                        # its own padding); decode, concat bytes, re-encode.
+                        merged = base64.b64decode(
                             existing.source.data,
-                            src.data,
-                        )
-                        if src.media_type:
-                            existing.source.media_type = src.media_type
+                        ) + base64.b64decode(src.data)
+                        existing.source.data = base64.b64encode(
+                            merged,
+                        ).decode("ascii")
+                        existing.source.media_type = src.media_type
                     else:
                         block.output.append(
                             DataBlock(id=event.block_id, source=src),
