@@ -831,16 +831,6 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
-                    "type": "REPLY_END",
-                    "session_id": AnyString(),
-                    "reply_id": "r1",
-                    "finished_reason": "completed",
-                    "error": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
                     "type": "TOOL_CALL_START",
                     "reply_id": "r1",
                     "tool_call_id": "c1",
@@ -894,18 +884,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
-                    "type": "REPLY_START",
-                    "session_id": AnyString(),
-                    "reply_id": "r2",
-                    "name": "Friday",
-                    "role": "assistant",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
                     "type": "MODEL_CALL_START",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "model_name": "scripted",
                 },
                 {
@@ -913,7 +893,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "TEXT_BLOCK_START",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "block_id": AnyString(),
                 },
                 {
@@ -921,7 +901,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "TEXT_BLOCK_DELTA",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "block_id": AnyString(),
                     "delta": "今天晴",
                 },
@@ -930,7 +910,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "DATA_BLOCK_START",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "block_id": AnyString(),
                     "media_type": "audio/pcm;rate=24000",
                     "name": None,
@@ -940,7 +920,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "DATA_BLOCK_DELTA",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "block_id": AnyString(),
                     "media_type": "audio/pcm;rate=24000",
                     "data": "AQA=",
@@ -951,7 +931,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "TEXT_BLOCK_END",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "block_id": AnyString(),
                 },
                 {
@@ -959,7 +939,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "DATA_BLOCK_END",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "block_id": AnyString(),
                 },
                 {
@@ -967,7 +947,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "created_at": AnyString(),
                     "metadata": {},
                     "type": "MODEL_CALL_END",
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "input_tokens": 9,
                     "output_tokens": 3,
                     "cache_input_tokens": 0,
@@ -980,14 +960,14 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "metadata": {},
                     "type": "REPLY_END",
                     "session_id": AnyString(),
-                    "reply_id": "r2",
+                    "reply_id": "r1",
                     "finished_reason": "completed",
                     "error": None,
                 },
             ],
         )
-        # The context records the whole turn: user text, the tool call
-        # and its result on the first reply, the spoken answer on the second.
+        # The context records the whole turn as one assistant message: the
+        # first words, the tool call and its result, then the spoken answer.
         self.assertListEqual(
             [m.model_dump() for m in agent.state.context],
             [
@@ -1044,25 +1024,6 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             "created_at": AnyString(),
                             "finished_at": None,
                         },
-                    ],
-                    "metadata": {},
-                    "created_at": AnyString(),
-                    "usage": {
-                        "input_tokens": 5,
-                        "output_tokens": 2,
-                        "cache_input_tokens": 0,
-                        "cache_creation_input_tokens": 0,
-                    },
-                    "finished_at": None,
-                    "finished_reason": None,
-                    "structured_output": None,
-                    "error": None,
-                },
-                {
-                    "name": "Friday",
-                    "role": "assistant",
-                    "id": "r2",
-                    "content": [
                         {
                             "type": "text",
                             "text": "今天晴",
@@ -1073,9 +1034,10 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     ],
                     "metadata": {},
                     "created_at": AnyString(),
+                    # Both model calls of the reply, summed.
                     "usage": {
-                        "input_tokens": 9,
-                        "output_tokens": 3,
+                        "input_tokens": 14,
+                        "output_tokens": 5,
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },

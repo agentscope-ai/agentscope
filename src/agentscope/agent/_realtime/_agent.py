@@ -66,6 +66,11 @@ class _Reply:
     to work out what the user actually heard."""
 
     item_id: str
+    """The provider's response item; what playout and truncation refer to."""
+    reply_id: str
+    """The agent's reply this response belongs to, as seen in events and
+    context. A reply spans every response up to the next user turn, so
+    one that calls tools has several responses."""
     text_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     audio_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     text: str = ""
@@ -185,6 +190,10 @@ class RealtimeAgent:
         self._out: asyncio.Queue = asyncio.Queue()
         self._reply: _Reply | None = None
         self._finished_item = ""
+        # The agent's open reply, and whether the next response continues
+        # it (after tool results) rather than starting a new one.
+        self._reply_id = ""
+        self._continuing = False
         # The user's turn in flight, reported as a reply of its own.
         self._user_turn = ""
         self._user_turn_open = False
@@ -546,6 +555,8 @@ class RealtimeAgent:
         """Body of :meth:`_barge_in`, run under the lock."""
         reply = self._reply
         if reply is None:
+            # Nothing playing, but a reply may be waiting on its tools.
+            self._finish_reply(ReplyFinishedReason.INTERRUPTED)
             return
 
         spoken, played_ms = (
@@ -669,15 +680,21 @@ class RealtimeAgent:
                 self._metrics.input_tokens = event.input_tokens
                 self._metrics.output_tokens = event.output_tokens
                 tail = self.state.context[-1] if self.state.context else None
-                if tail is not None and tail.id == event.item_id:
+                if tail is not None and tail.id == self._reply_id:
                     tail.append_usage(
                         Usage(
                             input_tokens=event.input_tokens,
                             output_tokens=event.output_tokens,
                         ),
                     )
-                self._finish_reply(ReplyFinishedReason.COMPLETED)
-                self._schedule_tools()
+                if self._pending_tools and self.toolkit is not None:
+                    # The reply goes on: tools run, then the next response
+                    # answers with their results.
+                    self._finish_response()
+                    self._continuing = True
+                    self._schedule_tools()
+                else:
+                    self._finish_reply(ReplyFinishedReason.COMPLETED)
 
             case me.ModelErrorEvent():
                 logger.error(
@@ -774,7 +791,8 @@ class RealtimeAgent:
         return True
 
     def _start_reply(self, item_id: str) -> _Reply | None:
-        """Open a reply for *item_id*, emitting its start events once.
+        """Open the response *item_id*, and the reply it belongs to unless
+        one is waiting for it after tool results.
 
         Returns ``None`` for an item already closed — deltas still in
         flight after a barge-in must not reopen it.
@@ -783,30 +801,37 @@ class RealtimeAgent:
             return self._reply
         if item_id == self._finished_item:
             return None
+        if self._reply is not None:
+            self._finish_response()
 
-        self._reply = _Reply(item_id=item_id)
-        self.state.reply_id = item_id
-        self._metrics = TurnMetrics(
-            user_speech_end_at=self._metrics.user_speech_end_at,
-            turn_committed_at=self._metrics.turn_committed_at,
-        )
-        self._emit(
-            ReplyStartEvent(
-                session_id=self.state.session_id,
-                reply_id=item_id,
-                name=self.name,
-            ),
-        )
+        if not self._continuing:
+            # The agent takes the turn; the reply is named by its first
+            # response so that every event of the turn shares one id.
+            self._reply_id = item_id
+            self.state.reply_id = item_id
+            self._metrics = TurnMetrics(
+                user_speech_end_at=self._metrics.user_speech_end_at,
+                turn_committed_at=self._metrics.turn_committed_at,
+            )
+            self._emit(
+                ReplyStartEvent(
+                    session_id=self.state.session_id,
+                    reply_id=item_id,
+                    name=self.name,
+                ),
+            )
+        self._continuing = False
+        self._reply = _Reply(item_id=item_id, reply_id=self._reply_id)
         self._emit(
             ModelCallStartEvent(
-                reply_id=item_id,
+                reply_id=self._reply_id,
                 model_name=self.model.model_name,
             ),
         )
         return self._reply
 
-    def _finish_reply(self, reason: ReplyFinishedReason) -> None:
-        """Close the open reply, if any."""
+    def _finish_response(self) -> None:
+        """Close the open response: its blocks and the model call."""
         reply = self._reply
         if reply is None:
             return
@@ -817,33 +842,41 @@ class RealtimeAgent:
         if reply.text_started:
             self._emit(
                 TextBlockEndEvent(
-                    reply_id=reply.item_id,
+                    reply_id=reply.reply_id,
                     block_id=reply.text_block_id,
                 ),
             )
         if reply.audio_started:
             self._emit(
                 DataBlockEndEvent(
-                    reply_id=reply.item_id,
+                    reply_id=reply.reply_id,
                     block_id=reply.audio_block_id,
                 ),
             )
         self._emit(
             ModelCallEndEvent(
-                reply_id=reply.item_id,
+                reply_id=reply.reply_id,
                 input_tokens=self._metrics.input_tokens,
                 output_tokens=self._metrics.output_tokens,
             ),
         )
+        self._finished_item = reply.item_id
+        self._reply = None
+
+    def _finish_reply(self, reason: ReplyFinishedReason) -> None:
+        """Close the open reply, if any, response included."""
+        self._finish_response()
+        if not self._reply_id:
+            return
         self._emit(
             ReplyEndEvent(
                 session_id=self.state.session_id,
-                reply_id=reply.item_id,
+                reply_id=self._reply_id,
                 finished_reason=reason,
             ),
         )
-        self._finished_item = reply.item_id
-        self._reply = None
+        self._reply_id = ""
+        self._continuing = False
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
         """Emit a transcript delta, opening the block on first use."""
@@ -851,7 +884,7 @@ class RealtimeAgent:
             reply.text_started = True
             self._emit(
                 TextBlockStartEvent(
-                    reply_id=reply.item_id,
+                    reply_id=reply.reply_id,
                     block_id=reply.text_block_id,
                 ),
             )
@@ -860,7 +893,7 @@ class RealtimeAgent:
         tail = self.state.context[-1] if self.state.context else None
         blocks = (
             tail.content
-            if tail is not None and tail.id == reply.item_id
+            if tail is not None and tail.id == reply.reply_id
             else None
         )
         if (
@@ -873,7 +906,7 @@ class RealtimeAgent:
             self.state.append_context(self.name, [TextBlock(text=delta)])
         self._emit(
             TextBlockDeltaEvent(
-                reply_id=reply.item_id,
+                reply_id=reply.reply_id,
                 block_id=reply.text_block_id,
                 delta=delta,
             ),
@@ -886,14 +919,14 @@ class RealtimeAgent:
             reply.audio_started = True
             self._emit(
                 DataBlockStartEvent(
-                    reply_id=reply.item_id,
+                    reply_id=reply.reply_id,
                     block_id=reply.audio_block_id,
                     media_type=media_type,
                 ),
             )
         self._emit(
             DataBlockDeltaEvent(
-                reply_id=reply.item_id,
+                reply_id=reply.reply_id,
                 block_id=reply.audio_block_id,
                 data=base64.b64encode(pcm).decode("ascii"),
                 media_type=media_type,
@@ -920,11 +953,13 @@ class RealtimeAgent:
 
     async def _run_tools(self, calls: list[ToolCallBlock]) -> None:
         """Execute *calls* in order, then trigger the follow-up response."""
-        reply_id = self.state.reply_id
+        reply_id = self._reply_id
         try:
             for call in calls:
                 await self._run_tool(reply_id, call)
-            await self.model.request_response()
+            # Unless the user cut the reply short while the tools ran.
+            if self._reply_id == reply_id:
+                await self.model.request_response()
         except Exception:  # noqa: BLE001
             logger.exception("RealtimeAgent: tool execution failed")
 
