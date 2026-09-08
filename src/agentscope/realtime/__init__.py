@@ -30,7 +30,7 @@ from ._transport import (
     TransportBase,
     TransportFrame,
 )
-from ._vad import SpeechEvent, VADBase
+from ._vad import SpeechTransition, VADBase
 
 __all__ = [
     # Model
@@ -48,7 +48,7 @@ __all__ = [
     "PlayoutPosition",
     # Turn taking
     "VADBase",
-    "SpeechEvent",
+    "SpeechTransition",
     # Model events
     "ModelEvent",
     "SessionEndedEvent",

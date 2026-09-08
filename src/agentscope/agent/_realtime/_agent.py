@@ -17,7 +17,7 @@ from ...realtime._transport._base import (
     ControlFrameType,
     TransportBase,
 )
-from ...realtime._vad import SpeechEvent, VADBase
+from ...realtime._vad import SpeechTransition, VADBase
 from ..._logging import logger
 from ..._utils._common import _json_loads_with_repair
 from ...event import (
@@ -426,9 +426,9 @@ class RealtimeAgent:
             self._backlog.clear()
             pushed = True
 
-        if speech is SpeechEvent.STARTED:
+        if speech is SpeechTransition.STARTED:
             await self._barge_in()
-        elif speech is SpeechEvent.ENDED:
+        elif speech is SpeechTransition.ENDED:
             now = time.monotonic()
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()

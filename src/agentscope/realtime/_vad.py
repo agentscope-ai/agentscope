@@ -4,8 +4,9 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 
 
-class SpeechEvent(StrEnum):
-    """A transition in voice activity."""
+class SpeechTransition(StrEnum):
+    """A transition in voice activity, as detected by a VAD. Not an event
+    class; the model-side ``SpeechStartedEvent`` is what a provider reports."""
 
     STARTED = "started"
     ENDED = "ended"
@@ -22,7 +23,7 @@ class VADBase(ABC):
     """The PCM sample rate the implementation expects."""
 
     @abstractmethod
-    def push(self, pcm: bytes) -> SpeechEvent | None:
+    def push(self, pcm: bytes) -> SpeechTransition | None:
         """Feed one chunk of audio and report a transition, if any.
 
         This is an edge detector, not a level query: it returns a value
@@ -36,7 +37,7 @@ class VADBase(ABC):
                 PCM16 mono audio at :attr:`sample_rate`.
 
         Returns:
-            `SpeechEvent | None`:
+            `SpeechTransition | None`:
                 The transition detected on this chunk, or ``None``.
         """
 
