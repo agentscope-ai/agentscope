@@ -76,6 +76,39 @@ class TestOpenSandboxWorkspaceManagerRecovery(IsolatedAsyncioTestCase):
                 sandbox.get_info.assert_not_awaited()
                 self.assertGreater(manager._cache["wid"][1], 0.0)
 
+    async def test_slow_renewal_does_not_block_other_workspace(self) -> None:
+        """A remote renewal only serializes access to its own workspace."""
+        manager = OpenSandboxWorkspaceManager()
+        workspace_a = await manager.get_workspace("u", "a", "s1", "wid-a")
+        workspace_b = await manager.get_workspace("u", "a", "s2", "wid-b")
+        renewal_started = asyncio.Event()
+        release_renewal = asyncio.Event()
+
+        async def block_renewal(*_: object) -> None:
+            renewal_started.set()
+            await release_renewal.wait()
+
+        workspace_a._sandbox.renew.side_effect = block_renewal
+        task_a = asyncio.create_task(
+            manager.get_workspace("u", "a", "s3", "wid-a"),
+        )
+        await renewal_started.wait()
+        task_b = asyncio.create_task(
+            manager.get_workspace("u", "a", "s4", "wid-b"),
+        )
+
+        try:
+            completed, _ = await asyncio.wait({task_b}, timeout=1.0)
+        finally:
+            release_renewal.set()
+            result_a, result_b = await asyncio.gather(task_a, task_b)
+
+        self.assertIn(task_b, completed)
+        self.assertIs(result_a, workspace_a)
+        self.assertIs(result_b, workspace_b)
+        workspace_a._sandbox.renew.assert_awaited_once()
+        workspace_b._sandbox.renew.assert_awaited_once()
+
     async def test_404_recreates_workspace_and_closes_old_resources(
         self,
     ) -> None:
@@ -203,6 +236,7 @@ class TestOpenSandboxWorkspaceManagerRecovery(IsolatedAsyncioTestCase):
         """Cancellation is not mistaken for a failed lease renewal."""
         manager = OpenSandboxWorkspaceManager()
         workspace = await manager.get_workspace("u", "a", "s1", "wid")
+        workspace_lock = await manager._get_workspace_lock("wid")
         workspace._sandbox.renew.side_effect = asyncio.CancelledError()
 
         with self.assertRaises(asyncio.CancelledError):
@@ -210,6 +244,7 @@ class TestOpenSandboxWorkspaceManagerRecovery(IsolatedAsyncioTestCase):
 
         self.assertIs(manager._cache["wid"][0], workspace)
         self.assertFalse(manager._lock.locked())
+        self.assertFalse(workspace_lock.locked())
         workspace._sandbox.close.assert_not_awaited()
 
     async def test_failed_replacement_is_not_cached(self) -> None:
@@ -240,6 +275,82 @@ class TestOpenSandboxWorkspaceManagerRecovery(IsolatedAsyncioTestCase):
 
         self.assertNotIn("wid", manager._cache)
         sandbox.renew.assert_not_awaited()
+        sandbox.pause.assert_awaited_once()
+        sandbox.close.assert_awaited_once()
+
+    async def test_sweep_keeps_workspace_refreshed_after_snapshot(
+        self,
+    ) -> None:
+        """A stale sweep candidate is rechecked after waiting for renewal."""
+        manager = OpenSandboxWorkspaceManager(ttl=1.0)
+        workspace = await manager.get_workspace("u", "a", "s1", "wid")
+        sandbox = workspace._sandbox
+        manager._cache["wid"] = (
+            workspace,
+            time.monotonic() - manager._ttl - 1.0,
+        )
+        renewal_started = asyncio.Event()
+        release_renewal = asyncio.Event()
+        candidate_selected = asyncio.Event()
+
+        async def block_renewal(*_: object) -> None:
+            renewal_started.set()
+            await release_renewal.wait()
+
+        original_close_if_expired = manager._close_if_expired
+
+        async def observe_candidate(workspace_id: str, cutoff: float) -> None:
+            candidate_selected.set()
+            await original_close_if_expired(workspace_id, cutoff)
+
+        sandbox.renew.side_effect = block_renewal
+        renewal_task = asyncio.create_task(
+            manager.get_workspace("u", "a", "s2", "wid"),
+        )
+        await renewal_started.wait()
+        with patch.object(
+            manager,
+            "_close_if_expired",
+            new=observe_candidate,
+        ):
+            sweep_task = asyncio.create_task(manager._sweep_once())
+            await candidate_selected.wait()
+            release_renewal.set()
+            renewed, _ = await asyncio.gather(renewal_task, sweep_task)
+
+        self.assertIs(renewed, workspace)
+        self.assertIs(manager._cache["wid"][0], workspace)
+        sandbox.pause.assert_not_awaited()
+        sandbox.close.assert_not_awaited()
+
+    async def test_close_all_waits_for_active_workspace_operation(
+        self,
+    ) -> None:
+        """Shutdown includes workspaces active when its snapshot is taken."""
+        manager = OpenSandboxWorkspaceManager()
+        workspace = await manager.get_workspace("u", "a", "s1", "wid")
+        sandbox = workspace._sandbox
+        renewal_started = asyncio.Event()
+        release_renewal = asyncio.Event()
+
+        async def block_renewal(*_: object) -> None:
+            renewal_started.set()
+            await release_renewal.wait()
+
+        sandbox.renew.side_effect = block_renewal
+        renewal_task = asyncio.create_task(
+            manager.get_workspace("u", "a", "s2", "wid"),
+        )
+        await renewal_started.wait()
+        close_task = asyncio.create_task(manager.close_all())
+        await asyncio.sleep(0)
+
+        self.assertFalse(close_task.done())
+        release_renewal.set()
+        renewed, _ = await asyncio.gather(renewal_task, close_task)
+
+        self.assertIs(renewed, workspace)
+        self.assertFalse(manager._cache)
         sandbox.pause.assert_awaited_once()
         sandbox.close.assert_awaited_once()
 

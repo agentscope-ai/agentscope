@@ -32,6 +32,7 @@ Differences from the Docker manager:
 import asyncio
 import time
 from typing import Any, Literal, Self
+from weakref import WeakValueDictionary
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -158,8 +159,28 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
 
         # workspace_id -> (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[OpenSandboxWorkspace, float]] = {}
+        # Keep only locks referenced by active operations. Idle cached
+        # workspaces do not need a permanent lock entry, and a fresh lookup
+        # will create one before the next operation.
+        self._workspace_locks: WeakValueDictionary[
+            str,
+            asyncio.Lock,
+        ] = WeakValueDictionary()
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
+
+    async def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
+        """Return the serialization lock for one workspace id.
+
+        The manager-wide lock only protects the weak lock registry. Callers
+        must release it before waiting for the returned workspace lock.
+        """
+        async with self._lock:
+            workspace_lock = self._workspace_locks.get(workspace_id)
+            if workspace_lock is None:
+                workspace_lock = asyncio.Lock()
+                self._workspace_locks[workspace_id] = workspace_lock
+            return workspace_lock
 
     async def _build_and_start(
         self,
@@ -247,17 +268,22 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             session_id="",
         )
 
-        # Serialize reuse and recovery so concurrent requests cannot create
-        # two replacement sandboxes for the same workspace id.
-        async with self._lock:
-            cached = self._cache.get(resolved_id)
+        # Serialize reuse and recovery per workspace id. Remote operations
+        # must not hold the manager-wide cache lock, otherwise one slow
+        # sandbox blocks unrelated workspaces.
+        workspace_lock = await self._get_workspace_lock(resolved_id)
+        async with workspace_lock:
+            async with self._lock:
+                cached = self._cache.get(resolved_id)
             if cached is not None:
                 ws, _ = cached
                 # pylint: disable-next=protected-access
                 if await ws._renew_once():
-                    self._cache[resolved_id] = (ws, time.monotonic())
+                    async with self._lock:
+                        self._cache[resolved_id] = (ws, time.monotonic())
                     return ws
-                self._cache.pop(resolved_id)
+                async with self._lock:
+                    self._cache.pop(resolved_id, None)
                 logger.warning(
                     "OpenSandbox workspace %r lost sandbox %r; recreating "
                     "it. Ephemeral workspace data may have been lost.",
@@ -271,17 +297,20 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 user_id=user_id,
                 agent_id=agent_id,
             )
-            self._cache[resolved_id] = (ws, time.monotonic())
+            async with self._lock:
+                self._cache[resolved_id] = (ws, time.monotonic())
             return ws
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace."""
-        async with self._lock:
-            entry = self._cache.pop(workspace_id, None)
-        if entry is None:
-            return
-        ws, _ = entry
-        await self._safe_close(ws)
+        workspace_lock = await self._get_workspace_lock(workspace_id)
+        async with workspace_lock:
+            async with self._lock:
+                entry = self._cache.pop(workspace_id, None)
+            if entry is None:
+                return
+            ws, _ = entry
+            await self._safe_close(ws)
 
     async def close_all(self) -> None:
         """Close every cached workspace in parallel.
@@ -290,12 +319,11 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         it sequentially on shutdown would produce unnecessary latency.
         """
         async with self._lock:
-            entries = list(self._cache.values())
-            self._cache.clear()
-        if not entries:
+            workspace_ids = set(self._cache) | set(self._workspace_locks)
+        if not workspace_ids:
             return
         await asyncio.gather(
-            *(self._safe_close(ws) for ws, _ in entries),
+            *(self.close(workspace_id) for workspace_id in workspace_ids),
             return_exceptions=True,
         )
 
@@ -335,20 +363,35 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
 
     async def _sweep_once(self) -> None:
         """One sweeper tick: evict expired entries and close them."""
-        now = time.monotonic()
+        cutoff = time.monotonic() - self._ttl
         async with self._lock:
             expired_ids = [
-                wid
-                for wid, (_, ts) in self._cache.items()
-                if now - ts > self._ttl
+                wid for wid, (_, ts) in self._cache.items() if ts < cutoff
             ]
-            evicted = [self._cache.pop(wid)[0] for wid in expired_ids]
-        if not evicted:
+        if not expired_ids:
             return
         await asyncio.gather(
-            *(self._safe_close(ws) for ws in evicted),
+            *(
+                self._close_if_expired(workspace_id, cutoff)
+                for workspace_id in expired_ids
+            ),
             return_exceptions=True,
         )
+
+    async def _close_if_expired(
+        self,
+        workspace_id: str,
+        cutoff: float,
+    ) -> None:
+        """Close a candidate only if it is still idle after serialization."""
+        workspace_lock = await self._get_workspace_lock(workspace_id)
+        async with workspace_lock:
+            async with self._lock:
+                entry = self._cache.get(workspace_id)
+                if entry is None or entry[1] >= cutoff:
+                    return
+                ws, _ = self._cache.pop(workspace_id)
+            await self._safe_close(ws)
 
     @staticmethod
     async def _safe_close(ws: OpenSandboxWorkspace) -> None:
