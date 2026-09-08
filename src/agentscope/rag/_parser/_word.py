@@ -300,9 +300,10 @@ class WordParser(ParserBase):
                 text = _extract_text_from_paragraph(para)
                 if text:
                     text_buffer.append(text)
-                elif text_buffer and all(
-                    child.tag == qn("w:pPr") for child in para._element
+                elif text_buffer and not para._element.findall(
+                    ".//" + qn("w:r"),
                 ):
+                    # No runs at all, i.e. a blank line in Word
                     text_buffer.append("")
 
                 if self.include_image:
