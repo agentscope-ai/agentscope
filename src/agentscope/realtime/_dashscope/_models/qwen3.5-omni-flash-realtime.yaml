@@ -1,0 +1,28 @@
+type: realtime_model
+name: qwen3.5-omni-flash-realtime
+label: Qwen3.5-Omni-Flash Realtime
+status: active
+
+input_types:
+  - audio/pcm
+  - image/jpeg
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+supports_tools: true
+supports_session_resumption: false
+
+# Turns and cumulative audio seconds both apply; the provider discards
+# the oldest turn once either is exceeded.
+max_audio_turns: 80
+max_audio_duration_s: 480
+max_session_duration_s: 7200
+
+parameter_overrides:
+  voice:
+    default: "Tina"
+    enum: ["Cherry", "Serena", "Ethan", "Chelsie", "Tina"]
