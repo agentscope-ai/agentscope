@@ -50,7 +50,10 @@ def _drive(msg: AssistantMsg, deltas: list) -> None:
 
 
 class TestToolResultDataDeltaMerge(IsolatedAsyncioTestCase):
+    """TOOL_RESULT_DATA_DELTA block-id grouping on Msg.append_event."""
+
     def test_same_block_id_deltas_merge_into_one_block(self) -> None:
+        """Same-id Base64 deltas merge into a single block (issue #2549)."""
         msg = AssistantMsg(name="assistant", content=[])
         _drive(msg, [("audio-1", _b64(b"hello")), ("audio-1", _b64(b"world"))])
 
@@ -66,6 +69,7 @@ class TestToolResultDataDeltaMerge(IsolatedAsyncioTestCase):
         self.assertEqual(base64.b64decode(src.data), b"helloworld")
 
     def test_different_block_ids_stay_separate(self) -> None:
+        """Different block ids still produce separate DataBlocks."""
         msg = AssistantMsg(name="assistant", content=[])
         _drive(msg, [("a", _b64(b"hello")), ("b", _b64(b"world"))])
         tool_blocks = [b for b in msg.content if b.type == "tool_result"]
