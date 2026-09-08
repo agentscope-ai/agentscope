@@ -149,22 +149,17 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             "verifier",
             [[_verdict("fail", "try again")], [_verdict("pass")]],
         )
-        verifier.state.context.append(UserMsg("user", "prior verdict"))
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
         verifier.state.summary = "prior summary"
         pipe = GoalPipeline(executor, verifier)
 
         await self._run(pipe, self.query)
 
-        self.assertEqual(len(verifier.conversation_before_calls), 2)
-        self.assertEqual(
-            verifier.conversation_before_calls[0][0][0].get_text_content(),
-            "prior verdict",
+        self.assertListEqual(
+            verifier.conversation_before_calls,
+            [([prior], "prior summary"), ([], "")],
         )
-        self.assertEqual(
-            verifier.conversation_before_calls[0][1],
-            "prior summary",
-        )
-        self.assertEqual(verifier.conversation_before_calls[1], ([], ""))
 
     async def test_can_keep_verifier_conversation_between_refused_rounds(
         self,
@@ -175,20 +170,16 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             "verifier",
             [[_verdict("fail", "try again")], [_verdict("pass")]],
         )
-        verifier.state.context.append(UserMsg("user", "prior verdict"))
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
         verifier.state.summary = "prior summary"
         pipe = GoalPipeline(executor, verifier, verifier_reset_context=False)
 
         await self._run(pipe, self.query)
 
-        self.assertEqual(len(verifier.conversation_before_calls), 2)
-        self.assertEqual(
-            verifier.conversation_before_calls[1][0][0].get_text_content(),
-            "prior verdict",
-        )
-        self.assertEqual(
-            verifier.conversation_before_calls[1][1],
-            "prior summary",
+        self.assertListEqual(
+            verifier.conversation_before_calls,
+            [([prior], "prior summary"), ([prior], "prior summary")],
         )
 
     async def test_stops_at_max_iters(self) -> None:

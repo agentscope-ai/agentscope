@@ -90,20 +90,6 @@ class GoalPipeline:
         self._iters = 0
         self._goal: None | list[TextBlock | DataBlock] = None
 
-    def _reset_verifier_context(self) -> None:
-        """Clear conversation state before the next verification round.
-
-        A failed verdict starts a new executor-verifier iteration. Keeping the
-        verifier's prior conversation in that next iteration contradicts
-        ``verifier_reset_context`` and can make a new report look like a
-        continuation of the rejected one. Deliberately leave the rest of the
-        verifier state intact: tool configuration, tasks, middleware state,
-        and an in-progress HITL reply all belong to the verifier itself rather
-        than to its conversation history.
-        """
-        self.verifier.state.context.clear()
-        self.verifier.state.summary = ""
-
     async def reply_stream(
         self,
         inputs: Msg
@@ -318,7 +304,9 @@ class GoalPipeline:
                 else:
                     self._iters += 1
                     if self.verifier_reset_context:
-                        self._reset_verifier_context()
+                        # Only the conversation, tool/task state stays
+                        self.verifier.state.context.clear()
+                        self.verifier.state.summary = ""
                     if self._iters >= self.max_iters:
                         # Out of attempts; the work never passed
                         break_loop = True
