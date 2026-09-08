@@ -58,13 +58,9 @@ Use TaskGet with a specific task ID to view full details including description a
         tasks = []
         for task in _agent_state.tasks_context.tasks:
             owner = f"({task.owner})" if task.owner else ""
-            active_blocker_ids = self._get_active_blocker_ids(
-                task,
-                _agent_state,
-            )
             blocked = (
-                f'[blocked by {", ".join(active_blocker_ids)}]'
-                if active_blocker_ids
+                f'[blocked by {", ".join(task.blocked_by)}]'
+                if task.blocked_by
                 else ""
             )
             tasks.append(

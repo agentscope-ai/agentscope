@@ -4,39 +4,8 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.state import AgentState, Task
+from agentscope.state import AgentState
 from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate
-
-
-def _add_tasks_with_completed_and_active_blockers(
-    agent_state: AgentState,
-) -> None:
-    """Add a dependent task with completed and active prerequisites."""
-    agent_state.tasks_context.tasks = [
-        Task(
-            id="completed",
-            subject="Completed prerequisite",
-            description="Done",
-            metadata={},
-            state="completed",
-            blocks=["dependent"],
-        ),
-        Task(
-            id="active",
-            subject="Active prerequisite",
-            description="Still running",
-            metadata={},
-            state="in_progress",
-            blocks=["dependent"],
-        ),
-        Task(
-            id="dependent",
-            subject="Dependent task",
-            description="Waiting",
-            metadata={},
-            blocked_by=["completed", "active"],
-        ),
-    ]
 
 
 class TestTaskCreate(IsolatedAsyncioTestCase):
@@ -328,21 +297,6 @@ class TestTaskList(IsolatedAsyncioTestCase):
         }
         self.assertDictEqual(result_dump, expected_result)
 
-    async def test_list_hides_completed_blockers(self) -> None:
-        """Completed prerequisites are not rendered as active blockers."""
-        _add_tasks_with_completed_and_active_blockers(self.agent_state)
-
-        result = await self.task_list(_agent_state=self.agent_state)
-
-        self.assertIn(
-            "dependent [pending] Dependent task[blocked by active]",
-            result.content[0].text,
-        )
-        self.assertEqual(
-            self.agent_state.tasks_context.tasks[2].blocked_by,
-            ["completed", "active"],
-        )
-
 
 class TestTaskGet(IsolatedAsyncioTestCase):
     """Test cases for TaskGet tool."""
@@ -418,22 +372,6 @@ class TestTaskGet(IsolatedAsyncioTestCase):
             "id": AnyString(),
         }
         self.assertDictEqual(result_dump, expected_result)
-
-    async def test_get_hides_completed_blockers(self) -> None:
-        """Completed prerequisites are not returned as active blockers."""
-        _add_tasks_with_completed_and_active_blockers(self.agent_state)
-
-        result = await self.task_get(
-            task_id="dependent",
-            _agent_state=self.agent_state,
-        )
-
-        self.assertIn("Blocked by: #active", result.content[0].text)
-        self.assertNotIn("#completed", result.content[0].text)
-        self.assertEqual(
-            self.agent_state.tasks_context.tasks[2].blocked_by,
-            ["completed", "active"],
-        )
 
 
 class TestTaskUpdate(IsolatedAsyncioTestCase):
@@ -944,6 +882,122 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             },
         ]
         self.assertEqual(tasks_dump, expected)
+
+    async def test_update_completed_unblocks_dependents(self) -> None:
+        """Test completing a task removes it from dependents' blocked_by."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 3",
+            description="Third task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+        task3_id = self.agent_state.tasks_context.tasks[2].id
+
+        await self.task_update(
+            task_id=task3_id,
+            add_blocked_by=[task1_id, task2_id],
+            _agent_state=self.agent_state,
+        )
+
+        # Complete task1, task3 should remain blocked by task2 only
+        result = await self.task_update(
+            task_id=task1_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task1_id}) status.\n\n"
+                    f"Task completed. "
+                    f"Call TaskList now to find your next available "
+                    f"task or see if your work unblocked others.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "Task 1",
+                "description": "First task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "completed",
+                "id": task1_id,
+                "owner": None,
+                "blocks": [task3_id],
+                "blocked_by": [],
+            },
+            {
+                "subject": "Task 2",
+                "description": "Second task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task2_id,
+                "owner": None,
+                "blocks": [task3_id],
+                "blocked_by": [],
+            },
+            {
+                "subject": "Task 3",
+                "description": "Third task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task3_id,
+                "owner": None,
+                "blocks": [],
+                "blocked_by": [task2_id],
+            },
+        ]
+        self.assertEqual(tasks_dump, expected)
+
+        result = await TaskList()(_agent_state=self.agent_state)
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"{task1_id} [completed] Task 1\n"
+                    f"{task2_id} [pending] Task 2\n"
+                    f"{task3_id} [pending] Task 3[blocked by {task2_id}]",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
 
     async def test_update_delete_task(self) -> None:
         """Test deleting a task and removing it from blocks/blocked_by."""
