@@ -10,12 +10,13 @@ import {
 	Plus,
 	Settings2,
 	Trash2,
+	Users,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
-import type { SessionRecord, SessionSource } from '@/api';
+import type { SessionRecord, SessionSourceKind } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
@@ -77,10 +78,11 @@ import { useTranslation } from '@/i18n/useI18n.ts';
  * @returns The chat page JSX.
  */
 // Icon per session origin, shown only when a sidebar mixes sources.
-const SOURCE_ICON: Record<SessionSource, LucideIcon> = {
+const SOURCE_ICON: Record<SessionSourceKind, LucideIcon> = {
 	user: BotMessageSquare,
 	schedule: CalendarClock,
 	channel: Cable,
+	team: Users,
 };
 
 /** localStorage keys holding the last (agent, session) the user viewed. */
@@ -120,7 +122,7 @@ const ChatPageInner = () => {
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
 	// Show a per-origin icon only when sessions actually mix sources —
 	// a uniform list needs no disambiguation.
-	const showSourceIcons = new Set(sessions.map((v) => v.session.source)).size > 1;
+	const showSourceIcons = new Set(sessions.map((v) => v.session.origin.type)).size > 1;
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -334,7 +336,7 @@ const ChatPageInner = () => {
 													{todaySessions.map((view) => {
 														const session = view.session;
 														const SourceIcon =
-															SOURCE_ICON[session.source] ??
+															SOURCE_ICON[session.origin.type] ??
 															BotMessageSquare;
 														return (
 															<SidebarMenuItem key={session.id}>
@@ -426,7 +428,7 @@ const ChatPageInner = () => {
 													{earlierSessions.map((view) => {
 														const session = view.session;
 														const SourceIcon =
-															SOURCE_ICON[session.source] ??
+															SOURCE_ICON[session.origin.type] ??
 															BotMessageSquare;
 														return (
 															<SidebarMenuItem key={session.id}>

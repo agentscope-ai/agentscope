@@ -1,0 +1,27 @@
+type: realtime_model
+name: qwen3-omni-flash-realtime
+label: Qwen3-Omni-Flash Realtime
+status: active
+
+input_types:
+  - audio/pcm
+  - image/jpeg
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+# Function calling is only offered on the qwen3.5 series.
+supports_tools: false
+supports_session_resumption: false
+
+# History is bounded by dialog turns, not tokens; the provider discards
+# the oldest turn once exceeded.
+max_audio_turns: 8
+max_session_duration_s: 7200
+
+parameter_overrides:
+  voice:
+    enum: ["Cherry", "Serena", "Ethan", "Chelsie"]

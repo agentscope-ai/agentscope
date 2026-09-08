@@ -1,0 +1,27 @@
+type: realtime_model
+name: qwen-omni-turbo-realtime
+label: Qwen-Omni-Turbo Realtime
+status: active
+
+input_types:
+  - audio/pcm
+  - image/jpeg
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+# The model page lists "Function Calling: 不支持".
+supports_tools: false
+supports_session_resumption: false
+
+# The model page states the context in tokens; the realtime guide's
+# turn/duration table does not cover this model.
+max_context_tokens: 32768
+max_session_duration_s: 7200
+
+parameter_overrides:
+  voice:
+    enum: ["Cherry", "Serena", "Ethan", "Chelsie"]
