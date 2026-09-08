@@ -50,6 +50,7 @@ from ...message import (
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
+    Usage,
     UserMsg,
 )
 from ...permission import PermissionBehavior, PermissionEngine
@@ -243,8 +244,19 @@ class RealtimeAgent:
         # context. No provider documents whether the update applies
         # retroactively, so treat it as affecting future turns only. Do
         # not let it change `voice`: OpenAI locks it after first audio.
+        # Providers differ in whether prior turns can be seeded, so the
+        # transcript so far rides along in the instructions, which every
+        # provider takes. Only matters on reconnect; first connect is empty.
+        history = "\n".join(
+            f"{m.name}: {text}"
+            for m in self.state.context
+            if (text := m.get_text_content())
+        )
+        if history:
+            instructions = (
+                f"{instructions}\n\n## Conversation so far\n{history}"
+            )
         await self.model.connect(
-            context=self.state.context,
             instructions=instructions,
             tools=tools,
             turn_detection_disabled=self.vad is not None,
@@ -656,6 +668,14 @@ class RealtimeAgent:
             case me.ResponseDoneEvent():
                 self._metrics.input_tokens = event.input_tokens
                 self._metrics.output_tokens = event.output_tokens
+                tail = self.state.context[-1] if self.state.context else None
+                if tail is not None and tail.id == event.item_id:
+                    tail.append_usage(
+                        Usage(
+                            input_tokens=event.input_tokens,
+                            output_tokens=event.output_tokens,
+                        ),
+                    )
                 self._finish_reply(ReplyFinishedReason.COMPLETED)
                 self._schedule_tools()
 

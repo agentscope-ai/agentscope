@@ -34,7 +34,7 @@ from agentscope.event import (
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
+from agentscope.message import TextBlock, ToolCallBlock, ToolResultBlock
 from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
@@ -86,21 +86,23 @@ class ScriptedModel(RealtimeModelBase):
         self.scripts = scripts
         self.calls: list[str] = []
         self.sessions = 0
+        self.instructions = ""
         self._open = asyncio.Event()
         self._requested = asyncio.Event()
 
     async def connect(
         self,
-        context: list[Msg],
         instructions: str,
         tools: list[dict] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Record a session open and the turn-detection request."""
+        """Record a session open, its instructions and the turn-detection
+        request."""
         self.sessions += 1
         self._open.clear()
+        self.instructions = instructions
         self.calls.append(
-            f"connect(session={self.sessions},ctx={len(context)},"
+            f"connect(session={self.sessions},"
             f"td_off={kwargs.get('turn_detection_disabled')})",
         )
 
@@ -262,7 +264,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [c for c in model.calls if c != "push_audio"],
             [
-                "connect(session=1,ctx=0,td_off=False)",
+                "connect(session=1,td_off=False)",
                 "truncate(r1,320ms,'从前有座山山里有座庙')",
                 "cancel",
                 "close",
@@ -301,8 +303,13 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             summary = await self._collect(agent, FakeTransport(frames=2))
 
         self.assertEqual(model.sessions, 2)
-        # The orphaned reply was dropped, so one message carried over.
-        self.assertIn("connect(session=2,ctx=1,td_off=False)", model.calls)
+        # The orphaned reply was dropped, so one message carried over,
+        # riding along in the instructions of the new session.
+        self.assertIn("connect(session=2,td_off=False)", model.calls)
+        self.assertEqual(
+            model.instructions,
+            "be brief\n\n## Conversation so far\nuser: 讲个故事",
+        )
         # Events produced while no run was active are delivered first;
         # a reply streamed with nobody listening is cut off exactly once.
         self.assertListEqual(
@@ -335,7 +342,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             model.calls,
             [
-                "connect(session=1,ctx=0,td_off=True)",
+                "connect(session=1,td_off=True)",
                 "push_audio",
                 "commit_turn",
                 "push_audio",
@@ -530,7 +537,7 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [c for c in model.calls if not c.startswith("push_audio")],
             [
-                "connect(session=1,ctx=0,td_off=False)",
+                "connect(session=1,td_off=False)",
                 "tool_result(c1,'x-final')",
                 "request_response",
                 "close",
@@ -920,7 +927,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [c for c in model.calls if c != "push_audio"],
             [
-                "connect(session=1,ctx=0,td_off=False)",
+                "connect(session=1,td_off=False)",
                 "tool_result(c1,'x-final')",
                 "request_response",
                 "close",
@@ -965,8 +972,8 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [c for c in model.calls if c != "push_audio"],
             [
-                "connect(session=1,ctx=0,td_off=False)",
-                "connect(session=2,ctx=0,td_off=False)",
+                "connect(session=1,td_off=False)",
+                "connect(session=2,td_off=False)",
                 "close",
             ],
         )

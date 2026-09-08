@@ -16,7 +16,7 @@ from .._base import (
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ...credential import DashScopeCredential
-from ...message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
+from ...message import TextBlock, ToolCallBlock, ToolResultBlock
 
 _REALTIME_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 
@@ -85,24 +85,12 @@ class DashScopeRealtimeModel(RealtimeModelBase):
 
     async def connect(
         self,
-        context: list[Msg],
         instructions: str,
         tools: list[dict] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Open the WebSocket and send the session config.
-
-        DashScope offers no way to replay *context* into a new session, so
-        a non-empty one is logged and dropped rather than silently lost.
-        """
+        """Open the WebSocket and send the session config."""
         import websockets
-
-        if context:
-            logger.warning(
-                "DashScopeRealtimeModel: %d prior messages cannot be "
-                "seeded into the session; the model starts fresh.",
-                len(context),
-            )
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(

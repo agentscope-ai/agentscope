@@ -28,6 +28,7 @@
 | `fade_ms` 归 transport 构造参数 | 淡出由 transport 执行 |
 | provider 连接异常由 adapter 翻译成 `ModelDisconnectedError`，agent 只认它、不 import websockets；发送失败 = 断开，攒帧等下一帧重连，上行泵不死 | 真机复现：DashScope 180s 空闲关闭后 `push_audio` 撞上已关 socket，比下行泵察觉更早 |
 | transport 没有 `send_event`：下行给客户端的智能体事件由 `reply_stream()` 的消费者（服务层）转发，transport 只管音频与上行控制帧 | 原 `send_event(dict)` 无调用方、类型也不明；浏览器 transport 落地时若确需经 transport 下发再加，且类型为 `AgentEvent` |
+| 重连时把 `state.context` 的文本转写拼到 instructions 末尾（`## Conversation so far`），`connect()` 不再接收 `context` | `push_text` 只能发用户角色；instructions 每个 provider 都收，不用按能力分叉。原生回灌（OpenAI item、Gemini resumption）留给各适配器覆盖 |
 | `reply_stream()` 入口校验 transport / VAD 与 model 的采样率，不一致直接拒绝；agent 不做重采样 | Copilot review；重采样归 transport |
 | 工具结果只取 `ToolResponse.content`，`ToolChunk` 仅用于展示 | `ToolResponse` 是完整结果（与 `Agent` 一致），否则流式工具的文本会重复 |
 | `RealtimeAgent` / `TurnAggregator` / `TurnMetrics` 放 `agent/_realtime/`；`realtime/` 只放模型侧（model、card、事件、transport、VAD） | 与 `Agent` 同目录；`agent/` 单向依赖 `realtime/` |
@@ -48,7 +49,7 @@
 | `update_session(instructions, tools)` | M2 | OpenAI/DashScope/xAI 发 `session.update`；Gemini 重连+resumption handle；不改 `voice` | 见 `_agent.py` connect() 处 TODO |
 | `ModelEvent.SessionResumption` | Gemini 接入时 | 随 Gemini adapter 一起回来 | Gemini 唯一的改 instructions 路径 |
 | 语义端点检测 | M3 之后 | 先接 pipecat smart-turn ONNX | OpenAI/DashScope 已有 `semantic_vad` |
-| 上下文压缩 | 重连功能时 | `summarize(messages) -> str` 灌进新 session | S2S 下压缩本地历史不影响 provider |
+| 上下文压缩 | 历史过长时 | 重连时拼进 instructions 的转写先做摘要 | 目前全文拼接，无上限 |
 | WebSocket transport 兜底 | Safari 支持面确认后 | 同 9 字节头 + 二进制 Opus | 优先 WebTransport |
 
 ## 待定

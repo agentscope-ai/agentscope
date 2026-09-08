@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from ._events import ModelEvent
 from ._model_card import RealtimeModelCard
 from ..credential import CredentialBase
-from ..message import Msg, ToolResultBlock
+from ..message import ToolResultBlock
 
 
 class ModelDisconnectedError(ConnectionError):
@@ -145,16 +145,13 @@ class RealtimeModelBase(ABC):
     @abstractmethod
     async def connect(
         self,
-        context: list[Msg],
         instructions: str,
         tools: list[dict] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Open the session, seeding it with prior *context*.
+        """Open the session.
 
         Args:
-            context (`list[Msg]`):
-                Prior conversation, e.g. from ``AgentState.context``.
             instructions (`str`):
                 System instructions.
             tools (`list[dict] | None`, optional):

@@ -82,9 +82,9 @@ agent gives up on a prompt after five minutes.
 
 - **Silence is fine.** DashScope closes a session after about three minutes
   without a response. The example logs that it happened and keeps the
-  microphone open; the next thing you say reconnects the model. The
-  conversation history stays in `agent.state`, but the provider starts fresh —
-  it cannot be seeded with prior turns.
+  microphone open; the next thing you say reconnects the model, with the
+  transcript so far appended to the system prompt so the model keeps the
+  thread.
 - **Model limits are per turn, not per token.** `qwen3-omni-flash-realtime`
   remembers eight turns, `qwen-audio-3.0-realtime-*` fifty; older turns are
   dropped silently on the provider side. The cards under
