@@ -32,8 +32,6 @@ from agentscope.event import (
     ToolResultEndEvent,
     ToolResultStartEvent,
     UserConfirmResultEvent,
-    UserInputAudioStartEvent,
-    UserInputTranscriptionEvent,
 )
 from agentscope.realtime import LocalAudioTransport
 from agentscope.tool import Bash, Edit, Read, Toolkit, Write
@@ -73,15 +71,19 @@ async def main() -> None:
     print(f"[{name}] listening... (Ctrl-C to quit)")
     # The agent owns the model session, we own the transport, and one
     # reply_stream() borrows both until the transport ends.
+    # The user's speech is reported as a reply too, with role "user":
+    # its transcript arrives as text block events once it has settled.
+    user_turns: set[str] = set()
     async with agent, transport:
         async for event in agent.reply_stream(transport):
             match event:
-                case UserInputAudioStartEvent():
+                case ReplyStartEvent(role="user"):
+                    user_turns.add(event.reply_id)
                     print("\n[you] ...", end="", flush=True)
-                case UserInputTranscriptionEvent():
-                    print(f"\r[you] {event.transcript}")
                 case ReplyStartEvent():
-                    print(f"[{agent.name}] ", end="", flush=True)
+                    print(f"\n[{agent.name}] ", end="", flush=True)
+                case TextBlockDeltaEvent() if event.reply_id in user_turns:
+                    print(f"\r[you] {event.delta}")
                 case TextBlockDeltaEvent():
                     print(event.delta, end="", flush=True)
                 case RequireUserConfirmEvent():
@@ -90,7 +92,7 @@ async def main() -> None:
                     print(f"\n  [tool] {event.tool_call_name} running...")
                 case ToolResultEndEvent():
                     print(f"  [tool] {event.state}")
-                case ReplyEndEvent():
+                case ReplyEndEvent() if event.reply_id not in user_turns:
                     m = agent.last_turn_metrics
                     print(
                         f"\n  ({event.finished_reason}"

@@ -11,9 +11,8 @@ from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     ReplyEndEvent,
-    UserInputAudioEndEvent,
-    UserInputAudioStartEvent,
-    UserInputTranscriptionEvent,
+    ReplyStartEvent,
+    TextBlockDeltaEvent,
 )
 from agentscope.realtime import (
     AudioFrame,
@@ -235,14 +234,20 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         agent: RealtimeAgent,
         transport: FakeTransport,
     ) -> list[tuple[str, Any]]:
-        """Run the agent over *transport* and summarise the events."""
+        """Run the agent over *transport* and summarise the events: the
+        user's transcripts and how each of the agent's replies ended."""
         summary: list[tuple[str, Any]] = []
+        user_turns: set[str] = set()
         async with transport:
             async for event in agent.reply_stream(transport):
-                if isinstance(event, ReplyEndEvent):
-                    summary.append(("reply_end", event.finished_reason))
-                elif isinstance(event, UserInputTranscriptionEvent):
-                    summary.append(("user", event.transcript))
+                if isinstance(event, ReplyStartEvent) and event.role == "user":
+                    user_turns.add(event.reply_id)
+                elif isinstance(event, TextBlockDeltaEvent):
+                    if event.reply_id in user_turns:
+                        summary.append(("user", event.delta))
+                elif isinstance(event, ReplyEndEvent):
+                    if event.reply_id not in user_turns:
+                        summary.append(("reply_end", event.finished_reason))
         return summary
 
     async def test_barge_in_truncates_to_what_was_heard(self) -> None:
@@ -347,17 +352,27 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             transport = FakeTransport(frames=3)
             async with transport:
                 async for event in agent.reply_stream(transport):
-                    if isinstance(
-                        event,
-                        (UserInputAudioStartEvent, UserInputAudioEndEvent),
-                    ):
-                        speech.append((event.type, event.item_id))
+                    if isinstance(event, ReplyStartEvent):
+                        speech.append((event.type, event.role, event.reply_id))
+                    elif isinstance(event, ReplyEndEvent):
+                        speech.append(
+                            (
+                                event.type,
+                                event.finished_reason,
+                                event.reply_id,
+                            ),
+                        )
 
-        # No provider item exists yet, so the local VAD's events carry none.
+        # The user's turn is a reply of its own, with a locally generated id
+        # since no provider item exists yet.
         self.assertListEqual(
             speech,
-            [("USER_INPUT_AUDIO_START", ""), ("USER_INPUT_AUDIO_END", "")],
+            [
+                ("REPLY_START", "user", AnyString()),
+                ("REPLY_END", "completed", AnyString()),
+            ],
         )
+        self.assertEqual(speech[0][2], speech[1][2])
         self.assertListEqual(
             model.calls,
             [
@@ -687,18 +702,46 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
-                    "type": "USER_INPUT_AUDIO_END",
+                    "type": "REPLY_START",
                     "session_id": AnyString(),
-                    "item_id": "u1",
+                    "reply_id": "u1",
+                    "name": "user",
+                    "role": "user",
                 },
                 {
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
-                    "type": "USER_INPUT_TRANSCRIPTION",
+                    "type": "TEXT_BLOCK_START",
+                    "reply_id": "u1",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_DELTA",
+                    "reply_id": "u1",
+                    "block_id": AnyString(),
+                    "delta": "查天气",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TEXT_BLOCK_END",
+                    "reply_id": "u1",
+                    "block_id": AnyString(),
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "REPLY_END",
                     "session_id": AnyString(),
-                    "item_id": "u1",
-                    "transcript": "查天气",
+                    "reply_id": "u1",
+                    "finished_reason": "completed",
+                    "error": None,
                 },
                 {
                     "id": AnyString(),
@@ -951,7 +994,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 {
                     "name": "user",
                     "role": "user",
-                    "id": AnyString(),
+                    "id": "u1",
                     "content": [
                         {
                             "type": "text",

@@ -40,9 +40,6 @@ from ...event import (
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
-    UserInputAudioEndEvent,
-    UserInputAudioStartEvent,
-    UserInputTranscriptionEvent,
     UserInterruptEvent,
 )
 from ...message import (
@@ -188,6 +185,9 @@ class RealtimeAgent:
         self._out: asyncio.Queue = asyncio.Queue()
         self._reply: _Reply | None = None
         self._finished_item = ""
+        # The user's turn in flight, reported as a reply of its own.
+        self._user_turn = ""
+        self._user_turn_open = False
         self._metrics = TurnMetrics()
         self._pending_tools: dict[str, ToolCallBlock] = {}
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
@@ -499,23 +499,11 @@ class RealtimeAgent:
             self._backlog.clear()
             pushed = True
 
-        # A local VAD sees the turn before the provider creates its item,
-        # so these carry no item id.
         if speech is SpeechTransition.STARTED:
-            self._emit(
-                UserInputAudioStartEvent(
-                    session_id=self.state.session_id,
-                    item_id="",
-                ),
-            )
+            self._start_user_turn()
             await self._barge_in()
         elif speech is SpeechTransition.ENDED:
-            self._emit(
-                UserInputAudioEndEvent(
-                    session_id=self.state.session_id,
-                    item_id="",
-                ),
-            )
+            self._end_user_turn()
             now = time.monotonic()
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
@@ -634,21 +622,11 @@ class RealtimeAgent:
         rate = self.model.output_sample_rate
         match event:
             case me.SpeechStartedEvent():
-                self._emit(
-                    UserInputAudioStartEvent(
-                        session_id=self.state.session_id,
-                        item_id=event.item_id,
-                    ),
-                )
+                self._start_user_turn(event.item_id)
                 await self._barge_in()
 
             case me.SpeechEndedEvent():
-                self._emit(
-                    UserInputAudioEndEvent(
-                        session_id=self.state.session_id,
-                        item_id=event.item_id,
-                    ),
-                )
+                self._end_user_turn()
                 # With provider turn detection this is also its commit.
                 now = time.monotonic()
                 self._metrics.user_speech_end_at = now
@@ -716,26 +694,64 @@ class RealtimeAgent:
                     event.reason,
                 )
 
+    def _start_user_turn(self, item_id: str = "") -> None:
+        """Open the user's turn as a reply of its own. A local VAD sees it
+        before the provider creates an item, hence the generated id."""
+        self._user_turn = item_id or uuid.uuid4().hex
+        self._user_turn_open = True
+        self._emit(
+            ReplyStartEvent(
+                session_id=self.state.session_id,
+                reply_id=self._user_turn,
+                name="user",
+                role="user",
+            ),
+        )
+
+    def _end_user_turn(self) -> None:
+        """Close the user's turn; the transcript may still be on its way."""
+        if not self._user_turn_open:
+            return
+        self._user_turn_open = False
+        self._emit(
+            ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id=self._user_turn,
+                finished_reason=ReplyFinishedReason.COMPLETED,
+            ),
+        )
+
     def _on_transcription(self, event: me.InputTranscriptionEvent) -> None:
-        """Record a settled user turn, merging a split one back together."""
+        """Record a settled user turn, merging a split one back together,
+        and report its text on the user's reply."""
         turn = self.aggregator.take(event.text)
         if turn is None:
             logger.debug("RealtimeAgent: dropping %r", event.text)
             return
 
-        if self.aggregator.merges_with_previous() and self._merge_user(turn):
-            transcript = self.state.context[-1].get_text_content() or turn
-        else:
-            self.state.context.append(UserMsg(name="user", content=turn))
-            transcript = turn
-
+        # A transcript with no detected speech, e.g. after a reconnect,
+        # gets a turn of its own.
+        if not self._user_turn:
+            self._start_user_turn(event.item_id)
+        reply_id, block_id = self._user_turn, uuid.uuid4().hex
+        self._emit(TextBlockStartEvent(reply_id=reply_id, block_id=block_id))
         self._emit(
-            UserInputTranscriptionEvent(
-                session_id=self.state.session_id,
-                item_id=event.item_id,
-                transcript=transcript,
+            TextBlockDeltaEvent(
+                reply_id=reply_id,
+                block_id=block_id,
+                delta=turn,
             ),
         )
+        self._emit(TextBlockEndEvent(reply_id=reply_id, block_id=block_id))
+        self._end_user_turn()
+        self._user_turn = ""
+
+        if not (
+            self.aggregator.merges_with_previous() and self._merge_user(turn)
+        ):
+            self.state.context.append(
+                UserMsg(name="user", content=turn, id=reply_id),
+            )
 
     def _merge_user(self, text: str) -> bool:
         """Append *text* to the previous user turn that endpointing split.
