@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Volcengine Ark formatter module."""
 
-import base64
 from fnmatch import fnmatch
 from typing import Any
 
@@ -64,11 +63,12 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         )
         return None
 
-    @staticmethod
     def _format_video_source(
+        self,
         source: URLSource | Base64Source,
     ) -> dict[str, Any]:
-        """Convert a video source to Ark's ``video_url`` format.
+        """Convert a video source to Ark's ``video_url`` format. Ark takes
+        the same URL / base64 data URI as images, so reuse that conversion.
 
         Args:
             source (`URLSource | Base64Source`):
@@ -78,23 +78,9 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
             `dict[str, Any]`:
                 A video content block accepted by the Ark Chat API.
         """
-        if isinstance(source, Base64Source):
-            url = f"data:{source.media_type};base64,{source.data}"
-        elif isinstance(source, URLSource):
-            url_str = str(source.url)
-            if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
-                with open(local_path, "rb") as file:
-                    encoded = base64.b64encode(file.read()).decode("utf-8")
-                url = f"data:{source.media_type};base64,{encoded}"
-            else:
-                url = url_str
-        else:
-            raise ValueError(f"Unsupported video source type: {type(source)}")
-
         return {
             "type": "video_url",
-            "video_url": {"url": url},
+            "video_url": self._format_image_source(source)["image_url"],
         }
 
 
@@ -111,33 +97,6 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
             '``["text/plain", "image/*", "video/*"]``.'
         ),
     )
-
-    @staticmethod
-    def _build_content(
-        content_blocks: list[dict[str, Any]],
-        has_tool_calls: bool = False,
-    ) -> str | list[dict[str, Any]] | None:
-        """Build Ark content while retaining plain strings for text-only
-        messages.
-
-        Args:
-            content_blocks (`list[dict[str, Any]]`):
-                The formatted text and image content blocks.
-            has_tool_calls (`bool`, defaults to `False`):
-                Whether the message contains tool calls.
-
-        Returns:
-            `str | list[dict[str, Any]] | None`:
-                A plain string for text-only content, a block list for
-                multimodal content, or ``None`` for a tool-call-only message.
-        """
-        if any(block.get("type") != "text" for block in content_blocks):
-            return content_blocks
-
-        content_text = "\n".join(
-            block.get("text", "") for block in content_blocks
-        )
-        return content_text or (None if has_tool_calls else "")
 
     # pylint: disable=too-many-branches
     async def format(
@@ -182,10 +141,7 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                     ):
                         msg_flush_hint: dict[str, Any] = {
                             "role": msg.role,
-                            "content": self._build_content(
-                                content_blocks,
-                                bool(tool_calls),
-                            ),
+                            "content": content_blocks or None,
                         }
                         if (
                             msg.role == "assistant"
@@ -203,7 +159,12 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
 
                     if isinstance(block.hint, str):
                         messages.append(
-                            {"role": "user", "content": block.hint},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": block.hint},
+                                ],
+                            },
                         )
                     else:
                         hint_parts: list[dict[str, Any]] = []
@@ -220,10 +181,7 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                                     hint_parts.append(formatted_sub)
                         if hint_parts:
                             messages.append(
-                                {
-                                    "role": "user",
-                                    "content": self._build_content(hint_parts),
-                                },
+                                {"role": "user", "content": hint_parts},
                             )
 
                 elif isinstance(block, ToolCallBlock):
@@ -246,10 +204,7 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                     ):
                         msg_flush: dict[str, Any] = {
                             "role": msg.role,
-                            "content": self._build_content(
-                                content_blocks,
-                                bool(tool_calls),
-                            ),
+                            "content": content_blocks or None,
                         }
                         if (
                             msg.role == "assistant"
@@ -308,10 +263,7 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
 
             msg_volcengine: dict[str, Any] = {
                 "role": msg.role,
-                "content": self._build_content(
-                    content_blocks,
-                    bool(tool_calls),
-                ),
+                "content": content_blocks or None,
             }
 
             # Preserve reasoning in multi-turn requests. Ark documents this
@@ -411,8 +363,7 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
         else:
             conversation_history_prompt = ""
 
-        formatted_msgs: list[dict] = []
-        accumulated_text = []
+        accumulated_text: list[str] = []
         media_blocks: list[dict[str, Any]] = []
 
         for msg in msgs:
@@ -424,36 +375,25 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
                     if formatted is not None:
                         media_blocks.append(formatted)
 
-        conversation_blocks_text = ""
+        if not accumulated_text and not media_blocks:
+            return []
+
+        content_blocks: list[dict[str, Any]] = []
         if accumulated_text:
-            conversation_blocks_text = (
-                conversation_history_prompt
-                + "<history>\n"
-                + "\n".join(accumulated_text)
-                + "\n</history>"
-            )
-
-        if conversation_blocks_text or media_blocks:
-            content: str | list[dict[str, Any]]
-            if media_blocks:
-                content_blocks: list[dict[str, Any]] = []
-                if conversation_blocks_text:
-                    content_blocks.append(
-                        {"type": "text", "text": conversation_blocks_text},
-                    )
-                content_blocks.extend(media_blocks)
-                content = content_blocks
-            else:
-                content = conversation_blocks_text
-
-            formatted_msgs.append(
+            content_blocks.append(
                 {
-                    "role": "user",
-                    "content": content,
+                    "type": "text",
+                    "text": (
+                        conversation_history_prompt
+                        + "<history>\n"
+                        + "\n".join(accumulated_text)
+                        + "\n</history>"
+                    ),
                 },
             )
+        content_blocks.extend(media_blocks)
 
-        return formatted_msgs
+        return [{"role": "user", "content": content_blocks}]
 
     @staticmethod
     async def _format_system_message(

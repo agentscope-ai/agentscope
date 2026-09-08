@@ -2,7 +2,6 @@
 """Unit tests for the tracing module using an in-memory OTel exporter."""
 import asyncio
 import json
-from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -17,6 +16,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from utils import MockModel
 
 from agentscope.agent import Agent, InjectionConfig
+from agentscope.credential import OpenAICredential, VolcengineCredential
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -36,7 +36,13 @@ from agentscope.middleware._tracing._extractor import (
     _get_provider_name,
     _get_llm_response_attributes,
 )
-from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.model import (
+    ChatResponse,
+    ChatUsage,
+    FinishedReason,
+    OpenAIChatModel,
+    VolcengineChatModel,
+)
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -149,15 +155,21 @@ class TracingExtractorTest(TestCase):
 
     def test_volcengine_provider_name_from_model_class(self) -> None:
         """Volcengine models should use the Volcengine provider name."""
-        model: Any = type("VolcengineChatModel", (), {})()
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model="doubao-seed-2-1-pro-260628",
+        )
 
         self.assertEqual(_get_provider_name(model), "volcengine")
 
     def test_volcengine_provider_name_from_openai_base_url(self) -> None:
         """Ark's OpenAI-compatible endpoint should map to Volcengine."""
-        model: Any = type("OpenAIChatModel", (), {})()
-        model.credential = SimpleNamespace(
-            base_url="https://ark.cn-beijing.volces.com/api/v3",
+        model = OpenAIChatModel(
+            credential=OpenAICredential(
+                api_key="test",
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+            ),
+            model="doubao-seed-2-1-pro-260628",
         )
 
         self.assertEqual(_get_provider_name(model), "volcengine")

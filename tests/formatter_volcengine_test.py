@@ -85,21 +85,54 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
         ]
 
         # --- Chat formatter ground truth ---
-        # Volcengine content is a plain string (not a list of blocks).
+        # Text content is a list of blocks, as in the OpenAI formatter.
         # Ark only needs `reasoning_content` when preserving a ThinkingBlock.
         self.gt_chat = [
-            {"role": "system", "content": "You're a helpful assistant."},
-            {"role": "user", "content": "What is the capital of France?"},
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You're a helpful assistant."},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is the capital of France?"},
+                ],
+            },
             {
                 "role": "assistant",
-                "content": "The capital of France is Paris.",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of France is Paris.",
+                    },
+                ],
             },
-            {"role": "user", "content": "What is the capital of Germany?"},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is the capital of Germany?",
+                    },
+                ],
+            },
             {
                 "role": "assistant",
-                "content": "The capital of Germany is Berlin.",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of Germany is Berlin.",
+                    },
+                ],
             },
-            {"role": "user", "content": "What is the capital of Japan?"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is the capital of Japan?"},
+                ],
+            },
             {
                 "role": "assistant",
                 "content": None,
@@ -122,18 +155,22 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "assistant",
-                "content": "The capital of Japan is Tokyo.",
+                "content": [
+                    {"type": "text", "text": "The capital of Japan is Tokyo."},
+                ],
             },
         ]
 
         # --- MultiAgent formatter ground truth ---
         # System content is a plain string.
-        # History is a plain string (not a list) with <history> tags.
+        # History is a single text block with <history> tags.
         # The trailing assistant message (is_first=False) is wrapped in a
         # minimal <history> block without the full prompt prefix.
         self._gt_trailing_asst = {
             "role": "assistant",
-            "content": "The capital of Japan is Tokyo.",
+            "content": [
+                {"type": "text", "text": "The capital of Japan is Tokyo."},
+            ],
         }
         self._gt_tool_call = {
             "role": "assistant",
@@ -160,15 +197,20 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             {"role": "system", "content": "You're a helpful assistant."},
             {
                 "role": "user",
-                "content": (
-                    _hist_prompt + "<history>\n"
-                    "user: What is the capital of France?\n"
-                    "assistant: The capital of France is Paris.\n"
-                    "user: What is the capital of Germany?\n"
-                    "assistant: The capital of Germany is Berlin.\n"
-                    "user: What is the capital of Japan?\n"
-                    "</history>"
-                ),
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            _hist_prompt + "<history>\n"
+                            "user: What is the capital of France?\n"
+                            "assistant: The capital of France is Paris.\n"
+                            "user: What is the capital of Germany?\n"
+                            "assistant: The capital of Germany is Berlin.\n"
+                            "user: What is the capital of Japan?\n"
+                            "</history>"
+                        ),
+                    },
+                ],
             },
             self._gt_tool_call,
             self._gt_tool_result,
@@ -219,7 +261,7 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             [
                 {
                     "role": "assistant",
-                    "content": "Answer",
+                    "content": [{"type": "text", "text": "Answer"}],
                 },
             ],
             res,
@@ -242,7 +284,7 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             [
                 {
                     "role": "assistant",
-                    "content": "Answer",
+                    "content": [{"type": "text", "text": "Answer"}],
                     "reasoning_content": "Let me think...",
                 },
             ],
@@ -371,7 +413,7 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             [
                 {
                     "role": "assistant",
-                    "content": "text_1",
+                    "content": [{"type": "text", "text": "text_1"}],
                     "reasoning_content": "thinking_1",
                     "tool_calls": [
                         {
@@ -406,7 +448,7 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "text_2",
+                    "content": [{"type": "text", "text": "text_2"}],
                     "reasoning_content": "thinking_2",
                     "tool_calls": [
                         {
@@ -447,7 +489,7 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "text_3",
+                    "content": [{"type": "text", "text": "text_3"}],
                     "reasoning_content": "thinking_3",
                 },
             ],
@@ -472,15 +514,21 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             [
                 {
                     "role": "assistant",
-                    "content": "Let me think about that.",
+                    "content": [
+                        {"type": "text", "text": "Let me think about that."},
+                    ],
                 },
                 {
                     "role": "user",
-                    "content": "Remember to be concise.",
+                    "content": [
+                        {"type": "text", "text": "Remember to be concise."},
+                    ],
                 },
                 {
                     "role": "assistant",
-                    "content": "Here is my answer.",
+                    "content": [
+                        {"type": "text", "text": "Here is my answer."},
+                    ],
                 },
             ],
             res,
@@ -622,12 +670,27 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             ),
         ]
 
-        result = await fmt.format(msgs)
-        self.assertEqual(result[0]["role"], "user")
-        self.assertEqual(
-            result[0]["content"][-1],
-            {
-                "type": "image_url",
-                "image_url": {"url": "https://example.com/image.png"},
-            },
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                fmt.conversation_history_prompt
+                                + "<history>\nalice: Describe this image.\n"
+                                "</history>"
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/image.png",
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
         )
