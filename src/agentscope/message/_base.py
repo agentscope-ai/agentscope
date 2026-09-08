@@ -55,6 +55,24 @@ def _to_blocks(content: str | list) -> list:
     return content
 
 
+def _merge_base64_delta(existing: str, incoming: str) -> str:
+    """Merge independently encoded base64 chunks without corrupting padding.
+
+    Mirrors tool._response._merge_base64_chunks (kept local here because the
+    message package sits below the tool package in the dependency graph).
+    """
+    try:
+        merged = base64.b64decode(existing, validate=True) + base64.b64decode(
+            incoming,
+            validate=True,
+        )
+    except Exception:
+        # Keep compatibility with placeholder strings that are not valid
+        # base64 payloads (e.g. some tests / hand-built fixtures).
+        return existing + incoming
+    return base64.b64encode(merged).decode("ascii")
+
+
 class Usage(BaseModel):
     """The token usage information of a message."""
 
@@ -447,9 +465,27 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    block.output.append(
-                        DataBlock(id=event.block_id, source=src),
-                    )
+                    # Group same-id Base64 chunks of one multimodal payload,
+                    # mirroring ToolResponse.append_chunk. Previously every
+                    # delta was appended as a separate block, splitting one
+                    # resource into multiple partial blocks on replay.
+                    existing = block.output[-1] if block.output else None
+                    if (
+                        isinstance(existing, DataBlock)
+                        and existing.id == event.block_id
+                        and isinstance(existing.source, Base64Source)
+                        and isinstance(src, Base64Source)
+                    ):
+                        existing.source.data = _merge_base64_delta(
+                            existing.source.data,
+                            src.data,
+                        )
+                        if src.media_type:
+                            existing.source.media_type = src.media_type
+                    else:
+                        block.output.append(
+                            DataBlock(id=event.block_id, source=src),
+                        )
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state

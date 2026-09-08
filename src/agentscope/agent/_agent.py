@@ -3896,6 +3896,10 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        # Preserve the block id so replay can group chunks of
+                        # one multimodal payload (ToolChunk's documented
+                        # contract) instead of generating a new id per chunk.
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
@@ -3903,6 +3907,7 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )
