@@ -2,8 +2,10 @@
 """Unittests for the AskUser tool."""
 from unittest import IsolatedAsyncioTestCase
 
+import jsonschema
 from pydantic import ValidationError
 
+from agentscope.message import ToolResultBlock, ToolResultState
 from agentscope.permission import PermissionBehavior, PermissionContext
 from agentscope.tool import AskUser
 from agentscope.tool._builtin._ask_user import _AskUserParams
@@ -67,6 +69,24 @@ class AskUserTest(IsolatedAsyncioTestCase):
                     ],
                 },
             )
+
+    async def test_a_result_that_breaks_its_promise_is_refused(self) -> None:
+        """The shape is the caller's to keep; prose alone is not enough."""
+        result = ToolResultBlock(
+            id="call-1",
+            name="AskUser",
+            output="通过",
+            state=ToolResultState.SUCCESS,
+        )
+        with self.assertRaises(jsonschema.ValidationError):
+            await self.tool.check_external_result(result)
+
+        result.metadata = AskUser.Answers(
+            answers=[
+                {"question": "批准吗？", "selected": ["通过"], "other": None},
+            ],
+        ).model_dump()
+        await self.tool.check_external_result(result)
 
     async def test_the_schema_reaches_the_model_whole(self) -> None:
         """Nested models mean $defs, which the model layers inline."""

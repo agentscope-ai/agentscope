@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The asking user tool class."""
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -65,6 +65,15 @@ class _Question(BaseModel):
         ),
     )
 
+    context: str | None = Field(
+        default=None,
+        description=(
+            "What the user should look at while answering — the draft "
+            "being reviewed, the two designs being compared, the error "
+            "that prompted the question. Shown above the options."
+        ),
+    )
+
     options: list[_Option] = Field(
         min_length=2,
         max_length=4,
@@ -84,6 +93,38 @@ class _Question(BaseModel):
             "Note: preview is only supported when multi_select is false."
         ),
     )
+
+
+class _Answer(BaseModel):
+    """One question's answer, as the caller must return it."""
+
+    question: str = Field(
+        description="The question this answers, verbatim.",
+    )
+
+    selected: list[str] = Field(
+        default_factory=list,
+        description="Labels of the options the user chose.",
+    )
+
+    other: str | None = Field(
+        default=None,
+        description=(
+            "What the user typed instead of choosing, when they answered "
+            "in their own words."
+        ),
+    )
+
+
+class AskUserAnswers(BaseModel):
+    """What the caller must put in ``ToolResultBlock.metadata``.
+
+    ``output`` is for the model to read; this is the half a program may
+    branch on — a SOP step deciding whether its work was approved cannot
+    do that on prose.
+    """
+
+    answers: list[_Answer]
 
 
 class _AskUserParams(BaseModel):
@@ -127,10 +168,20 @@ Use this tool when you need to ask the user questions during execution:
 - Users will always be able to select "Other" to provide free-text input — do not add an "Other" option yourself.
 - Use `multi_select: true` only when the choices are genuinely not mutually exclusive.
 - If you recommend a specific option, place it first and append "(Recommended)" to its label.
-- The `preview` field on an option renders a side-by-side visual comparison; only use it for concrete artifacts (code snippets, ASCII mockups, config examples) where seeing the content helps the user choose. Preview is only supported for single-select questions."""  # noqa: E501
+- The `preview` field on an option renders a side-by-side visual comparison; only use it for concrete artifacts (code snippets, ASCII mockups, config examples) where seeing the content helps the user choose. Preview is only supported for single-select questions.
+- Put whatever the user must look at to answer — a draft, a diff, an error — in `context` rather than in the question text.
+
+## What comes back
+`output` is written for you to read. The caller also returns the same answers in `ToolResultBlock.metadata`, shaped by `AskUser.Answers`, for programs that must branch on the choice rather than read prose."""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = _AskUserParams.model_json_schema()
+
+    metadata_schema: dict[str, Any] | None = AskUserAnswers.model_json_schema()
+
+    Answers: ClassVar[type[BaseModel]] = AskUserAnswers
+    """The shape a caller must return, beside the tool that asks for
+    it — so the two cannot drift apart."""
 
     is_read_only: bool = True
     is_state_injected: bool = False
