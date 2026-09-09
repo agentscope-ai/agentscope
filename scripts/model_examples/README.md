@@ -46,6 +46,9 @@ scripts/model_examples/
 ├── moonshot_multimodal.py
 ├── moonshot_multiagent_multimodal.py
 │
+├── volcengine_call.py               # Volcengine Ark / Doubao
+├── volcengine_multiagent.py
+│
 ├── xai_call.py                     # xAI Grok
 ├── xai_multiagent.py
 ├── xai_multimodal.py
@@ -81,6 +84,7 @@ scripts/model_examples/
 | `deepseek` | `DEEPSEEK_API_KEY` | Supports only `call` / `multiagent` (no multimodal) |
 | `gemini` | `GEMINI_API_KEY` | Gemini models, supports `thinking_budget` |
 | `moonshot` | `MOONSHOT_API_KEY` | Moonshot AI kimi-k2.6, etc. |
+| `volcengine` | `VOLCENGINE_API_KEY` | Volcengine Ark / Doubao models |
 | `xai` | `XAI_API_KEY` | Grok models, supports `reasoning_effort` |
 | `ollama` | *(none – auto-detect)* | Local server, default `http://localhost:11434` |
 
@@ -99,6 +103,7 @@ export DASHSCOPE_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
 export GEMINI_API_KEY="AIza..."
 export MOONSHOT_API_KEY="sk-..."
+export VOLCENGINE_API_KEY="..."
 export XAI_API_KEY="xai-..."
 ```
 
@@ -228,4 +233,3 @@ Ollama runs locally and requires no API key, but you must:
 3. If the service runs on a non-default address, set: `export OLLAMA_HOST=http://your-host:11434`
 
 `run_tests.py` pings the Ollama host before running any test. If the server is unreachable, all Ollama tests are automatically skipped.
-

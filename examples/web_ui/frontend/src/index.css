@@ -8,6 +8,16 @@
 
 @plugin '@tailwindcss/typography';
 
+/* Shimmer relies on relative color syntax. Older browsers drop its gradient
+   while keeping the text fill transparent, so fall back to visible text. */
+@supports not (color: oklch(from red l c h)) {
+	.shimmer {
+		--shimmer-image: none;
+		--shimmer-text-fill: currentColor;
+		animation: none;
+	}
+}
+
 html,
 body,
 #root {

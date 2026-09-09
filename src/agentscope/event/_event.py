@@ -190,6 +190,9 @@ class TextBlockEndEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the text block."""
+    text: str | None = None
+    """The block's final text, when it is not the concatenation of the
+    deltas: a voice reply cut short is truncated to what the user heard."""
 
 
 class DataBlockStartEvent(EventBase):

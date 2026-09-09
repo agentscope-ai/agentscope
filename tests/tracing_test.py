@@ -16,6 +16,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from utils import MockModel
 
 from agentscope.agent import Agent, InjectionConfig
+from agentscope.credential import OpenAICredential, VolcengineCredential
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -32,9 +33,16 @@ from agentscope.message import (
 )
 from agentscope.middleware._tracing._attributes import SpanAttributes
 from agentscope.middleware._tracing._extractor import (
+    _get_provider_name,
     _get_llm_response_attributes,
 )
-from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.model import (
+    ChatResponse,
+    ChatUsage,
+    FinishedReason,
+    OpenAIChatModel,
+    VolcengineChatModel,
+)
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -144,6 +152,27 @@ class ExternalWeatherTool(ToolBase):
 
 class TracingExtractorTest(TestCase):
     """Tests for tracing attribute extraction helpers."""
+
+    def test_volcengine_provider_name_from_model_class(self) -> None:
+        """Volcengine models should use the Volcengine provider name."""
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model="doubao-seed-2-1-pro-260628",
+        )
+
+        self.assertEqual(_get_provider_name(model), "volcengine")
+
+    def test_volcengine_provider_name_from_openai_base_url(self) -> None:
+        """Ark's OpenAI-compatible endpoint should map to Volcengine."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(
+                api_key="test",
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+            ),
+            model="doubao-seed-2-1-pro-260628",
+        )
+
+        self.assertEqual(_get_provider_name(model), "volcengine")
 
     def test_llm_response_tracing_uses_chat_response_finish_reason(
         self,
