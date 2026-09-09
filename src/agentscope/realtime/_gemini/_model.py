@@ -95,7 +95,8 @@ class GeminiRealtimeModel(RealtimeModelBase):
         super().__init__(model_name, credential, parameters, model_card)
         self.parameters: GeminiRealtimeModel.Parameters
         self.resumption_handle = ""
-        """The latest handle the server offered, to reconnect with."""
+        """The latest handle the server offered. Not used on reconnect:
+        the agent carries the transcript in the instructions instead."""
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
@@ -134,7 +135,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             self._setup(
                 instructions,
                 tools,
-                kwargs.get("resumption_handle", self.resumption_handle),
+                kwargs.get("resumption_handle", ""),
             ),
         )
 

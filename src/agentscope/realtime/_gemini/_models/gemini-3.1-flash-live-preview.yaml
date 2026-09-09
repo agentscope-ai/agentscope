@@ -5,7 +5,6 @@ status: active
 
 input_types:
   - audio/pcm
-  - image/jpeg
   - text/plain
 output_types:
   - audio/pcm
