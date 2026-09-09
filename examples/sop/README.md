@@ -78,7 +78,7 @@ StdioMCPConfig(
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-export DASHSCOPE_WORKSPACE_ID=llm-...   # 业务空间 ID, from the Model Studio console
+export DASHSCOPE_WORKSPACE_ID=llm-...   # 业务空间 ID，控制台可查（北京地域）
 brew install --cask blender
 # install Blender's own MCP add-on — addon/blender_mcp_addon from
 # https://projects.blender.org/lab/blender_mcp — and enable auto-start
@@ -138,9 +138,10 @@ The upload is a `getPolicy` call followed by a form POST — the SDK adds
 that will read it. The model's own limits on a reference video are why
 the storyboard is told to stay under **15 seconds** at **≥24 fps**.
 
-Video generation is served only on the workspace-scoped endpoint, hence
-`DASHSCOPE_WORKSPACE_ID`. Setting `dashscope.base_http_api_url` only
-affects the video model here; the chat model carries its own URL.
+Video generation is served on the workspace-scoped endpoint, hence
+`DASHSCOPE_WORKSPACE_ID` — the example pins Beijing. It reaches the
+video model alone: the chat model carries its own URL, so nothing else
+moves with it.
 
 ### Every verifier here is a person
 

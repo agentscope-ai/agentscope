@@ -406,10 +406,11 @@ async def main() -> None:
     workspace_id = os.environ.get("DASHSCOPE_WORKSPACE_ID")
     if not workspace_id:
         raise RuntimeError(
-            "Set DASHSCOPE_WORKSPACE_ID — video generation is only served "
-            "on the workspace-scoped endpoint.",
+            "Set DASHSCOPE_WORKSPACE_ID — video generation is served on "
+            "the workspace-scoped endpoint.",
         )
-    # Only the video model reads this; the chat model carries its own URL.
+    # Beijing; the SDK reads this for the video model, while the chat
+    # model carries its own URL.
     dashscope.base_http_api_url = (
         f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1"
     )
