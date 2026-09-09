@@ -212,7 +212,11 @@ class HitlUI(Vertical):
             f"{state} · {agent_name} · {index}/{total}",
         )
         body = Text(f"{tool_call.name}\n", style="bold")
-        body.append(tool_call.input or "{}", style="dim")
+        arguments = tool_call.input or "{}"
+        body.append(
+            "\n".join(f"  {line}" for line in arguments.splitlines()),
+            style="dim",
+        )
         self.query_one("#as-hitl-body", Static).update(body)
 
         options = self.query_one(OptionList)
@@ -249,7 +253,7 @@ class HitlUI(Vertical):
     @staticmethod
     def _choice_prompt(index: int, label: str, selected: bool) -> str:
         marker = "→" if selected else " "
-        return f"{marker} {index + 1}. {label}"
+        return f"{marker} {index + 1}. {label}\n"
 
     def _refresh_choice_prompts(self) -> None:
         options = self.query_one(OptionList)
@@ -330,12 +334,13 @@ class ChatUI(Widget):
         width: 100%;
         height: 100%;
         layout: vertical;
-        padding: 0 1;
+        padding: 0;
         background: transparent;
     }
 
     ChatUI > MessagesUI {
         height: 1fr;
+        padding: 0 1;
     }
 
     ComposerUI, HitlUI {
@@ -356,10 +361,11 @@ class ChatUI(Widget):
     #as-composer-input {
         width: 100%;
         height: auto;
-        min-height: 3;
+        min-height: 1;
         max-height: 10;
+        scrollbar-visibility: hidden;
         border: none;
-        padding: 0;
+        padding: 0 1;
         background: transparent;
     }
 
@@ -370,15 +376,17 @@ class ChatUI(Widget):
     .as-composer-hint, .as-hitl-hint {
         width: 100%;
         height: 1;
+        padding: 0 1;
         color: $text-muted;
     }
 
     .as-hitl-options {
         width: 100%;
         height: auto;
-        max-height: 6;
+        max-height: 10;
+        scrollbar-visibility: hidden;
         border: none;
-        padding: 0;
+        padding: 0 1;
         background: transparent;
     }
 
@@ -391,17 +399,18 @@ class ChatUI(Widget):
     .as-hitl-options > .option-list--option-highlighted,
     .as-hitl-options:focus > .option-list--option-highlighted {
         color: #d8b66f;
-        background: #b8945a 14%;
+        background: transparent;
         text-style: bold;
     }
 
     .as-hitl-options > .option-list--option-hover {
         color: #d8b66f;
-        background: #b8945a 10%;
+        background: transparent;
     }
 
     .as-hitl-title {
         height: 1;
+        padding: 0 1;
         text-style: bold;
         color: $foreground;
     }
@@ -410,7 +419,8 @@ class ChatUI(Widget):
         height: auto;
         max-height: 10;
         overflow-y: auto;
-        padding: 0;
+        scrollbar-visibility: hidden;
+        padding: 0 1;
         background: transparent;
     }
     """

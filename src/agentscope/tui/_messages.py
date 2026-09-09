@@ -759,7 +759,7 @@ class MessagesUI(VerticalScroll):
     .as-tool-group > CollapsibleTitle:focus,
     .as-hint > CollapsibleTitle:hover,
     .as-hint > CollapsibleTitle:focus {
-        background: #b8945a 12%;
+        background: transparent;
         color: #d8b66f;
         text-style: bold;
     }

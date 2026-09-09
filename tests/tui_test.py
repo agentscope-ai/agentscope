@@ -247,11 +247,11 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(
                         message_uis[0].region.x,
-                        chat.content_region.x,
+                        chat.content_region.x + 1,
                     )
                     self.assertLessEqual(
                         message_uis[0].region.right,
-                        chat.content_region.right,
+                        chat.content_region.right - 1,
                     )
                     self.assertEqual(
                         message_uis[1]
@@ -269,10 +269,18 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         "hidden",
                     )
                     self.assertEqual(editor.styles.background.a, 0)
+                    self.assertEqual(editor.region.height, 1)
+                    self.assertEqual(
+                        str(editor.styles.scrollbar_visibility),
+                        "hidden",
+                    )
                     self.assertEqual(
                         len(composer.query(".as-section-rule")),
                         2,
                     )
+                    for rule in composer.query(".as-section-rule"):
+                        self.assertEqual(rule.region.x, chat.region.x)
+                        self.assertEqual(rule.region.width, chat.region.width)
                     self.assertEqual(
                         message_uis[0]._header_text().title.plain,
                         "user",
@@ -371,11 +379,32 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
 
         app = _ChatApp()
         async with app.run_test(message_hook=hook) as pilot:
-            app.query_one(_ComposerTextArea).focus()
-            await pilot.press("a", "shift+enter", "b", "enter")
+            editor = app.query_one(_ComposerTextArea)
+            editor.focus()
+            await pilot.press("a", "shift+enter", "b")
+            await pilot.pause()
+            self.assertEqual(editor.region.height, 2)
+            await pilot.press("enter")
             await pilot.pause()
 
             self.assertEqual(observed[-1].msg.get_text_content(), "a\nb")
+
+    async def test_composer_growth_stops_at_hidden_scroll_cap(self) -> None:
+        app = _ChatApp()
+        async with app.run_test() as pilot:
+            editor = app.query_one(_ComposerTextArea)
+            editor.focus()
+            keys = ["a"]
+            for _ in range(12):
+                keys.extend(("shift+enter", "a"))
+            await pilot.press(*keys)
+            await pilot.pause()
+
+            self.assertEqual(editor.region.height, 10)
+            self.assertEqual(
+                str(editor.styles.scrollbar_visibility),
+                "hidden",
+            )
 
     async def test_hitl_uses_keyboard_selection_and_restores_draft(
         self,
@@ -435,6 +464,10 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             options = app.query_one(OptionList)
             self.assertTrue(options.has_focus)
             self.assertEqual(options.highlighted, 0)
+            self.assertGreaterEqual(
+                options.region.height,
+                options.option_count * 2,
+            )
             self.assertTrue(
                 str(options.get_option_at_index(0).prompt).startswith("→ 1."),
             )
