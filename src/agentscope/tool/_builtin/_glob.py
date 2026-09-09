@@ -45,6 +45,12 @@ class Glob(ToolBase):
     name: str = "Glob"
     """The tool name presented to the agent."""
 
+    default_limit: int = 200
+    """The default maximum number of paths returned by the tool."""
+
+    max_limit: int = 1000
+    """The hard maximum number of paths returned by the tool."""
+
     description: str = """Fast file pattern matching tool that works with
 any codebase size.
 
@@ -67,6 +73,20 @@ codebase."""  # ignore: E501
                 "type": "string",
                 "description": "The base directory to search from "
                 "(defaults to current working directory)",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 200,
+                "description": "Maximum number of matching files to return "
+                "(default: 200, values above 1000 are capped)",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Number of matching files to skip before "
+                "returning results",
             },
         },
         "required": ["pattern"],
@@ -207,6 +227,8 @@ codebase."""  # ignore: E501
         self,
         pattern: str,
         path: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> ToolChunk:
         """Execute the glob pattern matching and return the results.
 
@@ -224,6 +246,12 @@ codebase."""  # ignore: E501
             path (`str | None`, optional):
                 Base directory to search from. Defaults to the current
                 working directory when ``None``.
+            limit (`int | None`, optional):
+                Maximum number of matching paths to return. Defaults to
+                ``200`` and is capped at ``1000``.
+            offset (`int`, optional):
+                Number of matching paths to skip before returning results.
+                Defaults to ``0``.
 
         Returns:
             `ToolChunk`:
@@ -232,6 +260,36 @@ codebase."""  # ignore: E501
                 is missing or the helper fails, an error chunk with
                 ``ToolResultState.ERROR``.
         """
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0
+        ):
+            return ToolChunk(
+                content=[
+                    TextBlock(text="Glob limit must be a positive integer."),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+        ):
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=("Glob offset must be a non-negative integer."),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
+        effective_limit = min(
+            limit if limit is not None else self.default_limit,
+            self.max_limit,
+        )
         base_dir = path if path else await self._backend.getcwd()
 
         # The base must be an existing directory; a regular file would
@@ -288,18 +346,52 @@ codebase."""  # ignore: E501
             matches = []
 
         if len(matches) == 0:
+            no_match_text = (
+                f"No files found matching pattern: {pattern}"
+                if offset == 0
+                else (
+                    f"No more files found matching pattern: {pattern} "
+                    f"after offset {offset}."
+                )
+            )
+            return ToolChunk(
+                content=[
+                    TextBlock(text=no_match_text),
+                ],
+                state=ToolResultState.RUNNING,
+                is_last=True,
+            )
+
+        if offset >= len(matches):
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"No files found matching pattern: {pattern}",
+                        text=(
+                            f"No more files found matching pattern: {pattern} "
+                            f"after offset {offset}."
+                        ),
                     ),
                 ],
                 state=ToolResultState.RUNNING,
                 is_last=True,
             )
 
+        end = min(offset + effective_limit, len(matches))
+        truncated = end < len(matches)
+        output = "\n".join(matches[offset:end])
+        if truncated:
+            output += (
+                f"\n\n[Results truncated: showing results {offset + 1}-{end} "
+                f"of {len(matches)} matches. "
+                f"Use offset={end} to retrieve more results"
+            )
+            if effective_limit < self.max_limit:
+                output += f", or increase limit up to {self.max_limit}.]"
+            else:
+                output += ".]"
+
         return ToolChunk(
-            content=[TextBlock(text="\n".join(matches))],
+            content=[TextBlock(text=output)],
             state=ToolResultState.RUNNING,
             is_last=True,
         )
