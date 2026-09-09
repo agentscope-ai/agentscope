@@ -519,6 +519,9 @@ class RealtimeAgent:
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
             self._metrics.turn_committed_at = time.monotonic()
+            # With turn detection off nothing answers a committed turn
+            # by itself; providers that reply on commit make this a no-op.
+            await self.model.request_response()
 
         if not pushed:
             await self.model.push_audio(pcm)
