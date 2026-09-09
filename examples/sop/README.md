@@ -35,7 +35,7 @@ everyone knows and nobody has seen: **China lifting the World Cup.**
 ```
 分镜与建模需求  ------->  Blender 建模与动画  ------->  视频风格化
 director                  animator                     colorist
-frames, not vibes         blender-mcp (uvx)            Wan 2.7 video edit
+frames, not vibes         Blender's own MCP            Wan 2.7 video edit
 |                         |                            |
 gate: a person            gate: a person               gate: a person
 ```
@@ -52,12 +52,30 @@ a video model come in, at the one step where a *look* is what you want.
 That is also why the steps split where they do: three different kinds of
 work, and a person can check each without knowing the next.
 
+The MCP server is Blender's own (`projects.blender.org/lab/blender_mcp`)
+rather than the better-known GitHub one, for three reasons that all
+matter to an unattended step: its add-on runs headless with auto-start,
+so nobody has to click *Connect*; it ships the bpy API and the manual as
+searchable tools, so the animator looks things up instead of guessing;
+and it renders straight to a path. It is launched from git, so there is
+nothing to clone for the server side:
+
+```python
+StdioMCPConfig(
+    command="uvx",
+    args=["--from", "git+https://projects.blender.org/lab/blender_mcp.git#subdirectory=mcp",
+          "blender-mcp"],
+)
+```
+
 ### Prerequisites
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-uvx blender-mcp install-addon     # once — installs the Blender addon
-# in Blender: press N → "MCP for Blender" tab → Connect to Claude (port 9876)
+brew install --cask blender
+# install Blender's own MCP add-on — addon/blender_mcp_addon from
+# https://projects.blender.org/lab/blender_mcp — and enable auto-start
+# in its preferences. The MCP server is fetched from that repo by uvx.
 
 python main.py
 python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"

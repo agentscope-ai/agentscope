@@ -32,8 +32,10 @@ path and a line on what was built.
 Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
-    uvx blender-mcp install-addon      # once; then in Blender: N sidebar →
-                                       # "MCP for Blender" → Connect to Claude
+    brew install --cask blender
+    # install Blender's own MCP add-on (addon/blender_mcp_addon in
+    # https://projects.blender.org/lab/blender_mcp) and turn on its
+    # auto-start; the MCP server itself is fetched from that repo by uvx
 
     python main.py
     python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"
@@ -207,10 +209,11 @@ async def build_sop(
         name="animator",
         system_prompt=(
             "You build and render animations in Blender through the tools "
-            "you are given. Follow the shot list to the frame: keyframe "
-            "exactly the ranges it gives, set the camera moves it "
-            f"specifies, and render to an .mp4 under {workspace.workdir}. "
-            "Report the absolute path."
+            "you are given. Look up the bpy API with search_api_docs "
+            "before writing code rather than guessing at it. Follow the "
+            "shot list to the frame: keyframe exactly the ranges it "
+            "gives and set the camera moves it specifies. Render to an "
+            f".mp4 under {workspace.workdir} and report the absolute path."
         ),
         model=model(),
         toolkit=Toolkit(tools=[*shared, *await blender.list_tools()]),
@@ -338,7 +341,15 @@ async def main() -> None:
     here = os.path.dirname(os.path.abspath(__file__))
     blender = MCPClient(
         name="blender",
-        mcp_config=StdioMCPConfig(command="uvx", args=["blender-mcp"]),
+        mcp_config=StdioMCPConfig(
+            command="uvx",
+            args=[
+                "--from",
+                "git+https://projects.blender.org/lab/blender_mcp.git"
+                "#subdirectory=mcp",
+                "blender-mcp",
+            ],
+        ),
         is_stateful=True,
     )
     await blender.connect()
