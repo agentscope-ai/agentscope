@@ -78,11 +78,11 @@ class XAICardsTest(unittest.TestCase):
             XAIRealtimeModel("no-such-model", CRED)
 
     def test_adapter_facts(self) -> None:
-        """Grok takes text turns and an explicit truncate frame."""
+        """Grok takes text turns but documents no truncate frame."""
         model = XAIRealtimeModel("grok-voice-latest", CRED)
         self.assertListEqual(
             [model.type, model.truncation, model.supports_text_input],
-            ["xai_realtime", TruncationSupport.EXPLICIT, True],
+            ["xai_realtime", TruncationSupport.NONE, True],
         )
 
 
@@ -124,7 +124,7 @@ class XAISessionUpdateTest(unittest.TestCase):
         )
 
     def test_turn_detection_none_hands_endpointing_to_caller(self) -> None:
-        """``none`` sends null turn detection and no tools without any."""
+        """``none`` sends a null detection type and no tools without any."""
         model = XAIRealtimeModel(
             "grok-voice-think-fast-2.0",
             CRED,
@@ -142,7 +142,7 @@ class XAISessionUpdateTest(unittest.TestCase):
                     "instructions": "be brief",
                     "voice": "ara",
                     "reasoning": {"effort": "none"},
-                    "turn_detection": None,
+                    "turn_detection": {"type": None},
                     "audio": {
                         "input": {
                             "format": {"type": "audio/pcm", "rate": 24000},
@@ -343,10 +343,7 @@ class XAIClientFramesTest(IsolatedAsyncioTestCase):
                         ],
                     },
                 },
-                {
-                    "type": "response.create",
-                    "response": {"modalities": ["text", "audio"]},
-                },
+                {"type": "response.create"},
             ],
         )
 
@@ -375,38 +372,14 @@ class XAIClientFramesTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_truncate_addresses_the_audio_item(self) -> None:
-        """A barge-in cancels the response, then trims the audio item the
-        deltas named — not the response the agent passes in."""
+    async def test_barge_in_cancels_without_truncating(self) -> None:
+        """A barge-in cancels the response; there is no truncate frame."""
         self.model._parse(
             {"type": "response.created", "response": {"id": "resp_001"}},
         )
-        self.model._parse(
-            {
-                "type": "response.output_audio.delta",
-                "item_id": "msg_008",
-                "delta": base64.b64encode(b"\x01\x00").decode(),
-            },
-        )
         await self.model.cancel_response()
         await self.model.truncate("resp_001", 1500, "Hello! I'm")
-        self.assertListEqual(
-            self.sent,
-            [
-                {"type": "response.cancel"},
-                {
-                    "type": "conversation.item.truncate",
-                    "item_id": "msg_008",
-                    "content_index": 0,
-                    "audio_end_ms": 1500,
-                },
-            ],
-        )
-
-    async def test_truncate_without_audio_is_a_no_op(self) -> None:
-        """Nothing was played, so there is no item to trim."""
-        await self.model.truncate("resp_001", 0, "")
-        self.assertListEqual(self.sent, [])
+        self.assertListEqual(self.sent, [{"type": "response.cancel"}])
 
 
 class XAIDisconnectTest(IsolatedAsyncioTestCase):

@@ -25,8 +25,9 @@ class XAIRealtimeModel(RealtimeModelBase):
     OpenAI-shaped, with three xAI departures: the audio format lives in a
     nested ``session.audio`` block, the reply-side frames are the GA names
     (``response.output_audio.delta``), and one response spans several
-    items, so events are grouped by ``response_id`` while
-    ``conversation.item.truncate`` addresses the audio item itself.
+    items, so events are grouped by ``response_id``. The docs list no
+    ``conversation.item.truncate``, so an interrupted reply is not
+    corrected on the provider side.
     """
 
     class Parameters(RealtimeModelBase.Parameters):
@@ -56,7 +57,7 @@ class XAIRealtimeModel(RealtimeModelBase):
         )
 
     type = "xai_realtime"
-    truncation = TruncationSupport.EXPLICIT
+    truncation = TruncationSupport.NONE
     supports_text_input = True
 
     def __init__(
@@ -84,7 +85,6 @@ class XAIRealtimeModel(RealtimeModelBase):
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
         self._response_id = ""
-        self._audio_item_id = ""
         self._tool_args: dict[str, str] = {}
 
     # ------------------------------------------------------------------
@@ -194,12 +194,7 @@ class XAIRealtimeModel(RealtimeModelBase):
         """Ask for a reply, cancelling one already in flight first."""
         if self._response_id:
             await self.cancel_response()
-        await self._send(
-            {
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]},
-            },
-        )
+        await self._send({"type": "response.create"})
 
     async def cancel_response(self) -> None:
         """Cancel the reply in flight, if any."""
@@ -212,21 +207,7 @@ class XAIRealtimeModel(RealtimeModelBase):
         played_ms: int,
         played_text: str,
     ) -> None:
-        """Drop the audio the user never heard from the history.
-
-        *item_id* names the response; the frame addresses the assistant
-        audio item inside it, which the deltas carry.
-        """
-        if not self._audio_item_id:
-            return
-        await self._send(
-            {
-                "type": "conversation.item.truncate",
-                "item_id": self._audio_item_id,
-                "content_index": 0,
-                "audio_end_ms": played_ms,
-            },
-        )
+        """No-op: the protocol documents no truncate frame."""
 
     # ------------------------------------------------------------------
     # Wire
@@ -248,7 +229,8 @@ class XAIRealtimeModel(RealtimeModelBase):
             "instructions": instructions,
             "voice": p.voice,
             "reasoning": {"effort": p.reasoning_effort},
-            "turn_detection": None
+            # Manual turns are ``type: null``, not a null block.
+            "turn_detection": {"type": None}
             if p.turn_detection == "none"
             else {
                 "type": "server_vad",
@@ -314,7 +296,6 @@ class XAIRealtimeModel(RealtimeModelBase):
         match kind:
             case "response.created":
                 self._response_id = data.get("response", {}).get("id", "")
-                self._audio_item_id = ""
                 return me.ResponseCreatedEvent(item_id=self._response_id)
 
             case "response.done":
@@ -332,7 +313,6 @@ class XAIRealtimeModel(RealtimeModelBase):
                 delta = data.get("delta")
                 if not delta:
                     return None
-                self._audio_item_id = item_id or self._audio_item_id
                 return me.AudioDeltaEvent(
                     item_id=self._response_id,
                     pcm=base64.b64decode(delta),
