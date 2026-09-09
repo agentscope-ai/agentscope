@@ -2,6 +2,7 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-09] `集成`:** `RealtimeAgent` 支持 OpenAI Realtime API —— 接入 `gpt-realtime` 系列模型，支持打断、截断与工具调用。
 - **[2026-09] `功能` `实验性`:** 支持实时语音智能体 —— 通过 `RealtimeAgent` 接入 DashScope Realtime API（Qwen-Omni、Qwen-Audio-3.0），全双工语音对话、打断与工具调用。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime)
 - **[2026-09] `功能`:** 支持 A2A 协议 —— 通过 `A2AAgent` 与任意远端 A2A 智能体对话。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/a2a)
 - **[2026-08] `功能`:** 支持流水线 —— 按照固化逻辑运行多智能体，并向外提供统一接口。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/overview)
