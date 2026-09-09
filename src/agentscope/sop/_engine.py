@@ -15,6 +15,7 @@ from ._schema import SOP
 from ._state import SOPPhase, SOPRunState
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
@@ -91,13 +92,10 @@ class SOPEngine:
             `AgentEvent | Msg`:
                 Everything its steps produced on the way.
         """
-        resuming = isinstance(
+        interrupting = isinstance(inputs, UserInterruptEvent)
+        resuming = interrupting or isinstance(
             inputs,
-            (
-                UserConfirmResultEvent,
-                UserInterruptEvent,
-                ExternalExecutionResultEvent,
-            ),
+            (UserConfirmResultEvent, ExternalExecutionResultEvent),
         )
         if not resuming and inputs is not None:
             self.state.inputs = (
@@ -116,13 +114,27 @@ class SOPEngine:
                 # attempt gets what the run knows so far.
                 if not resuming:
                     record.given = self._handover(index)
+                yield CustomEvent(
+                    name="sop.step.started",
+                    value={
+                        "step_id": step.id,
+                        "attempt": len(record.verifications) + 1,
+                    },
+                )
                 async for event in step.reply_stream(
                     inputs if resuming else record.given,
                     record,
                 ):
                     yield event
+                yield CustomEvent(
+                    name="sop.step.ended",
+                    value={"step_id": step.id, "phase": record.phase.value},
+                )
                 inputs, resuming = None, False
 
+                if interrupting:
+                    # The parked reply was closed; nothing is retried.
+                    return
                 if record.phase is SOPPhase.AWAITING:
                     # Let go of the stream rather than hold a coroutine
                     # open; the caller comes back with an answer.

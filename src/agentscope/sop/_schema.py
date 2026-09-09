@@ -224,6 +224,19 @@ class SOPStep(SOPStepBase):
         state: SOPStepRunState,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Make one attempt: do the work, then have it judged."""
+        if isinstance(inputs, UserInterruptEvent):
+            # Whichever side is parked closes its reply; the attempt is
+            # abandoned rather than refused, so it costs nothing from the
+            # budget and the step waits at PENDING for a fresh start.
+            parked = (
+                self.executor if state.submission is None else self.verifier
+            )
+            async for event in parked.reply_stream(inputs=inputs):
+                yield event
+            state.submission = None
+            state.phase = SOPPhase.PENDING
+            return
+
         state.phase = SOPPhase.RUNNING
 
         if state.submission is None:

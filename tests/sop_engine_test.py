@@ -12,6 +12,8 @@ from utils import AnyString
 
 from agentscope.event import (
     ConfirmResult,
+    CustomEvent,
+    UserInterruptEvent,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
@@ -334,8 +336,17 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         events = await self._drive(engine, UserMsg(name="user", content="go"))
 
         self.assertEqual(engine.phase, SOPPhase.AWAITING)
-        self.assertEqual(len(events), 1)
-        self.assertIsInstance(events[0], RequireUserConfirmEvent)
+        self.assertListEqual(
+            [
+                (_.name, _.value) if isinstance(_, CustomEvent) else type(_)
+                for _ in events
+            ],
+            [
+                ("sop.step.started", {"step_id": "a", "attempt": 1}),
+                RequireUserConfirmEvent,
+                ("sop.step.ended", {"step_id": "a", "phase": "awaiting"}),
+            ],
+        )
 
         await self._drive(engine, _answer())
 
@@ -449,4 +460,73 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             str(ctx.exception),
             "State belongs to SOP other, not sop-1.",
+        )
+
+    async def test_an_interrupt_abandons_the_attempt_without_charging_it(
+        self,
+    ) -> None:
+        """Interrupting a parked step closes its reply and stops the run.
+
+        The attempt is abandoned, not refused: no verdict is filed, the
+        budget is untouched, and the step waits at PENDING for a fresh
+        start rather than being retried on the spot.
+        """
+        executor = _Scripted("ex", [[_park()], []])
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", executor, step_id="a")],
+            sop_id="sop-1",
+        )
+        engine = SOPEngine(sop)
+        await self._drive(engine, UserMsg(name="user", content="go"))
+        self.assertEqual(engine.phase, SOPPhase.AWAITING)
+
+        events = await self._drive(
+            engine,
+            UserInterruptEvent(reply_id="reply-1"),
+        )
+
+        self.assertIsInstance(executor.asked[1], UserInterruptEvent)
+        self.assertEqual(len(executor.asked), 2)
+        self.assertDictEqual(
+            engine.state.steps["a"].model_dump(),
+            {
+                "step_id": "a",
+                "phase": SOPPhase.PENDING,
+                # What the abandoned attempt was dispatched with stays on
+                # record; the next dispatch overwrites it.
+                "given": [
+                    {
+                        "name": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "go",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "user",
+                        "id": AnyString(),
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                ],
+                "submission": None,
+                "verifications": [],
+            },
+        )
+        self.assertListEqual(
+            [(_.name, _.value) for _ in events if isinstance(_, CustomEvent)],
+            [
+                ("sop.step.started", {"step_id": "a", "attempt": 1}),
+                ("sop.step.ended", {"step_id": "a", "phase": "pending"}),
+            ],
         )
