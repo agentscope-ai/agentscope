@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from agentscope.message import ToolResultBlock, ToolResultState
 from agentscope.permission import PermissionBehavior, PermissionContext
-from agentscope.tool import AskUser, AskUserAnswers, AskUserParams
+from agentscope.tool import AskUser, AskUserMetadata, AskUserParams
 
 
 class AskUserTest(IsolatedAsyncioTestCase):
@@ -80,7 +80,7 @@ class AskUserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(jsonschema.ValidationError):
             await self.tool.check_external_result(result)
 
-        result.metadata = AskUserAnswers(
+        result.metadata = AskUserMetadata(
             answers=[
                 {"question": "批准吗？", "selected": ["通过"], "other": None},
             ],

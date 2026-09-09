@@ -3,8 +3,7 @@
 
 from ._ask_user import (
     AskUser,
-    AskUserAnswer,
-    AskUserAnswers,
+    AskUserMetadata,
     AskUserParams,
 )
 from ._backend import BackendBase, DirEntry, ExecResult, LocalBackend
@@ -20,8 +19,7 @@ from ._write import Write
 
 __all__ = [
     "AskUser",
-    "AskUserAnswer",
-    "AskUserAnswers",
+    "AskUserMetadata",
     "AskUserParams",
     "ResetTools",
     "SkillViewer",
