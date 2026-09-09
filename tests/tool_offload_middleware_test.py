@@ -5,7 +5,7 @@ import asyncio
 import json
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import BaseModel
 
@@ -177,9 +177,15 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             `tuple[Agent, ToolOffloadMiddleware]`:
                 The configured agent and the middleware instance.
         """
+        # No run is registered as this session's inbox consumer, so a
+        # completed background tool is expected to wake the session.
+        # ``spec`` alone would hand back a truthy sentinel and make the
+        # delivery look like somebody was already going to drain it.
+        message_bus = MagicMock(spec=MessageBus)
+        message_bus.registry_get = AsyncMock(return_value=None)
         middleware = ToolOffloadMiddleware(
             bg_manager=self.bg_manager,
-            message_bus=MagicMock(spec=MessageBus),
+            message_bus=message_bus,
             user_id="u",
             agent_id="a",
             timeout_secs=timeout_secs,

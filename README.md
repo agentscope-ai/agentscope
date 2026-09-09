@@ -73,16 +73,16 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-09] `FEAT` `Experimental`:** Realtime voice agent supported — full-duplex speech-to-speech via `RealtimeAgent` on the DashScope Realtime API (Qwen-Omni, Qwen-Audio-3.0), with barge-in and tool calls. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime)
+- **[2026-09] `FEAT`:** A2A protocol supported — chat with any remote A2A agent via `A2AAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/a2a)
+- **[2026-08] `FEAT`:** Pipeline supported — run multiple agents by a fixed logic behind one event stream. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/overview)
+- **[2026-08] `INTE`:** DingTalk channel supported. [Docs](https://docs.agentscope.io/latest/en/deploy/channel/dingtalk)
+- **[2026-08] `FEAT`:** Console supported — test and debug agents in the terminal. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/console)
 - **[2026-08] `INTE`:** Feishu (Lark) and Discord channels supported. [Feishu](https://docs.agentscope.io/latest/en/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/en/deploy/channel/discord)
 - **[2026-08] `FEAT`:** Channels supported — connect agents to IM platforms in agent service. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/channel/overview)
 - **[2026-08] `INTE`:** GitHub MCP Registry and ClawHub supported as built-in hubs. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
 - **[2026-08] `FEAT`:** MCP & Skill Hub supported — browse a hub, install into your library, add to a workspace. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
 - **[2026-07] `INTE`:** Daytona-based workspace/sandbox supported. [Docs](https://docs.agentscope.io/latest/en/building-blocks/workspace)
-- **[2026-07] `INTE`:** K8s, OpenSandbox-based workspace/sandbox supported. [Docs](https://docs.agentscope.io/latest/en/building-blocks/workspace)
-- **[2026-07] `INTE`:** ReMe long-term memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
-- **[2026-06] `FEAT`:** Agentic Memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
-- **[2026-06] `FEAT`:** Distributed & Multi-Tenancy & Multi-Session RAG service supported. [Docs](https://docs.agentscope.io/latest/en/deploy/agent-team)
-- **[2026-06] `FEAT`:** RAG supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/rag) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/rag)
 <!-- END NEWS -->
 
 [More news →](./docs/NEWS.md)
@@ -127,7 +127,7 @@ The SDK layer — compose an agent from a rich set of building blocks:
 |---|---|
 | [**ReAct**](https://docs.agentscope.io/latest/en/building-blocks/agent/overview) | Reasoning-acting loop with structured output, realtime interruption & resume, and batched (sequential / concurrent) tool acting |
 | [**Toolkit**](https://docs.agentscope.io/latest/en/building-blocks/tool/overview) | Agentic tool management over Python tools, MCP servers, and skills; ships with built-in coding tools (shell, file edit, search) and task/plan tools |
-| [**Model**](https://docs.agentscope.io/latest/en/building-blocks/model/overview) | LLM, embedding, and TTS across major providers (OpenAI, Anthropic, Gemini, DashScope, DeepSeek, Moonshot, xAI, Ollama) |
+| [**Model**](https://docs.agentscope.io/latest/en/building-blocks/model/overview) | LLM, embedding, and TTS across major providers (OpenAI, Anthropic, Gemini, DashScope, DeepSeek, Moonshot, Volcengine, xAI, Ollama) |
 | [**Context**](https://docs.agentscope.io/latest/en/building-blocks/context/overview) | Automatic compaction, tool-result offload, and context injection (system prompt, RAG, memory) via built-in middleware |
 | [**Event System**](https://docs.agentscope.io/latest/en/building-blocks/message-and-event) | Unified event bus streaming reasoning, tool calls, and multimodal content (text, image, audio) to the frontend |
 | [**Permission & HITL**](https://docs.agentscope.io/latest/en/building-blocks/permission-system/overview) | Fine-grained control over tools and resources, confirmation, bypass mode |
@@ -135,15 +135,14 @@ The SDK layer — compose an agent from a rich set of building blocks:
 | [**Memory**](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory) | Agentic memory with switchable backends (ReMe, Mem0) |
 | [**Workspace / Sandbox**](https://docs.agentscope.io/latest/en/building-blocks/workspace/overview) | Isolated tool & code execution — local, Docker, Apple Container, Bubblewrap, E2B, OpenSandbox, Daytona, K8s |
 
-Start your first agent with AgentScope 2.0:
+Start your first agent with AgentScope 2.0 in console:
 
 ```python
 from agentscope.agent import Agent
+from agentscope.console import launch_console
 from agentscope.tool import Toolkit, Bash, Grep, Glob, Read, Write, Edit
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.message import UserMsg
-from agentscope.event import EventType
 
 import os, asyncio
 
@@ -170,21 +169,9 @@ async def main() -> None:
         ),
     )
 
-    async for evt in agent.reply_stream(UserMsg("Tony", "Hi, Friday!")):
-        # Handle the event stream, e.g., print the message, update UI, etc.
-        match evt.type:
-            case EventType.REPLY_START:
-                ...
-            case EventType.MODEL_CALL_START:
-                ...
-            case EventType.TEXT_BLOCK_START:
-                ...
-            case EventType.TEXT_BLOCK_DELTA:
-                ...
-            case EventType.TEXT_BLOCK_END:
-                ...
-
-            # Handle other event types
+    # Chat with the agent in the terminal — streamed output, tool-call
+    # confirmation and Ctrl+C interruption are all handled for you
+    await launch_console(agent)
 
 asyncio.run(main())
 ```

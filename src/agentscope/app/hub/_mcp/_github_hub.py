@@ -62,6 +62,42 @@ def _substitute(value: Any) -> Any:
     return value
 
 
+def _input_property(name: str, spec: dict) -> dict:
+    """Convert one registry variable definition to JSON Schema."""
+    prop: dict = {
+        "type": "string",
+        "title": name,
+        "description": spec.get("description") or "",
+    }
+    if spec.get("is_secret"):
+        prop["writeOnly"] = True
+        prop["format"] = "password"
+    if spec.get("choices"):
+        prop["enum"] = [str(choice) for choice in spec["choices"]]
+    if spec.get("default") is not None:
+        prop["default"] = str(spec["default"])
+    return prop
+
+
+def _inputs_schema(inputs: dict[str, dict]) -> dict:
+    """Build the install form schema for registry variables."""
+    if not inputs:
+        return {}
+
+    schema: dict = {
+        "type": "object",
+        "properties": {
+            name: _input_property(name, spec) for name, spec in inputs.items()
+        },
+    }
+    required = sorted(
+        name for name, spec in inputs.items() if spec.get("is_required")
+    )
+    if required:
+        schema["required"] = required
+    return schema
+
+
 class GitHubMCPHub(MCPHubBase):
     """An MCP hub backed by GitHub's MCP registry.
 
@@ -180,10 +216,10 @@ class GitHubMCPHub(MCPHubBase):
 
         Returns:
             `tuple[dict, dict]`:
-                The config template and the ``{name: description}`` of
-                the secrets it references.
+                The config template and registry definitions of the
+                install inputs it references.
         """
-        secrets: dict[str, str] = {}
+        inputs: dict[str, dict] = {}
         headers = {}
         for header in remote.get("headers") or []:
             value = header.get("value") or ""
@@ -192,12 +228,16 @@ class GitHubMCPHub(MCPHubBase):
             key = header.get("name") or "Authorization"
             headers[key] = _substitute(value)
             for match in _PLACEHOLDER.finditer(value):
-                secrets[match.group(1)] = header.get("description") or ""
+                inputs[match.group(1)] = {
+                    "description": header.get("description") or "",
+                    "is_required": True,
+                    "is_secret": header.get("is_secret", True),
+                }
 
         config: dict = {"type": "http_mcp", "url": remote["url"]}
         if headers:
             config["headers"] = headers
-        return config, secrets
+        return config, inputs
 
     @staticmethod
     def _from_package(package: dict) -> tuple[dict, dict] | None:
@@ -209,8 +249,9 @@ class GitHubMCPHub(MCPHubBase):
 
         Returns:
             `tuple[dict, dict] | None`:
-                The config template and its secrets, or ``None`` when the
-                registry does not say how to run the package.
+                The config template and registry definitions of its
+                install inputs, or ``None`` when the registry does not
+                say how to run the package.
         """
         runtime = package.get("runtime_hint")
         if runtime not in _RUNTIMES:
@@ -223,14 +264,28 @@ class GitHubMCPHub(MCPHubBase):
         spec = f"{name}@{version}" if version and runtime == "npx" else name
 
         env = {}
-        secrets: dict[str, str] = {}
+        inputs: dict[str, dict] = {}
         for variable in package.get("environment_variables") or []:
             key = variable.get("name")
             if not key:
                 continue
-            env[key] = f"${{{key}}}"
-            if variable.get("is_secret"):
-                secrets[key] = variable.get("description") or ""
+
+            nested = variable.get("variables")
+            value = variable.get("value")
+            if isinstance(nested, dict):
+                env[key] = str(_substitute(value or ""))
+                inputs.update(
+                    {
+                        input_name: input_spec
+                        for input_name, input_spec in nested.items()
+                        if isinstance(input_spec, dict)
+                    },
+                )
+            elif value is not None:
+                env[key] = str(value)
+            else:
+                env[key] = f"${{{key}}}"
+                inputs[key] = variable
 
         config: dict = {
             "type": "stdio_mcp",
@@ -239,7 +294,7 @@ class GitHubMCPHub(MCPHubBase):
         }
         if env:
             config["env"] = env
-        return config, secrets
+        return config, inputs
 
     def _to_card(self, entry: dict, readme: bool = False) -> MCPCard | None:
         """Build a card from one registry entry.
@@ -273,23 +328,8 @@ class GitHubMCPHub(MCPHubBase):
         if built is None:
             return None
 
-        config, secrets = built
-        inputs_schema: dict = {}
-        if secrets:
-            inputs_schema = {
-                "type": "object",
-                "properties": {
-                    key: {
-                        "type": "string",
-                        "title": key,
-                        "description": description,
-                        "writeOnly": True,
-                        "format": "password",
-                    }
-                    for key, description in secrets.items()
-                },
-                "required": sorted(secrets),
-            }
+        config, inputs = built
+        inputs_schema = _inputs_schema(inputs)
 
         name = server.get("name") or ""
         owner = name.rsplit("/", 1)[0] if "/" in name else None
@@ -333,7 +373,7 @@ class GitHubMCPHub(MCPHubBase):
             else None,
             # STDIO servers must be stateful — the process is the session.
             is_stateful=config["type"] == "stdio_mcp",
-            auth="inputs" if secrets else "none",
+            auth="inputs" if inputs else "none",
             inputs_schema=inputs_schema,
             config_template=config,  # type: ignore[arg-type]
         )

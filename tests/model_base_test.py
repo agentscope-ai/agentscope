@@ -3,6 +3,7 @@
 retry / accumulation / interrupt wrapper around ``_call_api``."""
 import asyncio
 import base64
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
@@ -16,7 +17,67 @@ from agentscope.message import (
     URLSource,
     UserMsg,
 )
-from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.model import (
+    ChatResponse,
+    ChatUsage,
+    FinishedReason,
+    StructuredResponse,
+)
+from agentscope.exception import StructuredOutputError
+from agentscope.tool import ToolChoice
+
+
+class _BadRequestError(Exception):
+    """A provider "bad request" error used to exercise strategy fallback."""
+
+
+class StructuredOutputStrategyMockModel(MockModel):
+    """Record and control structured-output strategy attempts."""
+
+    def __init__(
+        self,
+        responses: list[StructuredResponse | Exception] | None = None,
+        reject_forced: bool = False,
+    ) -> None:
+        """Initialize the strategy mock model."""
+        super().__init__()
+        self.responses = list(responses or [])
+        self.reject_forced = reject_forced
+        self.structured_calls: list[tuple[str | None, dict[str, Any]]] = []
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Expose a provider-specific thinking toggle."""
+        return {"extra_body": {"enable_thinking": False}}
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[type[Exception], ...]:
+        """Declare the provider error that permits a strategy fallback."""
+        return (_BadRequestError,)
+
+    async def _call_api_with_structured_output(
+        self,
+        model_name: str,
+        messages: list,
+        structured_model: Any,
+        tool_choice: ToolChoice | None = None,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Return or raise the configured result for one strategy."""
+        del model_name, messages, structured_model
+        mode = tool_choice.mode if tool_choice is not None else None
+        self.structured_calls.append((mode, kwargs))
+        await asyncio.sleep(0)
+
+        if self.reject_forced and mode == "generate_structured_output":
+            raise _BadRequestError("tool_choice is unsupported")
+        if self.responses:
+            response = self.responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+        return StructuredResponse(content={})
 
 
 def _dump(chat_response: ChatResponse) -> dict:
@@ -1068,3 +1129,158 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
+
+
+class StructuredOutputStrategyTest(IsolatedAsyncioTestCase):
+    """Test structured-output fallback strategy behavior."""
+
+    async def asyncSetUp(self) -> None:
+        """Prepare a common structured-output request."""
+        self.messages = [UserMsg(name="user", content="hi")]
+        self.schema = {"type": "object"}
+
+    async def test_strategy_order(self) -> None:
+        """Preserve thinking before falling back to disabling it."""
+        model = StructuredOutputStrategyMockModel(
+            responses=[
+                _BadRequestError("tool_choice is unsupported"),
+                StructuredOutputError(
+                    "Failed to generate structured output for model.",
+                ),
+                StructuredResponse(content={}),
+            ],
+        )
+
+        await model.generate_structured_output(self.messages, self.schema)
+
+        self.assertEqual(
+            model.structured_calls,
+            [
+                ("generate_structured_output", {}),
+                ("auto", {}),
+                (
+                    "generate_structured_output",
+                    {"extra_body": {"enable_thinking": False}},
+                ),
+            ],
+        )
+
+    async def test_success_does_not_permanently_promote_strategy(self) -> None:
+        """Every call starts from the strongest immutable strategy."""
+        model = StructuredOutputStrategyMockModel(
+            responses=[
+                _BadRequestError("tool_choice is unsupported"),
+                StructuredResponse(content={}),
+                StructuredResponse(content={}),
+            ],
+        )
+
+        await model.generate_structured_output(self.messages, self.schema)
+        await model.generate_structured_output(self.messages, self.schema)
+
+        self.assertEqual(
+            model.structured_calls,
+            [
+                ("generate_structured_output", {}),
+                ("auto", {}),
+                ("generate_structured_output", {}),
+            ],
+        )
+
+    async def test_explicit_tool_choice_bypasses_fallbacks(self) -> None:
+        """A caller-provided tool choice is forwarded exactly once."""
+        model = StructuredOutputStrategyMockModel(
+            responses=[StructuredResponse(content={})],
+        )
+
+        await model.generate_structured_output(
+            self.messages,
+            self.schema,
+            tool_choice=ToolChoice(mode="auto"),
+        )
+
+        self.assertEqual(model.structured_calls, [("auto", {})])
+
+    async def test_unrelated_error_fails_fast(self) -> None:
+        """Non-compatibility errors do not walk the strategy ladder."""
+        expected = PermissionError("invalid API key")
+        model = StructuredOutputStrategyMockModel(responses=[expected])
+
+        with self.assertRaises(PermissionError) as raised:
+            await model.generate_structured_output(
+                self.messages,
+                self.schema,
+            )
+
+        self.assertEqual(
+            (raised.exception, model.structured_calls),
+            (
+                expected,
+                [("generate_structured_output", {})],
+            ),
+        )
+
+    async def test_final_error_is_chained_from_first_error(self) -> None:
+        """The first provider failure remains visible as the root cause."""
+        first_error = _BadRequestError("tool_choice is unsupported")
+        final_error = StructuredOutputError(
+            "Failed to generate structured output for model.",
+        )
+        model = StructuredOutputStrategyMockModel(
+            responses=[
+                first_error,
+                StructuredOutputError(
+                    "Failed to generate structured output for model.",
+                ),
+                StructuredOutputError(
+                    "Failed to generate structured output for model.",
+                ),
+                final_error,
+            ],
+        )
+
+        with self.assertRaises(StructuredOutputError) as raised:
+            await model.generate_structured_output(
+                self.messages,
+                self.schema,
+            )
+
+        self.assertEqual(
+            (
+                raised.exception,
+                raised.exception.__cause__,
+                model.structured_calls,
+            ),
+            (
+                final_error,
+                first_error,
+                [
+                    ("generate_structured_output", {}),
+                    ("auto", {}),
+                    (
+                        "generate_structured_output",
+                        {"extra_body": {"enable_thinking": False}},
+                    ),
+                    (None, {}),
+                ],
+            ),
+        )
+
+    async def test_concurrent_calls_do_not_share_strategy_state(self) -> None:
+        """Concurrent calls independently traverse immutable strategies."""
+        model = StructuredOutputStrategyMockModel(reject_forced=True)
+
+        await asyncio.gather(
+            model.generate_structured_output(self.messages, self.schema),
+            model.generate_structured_output(self.messages, self.schema),
+        )
+
+        self.assertEqual(
+            model.structured_calls,
+            [
+                ("generate_structured_output", {}),
+                ("generate_structured_output", {}),
+                ("auto", {}),
+                ("auto", {}),
+            ],
+        )

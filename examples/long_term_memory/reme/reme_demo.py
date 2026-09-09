@@ -255,7 +255,7 @@ async def main() -> None:
     embedding_model = DashScopeEmbeddingModel(
         credential=DashScopeCredential(api_key=api_key),
         model="text-embedding-v4",
-        dimensions=1024,  # matches ReMe's default embedding dimension
+        dimensions=1024,
     )
 
     # One middleware, shared across both sessions. ReMe is embedded
@@ -267,12 +267,11 @@ async def main() -> None:
     # never stored on the middleware — so sharing one instance across
     # agents/sessions is safe.
     #
-    # ReMe's bundled ``default`` config searches keyword-only (its file
-    # store ships with ``embedding_store: ""``). For a long-term *memory*
-    # demo we want semantic recall — "plot monthly sales" should find a
-    # "prefers matplotlib / dark mode" card even without shared keywords —
-    # so we pass an ``embedding_model``, which the middleware uses to turn
-    # ReMe's vector store on automatically when it builds the app.
+    # AgentScope's minimal embedded ReMe config searches keyword-only by
+    # default. For a long-term *memory* demo we want semantic recall — "plot
+    # monthly sales" should find a "prefers matplotlib / dark mode" card even
+    # without shared keywords — so we pass an ``embedding_model``, which the
+    # middleware uses to turn ReMe's vector store on when it builds the app.
     mw = ReMeMiddleware(
         workspace_dir=WORKSPACE_DIR,
         parameters=ReMeMiddleware.Parameters(

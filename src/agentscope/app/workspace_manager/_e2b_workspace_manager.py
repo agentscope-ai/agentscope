@@ -47,11 +47,15 @@ from ...workspace._e2b._constants import (
     DEFAULT_TIMEOUT,
 )
 from ._base import WorkspaceManagerBase, IsolationPolicy
+from ._prewarm import PrewarmConfig, WorkspacePrewarmMixin
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
 
-class E2BWorkspaceManager(WorkspaceManagerBase):
+class E2BWorkspaceManager(
+    WorkspacePrewarmMixin[E2BWorkspace],
+    WorkspaceManagerBase,
+):
     """Manages :class:`E2BWorkspace` instances with TTL-based caching.
 
     Use the manager as an ``async with`` context manager: entering it
@@ -75,6 +79,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
+        prewarm: PrewarmConfig | None = None,
     ) -> None:
         """Initialize the E2B workspace manager.
 
@@ -118,6 +123,11 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up
                 to look for idle workspaces. Defaults to 5 minutes.
+            prewarm (`PrewarmConfig | None`, optional):
+                Keep this many sandboxes created and idle, ready to be
+                handed to the next session that needs one. ``None``
+                disables pre-warming. Idle sandboxes stay running, so
+                they bill while they wait — keep the buffer small.
         """
         self._template = template
         self._api_key = api_key
@@ -131,7 +141,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
-        super().__init__(isolation=isolation)
+        WorkspacePrewarmMixin.__init__(self, prewarm=prewarm)
+        WorkspaceManagerBase.__init__(self, isolation=isolation)
 
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[E2BWorkspace, float]] = {}
@@ -186,8 +197,66 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The remote sandbox may already exist — initialize also
+            # bootstraps the gateway, and that half can fail on its
+            # own. Nothing else holds this workspace, so it would bill
+            # forever.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
+
+    # ── pre-warming hooks ─────────────────────────────────────────
+
+    async def _create_prewarmed(self) -> E2BWorkspace:
+        """Create a sandbox for nobody in particular.
+
+        Carries no ``(user, agent)`` metadata — it is stamped with the
+        workspace id only, which is all reattachment needs.
+        """
+        ws = await self._build_and_start(
+            workspace_id=None,
+            user_id="",
+            agent_id="",
+        )
+        logger.info(
+            "E2BWorkspaceManager: pre-warmed workspace %s",
+            ws.workspace_id,
+        )
+        return ws
+
+    async def _adopt_prewarmed(self, workspace: E2BWorkspace) -> None:
+        """Track a handed-out sandbox under the ordinary TTL cache."""
+        async with self._lock:
+            self._cache[workspace.workspace_id] = (
+                workspace,
+                time.monotonic(),
+            )
+
+    async def _dispose_prewarmed(self, workspace: E2BWorkspace) -> None:
+        """Kill a sandbox nobody will come looking for.
+
+        ``close`` only pauses, so that the next ``initialize`` can
+        reattach by metadata. An unclaimed sandbox has no such future:
+        its id was never persisted, nothing will look it up, and a
+        paused sandbox bills for its snapshot indefinitely.
+        """
+        sandbox = workspace._sandbox  # pylint: disable=protected-access
+        if sandbox is not None:
+            try:
+                await sandbox.kill()
+                # pylint: disable-next=protected-access
+                workspace._sandbox = None
+            except Exception as e:
+                logger.warning(
+                    "E2BWorkspaceManager: failed to kill unclaimed "
+                    "sandbox %s: %s",
+                    workspace.workspace_id,
+                    e,
+                )
+        await workspace.close()
 
     # ── public API ────────────────────────────────────────────────
 
@@ -223,7 +292,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key and the
                 value stored in the sandbox's
-                ``agentscope.workspace.id`` metadata. When ``None``
+                ``agentscope.workspace.id`` metadata. When unset
                 the manager falls back to
                 :meth:`assign_workspace_id`.
 
@@ -233,8 +302,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",
@@ -343,13 +412,15 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
     # ── async context manager ─────────────────────────────────────
 
     async def __aenter__(self) -> Self:
-        """Start the TTL sweeper task."""
+        """Start the TTL sweeper task and fill the pre-warm buffer."""
         if self._sweep_task is None:
             self._sweep_task = asyncio.create_task(self._sweep_loop())
+        self._start_prewarm()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Stop the TTL sweeper task, then close every cached workspace."""
+        """Stop the sweeper and buffer, then close every workspace."""
+        await self._stop_prewarm()
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             try:

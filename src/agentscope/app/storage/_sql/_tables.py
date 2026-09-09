@@ -36,6 +36,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import DATETIME as _MySQLDateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -91,6 +92,12 @@ class _JsonRecordMixin(_Base):
     # Populated by subclasses; see class docstring.
     _record_cls: ClassVar[type]
     _indexed_fields: ClassVar[tuple[str, ...]] = ()
+    _index_paths: ClassVar[dict[str, str]] = {}
+
+    @classmethod
+    def get_index_paths(cls) -> dict[str, str]:
+        """Return ``column -> dotted path`` for columns fed from nesting."""
+        return cls._index_paths
 
     @classmethod
     def get_indexed_fields(cls) -> tuple[str, ...]:
@@ -169,10 +176,16 @@ class SessionRow(_JsonRecordMixin):
     _indexed_fields = (
         "user_id",
         "agent_id",
-        "source",
-        "source_schedule_id",
         "team_id",
     )
+
+    # Fed from inside ``source``, which is a tagged union rather than a
+    # flat field. Same column names and same indexes as before the
+    # nesting, so no migration is needed.
+    _index_paths: ClassVar[dict[str, str]] = {
+        "source": "origin.type",
+        "source_schedule_id": "origin.schedule_id",
+    }
 
 
 class ScheduleRow(_JsonRecordMixin):
@@ -333,6 +346,54 @@ class SkillRow(_JsonRecordMixin):
     )
 
     _indexed_fields = ("user_id", "name")
+
+
+class ChannelRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.ChannelRecord`.
+
+    ``platform_bot_id`` is globally unique — no two channels may drive
+    the same platform bot — but it is deliberately NOT a record field
+    (it is extracted from ``credentials`` on write and passed alongside
+    the record), so it is not listed in ``_indexed_fields``; the write
+    path sets this column explicitly.
+
+    ``updated_at`` is this record's configuration version: the client
+    cache and the lifecycle dispatcher both compare it for equality to
+    decide whether a running instance still matches its record. MySQL's
+    ``DATETIME`` keeps whole seconds unless a precision is asked for, so
+    two edits within one second would persist the same version and the
+    second one would never be picked up. Both timestamps therefore
+    override the mixin's to carry microseconds.
+    """
+
+    __tablename__ = "channels"
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime().with_variant(_MySQLDateTime(fsp=6), "mysql", "mariadb"),
+        index=True,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime().with_variant(_MySQLDateTime(fsp=6), "mysql", "mariadb"),
+        index=True,
+        nullable=False,
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    platform_bot_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("platform_bot_id", name="uq_channels_bot"),
+    )
+
+    _indexed_fields = ("user_id",)
 
 
 class MessageRow(_Base):

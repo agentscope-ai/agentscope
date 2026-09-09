@@ -4,7 +4,6 @@ GeminiMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import (
     GeminiChatFormatter,
@@ -281,6 +280,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is passed through as ``inline_data``."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this."},
+                        {
+                            "inline_data": {
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock becomes a part with thought=True in Gemini format."""
         fmt = GeminiChatFormatter()
@@ -337,13 +372,8 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(thought_parts, [])
         self.assertEqual(res[0]["parts"], [{"text": "reply"}])
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """Base64 images in tool results are promoted to a follow-up user
         message."""
@@ -363,6 +393,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=Base64Source(
                                     data=self.image_b64,
                                     media_type="image/png",

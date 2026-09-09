@@ -17,7 +17,7 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    SessionOrigin,
     SkillRecord,
     TeamRecord,
 )
@@ -370,9 +370,11 @@ class StorageBase(ABC):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
@@ -388,11 +390,14 @@ class StorageBase(ABC):
             session_id (`str | None`, optional): If provided, update the
                 existing session with this id. If ``None``, create a new
                 session.
-            source (`SessionSource`, optional): The source that created this
-                session. Defaults to ``SessionSource.USER``.
-            source_schedule_id (`str | None`, optional): The schedule that
-                created this session. When set, the session is indexed under
-                the schedule for execution history queries.
+            origin (`SessionOrigin | None`, optional): How the session came
+                to exist — a :class:`ScheduleOrigin` also indexes it under
+                its schedule. Defaults to :class:`UserOrigin`.
+            source / source_schedule_id / source_chat_id /
+                source_chat_name / source_channel_id: **Deprecated** —
+                the flat shape ``origin`` replaced. Passing any of them
+                still builds the matching origin, so callers written
+                against the old signature keep working.
 
         Returns:
             `SessionRecord`: The created or updated record.
@@ -605,10 +610,11 @@ class StorageBase(ABC):
     # ------------------------------------------------------------------
     # Channel persistence
     #
-    # Optional capability: channels require the distributed message bus
-    # (locks / pub-sub / queues), so only bus-backed stores (Redis)
-    # implement these. Other backends inherit the NotImplementedError
-    # default.
+    # Optional capability. Note it is orthogonal to the message bus:
+    # running channels across several nodes needs a *distributed bus*,
+    # but the storage backend is a separate injection — SQL storage
+    # with a Redis bus is the normal production shape. A backend that
+    # does not implement these inherits the NotImplementedError default.
     # ------------------------------------------------------------------
 
     async def upsert_channel(
@@ -858,7 +864,8 @@ class StorageBase(ABC):
              is fully removed because it was spawned solely for this
              team.
            - ``role == "invited"`` — call :meth:`delete_session` for
-             the borrowed team-scoped session only. The invited
+             the borrowed team-scoped session under the team owner's
+             namespace only. The invited
              agent's :class:`AgentRecord` and any other sessions it
              owns survive the team's dissolution.
         2. Clear ``team_id`` on the leader session referenced by

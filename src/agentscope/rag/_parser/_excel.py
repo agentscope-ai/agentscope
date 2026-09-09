@@ -21,7 +21,7 @@ from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
 from .._document import Section
 from ._base import ParserBase
-from ._utils import _guess_image_media_type
+from ._utils import _format_markdown_table_cell, _guess_image_media_type
 
 
 def _get_excel_column_name(col_index: int) -> str:
@@ -416,7 +416,7 @@ class ExcelParser(ParserBase):
         num_cols = len(table_data[0])
 
         def _fmt(cell: str, row_idx: int, col_idx: int) -> str:
-            escaped = cell.replace("|", "\\|")
+            escaped = _format_markdown_table_cell(cell)
             if self.include_cell_coordinates:
                 coord = f"{_get_excel_column_name(col_idx)}{row_idx + 1}"
                 return f"[{coord}] {escaped}"

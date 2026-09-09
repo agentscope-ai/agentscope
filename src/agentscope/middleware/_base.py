@@ -73,6 +73,13 @@ class MiddlewareBase:  # pylint: disable=unused-argument
     ) -> AsyncGenerator:
         """Hook for intercepting the reply process.
 
+        Swallowing a completed reply's ``ReplyEndEvent`` (receiving it
+        without yielding) forces another reasoning-acting round; the final
+        ``Msg`` is only produced once the event escapes the whole chain.
+        When swallowing an exceed-max-iters end, unblock the next round
+        first (e.g. adjust ``cur_iter`` or ``max_iters``). Interrupted
+        ends cannot be swallowed to continue the reply.
+
         Args:
             agent: The Agent instance executing this middleware
             input_kwargs: Dictionary containing:

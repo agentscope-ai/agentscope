@@ -12,13 +12,15 @@ funnels through this one serial consumer.
 Each queue entry carries a ``kind`` that selects how a busy session is
 handled:
 
-- ``wake`` (idle-session wake-up, ``input_msg=None``): skipped while the
-  session is already running — the live run will drain the inbox.
-- ``resume`` (a parked HITL run being fed its result): must *not* be
-  skipped while running, because the session is typically still running
-  the parked tail at trigger time. It is re-queued after a short backoff
-  until the parked run releases its session lock, then spawned with the
-  carried input event.
+- ``wake`` (idle-session wake-up, ``input_msg=None``): produced only
+  when no run is registered as the session's inbox consumer, so it
+  always has something to deliver.
+- ``resume`` (a parked HITL run being fed its result): carries the
+  event the parked run is waiting for.
+
+No kind is ever dropped. A trigger whose session still holds its run
+lock is re-queued after a short backoff until the lock frees, then
+spawned.
 
 All bus keys live on the :class:`MessageBus` base class (see
 ``enqueue_wakeup`` / ``enqueue_input``, ``dequeue_wakeups``,
@@ -54,10 +56,9 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
     UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
 )
 
-# Delay before re-queuing a ``resume`` trigger whose target session is
-# still running (the parked run is finishing and about to free its
-# lock). Short enough to feel instant to the user, long enough to avoid
-# a hot re-enqueue loop while the lock is held.
+# Delay before re-queuing a trigger whose target session still holds
+# its run lock. Short enough to feel instant to the user, long enough
+# to avoid a hot re-enqueue loop while the lock is held.
 _RESUME_RETRY_BACKOFF_SECS = 0.1
 
 
@@ -274,19 +275,21 @@ class WakeupDispatcher:
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
-            if carries_input:
-                # The session is busy. Do NOT drop input-carrying triggers
-                # — re-queue after a short backoff so they land once the
-                # running turn releases its lock.
-                self._schedule_input_retry(
-                    user_id,
-                    session_id,
-                    agent_id,
-                    kind,
-                    input_msg,
-                )
-            # ``wake`` triggers are safe to drop while running — the
-            # live run drains the inbox itself.
+            # The session is busy, so nothing can be spawned right now:
+            # re-queue after a short backoff rather than dropping.
+            #
+            # ``wake`` needs this as much as the input-carrying kinds. A
+            # producer only enqueues one after finding no registered
+            # inbox consumer, which a finished run gives up *before* it
+            # releases the session lock — so a held lock is no evidence
+            # that anyone is still going to drain the inbox.
+            self._schedule_retry(
+                user_id,
+                session_id,
+                agent_id,
+                kind,
+                input_msg,
+            )
             return
 
         # Orphan guard: the queue is unaware of session lifecycle. A
@@ -338,24 +341,18 @@ class WakeupDispatcher:
             )
         except RuntimeError:
             # A local run was registered between the running-check and
-            # the spawn. For ``wake`` that run will drain the inbox; for
-            # input-carrying kinds re-queue so the input is not lost.
-            if carries_input:
-                self._schedule_input_retry(
-                    user_id,
-                    session_id,
-                    agent_id,
-                    kind,
-                    input_msg,
-                )
-            else:
-                logger.debug(
-                    "WakeupDispatcher: skipping wake trigger for session "
-                    "%s; a local run is already registered.",
-                    session_id,
-                )
+            # the spawn. Re-queue so neither the carried input nor a
+            # queued inbox payload is stranded — that run may already be
+            # past its last drain.
+            self._schedule_retry(
+                user_id,
+                session_id,
+                agent_id,
+                kind,
+                input_msg,
+            )
 
-    def _schedule_input_retry(
+    def _schedule_retry(
         self,
         user_id: str,
         session_id: str,

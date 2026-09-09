@@ -46,6 +46,7 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
 )
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
@@ -129,6 +130,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         name: str,
         description: str,
         embedding_model_config: EmbeddingModelConfig,
+        chunker_config: ChunkerConfig | None = None,
     ) -> KnowledgeBaseRecord:
         raise NotImplementedError
 

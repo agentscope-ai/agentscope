@@ -2,6 +2,9 @@
 """Channel HTTP API.
 
     GET    /channels/types              List channel types + schemas
+    POST   /channels/bindings           Open a credential binding
+    GET    /channels/bindings/{id}      Poll it, advancing one step
+    POST   /channels/bindings/{id}/cancel   Abandon it
     GET    /channels/                   List the user's channels
     POST   /channels/                   Create a channel
     GET    /channels/{id}               Channel details
@@ -16,14 +19,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..channel import (
     ChannelError,
-    ChannelLifecycleDispatcher,
+    ChannelClients,
     ChannelStatus,
     ChannelTypeRegistry,
     ChannelTypeSchema,
 )
-from .._service import ChannelService
+from .._service import (
+    ChannelService,
+    CredentialBindingError,
+    CredentialBindingService,
+)
+from .._service._credential_binding import BindingView
 from ..deps import (
-    get_channel_dispatcher,
+    get_channel_clients,
+    get_credential_binding_service,
     get_channel_service,
     get_channel_type_registry,
     get_current_user_id,
@@ -37,6 +46,7 @@ from ._schema import (
     ChannelResponse,
     ChannelSessionsResponse,
     CreateChannelRequest,
+    StartCredentialBindingRequest,
     UpdateChannelRequest,
 )
 
@@ -130,15 +140,29 @@ async def create_channel(
     body: CreateChannelRequest,
     service: ChannelService = Depends(get_channel_service),
     registry: ChannelTypeRegistry = Depends(get_channel_type_registry),
+    bindings: CredentialBindingService = Depends(
+        get_credential_binding_service,
+    ),
     user_id: str = Depends(get_current_user_id),
 ) -> ChannelResponse:
-    """Create a channel."""
+    """Create a channel, from a completed binding or from the body."""
+    credentials = body.credentials
+    if body.credential_binding_id:
+        try:
+            credentials = await bindings.claim(
+                user_id,
+                body.credential_binding_id,
+                body.channel_type,
+            )
+        except CredentialBindingError as e:
+            raise HTTPException(e.status_code, str(e)) from e
+
     try:
         record = await service.create(
             user_id=user_id,
             channel_type=body.channel_type,
             name=body.name,
-            credentials=body.credentials,
+            credentials=credentials,
             platform_config=body.platform_config,
             routing=body.routing,
             session=body.session,
@@ -149,6 +173,60 @@ async def create_channel(
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     return _to_response(record, registry)
+
+
+@channel_router.post("/bindings", response_model=BindingView)
+async def start_credential_binding(
+    body: StartCredentialBindingRequest,
+    bindings: CredentialBindingService = Depends(
+        get_credential_binding_service,
+    ),
+    user_id: str = Depends(get_current_user_id),
+) -> BindingView:
+    """Open a session and return the URL the operator must approve.
+
+    Returns immediately; the client polls for the outcome, and each poll
+    is what advances the session.
+    """
+    try:
+        return await bindings.start(user_id, body.channel_type)
+    except CredentialBindingError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+
+
+@channel_router.get("/bindings/{binding_id}", response_model=BindingView)
+async def poll_credential_binding(
+    binding_id: str,
+    bindings: CredentialBindingService = Depends(
+        get_credential_binding_service,
+    ),
+    user_id: str = Depends(get_current_user_id),
+) -> BindingView:
+    """Report the session, asking the platform once when due.
+
+    Never returns the credentials themselves — those are handed over
+    only by creating a channel with this ``binding_id``.
+    """
+    try:
+        return await bindings.poll(user_id, binding_id)
+    except CredentialBindingError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+
+
+@channel_router.post("/bindings/{binding_id}/cancel")
+async def cancel_credential_binding(
+    binding_id: str,
+    bindings: CredentialBindingService = Depends(
+        get_credential_binding_service,
+    ),
+    user_id: str = Depends(get_current_user_id),
+) -> ChannelActionResponse:
+    """Abandon the session, from whichever replica takes this call."""
+    try:
+        await bindings.cancel(user_id, binding_id)
+    except CredentialBindingError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    return ChannelActionResponse(status="cancelled")
 
 
 @channel_router.get("/{channel_id}")
@@ -232,12 +310,13 @@ async def disable_channel(
 async def channel_status(
     channel_id: str,
     storage: StorageBase = Depends(get_storage),
-    dispatcher: ChannelLifecycleDispatcher = Depends(get_channel_dispatcher),
+    service: ChannelService = Depends(get_channel_service),
     user_id: str = Depends(get_current_user_id),
 ) -> ChannelStatus:
-    """The channel's live connection status."""
+    """The channel's live connection status, from whichever node holds
+    it — this replica need not be the one connected."""
     await _owned(channel_id, user_id, storage)
-    return await dispatcher.get_status(channel_id)
+    return await service.get_status(channel_id)
 
 
 @channel_router.get("/{channel_id}/sessions")
@@ -256,14 +335,20 @@ async def list_channel_sessions(
 async def list_chat_ids(
     channel_id: str,
     storage: StorageBase = Depends(get_storage),
-    dispatcher: ChannelLifecycleDispatcher = Depends(get_channel_dispatcher),
+    service: ChannelService = Depends(get_channel_service),
+    clients: ChannelClients = Depends(get_channel_clients),
     user_id: str = Depends(get_current_user_id),
 ) -> ChannelChatIdsResponse:
-    """Known chats for routing config: platform list ∪ passively seen."""
+    """Known chats for routing config: platform list ∪ passively seen.
+
+    The platform list is fetched over REST through a client, so it
+    answers from a replica that holds no connection.
+    """
     await _owned(channel_id, user_id, storage)
     chats: list[ChannelChatId] = []
     platform_ids: set[str] = set()
-    for chat in await dispatcher.list_bot_chats(channel_id):
+    channel = await clients.get(channel_id)
+    for chat in await channel.list_bot_chats() if channel else []:
         cid = chat.get("chat_id", "")
         if cid:
             platform_ids.add(cid)
@@ -274,7 +359,7 @@ async def list_chat_ids(
                     source="platform",
                 ),
             )
-    for cid in await dispatcher.list_seen_chat_ids(channel_id):
+    for cid in await service.list_seen_chat_ids(channel_id):
         if cid not in platform_ids:
             chats.append(ChannelChatId(chat_id=cid, source="recorded"))
     return ChannelChatIdsResponse(chats=chats)

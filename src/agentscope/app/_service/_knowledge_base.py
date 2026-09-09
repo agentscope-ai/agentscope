@@ -18,9 +18,11 @@ project's stance is that a knowledge base is managed end-to-end in one
 mode.
 """
 import uuid
-from typing import IO, TYPE_CHECKING
+from collections import Counter
+from typing import IO, TYPE_CHECKING, AsyncIterator
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 
 from ..access import ResourceKind
 from ..rag.knowledge_base_manager import (
@@ -28,12 +30,18 @@ from ..rag.knowledge_base_manager import (
     KnowledgeBaseNotFoundError,
 )
 from ..storage import (
+    ChunkerConfig,
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
 )
 from ..._logging import logger
+from ...rag import ApproxTokenChunker, Chunk
 from .._bus_ops import enqueue_index_task
-from ._access import ResourceAccessService
+from ._access import (
+    KnowledgeBaseStatusCounts,
+    KnowledgeBaseView,
+    ResourceAccessService,
+)
 
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
@@ -44,7 +52,7 @@ if TYPE_CHECKING:
         KnowledgeBaseRecord,
         StorageBase,
     )
-    from ...rag import VectorSearchResult
+    from ...rag import ChunkerBase, VectorSearchResult
 
 
 class KnowledgeBaseService:
@@ -65,6 +73,7 @@ class KnowledgeBaseService:
         blob_store: "BlobStoreBase",
         message_bus: "MessageBus",
         resource_access_service: "ResourceAccessService",
+        chunkers: "list[type[ChunkerBase]] | None" = None,
     ) -> None:
         """Initialize the service.
 
@@ -90,12 +99,19 @@ class KnowledgeBaseService:
                 *and* mutation) goes through it so shared knowledge
                 bases work end-to-end: readers see documents +
                 search hits, editors can also upload / delete.
+            chunkers (`list[type[ChunkerBase]] | None`, optional):
+                The chunker classes users can choose from when creating
+                a knowledge base; used to validate ``chunker_config``.
+                Defaults to ``[ApproxTokenChunker]``.
         """
         self._storage = storage
         self._manager = knowledge_base_manager
         self._blob_store = blob_store
         self._bus = message_bus
         self._access = resource_access_service
+        self._chunkers_by_type = {
+            cls.chunker_type: cls for cls in (chunkers or [ApproxTokenChunker])
+        }
 
     # ------------------------------------------------------------------
     # Knowledge base CRUD
@@ -107,6 +123,7 @@ class KnowledgeBaseService:
         name: str,
         description: str,
         embedding_model_config: "EmbeddingModelConfig",
+        chunker_config: "ChunkerConfig | None" = None,
     ) -> "KnowledgeBaseRecord":
         """Delegate creation to the manager, mapping policy errors.
 
@@ -119,6 +136,9 @@ class KnowledgeBaseService:
                 Free-form description.
             embedding_model_config (`EmbeddingModelConfig`):
                 Embedding model configuration; pinned to the record.
+            chunker_config (`ChunkerConfig | None`, optional):
+                Chunker configuration; pinned to the record.  Defaults
+                to the first configured chunker with default parameters.
 
         Returns:
             `KnowledgeBaseRecord`:
@@ -128,13 +148,38 @@ class KnowledgeBaseService:
             `HTTPException`:
                 ``409`` when the requested embedding dimension
                 violates the manager's dimension policy.
+                ``422`` when the chunker type or parameters are
+                invalid.
         """
+        if chunker_config is None:
+            chunker_config = ChunkerConfig(
+                type=next(iter(self._chunkers_by_type)),
+                parameters={},
+            )
+        chunker_cls = self._chunkers_by_type.get(chunker_config.type)
+        if chunker_cls is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Unknown chunker type: {chunker_config.type!r}, "
+                    f"available: {sorted(self._chunkers_by_type)}"
+                ),
+            )
+        try:
+            chunker_cls.Parameters(**chunker_config.parameters)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid chunker parameters: {exc}",
+            ) from exc
+
         try:
             return await self._manager.create_knowledge_base(
                 user_id=user_id,
                 name=name,
                 description=description,
                 embedding_model_config=embedding_model_config,
+                chunker_config=chunker_config,
             )
         except DimensionPolicyError as exc:
             raise HTTPException(
@@ -157,6 +202,101 @@ class KnowledgeBaseService:
                 All knowledge base records belonging to the user.
         """
         return await self._manager.list_knowledge_bases(user_id)
+
+    async def list_knowledge_base_views(
+        self,
+        user_id: str,
+        *,
+        knowledge_base_id: str | None = None,
+        name: str | None = None,
+        page: int = 1,
+        page_size: int = 30,
+        orderby: str = "create_time",
+        desc: bool = True,
+    ) -> tuple[list[KnowledgeBaseView], int]:
+        """List visible knowledge bases as enriched, paginated views.
+
+        Serves the single list endpoint that doubles as "get one"
+        (filter by ``knowledge_base_id``), mirroring RAGFlow's dataset
+        API. Filtering and ordering happen before the page is cut;
+        the returned total counts the filtered set so clients can
+        compute page numbers.
+
+        Only the served page is enriched: per view, the documents are
+        read once from storage to derive the counts, and the embedding
+        credential is resolved against the owner so shared viewers see
+        its display name too.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — own + shared knowledge bases.
+            knowledge_base_id (`str | None`, optional):
+                Filter down to one knowledge base by id.
+            name (`str | None`, optional):
+                Case-insensitive substring filter on the display name.
+            page (`int`, defaults to ``1``):
+                1-based page number.
+            page_size (`int`, defaults to ``30``):
+                Knowledge bases per page.
+            orderby (`str`, defaults to ``"create_time"``):
+                Sort key — ``"create_time"`` or ``"update_time"``.
+            desc (`bool`, defaults to ``True``):
+                Sort newest first.
+
+        Returns:
+            `tuple[list[KnowledgeBaseView], int]`:
+                The requested page of views and the filtered total.
+        """
+        views = await self._access.list_resource(
+            user_id,
+            ResourceKind.KNOWLEDGE_BASE,
+        )
+        if knowledge_base_id is not None:
+            views = [view for view in views if view.id == knowledge_base_id]
+        if name is not None:
+            needle = name.lower()
+            views = [view for view in views if needle in view.name.lower()]
+        total = len(views)
+
+        # The id breaks ties: storage returns rows in an undefined
+        # order and MySQL DATETIME has no sub-second precision, so
+        # records created together would otherwise shuffle between
+        # requests and make pages drop or repeat rows.
+        sort_key = "updated_at" if orderby == "update_time" else "created_at"
+        views.sort(
+            key=lambda view: (getattr(view, sort_key), view.id),
+            reverse=desc,
+        )
+        page_views = views[(page - 1) * page_size : page * page_size]
+
+        credential_names: dict[tuple[str, str], str | None] = {}
+        for view in page_views:
+            documents = await self._storage.list_knowledge_documents(
+                view.owner_id,
+                view.id,
+            )
+            view.document_count = len(documents)
+            view.chunk_count = sum(
+                document.data.chunk_count for document in documents
+            )
+            view.status_counts = KnowledgeBaseStatusCounts.model_validate(
+                Counter(document.status for document in documents),
+            )
+
+            cache_key = (
+                view.owner_id,
+                view.embedding_model_config.credential_id,
+            )
+            if cache_key not in credential_names:
+                credential = await self._storage.get_credential(*cache_key)
+                credential_names[cache_key] = (
+                    credential.data.get("name")
+                    if credential is not None
+                    else None
+                )
+            view.credential_name = credential_names[cache_key]
+
+        return page_views, total
 
     async def update_knowledge_base(
         self,
@@ -307,8 +447,16 @@ class KnowledgeBaseService:
         self,
         user_id: str,
         knowledge_base_id: str,
-    ) -> list[KnowledgeDocumentRecord]:
-        """List every document registered against a knowledge base.
+        *,
+        document_id: str | None = None,
+        keywords: str | None = None,
+        doc_status: str | None = None,
+        page: int = 1,
+        page_size: int = 30,
+        orderby: str = "create_time",
+        desc: bool = True,
+    ) -> tuple[list[KnowledgeDocumentRecord], int]:
+        """List documents of a knowledge base, filtered and paginated.
 
         Service-mode source of truth: reads from storage, NOT the
         vector store.  Documents in ``pending`` / ``parsing`` /
@@ -321,11 +469,25 @@ class KnowledgeBaseService:
                 granted access through the resource access policy.
             knowledge_base_id (`str`):
                 The target knowledge base id.
+            document_id (`str | None`, optional):
+                Filter down to one document by id.
+            keywords (`str | None`, optional):
+                Case-insensitive substring filter on the filename.
+            doc_status (`str | None`, optional):
+                Filter by indexing status (``pending`` / ``parsing`` /
+                ``chunking`` / ``indexing`` / ``ready`` / ``error``).
+            page (`int`, defaults to ``1``):
+                1-based page number.
+            page_size (`int`, defaults to ``30``):
+                Documents per page.
+            orderby (`str`, defaults to ``"create_time"``):
+                Sort key — ``"create_time"`` or ``"update_time"``.
+            desc (`bool`, defaults to ``True``):
+                Sort newest first.
 
         Returns:
-            `list[KnowledgeDocumentRecord]`:
-                Every document registered against the knowledge base,
-                in unspecified order.
+            `tuple[list[KnowledgeDocumentRecord], int]`:
+                The requested page of records and the filtered total.
 
         Raises:
             `HTTPException`:
@@ -336,10 +498,28 @@ class KnowledgeBaseService:
             user_id,
             knowledge_base_id,
         )
-        return await self._storage.list_knowledge_documents(
+        records = await self._storage.list_knowledge_documents(
             record.user_id,
             knowledge_base_id,
         )
+        if document_id is not None:
+            records = [r for r in records if r.id == document_id]
+        if keywords is not None:
+            needle = keywords.lower()
+            records = [r for r in records if needle in r.data.filename.lower()]
+        if doc_status is not None:
+            records = [r for r in records if r.status == doc_status]
+        total = len(records)
+
+        # See ``list_knowledge_base_views`` — the id breaks timestamp
+        # ties so pages stay stable; a batch upload lands within one
+        # MySQL DATETIME tick.
+        sort_key = "updated_at" if orderby == "update_time" else "created_at"
+        records.sort(
+            key=lambda record: (getattr(record, sort_key), record.id),
+            reverse=desc,
+        )
+        return records[(page - 1) * page_size : page * page_size], total
 
     async def get_document_status(
         self,
@@ -387,6 +567,183 @@ class KnowledgeBaseService:
             if record_doc is not None:
                 records.append(record_doc)
         return records
+
+    async def get_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> KnowledgeDocumentRecord:
+        """Fetch one document record, or 404.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — owner or shared reader.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document to fetch.
+
+        Returns:
+            `KnowledgeDocumentRecord`:
+                The matching record.
+
+        Raises:
+            `HTTPException`:
+                ``404`` if the knowledge base is not visible to the
+                caller or the document does not exist in it.
+        """
+        record = await self._access.resolve_knowledge_base(
+            user_id,
+            knowledge_base_id,
+        )
+        document = await self._storage.get_knowledge_document(
+            record.user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        if document is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document {document_id} not found.",
+            )
+        return document
+
+    async def list_document_chunks(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 30,
+    ) -> tuple[list[Chunk], int]:
+        """List one page of a document's chunks in ``chunk_index`` order.
+
+        ``page`` / ``page_size`` translate to the dense-``chunk_index``
+        slice ``[(page - 1) * page_size, page * page_size)`` — stable
+        under concurrent writes because chunk indices never move.  The
+        total comes from the document record's ``chunk_count`` rather
+        than a vector-store count, so a document that is still
+        indexing reports the chunks persisted so far with a total
+        of ``0`` until it turns ``ready``.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — owner or shared reader.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document whose chunks should be listed.
+            page (`int`, defaults to ``1``):
+                1-based page number.
+            page_size (`int`, defaults to ``30``):
+                Chunks per page.
+
+        Returns:
+            `tuple[list[Chunk], int]`:
+                The page of chunks (``chunk_index`` ascending) and the
+                document's total chunk count.
+
+        Raises:
+            `HTTPException`:
+                ``404`` if the knowledge base or document is not
+                visible to the caller; ``501`` if the configured
+                vector store does not implement chunk listing.
+        """
+        document = await self.get_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
+        try:
+            chunks = await knowledge.list_chunks(
+                document_id,
+                offset=(page - 1) * page_size,
+                limit=page_size,
+            )
+        except NotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=(
+                    "The configured vector store does not support "
+                    "chunk listing."
+                ),
+            ) from exc
+        return chunks, document.data.chunk_count
+
+    async def stream_document_content(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> tuple[KnowledgeDocumentRecord, int | None, AsyncIterator[bytes]]:
+        """Open the original uploaded file of a document for streaming.
+
+        The bytes come straight from the blob store — the same blob
+        the index worker parsed — in bounded 1 MiB chunks so a large
+        download never holds the whole file in the API process.
+
+        The size is measured on the blob rather than read off the
+        record: ``data.size`` is what the upload request happened to
+        carry, and a ``Content-Length`` that disagrees with the body
+        breaks the response.
+
+        Args:
+            user_id (`str`):
+                The viewer user id — owner or shared reader.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document whose original file should be streamed.
+
+        Returns:
+            `tuple[KnowledgeDocumentRecord, int | None, AsyncIterator[bytes]]`:
+                The document record (for the filename / content-type
+                headers), the blob's measured byte length — ``None``
+                when the backend cannot measure it — and a lazy byte
+                iterator that opens the blob on first pull.
+
+        Raises:
+            `HTTPException`:
+                ``404`` if the knowledge base or document is not
+                visible to the caller, or the underlying blob is gone
+                (legacy data, switched blob backend).
+        """
+        document = await self.get_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        blob_uri = document.data.blob_uri
+        try:
+            # A measured size doubles as proof the blob is there, so the
+            # extra existence check only runs for backends that cannot
+            # measure.
+            size = await self._blob_store.size(blob_uri)
+            available = size is not None or await self._blob_store.exists(
+                blob_uri,
+            )
+        except ValueError:
+            # URI scheme unknown to this backend (e.g. records written
+            # by a local:// deployment now running on s3://).
+            size, available = None, False
+        if not available:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The original file is no longer available.",
+            )
+
+        async def _iter_content() -> AsyncIterator[bytes]:
+            async with self._blob_store.open(blob_uri) as fp:
+                while True:
+                    data = await fp.read(1 << 20)
+                    if not data:
+                        break
+                    yield data
+
+        return document, size, _iter_content()
 
     async def delete_document(
         self,

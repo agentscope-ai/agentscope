@@ -18,6 +18,42 @@ class MCPRenderError(ValueError):
     """
 
 
+def _effective_values(schema: dict, values: dict) -> dict:
+    """Overlay submitted values on defaults declared by the input schema."""
+    effective = {
+        name: prop["default"]
+        for name, prop in schema.get("properties", {}).items()
+        if isinstance(prop, dict) and "default" in prop
+    }
+    effective.update(values)
+    return effective
+
+
+def _omit_unfilled_optional_env(
+    config: dict,
+    values: dict,
+    declared: set[str],
+    required: set[str],
+) -> None:
+    """Drop env entries whose optional inputs were not supplied.
+
+    Optional placeholders elsewhere remain errors: omitting a URL or an
+    argument can change the meaning of a config. Environment entries are
+    independent, so leaving one unset means not exporting that variable.
+    """
+    env = config.get("env")
+    if not isinstance(env, dict):
+        return
+
+    optional = declared - required
+    for key, value in list(env.items()):
+        if not isinstance(value, str):
+            continue
+        identifiers = set(Template(value).get_identifiers())
+        if (identifiers & optional) - values.keys():
+            del env[key]
+
+
 def _substitute(
     node: Any,
     values: dict,
@@ -89,6 +125,7 @@ def render_mcp(
             declared placeholder unfilled, or produce a config the
             client rejects.
     """
+    values = _effective_values(card.inputs_schema, values)
     try:
         jsonschema.validate(values, card.inputs_schema)
     except jsonschema.ValidationError as e:
@@ -97,9 +134,17 @@ def render_mcp(
         ) from e
 
     declared = set(card.inputs_schema.get("properties", {}))
+    required = set(card.inputs_schema.get("required", []))
     missing: set[str] = set()
+    config_template = card.config_template.model_dump(mode="json")
+    _omit_unfilled_optional_env(
+        config_template,
+        values,
+        declared,
+        required,
+    )
     config = _substitute(
-        card.config_template.model_dump(mode="json"),
+        config_template,
         values,
         declared,
         missing,

@@ -89,7 +89,11 @@ class GitHubCardTest(TestCase):
                         "name": "pkg",
                         "runtime_hint": "uvx",
                         "environment_variables": [
-                            {"name": "API_KEY", "is_secret": True},
+                            {
+                                "name": "API_KEY",
+                                "is_required": True,
+                                "is_secret": True,
+                            },
                         ],
                     },
                 ],
@@ -98,6 +102,123 @@ class GitHubCardTest(TestCase):
 
         self.assertIn("API_KEY", card.inputs_schema["properties"])
         self.assertEqual(card.config_template.env["API_KEY"], "${API_KEY}")
+
+    def test_required_non_secret_env_var_becomes_an_input(self) -> None:
+        """Required configuration is collected even when it is not secret."""
+        card = self._card(
+            {
+                "packages": [
+                    {
+                        "name": "pkg",
+                        "runtime_hint": "uvx",
+                        "environment_variables": [
+                            {
+                                "name": "DT_ENVIRONMENT",
+                                "description": "Dynatrace URL",
+                                "is_required": True,
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+
+        prop = card.inputs_schema["properties"]["DT_ENVIRONMENT"]
+        self.assertFalse(prop.get("writeOnly", False))
+        self.assertIn("DT_ENVIRONMENT", card.inputs_schema["required"])
+        client = render_mcp(card, {"DT_ENVIRONMENT": "https://example.com"})
+        self.assertEqual(
+            client.mcp_config.env["DT_ENVIRONMENT"],
+            "https://example.com",
+        )
+
+    def test_default_env_input_is_rendered_when_omitted(self) -> None:
+        """Registry defaults become effective values for API callers."""
+        card = self._card(
+            {
+                "packages": [
+                    {
+                        "name": "pkg",
+                        "runtime_hint": "uvx",
+                        "environment_variables": [
+                            {
+                                "name": "MODE",
+                                "default": "safe",
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+
+        prop = card.inputs_schema["properties"]["MODE"]
+        self.assertEqual(prop["default"], "safe")
+        client = render_mcp(card, {})
+        self.assertEqual(client.mcp_config.env["MODE"], "safe")
+
+    def test_nested_env_template_uses_declared_input(self) -> None:
+        """Registry ``value`` templates name inputs independently of env."""
+        card = self._card(
+            {
+                "packages": [
+                    {
+                        "name": "firecrawl-mcp",
+                        "runtime_hint": "npx",
+                        "environment_variables": [
+                            {
+                                "name": "FIRECRAWL_API_KEY",
+                                "value": "{api_key}",
+                                "variables": {
+                                    "api_key": {
+                                        "description": "your API key",
+                                        "is_required": True,
+                                        "is_secret": True,
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(
+            card.config_template.env["FIRECRAWL_API_KEY"],
+            "${api_key}",
+        )
+        self.assertTrue(
+            card.inputs_schema["properties"]["api_key"]["writeOnly"],
+        )
+        client = render_mcp(card, {"api_key": "fc-secret"})
+        self.assertEqual(
+            client.mcp_config.env["FIRECRAWL_API_KEY"],
+            "fc-secret",
+        )
+
+    def test_literal_env_value_is_preserved(self) -> None:
+        """A registry-provided value is a literal, not an install input."""
+        card = self._card(
+            {
+                "packages": [
+                    {
+                        "name": "sendmux-mcp",
+                        "runtime_hint": "uvx",
+                        "environment_variables": [
+                            {
+                                "name": "SENDMUX_MCP_SURFACES",
+                                "value": "mailbox,management,sending",
+                                "is_required": True,
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(
+            card.config_template.env["SENDMUX_MCP_SURFACES"],
+            "mailbox,management,sending",
+        )
 
     def test_unrunnable_package_is_skipped(self) -> None:
         """Around a third of the catalog names a package without saying

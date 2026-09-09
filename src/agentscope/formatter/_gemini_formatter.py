@@ -120,10 +120,11 @@ class GeminiChatFormatter(_GeminiFormatterBase):
             "image/*",
             "audio/*",
             "video/*",
+            "application/pdf",
         ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            'The supported input types. Defaults to ``["text/plain", '
+            '"image/*", "audio/*", "video/*", "application/pdf"]``.'
         ),
     )
 
@@ -317,10 +318,11 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
             "image/*",
             "audio/*",
             "video/*",
+            "application/pdf",
         ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            'The supported input types. Defaults to ``["text/plain", '
+            '"image/*", "audio/*", "video/*", "application/pdf"]``.'
         ),
     )
 

@@ -33,6 +33,7 @@ from ....event import (
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
 )
+from ....types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ag_ui.core.events import BaseEvent as AGUIBaseEvent
@@ -99,15 +100,23 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             )
 
         if isinstance(event, ReplyEndEvent):
+            if event.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+                return AGUIRunErrorEvent(
+                    message="The agent exceeded the maximum reasoning-acting "
+                    "iterations",
+                    code="exceed_max_iters",
+                )
             return AGUIRunFinishedEvent(
                 thread_id=event.session_id,
                 run_id=event.reply_id,
             )
 
         if isinstance(event, ExceedMaxItersEvent):
-            return AGUIRunErrorEvent(
-                message=(f"Agent '{event.name}' exceeded max iterations"),
-                code="exceed_max_iters",
+            # Deprecated event, still emitted for backward compatibility;
+            # the RUN_ERROR semantics now come from the ReplyEndEvent
+            return AGUICustomEvent(
+                name="exceed_max_iters",
+                value=event.model_dump(exclude_none=True),
             )
 
         if isinstance(event, ModelCallStartEvent):

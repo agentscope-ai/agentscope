@@ -10,6 +10,7 @@ input_types:
   - image/png
   - image/gif
   - image/webp
+  - application/pdf
 
 output_types:
   - text/plain
