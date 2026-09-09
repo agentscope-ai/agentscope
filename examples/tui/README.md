@@ -21,7 +21,7 @@ Controls:
   no clickable action buttons.
 - Tool and thinking rows expand with a click or with `Enter` when focused.
 - A pending HITL request replaces the composer until it is resolved.
-- `Ctrl+Q` exits the TUI.
+- Type `/exit` and press `Enter` to exit the standalone TUI.
 
 The example defaults to `qwen3.8-max`. `LocalWorkspace` instructions are
 attached automatically when the workspace is passed as the Agent offloader.

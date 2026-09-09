@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 import unittest
+from unittest.mock import patch
 
 from textual.app import App, ComposeResult
 from textual.message import Message as TextualMessage
@@ -576,12 +577,13 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
 class _FakeTarget:
     def __init__(self) -> None:
         self.done = asyncio.Event()
+        self.inputs: list[Any] = []
 
     async def reply_stream(
         self,
         inputs: Any,
     ) -> AsyncGenerator[Any, None]:
-        del inputs
+        self.inputs.append(inputs)
         yield ReplyStartEvent(
             session_id="s",
             reply_id="reply",
@@ -615,6 +617,19 @@ class LauncherTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(messages), 2)
             self.assertEqual(messages[0].get_text_content(), "hi")
             self.assertEqual(messages[1].get_text_content(), "response")
+            self.assertEqual(target.inputs[0].get_text_content(), "hi")
+
+    def test_exit_command_quits_without_forwarding_to_target(self) -> None:
+        target = _FakeTarget()
+        app = _AgentScopeTUI(target, [], "user")
+        event = ChatUI.Submitted(UserMsg(name="user", content="  /EXIT  "))
+
+        with patch.object(app, "exit") as exit_app:
+            app._on_submitted(event)
+
+        exit_app.assert_called_once_with()
+        self.assertEqual(target.inputs, [])
+        self.assertEqual(app.BINDINGS, [])
 
 
 if __name__ == "__main__":

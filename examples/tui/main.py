@@ -2,7 +2,7 @@
 """Run a full-featured AgentScope agent in the Textual terminal UI.
 
 Set ``DASHSCOPE_API_KEY`` and run ``python main.py``. Use Enter to send,
-Shift+Enter for a newline, Ctrl+C to interrupt, and Ctrl+Q to leave.
+Shift+Enter for a newline, Ctrl+C to interrupt, and type ``/exit`` to leave.
 """
 
 import argparse

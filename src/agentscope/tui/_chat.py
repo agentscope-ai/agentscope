@@ -104,7 +104,7 @@ class ComposerUI(Vertical):
         if not self._enabled:
             hint = "Input disabled"
         else:
-            hint = "Enter send · Shift+Enter newline"
+            hint = "Enter send · Shift+Enter newline · /exit quit"
             if self._running_reply_id is not None:
                 hint += " · Ctrl+C interrupt"
         self.query_one("#as-composer-hint", Static).update(hint)

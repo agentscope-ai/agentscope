@@ -30,7 +30,7 @@ class _AgentScopeTUI(App[None]):
 
     TITLE = "AgentScope"
     SUB_TITLE = "Interactive agent chat"
-    BINDINGS = [("ctrl+q", "quit", "Quit")]
+    BINDINGS = []
     CSS = """
     #agentscope-chat {
         width: 100%;
@@ -86,6 +86,9 @@ class _AgentScopeTUI(App[None]):
 
     @on(ChatUI.Submitted)
     def _on_submitted(self, event: ChatUI.Submitted) -> None:
+        if event.msg.get_text_content().strip().casefold() == "/exit":
+            self.exit()
+            return
         self._start_stream(event.msg)
 
     @on(ChatUI.Confirmed)
