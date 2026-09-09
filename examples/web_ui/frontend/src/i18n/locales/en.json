@@ -119,7 +119,8 @@
 			"team_message": "Team",
 			"schedule": "Schedule",
 			"system": "System",
-			"channel": "Channel"
+			"channel": "Channel",
+			"runtime_state": "Runtime State"
 		},
 		"error": {
 			"title": "Reply failed",
@@ -132,7 +133,8 @@
 			"internal": "An unexpected internal error occurred.",
 			"setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
 			"unknown": "The reply failed with an unknown error."
-		}
+		},
+		"copy": "Copy"
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",
@@ -194,6 +196,9 @@
 			},
 			"summary-template": {
 				"label": "Summary template"
+			},
+			"max-image-num": {
+				"label": "Max images"
 			}
 		},
 		"react-config": {
@@ -204,6 +209,18 @@
 			},
 			"stop-on-reject": {
 				"label": "Stop on reject"
+			},
+			"structured-output-grace-iters": {
+				"label": "Structured output grace",
+				"description": "Extra iterations allowed past the maximum, so a run that hits the limit can still produce the structured output it was asked for."
+			},
+			"interruption-message": {
+				"label": "Interruption reply",
+				"description": "Sent as the agent’s reply when the user interrupts a run."
+			},
+			"interruption-raise-cancelled-error": {
+				"label": "Raise CancelledError",
+				"description": "Re-raise asyncio.CancelledError once an interruption has been handled, instead of swallowing it."
 			}
 		},
 		"invite-config": {
