@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Turn a story outline into a stylised animation, one signed-off step at
-a time.
+"""Turn one line of text into a stylised animation, one signed-off step at
+a time — the shot everyone knows and nobody has seen: China lifting the
+World Cup.
 
-Three milestones, and a person signs off on each: the storyboard and the
-list of things to model, the animation Blender rendered, the restyled
-video that goes out. How any of them gets done — how many shots, how the
-rig is built, which filters make "sketch" look like a sketch — is the
-agents' business.
+Three milestones, and a person signs off on each: the shot list with its
+motion spelled out in frames, the animation Blender rendered from it, the
+restyled video that goes out. How any of them gets done is the agents'
+business.
+
+Why Blender in the middle, rather than a video model straight from the
+text: **motion you can dictate.** The captain's arms rise over exactly 40
+frames, the camera pushes in at a fixed speed, the confetti falls under
+real gravity. A diffusion model guesses at all of that; Blender does what
+it is told. The video model comes in at the end, where a look is what
+you want and physics is already settled.
 
 Three things are worth watching for.
 
@@ -18,27 +25,26 @@ picks up when the answer arrives — a second later or a week.
 **A refusal comes back as a critique.** Say ``n`` and give a reason; the
 executor gets it verbatim on its next attempt, with which attempt it is.
 
-**A step hands over an account, not its workspace.** Step two reads step
-one's storyboard and modelling list; step three reads the path step two
-rendered to. Nothing else crosses — no files, no context, no tools.
+**The agents share one workspace and hand over accounts, not files.**
+Every render lands in ``workspace/``; what crosses between steps is the
+path and a line on what was built.
 
 Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
-    uv tool install blender-mcp          # step two drives Blender over MCP
+    export BLENDER_MCP_DIR=/path/to/blender_mcp/mcp   # blender-mcp checkout
     # open Blender, enable the blender-mcp addon, start its server
-    # ffmpeg on PATH                     # step three restyles the render
 
     python main.py
-    python main.py --story "一只猫在雨夜的屋顶上追一片发光的落叶"
+    python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"
 """
 import argparse
 import asyncio
 import os
-import shutil
-import subprocess
+import urllib.request
 from typing import AsyncGenerator, Type
 
+from dashscope import VideoSynthesis
 from pydantic import BaseModel
 
 from agentscope.agent import Agent
@@ -66,41 +72,44 @@ from agentscope.model import DashScopeChatModel
 from agentscope.sop import SOP, SOPEngine, SOPPhase, SOPStep
 from agentscope.tool import FunctionTool, Toolkit
 from agentscope.types import ReplyFinishedReason
+from agentscope.workspace import LocalWorkspace
 from agentscope._utils._common import _generate_id
 
-DEFAULT_STORY = "清晨的森林里，一只小狐狸第一次学着自己抓鱼，最后和一只白鹭分享了收获。"
-
-# Named looks, each an ffmpeg filter graph. A real pipeline would call a
-# model here; a filter graph is enough to see the step's shape.
-STYLES = {
-    "sketch": "edgedetect=low=0.1:high=0.3,negate,hue=s=0",
-    "vintage": (
-        "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131,"
-        "eq=contrast=0.9"
-    ),
-    "noir": "hue=s=0,eq=contrast=1.4:brightness=-0.05",
-}
+DEFAULT_STORY = "世界杯决赛终场哨响，中国队队长在队友的簇拥下走上领奖台，" + "双手举起大力神杯，彩带从天而降，看台上红旗翻涌。"
 
 
-async def restyle_video(video_path: str, style: str) -> str:
-    """Re-render a video in a named look and return the new file's path.
+async def restyle_video(video_path: str, look: str) -> str:
+    """Re-render a video in a described look and return the new file's path.
+
+    Runs Wan 2.7 video editing: motion, timing and framing stay as they
+    are, the look changes to match the description.
 
     Args:
         video_path (`str`):
-            Path to the source video.
-        style (`str`):
-            One of ``sketch``, ``vintage``, ``noir``.
+            Absolute path to the source video, 2–10 seconds long.
+        look (`str`):
+            The look to apply, e.g. ``"1990s hand-drawn sports anime,
+            cel shading, film grain"``.
     """
-    if style not in STYLES:
-        raise ValueError(f"Unknown style {style!r}; pick from {list(STYLES)}")
-    root, ext = os.path.splitext(video_path)
-    out = f"{root}.{style}{ext or '.mp4'}"
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", video_path, "-vf", STYLES[style], out],
-        check=True,
-        capture_output=True,
-    )
-    return out
+    api_key = os.environ["DASHSCOPE_API_KEY"]
+
+    def run() -> str:
+        task = VideoSynthesis.async_call(
+            model="wan2.7-videoedit",
+            media=[{"type": "video", "url": video_path}],
+            prompt=look,
+            resolution="720P",
+            api_key=api_key,
+        )
+        done = VideoSynthesis.wait(task, api_key=api_key)
+        if done.status_code != 200:
+            raise RuntimeError(f"{done.code}: {done.message}")
+        root, _ = os.path.splitext(video_path)
+        out = f"{root}.restyled.mp4"
+        urllib.request.urlretrieve(done.output.video_url, out)
+        return out
+
+    return await asyncio.to_thread(run)
 
 
 class HumanApproval:
@@ -159,11 +168,17 @@ class HumanApproval:
         )
 
 
-async def build_sop(model_name: str, api_key: str, blender: MCPClient) -> SOP:
+async def build_sop(
+    workspace: LocalWorkspace,
+    blender: MCPClient,
+    model_name: str,
+    api_key: str,
+) -> SOP:
     """Assemble the procedure — agents, tools and all.
 
     At this layer a SOP is code: a step holds the agent that runs it and
-    the one that judges it, both already built.
+    the one that judges it, both already built. The three agents share
+    one workspace, so a render one of them writes is there for the next.
     """
 
     def model() -> DashScopeChatModel:
@@ -172,52 +187,60 @@ async def build_sop(model_name: str, api_key: str, blender: MCPClient) -> SOP:
             model=model_name,
         )
 
+    shared = await workspace.list_tools()
     director = Agent(
         name="director",
         system_prompt=(
-            "You break a story into a shot list a 3D artist can build "
-            "from. Number the shots; for each give the camera, the action "
-            "and its length in seconds. Then list every character, animal "
-            "and prop that has to be modelled, with a one-line look for "
-            "each. Keep it under a minute of animation."
+            "You are a storyboard artist who thinks in frames. Break the "
+            "scene into numbered shots at 24 fps. For every shot give the "
+            "camera (position, move, speed), each subject's motion as a "
+            "start pose, end pose and frame range, and what physics "
+            "applies — gravity on confetti, easing on a lift. Then list "
+            "everything to model: people, props, crowd, with a one-line "
+            "look for each. The whole thing must run under ten seconds."
         ),
         model=model(),
+        toolkit=Toolkit(tools=shared),
+        offloader=workspace,
     )
     animator = Agent(
         name="animator",
         system_prompt=(
             "You build and render animations in Blender through the tools "
-            "you are given. Work from the shot list and modelling list "
-            "exactly; do not invent shots. Render to an .mp4 and report "
-            "its absolute path."
+            "you are given. Follow the shot list to the frame: keyframe "
+            "exactly the ranges it gives, set the camera moves it "
+            f"specifies, and render to an .mp4 under {workspace.workdir}. "
+            "Report the absolute path."
         ),
         model=model(),
-        toolkit=Toolkit(tools=await blender.list_tools()),
+        toolkit=Toolkit(tools=[*shared, *await blender.list_tools()]),
+        offloader=workspace,
     )
     colorist = Agent(
         name="colorist",
         system_prompt=(
-            "You restyle a rendered video with the tool you are given. "
-            "Pick the look that best fits the story, apply it, and report "
-            "the absolute path of the result and why that look."
+            "You restyle a finished render with the tool you are given. "
+            "Describe the look in one sentence a painter would recognise, "
+            "apply it, and report the absolute path of the result."
         ),
         model=model(),
-        toolkit=Toolkit(tools=[FunctionTool(restyle_video)]),
+        toolkit=Toolkit(tools=[*shared, FunctionTool(restyle_video)]),
+        offloader=workspace,
     )
 
     return SOP(
-        name="故事到风格化动画",
+        name="文字到风格化动画",
         description=(
-            "Storyboard it, animate it in Blender, restyle the render."
+            "Storyboard it in frames, animate it in Blender, restyle the "
+            "render."
         ),
         steps=[
             SOPStep(
                 subject="分镜与建模需求",
                 description=(
-                    "Turn the story into a numbered shot list and a list "
-                    "of everything that must be modelled — characters, "
-                    "animals, props — each with a one-line description of "
-                    "its look. Hand both over."
+                    "Turn the scene into a numbered shot list with the "
+                    "motion written in frames, and a list of everything "
+                    "to model. Hand both over."
                 ),
                 executor=director,
                 verifier=HumanApproval(),
@@ -226,10 +249,10 @@ async def build_sop(model_name: str, api_key: str, blender: MCPClient) -> SOP:
             SOPStep(
                 subject="Blender 建模与动画",
                 description=(
-                    "Build the models on the list, animate the shots in "
-                    "order, and render the whole thing to one .mp4. Hand "
-                    "over the absolute path of the render and a line per "
-                    "shot on what was built."
+                    "Build what the list names, keyframe the shots exactly "
+                    "as written, and render one .mp4 of at most ten "
+                    "seconds into the workspace. Hand over its absolute "
+                    "path and a line per shot on what was built."
                 ),
                 executor=animator,
                 verifier=HumanApproval(),
@@ -238,16 +261,15 @@ async def build_sop(model_name: str, api_key: str, blender: MCPClient) -> SOP:
             SOPStep(
                 subject="视频风格化",
                 description=(
-                    "Restyle the render in the look that suits the story "
-                    "and hand over the absolute path of the result, with "
-                    "the look you chose and why."
+                    "Restyle the render in a look that suits the scene and "
+                    "hand over the absolute path of the result, with the "
+                    "look you chose and why."
                 ),
                 executor=colorist,
                 verifier=HumanApproval(),
                 step_id="restyle",
             ),
         ],
-        sop_id="story-to-animation",
     )
 
 
@@ -313,53 +335,64 @@ async def main() -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise RuntimeError("Set DASHSCOPE_API_KEY before running this demo.")
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("ffmpeg is not on PATH; step three needs it.")
+    mcp_dir = os.environ.get("BLENDER_MCP_DIR")
+    if not mcp_dir:
+        raise RuntimeError("Set BLENDER_MCP_DIR to your blender-mcp checkout.")
 
+    here = os.path.dirname(os.path.abspath(__file__))
     blender = MCPClient(
         name="blender",
-        mcp_config=StdioMCPConfig(command="uvx", args=["blender-mcp"]),
+        mcp_config=StdioMCPConfig(
+            command="uv",
+            args=["--directory", mcp_dir, "run", "blender-mcp"],
+        ),
         is_stateful=True,
     )
     await blender.connect()
     try:
-        sop = await build_sop(args.model, api_key, blender)
-        engine = SOPEngine(sop)
-        renderer = ConsoleRenderer()
+        async with LocalWorkspace(
+            workdir=os.path.join(here, "workspace"),
+        ) as workspace:
+            sop = await build_sop(workspace, blender, args.model, api_key)
+            engine = SOPEngine(sop)
+            renderer = ConsoleRenderer()
 
-        inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent
-        inputs = UserMsg(name="user", content=args.story)
-        while True:
-            pending: AgentEvent | None = None
-            async for event in engine.reply_stream(inputs):
-                renderer.render(event)
-                if isinstance(
-                    event,
-                    (RequireUserConfirmEvent, RequireExternalExecutionEvent),
-                ):
-                    pending = event
+            inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent
+            inputs = UserMsg(name="user", content=args.story)
+            while True:
+                pending: AgentEvent | None = None
+                async for event in engine.reply_stream(inputs):
+                    renderer.render(event)
+                    if isinstance(
+                        event,
+                        (
+                            RequireUserConfirmEvent,
+                            RequireExternalExecutionEvent,
+                        ),
+                    ):
+                        pending = event
 
-            if engine.phase is not SOPPhase.AWAITING:
-                break
-            if isinstance(pending, RequireUserConfirmEvent):
-                inputs = await answer_confirm(pending)
-            else:
-                inputs = await answer_request(pending)
+                if engine.phase is not SOPPhase.AWAITING:
+                    break
+                if isinstance(pending, RequireUserConfirmEvent):
+                    inputs = await answer_confirm(pending)
+                else:
+                    inputs = await answer_request(pending)
 
-        print(f"\n== run {engine.phase.value}")
-        for step in sop.steps:
-            phase = engine.state.steps[step.id].phase.value
-            print(f"   {step.subject}: {phase}")
+            print(f"\n== run {engine.phase.value}")
+            for step in sop.steps:
+                phase = engine.state.steps[step.id].phase.value
+                print(f"   {step.subject}: {phase}")
 
-        result = "".join(
-            block.text
-            for block in (engine.state.steps["restyle"].submission or [])
-            if block.type == "text"
-        )
-        if result:
-            print("\n" + "=" * 60)
-            print("成片：\n")
-            print(result)
+            result = "".join(
+                block.text
+                for block in (engine.state.steps["restyle"].submission or [])
+                if block.type == "text"
+            )
+            if result:
+                print("\n" + "=" * 60)
+                print("成片：\n")
+                print(result)
     finally:
         await blender.close()
 

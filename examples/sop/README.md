@@ -29,36 +29,80 @@ the same conclusion, until the attempt limit ends it.
 
 ## The demo
 
-`main.py` turns a story outline into a stylised animation.
+`main.py` turns one line of text into a stylised animation — the shot
+everyone knows and nobody has seen: **China lifting the World Cup.**
 
 ```
 分镜与建模需求  ------->  Blender 建模与动画  ------->  视频风格化
 director                  animator                     colorist
-no tools                  Blender over MCP             one ffmpeg tool
+frames, not vibes         Blender over MCP             Wan 2.7 video edit
 |                         |                            |
 gate: a person            gate: a person               gate: a person
 ```
 
-Three steps, three different kinds of work, and a person signs off on
-each. A refusal goes back to the right agent every time: a storyboard
-that misses a character sends `director` back, a render that skipped a
-shot sends `animator` back, a look that fights the story sends `colorist`
-back — each with the reason, verbatim.
+### Why Blender in the middle
+
+A video model straight from the text would *guess* at the motion. Blender
+does what it is told: the captain's arms rise over exactly 40 frames, the
+camera pushes in at one fixed speed, the confetti falls under real
+gravity. So the storyboard is written **in frames**, the animator keys
+**exactly those frames**, and only then — with the physics settled — does
+a video model come in, at the one step where a *look* is what you want.
+
+That is also why the steps split where they do: three different kinds of
+work, and a person can check each without knowing the next.
 
 ### Prerequisites
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-uv tool install blender-mcp     # step two drives Blender over MCP
+export BLENDER_MCP_DIR=/path/to/blender_mcp/mcp   # a blender-mcp checkout
 # open Blender, enable the blender-mcp addon, start its server
-# ffmpeg on PATH                # step three restyles the render
 
 python main.py
-python main.py --story "一只猫在雨夜的屋顶上追一片发光的落叶"
+python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"
 ```
 
 Say `n` at any approval and give a reason: it goes back to that step's
 agent word for word, along with which attempt this is.
+
+### The agents share one workspace
+
+All three are built on the same `LocalWorkspace`, so the render the
+animator writes is right there for the colorist:
+
+```python
+    shared = await workspace.list_tools()
+    animator = Agent(..., toolkit=Toolkit(tools=[*shared, *await blender.list_tools()]),
+                     offloader=workspace)
+    colorist = Agent(..., toolkit=Toolkit(tools=[*shared, FunctionTool(restyle_video)]),
+                     offloader=workspace)
+```
+
+What crosses between steps is still an **account**, not the workspace:
+the shot list, then the render's path and a line per shot, then the
+result's path and the look chosen. Each agent is handed exactly the tools
+its milestone needs on top of that.
+
+### The restyle is one tool
+
+`restyle_video` calls Wan 2.7's video-editing model through the DashScope
+SDK. A local path is enough — the SDK uploads it and resolves the
+temporary URL itself — and the result is written back beside the source:
+
+```python
+        task = VideoSynthesis.async_call(
+            model="wan2.7-videoedit",
+            media=[{"type": "video", "url": video_path}],
+            prompt=look,
+            resolution="720P",
+            api_key=api_key,
+        )
+        done = VideoSynthesis.wait(task, api_key=api_key)
+```
+
+The input has to be 2–10 seconds, which is why the storyboard is told to
+stay under ten.
 
 ### Every verifier here is a person
 
@@ -80,23 +124,6 @@ class HumanApproval:
 The engine ends the stream rather than holding a coroutine open. The
 demo blocks on `input()` with **no agent suspended anywhere behind it**,
 and the run picks up when the answer arrives — a second later or a week.
-Nothing is remembered on the object: which half of the step it is in is
-worked out from the run state, so the same class works after a restart.
-
-### A step hands over an account, not its workspace
-
-Step two reads step one's shot list and modelling list. Step three reads
-the path step two rendered to. Nothing else crosses — no files, no
-context, no tools:
-
-```
-<handover from="Blender 建模与动画">
-/tmp/fox/render.mp4 — 6 shots, fox and heron rigged, 42s
-</handover>
-```
-
-That is the whole contract between steps, and it is what lets each agent
-be given exactly the tools its milestone needs and nothing more.
 
 ### Driving it
 
