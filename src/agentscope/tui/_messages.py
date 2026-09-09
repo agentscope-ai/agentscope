@@ -463,6 +463,7 @@ class ToolGroupUI(Collapsible):
                     ToolCallUI(pair, show_title=multiple)
                     for pair in group.calls
                 ),
+                classes="as-tool-list",
             ),
             title=_tool_group_title(group),
             collapsed=True,
@@ -492,7 +493,7 @@ class MessageUI(Vertical):
 
     def compose(self) -> ComposeResult:
         self._block_uis = {}
-        yield Static(self.message.name, classes="as-message-header")
+        yield Static(self._header_text(), classes="as-message-header")
         for block in _group_tool_calls(self.message.content):
             widget = self._make_block_ui(block)
             if widget is not None:
@@ -507,6 +508,12 @@ class MessageUI(Vertical):
             yield self._footer
         else:
             self._footer = None
+
+    def _header_text(self) -> Text:
+        role = "YOU" if self.message.role == "user" else "AGENT"
+        header = Text(role, style="dim")
+        header.append(f"  {self.message.name}", style="bold")
+        return header
 
     def on_mount(self) -> None:
         if (
@@ -724,6 +731,11 @@ class MessagesUI(VerticalScroll):
         margin-top: 1;
     }
 
+    .as-thinking:ansi, .as-tool-group:ansi, .as-hint:ansi {
+        background: transparent;
+        border-top: none;
+    }
+
     .as-thinking > CollapsibleTitle,
     .as-tool-group > CollapsibleTitle,
     .as-hint > CollapsibleTitle {
@@ -748,7 +760,13 @@ class MessagesUI(VerticalScroll):
     .as-thinking > Contents,
     .as-tool-group > Contents,
     .as-hint > Contents {
+        height: auto;
         padding: 0 0 0 2;
+    }
+
+    .as-tool-list {
+        width: 100%;
+        height: auto;
     }
 
     .as-thinking-body, .as-hint-body {

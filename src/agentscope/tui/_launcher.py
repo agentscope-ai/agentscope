@@ -32,10 +32,6 @@ class _AgentScopeTUI(App[None]):
     SUB_TITLE = "Interactive agent chat"
     BINDINGS = [("ctrl+q", "quit", "Quit")]
     CSS = """
-    Screen {
-        background: $background;
-    }
-
     #agentscope-chat {
         width: 100%;
         height: 100%;
@@ -48,7 +44,9 @@ class _AgentScopeTUI(App[None]):
         messages: Sequence[Msg],
         user_name: str,
     ) -> None:
-        super().__init__()
+        # Render ANSI default colors so transparent widgets inherit the
+        # user's terminal background rather than Textual's dark theme.
+        super().__init__(ansi_color=True)
         self.target = target
         self.initial_messages = messages
         self.user_name = user_name

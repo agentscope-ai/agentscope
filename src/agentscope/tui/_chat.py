@@ -286,6 +286,7 @@ class ChatUI(Widget):
         width: 100%;
         height: 100%;
         layout: vertical;
+        padding: 0 1;
         background: transparent;
     }
 
@@ -298,8 +299,12 @@ class ChatUI(Widget):
         height: auto;
         min-height: 3;
         padding: 0;
-        border-top: none;
         background: transparent;
+    }
+
+    ComposerUI {
+        border-top: solid $foreground 20%;
+        border-bottom: solid $foreground 20%;
     }
 
     #as-composer-input {

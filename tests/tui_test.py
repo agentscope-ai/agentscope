@@ -245,6 +245,14 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         message_uis[1].region.x,
                     )
                     self.assertEqual(
+                        message_uis[0].region.x,
+                        chat.content_region.x,
+                    )
+                    self.assertLessEqual(
+                        message_uis[0].region.right,
+                        chat.content_region.right,
+                    )
+                    self.assertEqual(
                         message_uis[1]
                         .query_one(".as-message-header", Static)
                         .region.x,
@@ -260,6 +268,28 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         "hidden",
                     )
                     self.assertEqual(editor.styles.background.a, 0)
+                    self.assertIn(
+                        "YOU  user",
+                        str(
+                            message_uis[0]
+                            .query_one(".as-message-header", Static)
+                            .render(),
+                        ),
+                    )
+                    self.assertIn(
+                        "AGENT  agent",
+                        str(
+                            message_uis[1]
+                            .query_one(".as-message-header", Static)
+                            .render(),
+                        ),
+                    )
+                    tool_group.collapsed = False
+                    await pilot.pause()
+                    self.assertLess(
+                        tool_group.region.height,
+                        chat.region.height,
+                    )
                     self.assertLessEqual(composer.region.right, size[0])
                     self.assertLessEqual(composer.region.bottom, size[1])
                     self.assertEqual(len(chat.query("Button")), 0)
