@@ -19,7 +19,6 @@ from agentscope.app.channel._base import (
     _EVENT_ADAPTER,
 )
 from agentscope.app.channel._gateway import ChannelGateway
-from agentscope.app.channel._routing import resolve
 from agentscope.message import Msg, ToolCallBlock, ToolCallState
 from agentscope.state import AgentState
 from agentscope.app.message_bus import InMemoryMessageBus
@@ -324,23 +323,13 @@ class _RecordingStorage:
 class _InboundStorage(_RecordingStorage):
     """Storage stub for one normal inbound channel message."""
 
-    def __init__(
-        self,
-        record: ChannelRecord,
-        session: SessionRecord | None = None,
-    ) -> None:
+    def __init__(self, record: ChannelRecord) -> None:
         super().__init__()
         self.record = record
-        self.session = session
 
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
         """Return the configured channel by id."""
         return self.record if channel_id == self.record.id else None
-
-    async def get_session(self, **kwargs: Any) -> SessionRecord | None:
-        """Return the optional existing channel session."""
-        del kwargs
-        return self.session
 
 
 def _channel_record(user_id: str) -> ChannelRecord:
@@ -403,11 +392,9 @@ class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
 
 
 class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
-    """The gateway stores the trusted sender on the channel session."""
+    """The gateway records the trusted sender on the session's origin."""
 
-    async def test_session_contains_trusted_platform_user(
-        self,
-    ) -> None:
+    async def test_session_origin_carries_the_trusted_sender(self) -> None:
         record = _channel_record("owner-1")
         storage = _InboundStorage(record)
         bus = InMemoryMessageBus()
@@ -422,63 +409,23 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
                 channel_id=record.id,
                 channel_user_id="staff-1",
                 chat_id="group:cid-1",
+                chat_name="Product",
                 content=[TextBlock(text="hello")],
             ),
         )
 
+        self.assertEqual(
+            storage.upserts[0]["origin"],
+            ChannelOrigin(
+                channel_id=record.id,
+                chat_id="group:cid-1",
+                chat_name="Product",
+                channel_user_id="staff-1",
+            ),
+        )
         queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
         self.assertEqual(len(queued), 1)
-        payload = queued[0][1]
-        self.assertEqual(payload["input"]["name"], "staff-1")
-        self.assertNotIn("channel_user_id", payload)
-        self.assertEqual(
-            storage.upserts[0]["source_channel_user_id"],
-            "staff-1",
-        )
-
-    async def test_existing_session_tracks_latest_inbound_user(self) -> None:
-        """A fresh turn refreshes the user stored on a shared session."""
-        record = _channel_record("owner-1")
-        _, session_id, _ = resolve(
-            ChannelEvent(
-                channel_id=record.id,
-                channel_user_id="staff-2",
-                chat_id="group:cid-1",
-            ),
-            record,
-        )
-        session = SessionRecord(
-            id=session_id,
-            user_id=record.user_id,
-            agent_id="agent-x",
-            origin=ChannelOrigin(
-                channel_id=record.id,
-                chat_id="group:cid-1",
-            ),
-            source_channel_user_id="staff-1",
-            config=SessionConfig(workspace_id="ws-1"),
-        )
-        storage = _InboundStorage(record, session)
-        gateway = ChannelGateway(
-            storage=storage,
-            message_bus=InMemoryMessageBus(),
-            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
-        )
-
-        await gateway.process(
-            ChannelEvent(
-                channel_id=record.id,
-                channel_user_id="staff-2",
-                chat_id="group:cid-1",
-                content=[TextBlock(text="hello")],
-            ),
-        )
-
-        self.assertEqual(len(storage.upserts), 1)
-        self.assertEqual(
-            storage.upserts[0]["source_channel_user_id"],
-            "staff-2",
-        )
+        self.assertNotIn("channel_user_id", queued[0][1])
 
 
 class FeishuPostParseTest(IsolatedAsyncioTestCase):
@@ -624,6 +571,7 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
                 channel_id="chan-1",
                 chat_id="group:cid-1",
                 chat_name="产品群",
+                channel_user_id="u",
             ),
         )
 
@@ -637,6 +585,7 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
                 channel_id="chan-1",
                 chat_id="group:cid-1",
                 chat_name=None,
+                channel_user_id="u",
             ),
         )
 

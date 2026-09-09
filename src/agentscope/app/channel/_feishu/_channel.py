@@ -48,6 +48,7 @@ if TYPE_CHECKING:
         P2CardActionTrigger,
         P2CardActionTriggerResponse,
     )
+    from ...storage import ChannelOrigin
     from .....tool import ToolBase
     from .....workspace import WorkspaceBase
 
@@ -941,7 +942,7 @@ class FeishuChannel(ChannelBase):
     async def list_tools(  # pylint: disable=unused-argument
         self,
         workspace: "WorkspaceBase",
-        channel_user_id: str | None = None,
+        origin: "ChannelOrigin",
     ) -> list["ToolBase"]:
         """Expose the Feishu send/discovery tools to the agent.
 
@@ -949,9 +950,8 @@ class FeishuChannel(ChannelBase):
             workspace (`WorkspaceBase`):
                 The calling session's workspace; the send-file tools read
                 their payload from its backend by absolute path.
-            channel_user_id (`str | None`, optional): The platform user
-                associated with the channel session. Feishu tools do not
-                currently require it.
+            origin (`ChannelOrigin`): The calling session's channel
+                origin. Feishu tools are not user-scoped and ignore it.
 
         Returns:
             `list[ToolBase]`: The Feishu agent tools.

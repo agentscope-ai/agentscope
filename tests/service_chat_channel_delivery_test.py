@@ -24,7 +24,6 @@ from agentscope.app.channel import (
     ChannelEvent,
     ChannelStatus,
     ChannelTypeRegistry,
-    ChatKind,
 )
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.event import ReplyEndEvent, ReplyStartEvent
@@ -53,7 +52,7 @@ class _RecordingChannel(ChannelBase):
     display_name = "Fake"
     platform_bot_id_field = "bot_id"
     instances: list["_RecordingChannel"] = []
-    tool_user_ids: list[str] = []
+    origins: list[object] = []
 
     class Credentials(BaseModel):
         """Credentials for the fake platform."""
@@ -100,29 +99,11 @@ class _RecordingChannel(ChannelBase):
             self.seen.append(evt.get("type", ""))
         self.done.set()
 
-    async def list_tools(
-        self,
-        workspace: object,
-        channel_user_id: str | None = None,
-    ) -> list:
-        """Record the trusted user supplied to channel-bound tools."""
+    async def list_tools(self, workspace: object, origin: object) -> list:
+        """Record the origin the service equips channel tools with."""
         del workspace
-        self.tool_user_ids.append(channel_user_id or "")
+        self.origins.append(origin)
         return []
-
-
-class _RecordingDingTalkChannel(_RecordingChannel):
-    """DingTalk-shaped test double for private/group tool assembly."""
-
-    channel_type = "dingtalk"
-
-    async def chat_kind(self, chat_id: str) -> ChatKind | None:
-        """Classify the encoded DingTalk chat target."""
-        if chat_id.startswith("user:"):
-            return ChatKind.PRIVATE
-        if chat_id.startswith("group:"):
-            return ChatKind.GROUP
-        return None
 
 
 class _Storage:
@@ -171,14 +152,9 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         """Isolate the instances each test observes."""
         _RecordingChannel.instances.clear()
-        _RecordingChannel.tool_user_ids.clear()
+        _RecordingChannel.origins.clear()
 
-    def _fixture(
-        self,
-        source: SessionOrigin,
-        channel_user_id: str = "",
-        channel_type: str = "fake",
-    ) -> tuple:
+    def _fixture(self, source: SessionOrigin) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
         user_id = "user-1"
         agent = AgentRecord(
@@ -195,11 +171,6 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             user_id=user_id,
             agent_id=agent.id,
             origin=source,
-            source_channel_user_id=(
-                channel_user_id
-                if isinstance(source, ChannelOrigin) and channel_user_id
-                else None
-            ),
             config=SessionConfig(
                 workspace_id="ws-1",
                 chat_model_config=ChatModelConfig(
@@ -212,7 +183,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         channel = ChannelRecord(
             id="chan-1",
-            channel_type=channel_type,
+            channel_type="fake",
             user_id=user_id,
             credentials={"bot_id": "bot-1"},
             routing=RoutingConfig(
@@ -222,26 +193,15 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         return user_id, agent, session, channel
 
-    async def _run(
-        self,
-        source: SessionOrigin,
-        channel_user_id: str = "",
-        channel_type: str = "fake",
-    ) -> ChannelClients:
+    async def _run(self, source: SessionOrigin) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
-        user_id, agent, session, channel = self._fixture(
-            source,
-            channel_user_id,
-            channel_type,
-        )
+        user_id, agent, session, channel = self._fixture(source)
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
         clients = ChannelClients(
             storage=storage,
             message_bus=bus,
-            type_registry=ChannelTypeRegistry(
-                [_RecordingChannel, _RecordingDingTalkChannel],
-            ),
+            type_registry=ChannelTypeRegistry([_RecordingChannel]),
         )
 
         class _Agent:
@@ -348,46 +308,15 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         finally:
             await clients.__aexit__(None, None, None)
 
-    async def test_channel_tools_receive_trusted_current_sender(self) -> None:
-        """Tool assembly uses identity stored on the session record."""
-        clients = await self._run(
-            ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
+    async def test_channel_tools_are_equipped_with_the_origin(self) -> None:
+        """Tool assembly hands the channel the session's own origin."""
+        origin = ChannelOrigin(
+            channel_id="chan-1",
+            chat_id="chat-1",
             channel_user_id="staff-1",
         )
+        clients = await self._run(origin)
         try:
-            self.assertListEqual(
-                _RecordingChannel.tool_user_ids,
-                ["staff-1"],
-            )
-        finally:
-            await clients.__aexit__(None, None, None)
-
-    async def test_dingtalk_private_tools_receive_current_sender(self) -> None:
-        """DingTalk private chats may equip user-scoped knowledge tools."""
-        clients = await self._run(
-            ChannelOrigin(channel_id="chan-1", chat_id="user:staff-1"),
-            channel_user_id="staff-1",
-            channel_type="dingtalk",
-        )
-        try:
-            self.assertListEqual(
-                _RecordingChannel.tool_user_ids,
-                ["staff-1"],
-            )
-        finally:
-            await clients.__aexit__(None, None, None)
-
-    async def test_dingtalk_group_tools_do_not_receive_sender(self) -> None:
-        """DingTalk group chats cannot equip user-scoped knowledge tools."""
-        clients = await self._run(
-            ChannelOrigin(
-                channel_id="chan-1",
-                chat_id="group:conversation-1",
-            ),
-            channel_user_id="staff-1",
-            channel_type="dingtalk",
-        )
-        try:
-            self.assertListEqual(_RecordingChannel.tool_user_ids, [""])
+            self.assertListEqual(_RecordingChannel.origins, [origin])
         finally:
             await clients.__aexit__(None, None, None)

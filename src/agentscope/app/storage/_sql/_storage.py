@@ -1066,7 +1066,6 @@ class AsyncSQLAlchemyStorage(StorageBase):
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
         source_channel_id: str | None = None,
-        source_channel_user_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
         if session_id:
@@ -1077,8 +1076,6 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 record.config = config
                 if state is not None:
                     record.state = state
-                if source_channel_user_id is not None:
-                    record.source_channel_user_id = source_channel_user_id
                 await self._write_row(SessionRow, record)
                 return record
 
@@ -1087,7 +1084,6 @@ class AsyncSQLAlchemyStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source_channel_user_id=source_channel_user_id,
             **_origin_kwargs(
                 origin,
                 source,

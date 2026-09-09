@@ -909,26 +909,9 @@ class ChatService:
                     and self._channel_clients is not None
                     else None
                 )
-                chat_kind = (
-                    await channel.chat_kind(channel_origin.chat_id)
-                    if channel is not None and channel_origin is not None
-                    else None
-                )
-                channel_user_id = session_record.source_channel_user_id
-                if (
-                    channel is not None
-                    and channel.channel_type == "dingtalk"
-                    and chat_kind is not ChatKind.PRIVATE
-                ):
-                    # DingTalk knowledge tools act with the sender's
-                    # permissions. Keep them out of shared group sessions.
-                    channel_user_id = None
                 channel_tools = (
-                    await channel.list_tools(
-                        workspace,
-                        channel_user_id,
-                    )
-                    if channel is not None
+                    await channel.list_tools(workspace, channel_origin)
+                    if channel is not None and channel_origin is not None
                     else []
                 )
 
@@ -1089,7 +1072,7 @@ class ChatService:
                 if channel is not None and channel_origin is not None:
                     tools = ", ".join(t.name for t in channel_tools)
                     chat_id = channel_origin.chat_id
-                    kind = chat_kind
+                    kind = await channel.chat_kind(chat_id)
                     name = channel_origin.chat_name or await channel.chat_name(
                         chat_id,
                     )

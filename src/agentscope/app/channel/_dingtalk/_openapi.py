@@ -28,10 +28,6 @@ _AI_CARD_RENDERING = "1"
 _AI_CARD_RENDERED = "3"
 
 
-class _DingTalkAPIError(RuntimeError):
-    """A DingTalk OpenAPI request failed in a user-actionable way."""
-
-
 class _DingTalkOpenAPI:
     """Call only the DingTalk OpenAPI operations needed by the channel."""
 
@@ -98,7 +94,7 @@ class _DingTalkOpenAPI:
             `dict[str, Any]`: ``knowledge_bases`` and ``next_token``.
 
         Raises:
-            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+            `RuntimeError`: If DingTalk rejects the lookup.
         """
         payload = await self._knowledge_get(
             "/v2.0/wiki/workspaces",
@@ -137,7 +133,7 @@ class _DingTalkOpenAPI:
             `dict[str, Any]`: ``nodes`` and ``next_token``.
 
         Raises:
-            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+            `RuntimeError`: If DingTalk rejects the lookup.
         """
         payload = await self._knowledge_get(
             "/v2.0/wiki/nodes",
@@ -172,7 +168,7 @@ class _DingTalkOpenAPI:
             returns no node.
 
         Raises:
-            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+            `RuntimeError`: If DingTalk rejects the lookup.
         """
         payload = await self._knowledge_get(
             f"/v2.0/wiki/nodes/{quote(node_id, safe='')}",
@@ -205,7 +201,7 @@ class _DingTalkOpenAPI:
             `list[dict[str, Any]]`: Raw block objects in document order.
 
         Raises:
-            `_DingTalkAPIError`: If DingTalk rejects the lookup.
+            `RuntimeError`: If DingTalk rejects the lookup.
         """
         payload = await self._knowledge_get(
             f"/v1.0/doc/suites/documents/{quote(doc_key, safe='')}/blocks",
@@ -785,12 +781,12 @@ class _DingTalkOpenAPI:
             `dict[str, Any]`: JSON response object.
 
         Raises:
-            `_DingTalkAPIError`: If authentication, permissions, transport,
+            `RuntimeError`: If authentication, permissions, transport,
             or response validation fails.
         """
         token = await self._access_token()
         if token is None:
-            raise _DingTalkAPIError(
+            raise RuntimeError(
                 f"DingTalk {operation} failed: no application access token.",
             )
         query = {
@@ -806,11 +802,11 @@ class _DingTalkOpenAPI:
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise _DingTalkAPIError(
+                raise RuntimeError(
                     f"DingTalk {operation} returned invalid JSON.",
                 ) from exc
             if not isinstance(payload, dict):
-                raise _DingTalkAPIError(
+                raise RuntimeError(
                     f"DingTalk {operation} returned an invalid response.",
                 )
             code = payload.get("code") or payload.get("errcode")
@@ -825,17 +821,17 @@ class _DingTalkOpenAPI:
                 or code not in (None, "", 0, "0")
                 or payload.get("success") is False
             ):
-                raise _DingTalkAPIError(
+                raise RuntimeError(
                     f"DingTalk {operation} failed (HTTP "
                     f"{response.status_code}, code={code or 'unknown'}): "
                     f"{message[:_ERROR_BODY_CHARS]}",
                 )
             return payload
-        except _DingTalkAPIError:
+        except RuntimeError:
             raise
         except Exception as exc:
             logger.exception("DingTalk %s failed", operation)
-            raise _DingTalkAPIError(
+            raise RuntimeError(
                 f"DingTalk {operation} failed: {type(exc).__name__}.",
             ) from exc
 

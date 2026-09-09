@@ -46,6 +46,7 @@ from ._card import (
 from ._openapi import _DingTalkOpenAPI
 
 if TYPE_CHECKING:
+    from ...storage import ChannelOrigin
     from ....tool import ToolBase
     from ....workspace import WorkspaceBase
 
@@ -510,16 +511,15 @@ class DingTalkChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
-        channel_user_id: str | None = None,
+        origin: "ChannelOrigin",
     ) -> list["ToolBase"]:
         """Expose DingTalk tools to the agent.
 
         Args:
             workspace (`WorkspaceBase`): Calling session workspace whose
                 backend is used for file reads.
-            channel_user_id (`str | None`, optional): Trusted DingTalk staff
-                id associated with the channel session. Knowledge tools are
-                omitted when it is unavailable.
+            origin (`ChannelOrigin`): The calling session's channel origin,
+                naming the chat and its DingTalk sender.
 
         Returns:
             `list[ToolBase]`: DingTalk agent tools.
@@ -543,12 +543,18 @@ class DingTalkChannel(ChannelBase):
             SendFile(self, backend),
             SendImage(self, backend),
         ]
-        if channel_user_id:
+        # Knowledge tools read as the session's sender, so they are only
+        # safe where that sender is the only participant: a group session
+        # is shared, and one member's turn would read with another's
+        # permissions.
+        user_id = origin.channel_user_id
+        is_private = await self.chat_kind(origin.chat_id) is ChatKind.PRIVATE
+        if user_id and is_private:
             tools.extend(
                 [
-                    ListKnowledgeBases(self, backend, channel_user_id),
-                    ListKnowledgeNodes(self, backend, channel_user_id),
-                    ReadKnowledgeDocument(self, backend, channel_user_id),
+                    ListKnowledgeBases(self, backend, user_id),
+                    ListKnowledgeNodes(self, backend, user_id),
+                    ReadKnowledgeDocument(self, backend, user_id),
                 ],
             )
         return tools

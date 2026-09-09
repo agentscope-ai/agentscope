@@ -23,6 +23,7 @@ from agentscope.app.channel._dingtalk._card import (
 )
 from agentscope.app.channel._dingtalk._openapi import _DingTalkOpenAPI
 from agentscope.app.channel._registry import ChannelTypeRegistry
+from agentscope.app.storage import ChannelOrigin
 from agentscope.event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -45,6 +46,16 @@ from agentscope.permission import PermissionBehavior, PermissionContext
 from agentscope.workspace import WorkspaceBase
 
 _REPLY_ID = "reply-1"
+_PRIVATE_ORIGIN = ChannelOrigin(
+    channel_id="chan-1",
+    chat_id="user:staff-1",
+    channel_user_id="staff-1",
+)
+_GROUP_ORIGIN = ChannelOrigin(
+    channel_id="chan-1",
+    chat_id="group:cid-1",
+    channel_user_id="staff-1",
+)
 
 
 class _FakeResponse:
@@ -1189,7 +1200,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         backend = _FakeBackend({"/workspace/report.pdf": b"pdf"})
         workspace = cast(WorkspaceBase, _FakeWorkspace(backend))
 
-        tools = await channel.list_tools(workspace)
+        tools = await channel.list_tools(workspace, _GROUP_ORIGIN)
 
         self.assertEqual(
             [tool.name for tool in tools],
@@ -1226,6 +1237,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         backend = _FakeBackend()
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(backend)),
+            _GROUP_ORIGIN,
         )
 
         read_decision = await tools[0].check_permissions(
@@ -1302,7 +1314,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             _FakeWorkspace(_FakeBackend()),
         )
 
-        tools = await channel.list_tools(workspace, "staff-1")
+        tools = await channel.list_tools(workspace, _PRIVATE_ORIGIN)
 
         self.assertListEqual(
             [tool.name for tool in tools],
@@ -1378,7 +1390,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         channel, _ = _channel_with_openapi(media_api)
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
-            "staff-1",
+            _PRIVATE_ORIGIN,
         )
 
         document = await cast(ReadKnowledgeDocument, tools[7])("doc-1", 0, 1)
@@ -1402,19 +1414,27 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_knowledge_tools_hidden_without_channel_sender(self) -> None:
+    async def test_knowledge_tools_hidden_outside_private_chats(self) -> None:
         channel = _channel()
-        workspace = cast(
-            WorkspaceBase,
-            _FakeWorkspace(_FakeBackend()),
+        workspace = cast(WorkspaceBase, _FakeWorkspace(_FakeBackend()))
+
+        in_group = await channel.list_tools(workspace, _GROUP_ORIGIN)
+        without_sender = await channel.list_tools(
+            workspace,
+            ChannelOrigin(channel_id="chan-1", chat_id="user:staff-1"),
         )
 
-        tools = await channel.list_tools(workspace)
-
-        self.assertNotIn(
-            "ListKnowledgeBases",
-            [tool.name for tool in tools],
-        )
+        for tools in (in_group, without_sender):
+            self.assertListEqual(
+                [tool.name for tool in tools],
+                [
+                    "ListConversations",
+                    "ListUsers",
+                    "SendMessage",
+                    "SendFile",
+                    "SendImage",
+                ],
+            )
 
     async def test_knowledge_identity_failure_is_visible(self) -> None:
         media_api = _FakeMediaOpenAPI()
@@ -1422,7 +1442,11 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         channel, _ = _channel_with_openapi(media_api)
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
-            "staff-without-contact-access",
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="user:staff-without-contact-access",
+                channel_user_id="staff-without-contact-access",
+            ),
         )
 
         result = await tools[5](limit=20, next_token="")
@@ -1437,6 +1461,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         channel = _channel(approval_card_template_id="")
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            _GROUP_ORIGIN,
         )
 
         self.assertListEqual(
