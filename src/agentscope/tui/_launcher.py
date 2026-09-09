@@ -14,6 +14,7 @@ from textual.app import App, ComposeResult
 
 from ..agent import Agent
 from ..event import (
+    ExternalExecutionResultEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
@@ -22,7 +23,12 @@ from ..message import Msg
 from ..pipeline import PipelineProtocol
 from ._chat import ChatUI
 
-_TUIInput: TypeAlias = Msg | UserConfirmResultEvent | UserInterruptEvent
+_TUIInput: TypeAlias = (
+    Msg
+    | UserConfirmResultEvent
+    | ExternalExecutionResultEvent
+    | UserInterruptEvent
+)
 
 
 class _AgentScopeTUI(App[None]):
@@ -93,6 +99,13 @@ class _AgentScopeTUI(App[None]):
 
     @on(ChatUI.Confirmed)
     def _on_confirmed(self, event: ChatUI.Confirmed) -> None:
+        self._start_stream(event.value)
+
+    @on(ChatUI.ExternalExecutionSubmitted)
+    def _on_external_execution_submitted(
+        self,
+        event: ChatUI.ExternalExecutionSubmitted,
+    ) -> None:
         self._start_stream(event.value)
 
     @on(ChatUI.InterruptRequested)

@@ -8,15 +8,17 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+import json
 from typing import Any
 import unittest
 from unittest.mock import patch
 
 from textual.app import App, ComposeResult
 from textual.message import Message as TextualMessage
-from textual.widgets import Collapsible, OptionList, Static
+from textual.widgets import Collapsible, Input, OptionList, Static
 
 from agentscope.event import (
+    ExternalExecutionResultEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     RequireExternalExecutionEvent,
@@ -33,6 +35,7 @@ from agentscope.event import (
 )
 from agentscope.message import (
     AssistantMsg,
+    HintBlock,
     Msg,
     TextBlock,
     ThinkingBlock,
@@ -42,7 +45,9 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.permission import PermissionBehavior, PermissionRule
+from agentscope.tool import AskUser
 from agentscope.tui import ChatUI, MessagesUI
+from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
 from agentscope.tui._launcher import _AgentScopeTUI
 from agentscope.tui._messages import (
@@ -90,6 +95,23 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertTrue(str(thinking.title).startswith("◌ Thinking"))
+            self.assertEqual(thinking._title.collapsed_symbol, "→")
+            self.assertEqual(thinking._title.expanded_symbol, "↓")
+
+    async def test_hint_uses_shared_disclosure_arrows(self) -> None:
+        msg = AssistantMsg(
+            name="agent",
+            content=[HintBlock(id="hint-1", hint="Use the shared arrow")],
+        )
+        app = _MessagesApp([msg])
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            hint = app.query_one(".as-hint", Collapsible)
+
+            self.assertEqual(hint._title.collapsed_symbol, "→")
+            self.assertEqual(hint._title.expanded_symbol, "↓")
+            self.assertEqual(hint.styles.margin.top, 0)
+            self.assertEqual(hint.styles.margin.bottom, 1)
 
     async def test_full_snapshot_keeps_unchanged_message_widget(self) -> None:
         msg = UserMsg(name="user", content="first", id="user-1")
@@ -260,10 +282,19 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         text_block.region.x,
                     )
                     self.assertEqual(
+                        message_uis[1]
+                        .query_one(".as-message-header", Static)
+                        .styles.margin.bottom,
+                        1,
+                    )
+                    self.assertEqual(message_uis[0].styles.margin.bottom, 0)
+                    self.assertEqual(
                         len(tool_group.query(Collapsible)),
                         0,
                     )
-                    self.assertTrue(str(tool_group.title).startswith("✓"))
+                    self.assertEqual(tool_group.styles.margin.top, 0)
+                    self.assertEqual(tool_group.styles.margin.bottom, 1)
+                    self.assertIn("✓", str(tool_group.title))
                     self.assertFalse(footer.display)
                     self.assertEqual(
                         str(messages_ui.styles.scrollbar_visibility),
@@ -294,6 +325,7 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("AGENT", screenshot)
                     tool_group.collapsed = False
                     await pilot.pause()
+                    self.assertTrue(editor.has_focus)
                     self.assertLess(
                         tool_group.region.height,
                         chat.region.height,
@@ -461,9 +493,10 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one(ComposerUI).display)
             hitl = app.query_one(HitlUI)
             self.assertTrue(hitl.display)
-            self.assertTrue(
-                str(app.query_one(ToolGroupUI).title).startswith("→"),
-            )
+            tool_group = app.query_one(ToolGroupUI)
+            self.assertIn("[cyan]→", str(tool_group.title))
+            self.assertEqual(tool_group._title.collapsed_symbol, "")
+            self.assertEqual(tool_group._title.expanded_symbol, "")
             self.assertEqual(len(hitl.query(".as-section-rule")), 1)
             options = app.query_one(OptionList)
             self.assertTrue(options.has_focus)
@@ -489,12 +522,53 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(value.reply_id, "r1")
             self.assertFalse(value.confirm_results[0].confirmed)
 
-            chat.feed(value)
-            await pilot.pause()
             self.assertTrue(app.query_one(ComposerUI).display)
             self.assertFalse(app.query_one(HitlUI).display)
             self.assertEqual(editor.text, "draft")
             self.assertTrue(editor.has_focus)
+
+    async def test_next_hitl_request_keeps_keyboard_focus(self) -> None:
+        observed: list[ChatUI.Confirmed] = []
+
+        def hook(message: TextualMessage) -> None:
+            if isinstance(message, ChatUI.Confirmed):
+                observed.append(message)
+
+        app = _ChatApp(
+            [
+                AssistantMsg(
+                    name="agent",
+                    id="reply-1",
+                    content=[
+                        ToolCallBlock(
+                            id="call-1",
+                            name="Read",
+                            input="{}",
+                            state="asking",
+                        ),
+                        ToolCallBlock(
+                            id="call-2",
+                            name="Bash",
+                            input="{}",
+                            state="asking",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        async with app.run_test(message_hook=hook) as pilot:
+            options = app.query_one(OptionList)
+            self.assertTrue(options.has_focus)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            self.assertTrue(app.query_one(HitlUI).display)
+            self.assertTrue(options.has_focus)
+            self.assertEqual(options.highlighted, 0)
+            self.assertIn(
+                "Bash",
+                str(app.query_one("#as-hitl-body", Static).render()),
+            )
 
     async def test_permission_rules_are_embedded_in_always_option(
         self,
@@ -573,6 +647,161 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                 "interrupt",
             )
 
+    async def test_ask_user_collects_schema_valid_answers(self) -> None:
+        observed: list[ChatUI.ExternalExecutionSubmitted] = []
+
+        def hook(message: TextualMessage) -> None:
+            if isinstance(message, ChatUI.ExternalExecutionSubmitted):
+                observed.append(message)
+
+        questions = [
+            {
+                "header": "Version",
+                "question": "Which version should we install?",
+                "context": "The current version is too old.",
+                "options": [
+                    {
+                        "label": "Latest (Recommended)",
+                        "description": "Upgrade to the supported release.",
+                        "preview": "current: 4.5\nnext: 5.2",
+                    },
+                    {
+                        "label": "Keep current",
+                        "description": "Continue without the integration.",
+                    },
+                ],
+            },
+            {
+                "header": "Features",
+                "question": "Which features should be enabled?",
+                "options": [
+                    {
+                        "label": "Rendering",
+                        "description": "Enable the render pipeline.",
+                    },
+                    {
+                        "label": "Export",
+                        "description": "Enable file export.",
+                    },
+                ],
+                "multi_select": True,
+            },
+        ]
+        app = _ChatApp(
+            [
+                AssistantMsg(
+                    name="agent",
+                    id="reply",
+                    content=[
+                        ToolCallBlock(
+                            id="ask",
+                            name="AskUser",
+                            input=json.dumps({"questions": questions}),
+                            state="submitted",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        async with app.run_test(message_hook=hook, size=(100, 30)) as pilot:
+            ask_user = app.query_one(AskUserUI)
+            options = app.query_one(".as-ask-user-options", OptionList)
+            self.assertTrue(ask_user.display)
+            self.assertFalse(app.query_one(ComposerUI).display)
+            self.assertFalse(app.query_one(HitlUI).display)
+            self.assertTrue(options.has_focus)
+            self.assertIn(
+                "Upgrade to the supported release.",
+                str(options.get_option_at_index(0).prompt),
+            )
+            self.assertTrue(
+                app.query_one(".as-ask-user-preview", Static).display,
+            )
+
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertIn(
+                "Enable the render pipeline.",
+                str(options.get_option_at_index(0).prompt),
+            )
+            await pilot.press("enter", "down", "down", "down", "enter")
+            await pilot.pause()
+
+            unique = {id(message): message for message in observed}
+            self.assertEqual(len(unique), 1)
+            value = next(iter(unique.values())).value
+            self.assertIsInstance(value, ExternalExecutionResultEvent)
+            result = value.execution_results[0]
+            self.assertEqual(
+                result.metadata,
+                {
+                    "answers": [
+                        {
+                            "question": "Which version should we install?",
+                            "selected": ["Latest (Recommended)"],
+                            "other": None,
+                        },
+                        {
+                            "question": "Which features should be enabled?",
+                            "selected": ["Rendering"],
+                            "other": None,
+                        },
+                    ],
+                },
+            )
+            await AskUser().check_external_result(result)
+            self.assertFalse(ask_user.display)
+            self.assertTrue(app.query_one(ComposerUI).display)
+
+    async def test_ask_user_accepts_other_text(self) -> None:
+        observed: list[ChatUI.ExternalExecutionSubmitted] = []
+
+        def hook(message: TextualMessage) -> None:
+            if isinstance(message, ChatUI.ExternalExecutionSubmitted):
+                observed.append(message)
+
+        tool_call = ToolCallBlock(
+            id="ask",
+            name="AskUser",
+            input=json.dumps(
+                {
+                    "questions": [
+                        {
+                            "header": "Approach",
+                            "question": "Which approach should we use?",
+                            "options": [
+                                {"label": "A", "description": "First."},
+                                {"label": "B", "description": "Second."},
+                            ],
+                        },
+                    ],
+                },
+            ),
+            state="submitted",
+        )
+        app = _ChatApp(
+            [AssistantMsg(name="agent", id="reply", content=[tool_call])],
+        )
+        async with app.run_test(message_hook=hook) as pilot:
+            await pilot.press("down", "down", "enter")
+            await pilot.pause()
+            other = app.query_one(".as-ask-user-other", Input)
+            self.assertTrue(other.display)
+            self.assertTrue(other.has_focus)
+            await pilot.press(*"custom plan", "enter")
+            await pilot.pause()
+
+            result = observed[0].value.execution_results[0]
+            self.assertEqual(
+                result.metadata["answers"][0],
+                {
+                    "question": "Which approach should we use?",
+                    "selected": [],
+                    "other": "custom plan",
+                },
+            )
+            await AskUser().check_external_result(result)
+
     async def test_edit_tool_uses_authoritative_diff_stats(self) -> None:
         app = _ChatApp()
         async with app.run_test() as pilot:
@@ -617,6 +846,100 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertIn("+1 -1", app.query_one(ToolGroupUI).title)
+
+    async def test_edit_shows_diff_and_read_shows_only_result(self) -> None:
+        finished_at = "2026-01-01T00:00:01+00:00"
+        msg = AssistantMsg(
+            name="agent",
+            finished_at=finished_at,
+            content=[
+                ToolCallBlock(
+                    id="edit",
+                    name="Edit",
+                    input='{"file_path": "demo.py", "old_str": "old"}',
+                    state="finished",
+                ),
+                ToolResultBlock(
+                    id="edit",
+                    name="Edit",
+                    output="Successfully updated demo.py",
+                    state=ToolResultState.SUCCESS,
+                    metadata={"diff": "@@ -1 +1 @@\n-old\n+new\n"},
+                ),
+                ToolCallBlock(
+                    id="read",
+                    name="Read",
+                    input='{"file_path": "demo.py"}',
+                    state="finished",
+                ),
+                ToolResultBlock(
+                    id="read",
+                    name="Read",
+                    output="     1\tprint('ready')",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        app = _MessagesApp([msg])
+        async with app.run_test(size=(100, 24)) as pilot:
+            app.query_one(ToolGroupUI).collapsed = False
+            await pilot.pause()
+            bodies = list(app.query(".as-tool-body"))
+            edit_items = bodies[0].render()._renderable.renderables
+            read_items = bodies[1].render()._renderable.renderables
+
+            self.assertEqual(
+                getattr(edit_items[-1], "code", ""),
+                "@@ -1 +1 @@\n-old\n+new\n",
+            )
+            self.assertEqual(len(read_items), 1)
+            self.assertEqual(
+                getattr(read_items[0], "plain", ""),
+                "     1\tprint('ready')",
+            )
+            self.assertEqual(bodies[0].styles.padding.left, 1)
+            self.assertEqual(bodies[1].styles.padding.left, 1)
+
+    async def test_tool_group_uses_worst_result_state(self) -> None:
+        finished_at = "2026-01-01T00:00:01+00:00"
+        msg = AssistantMsg(
+            name="agent",
+            finished_at=finished_at,
+            content=[
+                ToolCallBlock(
+                    id="one",
+                    name="Bash",
+                    input="{}",
+                    state="finished",
+                ),
+                ToolResultBlock(
+                    id="one",
+                    name="Bash",
+                    output="ok",
+                    state=ToolResultState.SUCCESS,
+                ),
+                ToolCallBlock(
+                    id="two",
+                    name="Bash",
+                    input="{}",
+                    state="finished",
+                ),
+                ToolResultBlock(
+                    id="two",
+                    name="Bash",
+                    output="failed",
+                    state=ToolResultState.ERROR,
+                ),
+            ],
+        )
+        app = _MessagesApp([msg])
+        async with app.run_test() as pilot:
+            tool_group = app.query_one(ToolGroupUI)
+            self.assertIn("[red]→ ✗", str(tool_group.title))
+
+            tool_group.collapsed = False
+            await pilot.pause()
+            self.assertIn("[red]↓ ✗", str(tool_group.title))
 
 
 class _FakeTarget:
@@ -663,6 +986,37 @@ class LauncherTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[0].get_text_content(), "hi")
             self.assertEqual(messages[1].get_text_content(), "response")
             self.assertEqual(target.inputs[0].get_text_content(), "hi")
+
+    async def test_launcher_forwards_ask_user_result(self) -> None:
+        target = _FakeTarget()
+        app = _AgentScopeTUI(target, [], "user")
+        value = ExternalExecutionResultEvent(
+            reply_id="reply",
+            execution_results=[
+                ToolResultBlock(
+                    id="ask",
+                    name="AskUser",
+                    output="Selected A",
+                    state=ToolResultState.SUCCESS,
+                    metadata={
+                        "answers": [
+                            {
+                                "question": "Which?",
+                                "selected": ["A"],
+                                "other": None,
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+        async with app.run_test(size=(80, 24)):
+            app._on_external_execution_submitted(
+                ChatUI.ExternalExecutionSubmitted(value),
+            )
+            await asyncio.wait_for(target.done.wait(), timeout=1)
+
+            self.assertIs(target.inputs[0], value)
 
     def test_exit_command_quits_without_forwarding_to_target(self) -> None:
         target = _FakeTarget()

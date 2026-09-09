@@ -12,7 +12,7 @@ import os
 from agentscope.agent import Agent
 from agentscope.credential import DashScopeCredential
 from agentscope.model import DashScopeChatModel
-from agentscope.tool import Toolkit
+from agentscope.tool import AskUser, Toolkit
 from agentscope.tui import launch_tui
 from agentscope.workspace import LocalWorkspace
 
@@ -44,7 +44,7 @@ async def main() -> None:
                 stream=True,
             ),
             toolkit=Toolkit(
-                tools=await workspace.list_tools(),
+                tools=[AskUser(), *(await workspace.list_tools())],
                 skills_or_loaders=await workspace.list_skills(),
             ),
             offloader=workspace,

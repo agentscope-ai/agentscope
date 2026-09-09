@@ -21,6 +21,9 @@ Controls:
   no clickable action buttons.
 - Tool and thinking rows expand with a click or with `Enter` when focused.
 - A pending HITL request replaces the composer until it is resolved.
+- `AskUser` renders a keyboard-driven form with single-select, multi-select,
+  previews, and an `Other` text answer. It returns schema-valid structured
+  metadata to the Agent automatically.
 - Type `/exit` and press `Enter` to exit the standalone TUI.
 
 The example defaults to `qwen3.8-max`. `LocalWorkspace` instructions are
@@ -85,6 +88,13 @@ class RuntimeApp(App):
 
     @on(ChatUI.Confirmed)
     async def confirm(self, event: ChatUI.Confirmed) -> None:
+        await runtime.submit(event.value)
+
+    @on(ChatUI.ExternalExecutionSubmitted)
+    async def external_result(
+        self,
+        event: ChatUI.ExternalExecutionSubmitted,
+    ) -> None:
         await runtime.submit(event.value)
 
     @on(ChatUI.InterruptRequested)

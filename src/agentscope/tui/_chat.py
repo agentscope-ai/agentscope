@@ -17,11 +17,17 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import OptionList, Static, TextArea
+from textual.widgets import Collapsible, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from ..event import AgentEvent, ConfirmResult, UserConfirmResultEvent
+from ..event import (
+    AgentEvent,
+    ConfirmResult,
+    ExternalExecutionResultEvent,
+    UserConfirmResultEvent,
+)
 from ..message import Msg, ToolCallBlock, UserMsg
+from ._ask_user import AskUserUI
 from ._messages import MessagesUI
 
 
@@ -436,6 +442,11 @@ class ChatUI(Widget):
             super().__init__()
             self.value = value
 
+    class ExternalExecutionSubmitted(Message):
+        def __init__(self, value: ExternalExecutionResultEvent) -> None:
+            super().__init__()
+            self.value = value
+
     class InterruptRequested(Message):
         def __init__(self, reply_id: str) -> None:
             super().__init__()
@@ -460,6 +471,7 @@ class ChatUI(Widget):
         self.show_usage = show_usage
         self.input_enabled = input_enabled
         self._hitl_active = False
+        self._dismissed_external_call_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield MessagesUI(
@@ -472,6 +484,9 @@ class ChatUI(Widget):
         hitl = HitlUI()
         hitl.display = False
         yield hitl
+        ask_user = AskUserUI()
+        ask_user.display = False
+        yield ask_user
 
     def on_mount(self) -> None:
         self._sync_interaction_area()
@@ -497,15 +512,27 @@ class ChatUI(Widget):
 
     def _pending_tools(self) -> list[tuple[str, str, ToolCallBlock]]:
         pending: list[tuple[str, str, ToolCallBlock]] = []
+        submitted_ids: set[str] = set()
         for message in self._current_messages():
             if message.role != "assistant" or message.finished_at is not None:
                 continue
             for block in message.content:
-                if isinstance(block, ToolCallBlock) and block.state in (
-                    "asking",
-                    "submitted",
+                if (
+                    isinstance(block, ToolCallBlock)
+                    and block.state == "submitted"
+                ):
+                    submitted_ids.add(block.id)
+                if (
+                    isinstance(block, ToolCallBlock)
+                    and block.state
+                    in (
+                        "asking",
+                        "submitted",
+                    )
+                    and block.id not in self._dismissed_external_call_ids
                 ):
                     pending.append((message.id, message.name, block))
+        self._dismissed_external_call_ids.intersection_update(submitted_ids)
         return pending
 
     def _latest_running_reply_id(self) -> str | None:
@@ -517,17 +544,49 @@ class ChatUI(Widget):
     def _sync_interaction_area(self) -> None:
         composer = self.query_one(ComposerUI)
         hitl = self.query_one(HitlUI)
+        ask_user = self.query_one(AskUserUI)
         pending = self._pending_tools()
-        was_hitl_active = self._hitl_active
+        ask_pending: list[tuple[str, str, ToolCallBlock]] = []
+        hitl_pending: list[tuple[str, str, ToolCallBlock]] = []
+        if (
+            pending
+            and pending[0][2].name == "AskUser"
+            and pending[0][2].state == "submitted"
+        ):
+            ask_pending = [
+                item
+                for item in pending
+                if item[2].name == "AskUser" and item[2].state == "submitted"
+            ]
+        else:
+            for item in pending:
+                if item[2].name == "AskUser" and item[2].state == "submitted":
+                    break
+                hitl_pending.append(item)
         self._hitl_active = bool(pending)
-        hitl.set_pending(pending)
+        hitl.set_pending(hitl_pending)
+        ask_user.set_pending(ask_pending)
         composer.display = not pending
         composer.set_enabled(self.input_enabled and not self.disabled)
         composer.set_running_reply(self._latest_running_reply_id())
-        if self._hitl_active and not was_hitl_active:
+        if ask_pending:
+            self.call_later(ask_user.focus_action)
+        elif hitl_pending:
             self.call_later(hitl.focus_action)
-        elif was_hitl_active and not self._hitl_active:
+        else:
             self.call_later(composer.focus_editor)
+
+    @on(Collapsible.Expanded)
+    @on(Collapsible.Collapsed)
+    def _on_collapsible_toggled(self) -> None:
+        ask_user = self.query_one(AskUserUI)
+        hitl = self.query_one(HitlUI)
+        if ask_user.display:
+            self.call_later(ask_user.focus_action)
+        elif hitl.display:
+            self.call_later(self.query_one(HitlUI).focus_action)
+        else:
+            self.call_later(self.query_one(ComposerUI).focus_editor)
 
     @on(ComposerUI.Submitted)
     def _on_composer_submitted(self, event: ComposerUI.Submitted) -> None:
@@ -544,11 +603,32 @@ class ChatUI(Widget):
 
     @on(HitlUI.Confirmed)
     def _on_hitl_confirmed(self, event: HitlUI.Confirmed) -> None:
+        # Reconcile the outgoing decision immediately. The runtime may not
+        # produce another event until a long-running allowed tool completes,
+        # but the approval prompt has already been answered and must not stay
+        # visible throughout that execution.
+        self.feed(event.value)
         self.post_message(self.Confirmed(event.value))
+
+    @on(AskUserUI.Submitted)
+    def _on_ask_user_submitted(self, event: AskUserUI.Submitted) -> None:
+        # Hide the completed form immediately. Feeding the outgoing external
+        # result here would duplicate the ToolResultBlock when the runtime
+        # streams its validated result back, so dismissal is tracked locally.
+        self._dismissed_external_call_ids.add(event.tool_call_id)
+        self._sync_interaction_area()
+        self.post_message(self.ExternalExecutionSubmitted(event.value))
 
     @on(HitlUI.InterruptRequested)
     def _on_hitl_interrupt(
         self,
         event: HitlUI.InterruptRequested,
+    ) -> None:
+        self.post_message(self.InterruptRequested(event.reply_id))
+
+    @on(AskUserUI.InterruptRequested)
+    def _on_ask_user_interrupt(
+        self,
+        event: AskUserUI.InterruptRequested,
     ) -> None:
         self.post_message(self.InterruptRequested(event.reply_id))

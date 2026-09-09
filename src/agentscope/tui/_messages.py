@@ -20,6 +20,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
+from textual.markup import escape
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Collapsible, Markdown, Static
@@ -172,8 +173,8 @@ class ThinkingUI(Collapsible):
             self.markdown,
             title=self._title_text(),
             collapsed=True,
-            collapsed_symbol="›",
-            expanded_symbol="⌄",
+            collapsed_symbol="→",
+            expanded_symbol="↓",
             classes="as-thinking",
         )
         self._timer: Timer | None = None
@@ -253,6 +254,14 @@ class _ToolGroup:
 
 _DisplayBlock: TypeAlias = ContentBlock | _ToolGroup
 
+_TOOL_STATE_STYLES = {
+    "success": ("✓", "green"),
+    "error": ("✗", "red"),
+    "denied": ("⊘", "yellow"),
+    "interrupted": ("⚠", "yellow"),
+    "running": ("→", "cyan"),
+}
+
 
 def _group_tool_calls(content: Iterable[ContentBlock]) -> list[_DisplayBlock]:
     """Pair results and group consecutive tool calls like the Web UI."""
@@ -331,7 +340,8 @@ def _file_path(call: ToolCallBlock) -> str | None:
 def _tool_body(pair: _ToolPair) -> RenderableType:
     """Return the built-in detail rendering for one tool invocation."""
     items: list[RenderableType] = []
-    if pair.call.input.strip():
+    compact_result_only = pair.call.name == "Read"
+    if pair.call.input.strip() and not compact_result_only:
         items.append(Text("input", style="dim"))
         items.append(
             Syntax(
@@ -349,20 +359,13 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
     output = _result_text(result)
     name = pair.call.name
     diff = result.metadata.get("diff")
-    if name in ("Edit", "Write") and isinstance(diff, str) and diff:
-        rendered: RenderableType = Syntax(
+    rendered: RenderableType
+    if compact_result_only:
+        rendered = Text(output or "(no output)", style="dim")
+    elif name in ("Edit", "Write") and isinstance(diff, str) and diff:
+        rendered = Syntax(
             diff,
             "diff",
-            word_wrap=False,
-            background_color="default",
-        )
-    elif name == "Read":
-        path = _file_path(pair.call) or ""
-        lexer = os.path.splitext(path)[1].lstrip(".") or "text"
-        rendered = Syntax(
-            output,
-            lexer,
-            line_numbers=True,
             word_wrap=False,
             background_color="default",
         )
@@ -382,29 +385,35 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
         "interrupted": "dim italic",
         "running": "dim italic",
     }.get(str(result.state), "dim")
-    items.append(Text(f"output · {result.state}", style=state_style))
+    if not compact_result_only:
+        items.append(Text(f"output · {result.state}", style=state_style))
     items.append(rendered)
     return Group(*items)
 
 
-def _tool_title(pair: _ToolPair) -> str:
+def _tool_title(
+    pair: _ToolPair,
+    *,
+    show_running_icon: bool = True,
+) -> str:
     state = pair.result.state if pair.result is not None else "running"
-    icon = {
-        "success": "✓",
-        "error": "✗",
-        "denied": "⊘",
-        "interrupted": "⚠",
-        "running": "→",
-    }.get(str(state), "·")
+    icon, style = _TOOL_STATE_STYLES.get(str(state), ("·", ""))
     path = _file_path(pair.call)
     primary = os.path.basename(path) if path else ""
-    details = f" {primary}" if primary else ""
+    details = f" {escape(primary)}" if primary else ""
     if pair.call.name in ("Edit", "Write") and pair.result is not None:
         diff = pair.result.metadata.get("diff")
         if isinstance(diff, str) and diff:
             added, removed = _diff_stats(diff)
             details += f"  +{added} -{removed}"
-    return f"{icon} {pair.call.name}{details}"
+    icon_prefix = f"{icon} " if show_running_icon or state != "running" else ""
+    name = escape(pair.call.name)
+    styled_tool = (
+        f"[{style}]{icon_prefix}[bold]{name}[/bold][/]"
+        if style
+        else f"{icon_prefix}[bold]{name}[/bold]"
+    )
+    return f"{styled_tool}{details}"
 
 
 class ToolCallUI(Vertical):
@@ -424,18 +433,31 @@ class ToolCallUI(Vertical):
         yield Static(_tool_body(self.pair), classes="as-tool-body")
 
 
-def _tool_group_title(group: _ToolGroup) -> str:
+def _tool_group_state(group: _ToolGroup) -> str:
+    states = {
+        (str(pair.result.state) if pair.result is not None else "running")
+        for pair in group.calls
+    }
+    for state in ("error", "denied", "interrupted", "running"):
+        if state in states:
+            return state
+    return "success"
+
+
+def _tool_group_title(group: _ToolGroup, *, expanded: bool = False) -> str:
+    state = _tool_group_state(group)
+    _, style = _TOOL_STATE_STYLES[state]
+    disclosure = "↓" if expanded else "→"
     if len(group.calls) == 1:
-        return _tool_title(group.calls[0])
+        return (
+            f"[{style}]{disclosure}[/] "
+            f"{_tool_title(group.calls[0], show_running_icon=False)}"
+        )
     counts: dict[str, int] = {}
     added = 0
     removed = 0
-    running = False
     for pair in group.calls:
         counts[pair.call.name] = counts.get(pair.call.name, 0) + 1
-        running = (
-            running or pair.result is None or pair.result.state == "running"
-        )
         if pair.result is not None:
             diff = pair.result.metadata.get("diff")
             if isinstance(diff, str):
@@ -449,13 +471,19 @@ def _tool_group_title(group: _ToolGroup) -> str:
     summary = ", ".join(pieces) or "Tools"
     if added or removed:
         summary += f"  +{added} -{removed}"
-    return f"{'→' if running else '✓'} {summary}"
+    icon, _ = _TOOL_STATE_STYLES[state]
+    result_prefix = "" if state == "running" else f"{icon} "
+    return (
+        f"[{style}]{disclosure} {result_prefix}"
+        f"[bold]{escape(summary)}[/bold][/]"
+    )
 
 
 class ToolGroupUI(Collapsible):
     """A collapsed group of consecutive tool invocations."""
 
     def __init__(self, group: _ToolGroup) -> None:
+        self.group = group
         self.call_ids = {pair.call.id for pair in group.calls}
         multiple = len(group.calls) > 1
         super().__init__(
@@ -468,10 +496,14 @@ class ToolGroupUI(Collapsible):
             ),
             title=_tool_group_title(group),
             collapsed=True,
-            collapsed_symbol="▸",
-            expanded_symbol="▾",
+            collapsed_symbol="",
+            expanded_symbol="",
             classes="as-tool-group",
         )
+
+    def _watch_collapsed(self, collapsed: bool) -> None:
+        super()._watch_collapsed(collapsed)
+        self.title = _tool_group_title(self.group, expanded=not collapsed)
 
 
 class MessageUI(Vertical):
@@ -563,8 +595,8 @@ class MessageUI(Vertical):
                 Markdown(text, classes="as-hint-body"),
                 title=f"Hint{source}",
                 collapsed=True,
-                collapsed_symbol="›",
-                expanded_symbol="⌄",
+                collapsed_symbol="→",
+                expanded_symbol="↓",
                 classes="as-hint",
             )
             self._block_uis[block.id] = widget
@@ -683,7 +715,7 @@ class MessagesUI(VerticalScroll):
     MessageUI {
         width: 100%;
         height: auto;
-        margin: 0 0 1 0;
+        margin: 0;
         padding: 0;
     }
 
@@ -699,6 +731,7 @@ class MessagesUI(VerticalScroll):
 
     .as-message-header {
         height: 1;
+        margin-bottom: 1;
         color: $text-muted;
         text-style: bold;
     }
@@ -731,7 +764,7 @@ class MessagesUI(VerticalScroll):
         background: transparent;
         border-top: none;
         padding: 0;
-        margin-top: 1;
+        margin: 0 0 1 0;
     }
 
     .as-thinking:ansi, .as-tool-group:ansi, .as-hint:ansi {
@@ -745,12 +778,17 @@ class MessagesUI(VerticalScroll):
         width: 100%;
         padding: 0 1;
         background: transparent;
-        color: $text-muted;
         text-style: none;
+    }
+
+    .as-thinking > CollapsibleTitle,
+    .as-hint > CollapsibleTitle {
+        color: $text-muted;
     }
 
     .as-tool-group > CollapsibleTitle {
         width: auto;
+        padding-left: 0;
     }
 
     .as-thinking > CollapsibleTitle:hover,
@@ -796,7 +834,7 @@ class MessagesUI(VerticalScroll):
     .as-tool-body {
         width: 100%;
         height: auto;
-        padding-left: 2;
+        padding-left: 1;
         color: $text-muted;
         background: transparent;
     }
