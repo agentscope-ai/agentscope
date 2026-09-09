@@ -12,8 +12,11 @@ Why Blender in the middle, rather than a video model straight from the
 text: **motion you can dictate.** The captain's arms rise over exactly 40
 frames, the camera pushes in at a fixed speed, the confetti falls under
 real gravity. A diffusion model guesses at all of that; Blender does what
-it is told. The video model comes in at the end, where a look is what
-you want and physics is already settled.
+it is told.
+
+So Blender renders a **white model** — untextured grey geometry, correct
+motion, correct camera — and Wan 3.0 paints it. Physics from the one that
+can be told; looks from the one that is good at looks.
 
 Three things are worth watching for.
 
@@ -32,6 +35,7 @@ path and a line on what was built.
 Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
+    export DASHSCOPE_WORKSPACE_ID=llm-...     # 业务空间 ID, from the console
     brew install --cask blender
     # install Blender's own MCP add-on (addon/blender_mcp_addon in
     # https://projects.blender.org/lab/blender_mcp) and turn on its
@@ -44,8 +48,11 @@ import argparse
 import asyncio
 import os
 import urllib.request
+from http import HTTPStatus
 from typing import AsyncGenerator, Type
 
+import dashscope
+import requests
 from dashscope import VideoSynthesis
 from pydantic import BaseModel
 
@@ -80,34 +87,84 @@ from agentscope._utils._common import _generate_id
 DEFAULT_STORY = "世界杯决赛终场哨响，中国队队长在队友的簇拥下走上领奖台，" + "双手举起大力神杯，彩带从天而降，看台上红旗翻涌。"
 
 
-async def restyle_video(video_path: str, look: str) -> str:
-    """Re-render a video in a described look and return the new file's path.
+VIDEO_MODEL = "wan3.0-video"
 
-    Runs Wan 2.7 video editing: motion, timing and framing stay as they
-    are, the look changes to match the description.
+
+def _upload(video_path: str, api_key: str) -> str:
+    """Put a local file in Model Studio's temporary space, as an
+    ``oss://`` URL good for 48 hours.
+
+    A reference video has to be reachable by the service: unlike an
+    image it cannot be inlined as base64, so a local render has to go
+    somewhere first. The upload is bound to the model that will read it.
+    """
+    policy = requests.get(
+        "https://dashscope.aliyuncs.com/api/v1/uploads",
+        params={"action": "getPolicy", "model": VIDEO_MODEL},
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    ).json()["data"]
+
+    name = os.path.basename(video_path)
+    key = f"{policy['upload_dir']}/{name}"
+    with open(video_path, "rb") as handle:
+        response = requests.post(
+            policy["upload_host"],
+            files={
+                "OSSAccessKeyId": (None, policy["oss_access_key_id"]),
+                "Signature": (None, policy["signature"]),
+                "policy": (None, policy["policy"]),
+                "x-oss-object-acl": (None, policy["x_oss_object_acl"]),
+                "x-oss-forbid-overwrite": (
+                    None,
+                    policy["x_oss_forbid_overwrite"],
+                ),
+                "key": (None, key),
+                "success_action_status": (None, "200"),
+                "file": (name, handle),
+            },
+            timeout=600,
+        )
+    response.raise_for_status()
+    return f"oss://{key}"
+
+
+async def restyle_video(video_path: str, look: str) -> str:
+    """Paint a white-model render in a described look, and return the
+    path of the result.
+
+    The render goes in as a reference video, so its motion, timing and
+    framing are what come back; the look is what changes.
 
     Args:
         video_path (`str`):
-            Absolute path to the source video, 2–10 seconds long.
+            Absolute path to the render. At most 15 seconds, mp4 or mov,
+            at least 16 fps — the model's own limits on a reference.
         look (`str`):
-            The look to apply, e.g. ``"1990s hand-drawn sports anime,
-            cel shading, film grain"``.
+            What it should look like, e.g. ``"把整个画面改成 1990 年代
+            手绘体育动画，赛璐璐上色，胶片颗粒"``.
     """
     api_key = os.environ["DASHSCOPE_API_KEY"]
 
     def run() -> str:
         task = VideoSynthesis.async_call(
-            model="wan2.7-videoedit",
-            media=[{"type": "video", "url": video_path}],
-            prompt=look,
-            resolution="720P",
             api_key=api_key,
+            model=VIDEO_MODEL,
+            prompt=look,
+            media=[
+                {
+                    "type": "reference_video",
+                    "url": _upload(video_path, api_key),
+                },
+            ],
+            resolution="720P",
+            ratio="adaptive",
+            prompt_extend=True,
         )
-        done = VideoSynthesis.wait(task, api_key=api_key)
-        if done.status_code != 200:
+        done = VideoSynthesis.wait(task=task, api_key=api_key)
+        if done.status_code != HTTPStatus.OK:
             raise RuntimeError(f"{done.code}: {done.message}")
-        root, _ = os.path.splitext(video_path)
-        out = f"{root}.restyled.mp4"
+        out = f"{os.path.splitext(video_path)[0]}.styled.mp4"
         urllib.request.urlretrieve(done.output.video_url, out)
         return out
 
@@ -199,21 +256,26 @@ async def build_sop(
             "start pose, end pose and frame range, and what physics "
             "applies — gravity on confetti, easing on a lift. Then list "
             "everything to model: people, props, crowd, with a one-line "
-            "look for each. The whole thing must run under ten seconds."
+            "note on shape and scale — no colours or materials, a later "
+            "step paints it. The whole thing must run under 15 seconds."
         ),
         model=model(),
         toolkit=Toolkit(tools=shared),
         offloader=workspace,
     )
-    animator = Agent(
-        name="animator",
+    blocker = Agent(
+        name="blocker",
         system_prompt=(
-            "You build and render animations in Blender through the tools "
-            "you are given. Look up the bpy API with search_api_docs "
-            "before writing code rather than guessing at it. Follow the "
-            "shot list to the frame: keyframe exactly the ranges it "
-            "gives and set the camera moves it specifies. Render to an "
-            f".mp4 under {workspace.workdir} and report the absolute path."
+            "You block out animations in Blender through the tools you "
+            "are given, as a white model: grey untextured geometry, "
+            "right shapes, right motion, right camera. No materials, no "
+            "lighting design — a later step paints all of that. Look up "
+            "the bpy API with search_api_docs before writing code rather "
+            "than guessing at it. Follow the shot list to the frame: "
+            "keyframe exactly the ranges it gives and set the camera "
+            "moves it specifies. Render one .mp4 under "
+            f"{workspace.workdir}, at most 15 seconds and at least 24 "
+            "fps, and report its absolute path."
         ),
         model=model(),
         toolkit=Toolkit(tools=[*shared, *await blender.list_tools()]),
@@ -222,9 +284,12 @@ async def build_sop(
     colorist = Agent(
         name="colorist",
         system_prompt=(
-            "You restyle a finished render with the tool you are given. "
-            "Describe the look in one sentence a painter would recognise, "
-            "apply it, and report the absolute path of the result."
+            "You paint a white-model render with the tool you are given. "
+            "Write the look as an instruction to a colourist — era, "
+            "medium, palette, light, grain — in one or two sentences, in "
+            "the language the scene is written in. The motion is already "
+            "settled, so say nothing about it. Report the absolute path "
+            "of the result and why that look."
         ),
         model=model(),
         toolkit=Toolkit(tools=[*shared, FunctionTool(restyle_video)]),
@@ -234,8 +299,8 @@ async def build_sop(
     return SOP(
         name="文字到风格化动画",
         description=(
-            "Storyboard it in frames, animate it in Blender, restyle the "
-            "render."
+            "Storyboard it in frames, block it out in Blender, paint the "
+            "white model."
         ),
         steps=[
             SOPStep(
@@ -243,30 +308,30 @@ async def build_sop(
                 description=(
                     "Turn the scene into a numbered shot list with the "
                     "motion written in frames, and a list of everything "
-                    "to model. Hand both over."
+                    "to model as bare geometry. Hand both over."
                 ),
                 executor=director,
                 verifier=HumanApproval(),
                 step_id="storyboard",
             ),
             SOPStep(
-                subject="Blender 建模与动画",
+                subject="Blender 白膜动画",
                 description=(
-                    "Build what the list names, keyframe the shots exactly "
-                    "as written, and render one .mp4 of at most ten "
-                    "seconds into the workspace. Hand over its absolute "
-                    "path and a line per shot on what was built."
+                    "Build what the list names as a white model, keyframe "
+                    "the shots exactly as written, and render one .mp4 of "
+                    "at most 15 seconds into the workspace. Hand over its "
+                    "absolute path and a line per shot on what was built."
                 ),
-                executor=animator,
+                executor=blocker,
                 verifier=HumanApproval(),
                 step_id="animate",
             ),
             SOPStep(
-                subject="视频风格化",
+                subject="风格化上色",
                 description=(
-                    "Restyle the render in a look that suits the scene and "
-                    "hand over the absolute path of the result, with the "
-                    "look you chose and why."
+                    "Paint the white model in a look that suits the scene "
+                    "and hand over the absolute path of the result, with "
+                    "the look you chose and why."
                 ),
                 executor=colorist,
                 verifier=HumanApproval(),
@@ -338,6 +403,16 @@ async def main() -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise RuntimeError("Set DASHSCOPE_API_KEY before running this demo.")
+    workspace_id = os.environ.get("DASHSCOPE_WORKSPACE_ID")
+    if not workspace_id:
+        raise RuntimeError(
+            "Set DASHSCOPE_WORKSPACE_ID — video generation is only served "
+            "on the workspace-scoped endpoint.",
+        )
+    # Only the video model reads this; the chat model carries its own URL.
+    dashscope.base_http_api_url = (
+        f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1"
+    )
     here = os.path.dirname(os.path.abspath(__file__))
     blender = MCPClient(
         name="blender",

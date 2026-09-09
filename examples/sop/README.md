@@ -33,11 +33,12 @@ the same conclusion, until the attempt limit ends it.
 everyone knows and nobody has seen: **China lifting the World Cup.**
 
 ```
-分镜与建模需求  ------->  Blender 建模与动画  ------->  视频风格化
-director                  animator                     colorist
-frames, not vibes         Blender's own MCP            Wan 2.7 video edit
-|                         |                            |
-gate: a person            gate: a person               gate: a person
+分镜与建模需求  ------->  Blender 白膜动画  ------->  风格化上色
+director                  blocker                    colorist
+frames, not vibes         grey geometry, exact       Wan 3.0 paints it
+                          motion, right camera
+|                         |                          |
+gate: a person            gate: a person             gate: a person
 ```
 
 ### Why Blender in the middle
@@ -45,9 +46,14 @@ gate: a person            gate: a person               gate: a person
 A video model straight from the text would *guess* at the motion. Blender
 does what it is told: the captain's arms rise over exactly 40 frames, the
 camera pushes in at one fixed speed, the confetti falls under real
-gravity. So the storyboard is written **in frames**, the animator keys
-**exactly those frames**, and only then — with the physics settled — does
-a video model come in, at the one step where a *look* is what you want.
+gravity.
+
+So the middle step renders a **white model** — grey untextured geometry,
+right shapes, right motion, right camera, no materials and no lighting
+design — and the last step hands that to Wan 3.0 to paint. Physics from
+the one that can be told; looks from the one that is good at looks. The
+storyboard is written **in frames** and the blocker keys **exactly those
+frames**, so nothing downstream can drift.
 
 That is also why the steps split where they do: three different kinds of
 work, and a person can check each without knowing the next.
@@ -72,6 +78,7 @@ StdioMCPConfig(
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
+export DASHSCOPE_WORKSPACE_ID=llm-...   # 业务空间 ID, from the Model Studio console
 brew install --cask blender
 # install Blender's own MCP add-on — addon/blender_mcp_addon from
 # https://projects.blender.org/lab/blender_mcp — and enable auto-start
@@ -102,25 +109,38 @@ the shot list, then the render's path and a line per shot, then the
 result's path and the look chosen. Each agent is handed exactly the tools
 its milestone needs on top of that.
 
-### The restyle is one tool
+### Painting the white model is one tool
 
-`restyle_video` calls Wan 2.7's video-editing model through the DashScope
-SDK. A local path is enough — the SDK uploads it and resolves the
-temporary URL itself — and the result is written back beside the source:
+`restyle_video` hands the render to `wan3.0-video` as a **reference
+video**, so the motion, timing and framing that come back are the ones
+Blender produced — only the look changes.
+
+A reference video cannot be inlined the way an image can, so the render
+goes to Model Studio's temporary space first and comes back as an
+`oss://` URL good for 48 hours:
 
 ```python
         task = VideoSynthesis.async_call(
-            model="wan2.7-videoedit",
-            media=[{"type": "video", "url": video_path}],
-            prompt=look,
-            resolution="720P",
             api_key=api_key,
+            model=VIDEO_MODEL,
+            prompt=look,
+            media=[{"type": "reference_video",
+                    "url": _upload(video_path, api_key)}],
+            resolution="720P",
+            ratio="adaptive",
+            prompt_extend=True,
         )
-        done = VideoSynthesis.wait(task, api_key=api_key)
+        done = VideoSynthesis.wait(task=task, api_key=api_key)
 ```
 
-The input has to be 2–10 seconds, which is why the storyboard is told to
-stay under ten.
+The upload is a `getPolicy` call followed by a form POST — the SDK adds
+`X-DashScope-OssResourceResolve` itself, and binds the file to the model
+that will read it. The model's own limits on a reference video are why
+the storyboard is told to stay under **15 seconds** at **≥24 fps**.
+
+Video generation is served only on the workspace-scoped endpoint, hence
+`DASHSCOPE_WORKSPACE_ID`. Setting `dashscope.base_http_api_url` only
+affects the video model here; the chat model carries its own URL.
 
 ### Every verifier here is a person
 
