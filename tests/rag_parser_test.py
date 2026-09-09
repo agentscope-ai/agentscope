@@ -1210,6 +1210,78 @@ class WordParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_empty_paragraph_is_preserved_between_text(self) -> None:
+        """A blank paragraph between text paragraphs remains a blank line."""
+        docx_bytes = _make_docx_simple(
+            ["Paragraph one.", "", "Paragraph two."],
+        )
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\nParagraph two.",
+        )
+
+    async def test_consecutive_empty_paragraphs_are_preserved(self) -> None:
+        """Consecutive blank paragraphs preserve each intervening line."""
+        docx_bytes = _make_docx_simple(
+            ["Paragraph one.", "", "", "Paragraph two."],
+        )
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\n\nParagraph two.",
+        )
+
+    async def test_empty_paragraph_with_bookmark_is_preserved(self) -> None:
+        """Word often leaves bookmarks (e.g. ``_GoBack``) on blank
+        paragraphs, which are still blank lines."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = DocxDocument()
+        doc.add_paragraph("Paragraph one.")
+        blank = doc.add_paragraph("")
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), "0")
+        start.set(qn("w:name"), "_GoBack")
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), "0")
+        blank._element.append(start)  # pylint: disable=protected-access
+        blank._element.append(end)  # pylint: disable=protected-access
+        doc.add_paragraph("Paragraph two.")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\nParagraph two.",
+        )
+
+    async def test_trailing_empty_paragraphs_do_not_add_newlines(self) -> None:
+        """Trailing blank paragraphs do not leave a trailing newline."""
+        docx_bytes = _make_docx_simple(["Paragraph one.", "", ""])
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].content.text, "Paragraph one.")
+
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
         text."""

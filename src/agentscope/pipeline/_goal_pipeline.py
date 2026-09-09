@@ -303,6 +303,10 @@ class GoalPipeline:
                     break_loop = True
                 else:
                     self._iters += 1
+                    if self.verifier_reset_context:
+                        # Only the conversation, tool/task state stays
+                        self.verifier.state.context.clear()
+                        self.verifier.state.summary = ""
                     if self._iters >= self.max_iters:
                         # Out of attempts; the work never passed
                         break_loop = True

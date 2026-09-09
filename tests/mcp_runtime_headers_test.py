@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi.testclient import TestClient
+from mcp.client.streamable_http import create_mcp_http_client
 
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.workspace._gateway_client import GatewayClient
@@ -154,6 +155,12 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
 
     async def test_owning_the_client_keeps_transport_defaults(self) -> None:
         """Taking ownership must not change how the client is configured."""
+        async with create_mcp_http_client() as transport_default_client:
+            transport_defaults = {
+                "follow_redirects": transport_default_client.follow_redirects,
+                "read_timeout": transport_default_client.timeout.read,
+            }
+
         defaults: dict[str, Any] = {}
         for label, config in (
             (
@@ -187,10 +194,7 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                     "follow_redirects": False,
                     "read_timeout": 30.0,
                 },
-                "untimed": {
-                    "follow_redirects": True,
-                    "read_timeout": 300.0,
-                },
+                "untimed": transport_defaults,
             },
         )
 

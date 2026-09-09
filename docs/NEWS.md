@@ -2,6 +2,8 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-09] `INTE`:** Support DashScope, OpenAI, Gemini and xAI realtime APIs in `RealtimeAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/realtime/full-duplex)
+- **[2026-09] `FEAT` `Experimental`:** Realtime voice agent supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/realtime/overview)
 - **[2026-09] `FEAT`:** A2A protocol supported — chat with any remote A2A agent via `A2AAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/a2a)
 - **[2026-08] `FEAT`:** Pipeline supported — run multiple agents by a fixed logic behind one event stream. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/overview)
 - **[2026-08] `INTE`:** DingTalk channel supported. [Docs](https://docs.agentscope.io/latest/en/deploy/channel/dingtalk)
