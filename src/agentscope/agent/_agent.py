@@ -1823,27 +1823,12 @@ class Agent:
             )
             and not has_only_thinking_blocks
         ):
-            last_ctx = self._get_last_msg()
-            final_usage = (
-                Usage(
-                    input_tokens=last_ctx.usage.input_tokens,
-                    output_tokens=last_ctx.usage.output_tokens,
-                    cache_input_tokens=(
-                        last_ctx.usage.cache_input_tokens or 0
-                    ),
-                    cache_creation_input_tokens=(
-                        last_ctx.usage.cache_creation_input_tokens or 0
-                    ),
-                )
-                if last_ctx is not None and last_ctx.usage is not None
-                else None
-            )
             yield AssistantMsg(
                 id=self.state.reply_id,
                 name=self.name,
                 # Text only response message
                 content=list(completed_response.content),
-                usage=final_usage,
+                usage=self._get_reply_usage(),
                 # The INTERRUPTED case is excluded by the branch condition
                 finished_reason=ReplyFinishedReason.COMPLETED,
             )
@@ -3481,6 +3466,24 @@ class Agent:
             return last_msg
         return None
 
+    def _get_reply_usage(self) -> Usage | None:
+        """Get a copy of the accumulated usage for the current reply."""
+        last_msg = self._get_last_msg()
+        if (
+            last_msg is None
+            or last_msg.id != self.state.reply_id
+            or last_msg.usage is None
+        ):
+            return None
+        return Usage(
+            input_tokens=last_msg.usage.input_tokens,
+            output_tokens=last_msg.usage.output_tokens,
+            cache_input_tokens=last_msg.usage.cache_input_tokens or 0,
+            cache_creation_input_tokens=(
+                last_msg.usage.cache_creation_input_tokens or 0
+            ),
+        )
+
     def _next_action(
         self,
         final_msg: Msg | None = None,
@@ -3553,6 +3556,7 @@ class Agent:
                     id=self.state.reply_id,
                     name=self.name,
                     content="The required structured output is generated.",
+                    usage=self._get_reply_usage(),
                     finished_reason=ReplyFinishedReason.COMPLETED,
                     structured_output=deepcopy(
                         self.state.reply_context.structured_output,
