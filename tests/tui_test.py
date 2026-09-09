@@ -13,7 +13,7 @@ import unittest
 
 from textual.app import App, ComposeResult
 from textual.message import Message as TextualMessage
-from textual.widgets import OptionList, Static
+from textual.widgets import Collapsible, OptionList, Static
 
 from agentscope.event import (
     ReplyEndEvent,
@@ -228,10 +228,20 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                     chat = app.query_one(ChatUI)
                     composer = app.query_one(ComposerUI)
                     screenshot = app.export_screenshot(simplify=True)
+                    message_uis = list(chat.query(MessageUI))
+                    tool_group = chat.query_one(ToolGroupUI)
 
                     self.assertEqual(
                         (chat.region.width, chat.region.height),
                         size,
+                    )
+                    self.assertEqual(
+                        message_uis[0].region.x,
+                        message_uis[1].region.x,
+                    )
+                    self.assertEqual(
+                        len(tool_group.query(Collapsible)),
+                        0,
                     )
                     self.assertLessEqual(composer.region.right, size[0])
                     self.assertLessEqual(composer.region.bottom, size[1])

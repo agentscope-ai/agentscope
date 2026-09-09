@@ -15,7 +15,6 @@ import os
 from typing import Iterable, Sequence, TypeAlias
 
 from rich.console import Group, RenderableType
-from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
@@ -172,6 +171,8 @@ class ThinkingUI(Collapsible):
             self.markdown,
             title=self._title_text(),
             collapsed=True,
+            collapsed_symbol="›",
+            expanded_symbol="⌄",
             classes="as-thinking",
         )
         self._timer: Timer | None = None
@@ -231,7 +232,7 @@ class AttachmentUI(Static):
             label.append("  open", style=f"blue underline link {url}")
         if self.block.finished_at is None:
             label.append("  receiving…", style="yellow")
-        return Panel(label, border_style="dim magenta", padding=(0, 1))
+        return label
 
     def replace(self, block: DataBlock) -> None:
         self.block = block
@@ -330,17 +331,13 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
     """Return the built-in detail rendering for one tool invocation."""
     items: list[RenderableType] = []
     if pair.call.input.strip():
+        items.append(Text("input", style="dim cyan"))
         items.append(
-            Panel(
-                Syntax(
-                    _pretty_json(pair.call.input),
-                    "json",
-                    word_wrap=True,
-                    background_color="default",
-                ),
-                title="input",
-                title_align="left",
-                border_style="dim cyan",
+            Syntax(
+                _pretty_json(pair.call.input),
+                "json",
+                word_wrap=True,
+                background_color="default",
             ),
         )
     result = pair.result
@@ -355,7 +352,6 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
         rendered: RenderableType = Syntax(
             diff,
             "diff",
-            line_numbers=True,
             word_wrap=False,
             background_color="default",
         )
@@ -385,14 +381,8 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
         "interrupted": "yellow",
         "running": "cyan",
     }.get(str(result.state), "dim")
-    items.append(
-        Panel(
-            rendered,
-            title=f"result · {result.state}",
-            title_align="left",
-            border_style=state_style,
-        ),
-    )
+    items.append(Text(f"output · {result.state}", style=state_style))
+    items.append(rendered)
     return Group(*items)
 
 
@@ -416,19 +406,26 @@ def _tool_title(pair: _ToolPair) -> str:
     return f"{icon} {pair.call.name}{details}"
 
 
-class ToolCallUI(Collapsible):
-    """One built-in, expandable tool call/result rendering."""
+class ToolCallUI(Vertical):
+    """One flat tool call/result row inside an expanded tool group."""
 
-    def __init__(self, pair: _ToolPair) -> None:
-        super().__init__(
-            Static(_tool_body(pair), classes="as-tool-body"),
-            title=_tool_title(pair),
-            collapsed=True,
-            classes="as-tool-call",
-        )
+    def __init__(self, pair: _ToolPair, *, show_title: bool) -> None:
+        super().__init__(classes="as-tool-call")
+        self.pair = pair
+        self.show_title = show_title
+
+    def compose(self) -> ComposeResult:
+        if self.show_title:
+            yield Static(
+                _tool_title(self.pair),
+                classes="as-tool-call-title",
+            )
+        yield Static(_tool_body(self.pair), classes="as-tool-body")
 
 
 def _tool_group_title(group: _ToolGroup) -> str:
+    if len(group.calls) == 1:
+        return _tool_title(group.calls[0])
     counts: dict[str, int] = {}
     added = 0
     removed = 0
@@ -445,13 +442,13 @@ def _tool_group_title(group: _ToolGroup) -> str:
                 added += pair_added
                 removed += pair_removed
     pieces = [
-        f"{name} {count}" if count > 1 else name
+        f"{name} ×{count}" if count > 1 else name
         for name, count in counts.items()
     ]
     summary = ", ".join(pieces) or "Tools"
     if added or removed:
         summary += f"  +{added} -{removed}"
-    return f"{'◌' if running else '◆'} {summary}"
+    return f"{'…' if running else '✓'} {summary}"
 
 
 class ToolGroupUI(Collapsible):
@@ -459,10 +456,18 @@ class ToolGroupUI(Collapsible):
 
     def __init__(self, group: _ToolGroup) -> None:
         self.call_ids = {pair.call.id for pair in group.calls}
+        multiple = len(group.calls) > 1
         super().__init__(
-            Vertical(*(ToolCallUI(pair) for pair in group.calls)),
+            Vertical(
+                *(
+                    ToolCallUI(pair, show_title=multiple)
+                    for pair in group.calls
+                ),
+            ),
             title=_tool_group_title(group),
             collapsed=True,
+            collapsed_symbol="›",
+            expanded_symbol="⌄",
             classes="as-tool-group",
         )
 
@@ -544,8 +549,10 @@ class MessageUI(Vertical):
             source = f" from {block.source}" if block.source else ""
             widget = Collapsible(
                 Markdown(text, classes="as-hint-body"),
-                title=f"◇ Hint{source}",
+                title=f"Hint{source}",
                 collapsed=True,
+                collapsed_symbol="›",
+                expanded_symbol="⌄",
                 classes="as-hint",
             )
             self._block_uis[block.id] = widget
@@ -658,24 +665,31 @@ class MessagesUI(VerticalScroll):
         width: 100%;
         height: auto;
         margin: 0 0 1 0;
-        padding: 0 1;
+        padding: 0;
     }
 
     .as-message-user {
-        margin-left: 8;
-        background: $boost;
-        border-left: tall $primary;
+        margin-left: 0;
+        background: transparent;
     }
 
     .as-message-assistant {
-        margin-right: 4;
-        border-left: tall $accent;
+        margin-right: 0;
+        background: transparent;
     }
 
     .as-message-header {
         height: 1;
         color: $text-muted;
         text-style: bold;
+    }
+
+    .as-message-user > .as-message-header {
+        color: $primary;
+    }
+
+    .as-message-assistant > .as-message-header {
+        color: $accent;
     }
 
     .as-message-footer {
@@ -690,21 +704,60 @@ class MessagesUI(VerticalScroll):
         height: auto;
     }
 
-    .as-thinking-body, .as-tool-body, .as-hint-body {
-        padding: 0 1;
-        background: $surface;
+    .as-thinking, .as-tool-group, .as-hint {
+        background: transparent;
+        border-top: none;
+        padding: 0;
+        margin-top: 1;
+    }
+
+    .as-thinking > CollapsibleTitle,
+    .as-tool-group > CollapsibleTitle,
+    .as-hint > CollapsibleTitle {
+        width: 100%;
+        padding: 0;
+        background: transparent;
+        color: $text-muted;
+        text-style: none;
+    }
+
+    .as-thinking > Contents,
+    .as-tool-group > Contents,
+    .as-hint > Contents {
+        padding: 0 0 0 2;
+    }
+
+    .as-thinking-body, .as-hint-body {
+        padding: 0;
+        background: transparent;
     }
 
     .as-tool-call {
         width: 100%;
         height: auto;
-        margin-left: 1;
+        margin-top: 1;
+    }
+
+    .as-tool-call-title {
+        width: 100%;
+        height: 1;
+        color: $text;
+    }
+
+    .as-tool-body {
+        width: 100%;
+        height: auto;
+        padding-left: 2;
+        color: $text-muted;
+        background: transparent;
     }
 
     .as-attachment {
         width: 100%;
         height: auto;
-        margin: 1 0 0 0;
+        margin-top: 1;
+        padding-left: 2;
+        color: $text-muted;
     }
     """
 
