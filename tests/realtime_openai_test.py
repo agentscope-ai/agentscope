@@ -119,10 +119,21 @@ class OpenAISessionUpdateTest(unittest.TestCase):
     """The GA session.update payload sent on connect."""
 
     def test_server_vad_payload(self) -> None:
-        """Server VAD, transcription and tools, in the GA session shape."""
+        """Server VAD, transcription and tools, in the GA session shape;
+        the toolkit's chat-style tool wrapper is flattened."""
         model = OpenAIRealtimeModel("gpt-realtime-2.1", CRED)
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Weather by city.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ]
         self.assertDictEqual(
-            model._session_update("be nice", [{"type": "function"}]),
+            model._session_update("be nice", tools),
             {
                 "type": "session.update",
                 "session": {
@@ -153,7 +164,17 @@ class OpenAISessionUpdateTest(unittest.TestCase):
                             "voice": "marin",
                         },
                     },
-                    "tools": [{"type": "function"}],
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "get_weather",
+                            "description": "Weather by city.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {},
+                            },
+                        },
+                    ],
                 },
             },
         )
@@ -209,8 +230,54 @@ class OpenAISessionUpdateTest(unittest.TestCase):
             CRED,
             parameters=OpenAIRealtimeModel.Parameters(turn_detection="none"),
         )
-        session = model._session_update("x", None)["session"]
-        self.assertIsNone(session["audio"]["input"]["turn_detection"])
+        self.assertDictEqual(
+            model._session_update("x", None),
+            {
+                "type": "session.update",
+                "session": {
+                    "type": "realtime",
+                    "instructions": "x",
+                    "output_modalities": ["audio"],
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "turn_detection": None,
+                            "transcription": {
+                                "model": "gpt-4o-mini-transcribe",
+                            },
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "voice": "marin",
+                        },
+                    },
+                },
+            },
+        )
+
+    def test_failed_response_is_an_error(self) -> None:
+        """A ``response.done`` with status ``failed`` is not a reply."""
+        model = OpenAIRealtimeModel("gpt-realtime-2.1", CRED)
+        model._parse({"type": "response.created", "response": {"id": "r"}})
+        self.assertEqual(
+            model._parse(
+                {
+                    "type": "response.done",
+                    "response": {
+                        "id": "r",
+                        "status": "failed",
+                        "status_details": {
+                            "type": "failed",
+                            "error": {
+                                "code": "server_error",
+                                "message": "boom",
+                            },
+                        },
+                    },
+                },
+            ),
+            me.ModelErrorEvent(code="server_error", message="boom"),
+        )
 
 
 class OpenAIParseTest(unittest.TestCase):

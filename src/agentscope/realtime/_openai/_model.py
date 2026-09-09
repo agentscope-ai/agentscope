@@ -284,7 +284,13 @@ class OpenAIRealtimeModel(RealtimeModelBase):
             },
         }
         if tools and self.card.supports_tools:
-            session["tools"] = tools
+            # The toolkit's chat-style wrapper, flattened to the realtime
+            # shape: ``type`` beside ``name``/``description``/``parameters``.
+            session["tools"] = [
+                {"type": "function", **t["function"]}
+                for t in tools
+                if "function" in t
+            ]
         return {"type": "session.update", "session": session}
 
     async def _send(self, payload: dict) -> None:
@@ -345,12 +351,23 @@ class OpenAIRealtimeModel(RealtimeModelBase):
                 return me.ResponseCreatedEvent(item_id=self._item_id)
 
             case "response.done":
-                usage = data.get("response", {}).get("usage") or {}
-                event = me.ResponseDoneEvent(
+                response = data.get("response", {})
+                usage = response.get("usage") or {}
+                event: me.ModelEvent = me.ResponseDoneEvent(
                     item_id=self._item_id,
                     input_tokens=usage.get("input_tokens") or 0,
                     output_tokens=usage.get("output_tokens") or 0,
                 )
+                # ``cancelled`` and ``incomplete`` still delivered a reply;
+                # only ``failed`` is an error.
+                if response.get("status") == "failed":
+                    err = (response.get("status_details") or {}).get(
+                        "error",
+                    ) or {}
+                    event = me.ModelErrorEvent(
+                        code=err.get("code") or "response_failed",
+                        message=err.get("message", ""),
+                    )
                 self._response_id = ""
                 self._item_id = ""
                 return event
