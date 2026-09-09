@@ -269,22 +269,20 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         "hidden",
                     )
                     self.assertEqual(editor.styles.background.a, 0)
-                    self.assertIn(
-                        "YOU  user",
-                        str(
-                            message_uis[0]
-                            .query_one(".as-message-header", Static)
-                            .render(),
-                        ),
+                    self.assertEqual(
+                        len(composer.query(".as-section-rule")),
+                        2,
                     )
-                    self.assertIn(
-                        "AGENT  agent",
-                        str(
-                            message_uis[1]
-                            .query_one(".as-message-header", Static)
-                            .render(),
-                        ),
+                    self.assertEqual(
+                        message_uis[0]._header_text().title.plain,
+                        "user",
                     )
+                    self.assertEqual(
+                        message_uis[1]._header_text().title.plain,
+                        "agent",
+                    )
+                    self.assertNotIn("YOU", screenshot)
+                    self.assertNotIn("AGENT", screenshot)
                     tool_group.collapsed = False
                     await pilot.pause()
                     self.assertLess(
@@ -431,11 +429,24 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertFalse(app.query_one(ComposerUI).display)
-            self.assertTrue(app.query_one(HitlUI).display)
+            hitl = app.query_one(HitlUI)
+            self.assertTrue(hitl.display)
+            self.assertEqual(len(hitl.query(".as-section-rule")), 1)
             options = app.query_one(OptionList)
             self.assertTrue(options.has_focus)
             self.assertEqual(options.highlighted, 0)
-            await pilot.press("down", "enter")
+            self.assertTrue(
+                str(options.get_option_at_index(0).prompt).startswith("→ 1."),
+            )
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertTrue(
+                str(options.get_option_at_index(0).prompt).startswith("  1."),
+            )
+            self.assertTrue(
+                str(options.get_option_at_index(1).prompt).startswith("→ 2."),
+            )
+            await pilot.press("enter")
             await pilot.pause()
 
             self.assertEqual(len({id(message) for message in observed}), 1)

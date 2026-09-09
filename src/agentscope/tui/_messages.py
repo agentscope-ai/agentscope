@@ -15,6 +15,7 @@ import os
 from typing import Iterable, Sequence, TypeAlias
 
 from rich.console import Group, RenderableType
+from rich.rule import Rule
 from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
@@ -467,8 +468,8 @@ class ToolGroupUI(Collapsible):
             ),
             title=_tool_group_title(group),
             collapsed=True,
-            collapsed_symbol="›",
-            expanded_symbol="⌄",
+            collapsed_symbol="▸",
+            expanded_symbol="▾",
             classes="as-tool-group",
         )
 
@@ -509,11 +510,13 @@ class MessageUI(Vertical):
         else:
             self._footer = None
 
-    def _header_text(self) -> Text:
-        role = "YOU" if self.message.role == "user" else "AGENT"
-        header = Text(role, style="dim")
-        header.append(f"  {self.message.name}", style="bold")
-        return header
+    def _header_text(self) -> Rule:
+        return Rule(
+            Text(self.message.name, style="bold #d8b66f"),
+            characters="─",
+            style="#766b5b",
+            align="left",
+        )
 
     def on_mount(self) -> None:
         if (
@@ -740,10 +743,14 @@ class MessagesUI(VerticalScroll):
     .as-tool-group > CollapsibleTitle,
     .as-hint > CollapsibleTitle {
         width: 100%;
-        padding: 0;
+        padding: 0 1;
         background: transparent;
         color: $text-muted;
         text-style: none;
+    }
+
+    .as-tool-group > CollapsibleTitle {
+        width: auto;
     }
 
     .as-thinking > CollapsibleTitle:hover,
@@ -752,8 +759,8 @@ class MessagesUI(VerticalScroll):
     .as-tool-group > CollapsibleTitle:focus,
     .as-hint > CollapsibleTitle:hover,
     .as-hint > CollapsibleTitle:focus {
-        background: $foreground 10%;
-        color: $foreground;
+        background: #b8945a 12%;
+        color: #d8b66f;
         text-style: bold;
     }
 

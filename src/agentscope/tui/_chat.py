@@ -56,6 +56,16 @@ class _ComposerTextArea(TextArea):
         await super()._on_key(event)
 
 
+class _HitlOptionList(OptionList):
+    """Option list whose mouse hover follows the keyboard highlight."""
+
+    def _on_mouse_move(self, event: events.MouseMove) -> None:
+        super()._on_mouse_move(event)
+        hovered = event.style.meta.get("option")
+        if isinstance(hovered, int):
+            self.highlighted = hovered
+
+
 class ComposerUI(Vertical):
     """Keyboard-driven multiline composer with targeted interruption."""
 
@@ -75,12 +85,14 @@ class ComposerUI(Vertical):
         self._running_reply_id: str | None = None
 
     def compose(self) -> ComposeResult:
+        yield Static("─" * 4096, classes="as-section-rule")
         yield _ComposerTextArea(
             placeholder="Message the agent…",
             id="as-composer-input",
             soft_wrap=True,
             compact=True,
         )
+        yield Static("─" * 4096, classes="as-section-rule")
         yield Static(id="as-composer-hint", classes="as-composer-hint")
 
     @property
@@ -155,12 +167,17 @@ class HitlUI(Vertical):
     def __init__(self) -> None:
         super().__init__(classes="as-hitl")
         self._pending: list[tuple[str, str, ToolCallBlock]] = []
+        self._choice_labels: list[str] = []
         self._submitting = False
 
     def compose(self) -> ComposeResult:
+        yield Static("─" * 4096, classes="as-section-rule")
         yield Static(id="as-hitl-title", classes="as-hitl-title")
         yield Static(id="as-hitl-body", classes="as-hitl-body")
-        yield OptionList(id="as-hitl-options", classes="as-hitl-options")
+        yield _HitlOptionList(
+            id="as-hitl-options",
+            classes="as-hitl-options",
+        )
         yield Static(id="as-hitl-hint", classes="as-hitl-hint")
 
     def set_pending(
@@ -199,22 +216,28 @@ class HitlUI(Vertical):
         self.query_one("#as-hitl-body", Static).update(body)
 
         options = self.query_one(OptionList)
-        choices: list[Option] = []
+        choice_specs: list[tuple[str, str]] = []
         if not waiting_external:
-            choices.append(Option("Allow once", id="allow"))
+            choice_specs.append(("Allow once", "allow"))
             if tool_call.suggested_rules:
                 rules = "; ".join(
                     f"{rule.behavior.value} {rule.tool_name}"
                     + (f" ({rule.rule_content})" if rule.rule_content else "")
                     for rule in tool_call.suggested_rules
                 )
-                choices.append(
-                    Option(f"Always allow with {rules}", id="always"),
+                choice_specs.append(
+                    (f"Always allow with {rules}", "always"),
                 )
-            choices.append(Option("Deny", id="deny"))
-        choices.append(Option("Interrupt reply", id="interrupt"))
+            choice_specs.append(("Deny", "deny"))
+        choice_specs.append(("Interrupt reply", "interrupt"))
+        self._choice_labels = [label for label, _ in choice_specs]
+        choices = [
+            Option(self._choice_prompt(index, label, index == 0), id=key)
+            for index, (label, key) in enumerate(choice_specs)
+        ]
         options.clear_options().add_options(choices)
         options.highlighted = 0
+        self._refresh_choice_prompts()
         options.disabled = self._submitting
         hint = (
             "Submitting…"
@@ -222,6 +245,23 @@ class HitlUI(Vertical):
             else "↑/↓ select · Enter confirm · Ctrl+C interrupt"
         )
         self.query_one("#as-hitl-hint", Static).update(hint)
+
+    @staticmethod
+    def _choice_prompt(index: int, label: str, selected: bool) -> str:
+        marker = "→" if selected else " "
+        return f"{marker} {index + 1}. {label}"
+
+    def _refresh_choice_prompts(self) -> None:
+        options = self.query_one(OptionList)
+        for index, label in enumerate(self._choice_labels):
+            options.replace_option_prompt_at_index(
+                index,
+                self._choice_prompt(
+                    index,
+                    label,
+                    index == options.highlighted,
+                ),
+            )
 
     def _confirm(self, confirmed: bool, always: bool = False) -> None:
         if not self._pending or self._submitting:
@@ -267,6 +307,10 @@ class HitlUI(Vertical):
         elif event.option_id == "interrupt":
             self._interrupt()
 
+    @on(OptionList.OptionHighlighted, "#as-hitl-options")
+    def _on_option_highlighted(self) -> None:
+        self._refresh_choice_prompts()
+
     def on_key(self, event: events.Key) -> None:
         if not self._pending or self._submitting:
             return
@@ -302,9 +346,11 @@ class ChatUI(Widget):
         background: transparent;
     }
 
-    ComposerUI {
-        border-top: solid $foreground 20%;
-        border-bottom: solid $foreground 20%;
+    .as-section-rule {
+        width: 100%;
+        height: 1;
+        color: #766b5b;
+        background: transparent;
     }
 
     #as-composer-input {
@@ -336,11 +382,22 @@ class ChatUI(Widget):
         background: transparent;
     }
 
+    .as-hitl-options:focus {
+        border: none;
+        background: transparent;
+        background-tint: transparent;
+    }
+
     .as-hitl-options > .option-list--option-highlighted,
     .as-hitl-options:focus > .option-list--option-highlighted {
-        color: $foreground;
-        background: $foreground 10%;
+        color: #d8b66f;
+        background: #b8945a 14%;
         text-style: bold;
+    }
+
+    .as-hitl-options > .option-list--option-hover {
+        color: #d8b66f;
+        background: #b8945a 10%;
     }
 
     .as-hitl-title {
