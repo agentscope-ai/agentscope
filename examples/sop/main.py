@@ -1,41 +1,42 @@
 # -*- coding: utf-8 -*-
-"""Handle a customer complaint by the book: establish, propose, reply.
+"""Turn a story outline into a stylised animation, one signed-off step at
+a time.
 
-Three milestones, each a checkpoint somebody actually cares about — is
-the story straight, is the offer within policy, is the letter safe to
-send. How any of them gets done is the agents' business.
+Three milestones, and a person signs off on each: the storyboard and the
+list of things to model, the animation Blender rendered, the restyled
+video that goes out. How any of them gets done — how many shots, how the
+rig is built, which filters make "sketch" look like a sketch — is the
+agents' business.
 
 Three things are worth watching for.
 
-**A verifier is just another agent.** Step one is judged by an auditor
-that can read ``orders.json`` and ``shipments.json`` itself, so "the
-facts check out" means they were checked, not that the write-up read
-plausibly. The engine cannot tell an auditor from a supervisor from
-nothing at all — it reads verdicts, never verifiers.
-
-**Waiting costs nothing.** A supervisor signs off step two, and its
-verifier says so by asking and stopping. The stream ends, this program
+**Every verifier here is a person, and none of them holds anything open.**
+:class:`HumanApproval` asks and stops. The stream ends, this program
 blocks on ``input()`` with no agent suspended behind it, and the run
-picks up when the answer arrives.
+picks up when the answer arrives — a second later or a week.
 
-**A refusal comes back as a critique.** Whatever a verifier says on the
-way to ``passed=False`` is handed to the executor verbatim on its next
-attempt, along with which attempt it is.
+**A refusal comes back as a critique.** Say ``n`` and give a reason; the
+executor gets it verbatim on its next attempt, with which attempt it is.
 
-``data/`` stands in for the systems a support agent would really query —
-an order service, a courier's API, the policy wiki. The SOP does not know
-or care where the facts come from; it only says that step one must hand
-over an account that survives checking.
+**A step hands over an account, not its workspace.** Step two reads step
+one's storyboard and modelling list; step three reads the path step two
+rendered to. Nothing else crosses — no files, no context, no tools.
 
-Run with::
+Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
+    uv tool install blender-mcp          # step two drives Blender over MCP
+    # open Blender, enable the blender-mcp addon, start its server
+    # ffmpeg on PATH                     # step three restyles the render
+
     python main.py
-    python main.py --complaint "订单 A-1051 到现在还没动静"
+    python main.py --story "一只猫在雨夜的屋顶上追一片发光的落叶"
 """
 import argparse
 import asyncio
 import os
+import shutil
+import subprocess
 from typing import AsyncGenerator, Type
 
 from pydantic import BaseModel
@@ -52,6 +53,7 @@ from agentscope.event import (
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
+from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     AssistantMsg,
     Msg,
@@ -61,21 +63,47 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.model import DashScopeChatModel
-from agentscope.sop import (
-    SOP,
-    SOPEngine,
-    SOPPhase,
-    SOPStep,
-)
-from agentscope.tool import Toolkit
+from agentscope.sop import SOP, SOPEngine, SOPPhase, SOPStep
+from agentscope.tool import FunctionTool, Toolkit
 from agentscope.types import ReplyFinishedReason
-from agentscope.workspace import LocalWorkspace
 from agentscope._utils._common import _generate_id
 
-DEFAULT_COMPLAINT = "订单 A-1043，说好三天到，两个多星期没收到，物流不动。我要求全额退款。"
+DEFAULT_STORY = "清晨的森林里，一只小狐狸第一次学着自己抓鱼，最后和一只白鹭分享了收获。"
+
+# Named looks, each an ffmpeg filter graph. A real pipeline would call a
+# model here; a filter graph is enough to see the step's shape.
+STYLES = {
+    "sketch": "edgedetect=low=0.1:high=0.3,negate,hue=s=0",
+    "vintage": (
+        "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131,"
+        "eq=contrast=0.9"
+    ),
+    "noir": "hue=s=0,eq=contrast=1.4:brightness=-0.05",
+}
 
 
-class SupervisorApproval:
+async def restyle_video(video_path: str, style: str) -> str:
+    """Re-render a video in a named look and return the new file's path.
+
+    Args:
+        video_path (`str`):
+            Path to the source video.
+        style (`str`):
+            One of ``sketch``, ``vintage``, ``noir``.
+    """
+    if style not in STYLES:
+        raise ValueError(f"Unknown style {style!r}; pick from {list(STYLES)}")
+    root, ext = os.path.splitext(video_path)
+    out = f"{root}.{style}{ext or '.mp4'}"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", video_path, "-vf", STYLES[style], out],
+        check=True,
+        capture_output=True,
+    )
+    return out
+
+
+class HumanApproval:
     """A verifier that is a person, and does not hold anything open.
 
     It satisfies the same protocol an :class:`~agentscope.agent.Agent`
@@ -84,7 +112,7 @@ class SupervisorApproval:
     it turns that answer into a verdict.
     """
 
-    name = "supervisor"
+    name = "reviewer"
 
     async def reply_stream(  # pylint: disable=unused-argument
         self,
@@ -119,7 +147,7 @@ class SupervisorApproval:
             return
 
         answer = str(inputs.execution_results[0].output).strip()
-        approved = answer.lower() in ("y", "yes", "是", "同意", "批准")
+        approved = answer.lower() in ("y", "yes", "是", "同意", "通过")
         yield AssistantMsg(
             name=self.name,
             content="",
@@ -131,126 +159,95 @@ class SupervisorApproval:
         )
 
 
-async def build_sop(
-    workspace: LocalWorkspace,
-    model_name: str,
-    api_key: str,
-) -> SOP:
-    """Assemble the procedure — executors, verifiers and all.
+async def build_sop(model_name: str, api_key: str, blender: MCPClient) -> SOP:
+    """Assemble the procedure — agents, tools and all.
 
     At this layer a SOP is code: a step holds the agent that runs it and
     the one that judges it, both already built.
     """
-    tools = await workspace.list_tools()
-    data = os.path.join(workspace.workdir, "data")
 
-    def model(stream: bool = True) -> DashScopeChatModel:
+    def model() -> DashScopeChatModel:
         return DashScopeChatModel(
             credential=DashScopeCredential(api_key=api_key),
             model=model_name,
-            stream=stream,
         )
 
-    support = Agent(
-        name="support",
+    director = Agent(
+        name="director",
         system_prompt=(
-            "You work in customer support. You establish what actually "
-            f"happened by reading the records in {data}, and you never "
-            "state anything they do not show."
-        ),
-        model=model(),
-        toolkit=Toolkit(tools=tools),
-        offloader=workspace,
-    )
-    auditor = Agent(
-        name="auditor",
-        system_prompt=(
-            "You audit a support agent's account of what happened. The "
-            f"records in {data} are the only source of truth — read them "
-            "and check every factual claim against them. Judge the facts, "
-            "not the writing. When you refuse, name the specific claims "
-            "that are wrong or unsupported so they can be fixed."
-        ),
-        model=model(),
-        toolkit=Toolkit(tools=tools),
-        offloader=workspace,
-    )
-    policy = Agent(
-        name="policy",
-        system_prompt=(
-            f"You apply the compensation policy in {data}/policy.md "
-            "literally. You do not invent goodwill, and you say which "
-            "clause each part of your proposal comes from."
-        ),
-        model=model(),
-        toolkit=Toolkit(tools=tools),
-        offloader=workspace,
-    )
-    # No tools at all: whoever writes to the customer works from the
-    # approved offer, not from the order system.
-    writer = Agent(
-        name="writer",
-        system_prompt=(
-            "You write to customers in Chinese: apologetic, concrete, "
-            "short. You have no access to any system — everything you "
-            "know comes from what you were handed."
+            "You break a story into a shot list a 3D artist can build "
+            "from. Number the shots; for each give the camera, the action "
+            "and its length in seconds. Then list every character, animal "
+            "and prop that has to be modelled, with a one-line look for "
+            "each. Keep it under a minute of animation."
         ),
         model=model(),
     )
-    safety = Agent(
-        name="safety",
+    animator = Agent(
+        name="animator",
         system_prompt=(
-            "You are the last check before a reply goes to a customer. "
-            "Refuse a draft that offers anything beyond what was "
-            "approved — no extra refunds, no delivery dates, no goodwill "
-            "nobody agreed to — or that is not written as an apology "
-            "with concrete next steps."
+            "You build and render animations in Blender through the tools "
+            "you are given. Work from the shot list and modelling list "
+            "exactly; do not invent shots. Render to an .mp4 and report "
+            "its absolute path."
         ),
         model=model(),
+        toolkit=Toolkit(tools=await blender.list_tools()),
+    )
+    colorist = Agent(
+        name="colorist",
+        system_prompt=(
+            "You restyle a rendered video with the tool you are given. "
+            "Pick the look that best fits the story, apply it, and report "
+            "the absolute path of the result and why that look."
+        ),
+        model=model(),
+        toolkit=Toolkit(tools=[FunctionTool(restyle_video)]),
     )
 
     return SOP(
-        name="客户投诉处理",
-        description="Establish the facts, propose redress, reply.",
+        name="故事到风格化动画",
+        description=(
+            "Storyboard it, animate it in Blender, restyle the render."
+        ),
         steps=[
             SOPStep(
-                subject="核实事实",
+                subject="分镜与建模需求",
                 description=(
-                    f"Read {data}/orders.json and {data}/shipments.json "
-                    "and work out what happened to this customer's order. "
-                    "Hand over an account: the order id, what was "
-                    "promised, what the tracking actually shows, and how "
-                    "many days late it now is. Every claim must be "
-                    "traceable to the records."
+                    "Turn the story into a numbered shot list and a list "
+                    "of everything that must be modelled — characters, "
+                    "animals, props — each with a one-line description of "
+                    "its look. Hand both over."
                 ),
-                executor=support,
-                verifier=auditor,
-                step_id="establish",
+                executor=director,
+                verifier=HumanApproval(),
+                step_id="storyboard",
             ),
             SOPStep(
-                subject="拟补偿方案",
+                subject="Blender 建模与动画",
                 description=(
-                    f"Read {data}/policy.md and propose what this "
-                    "customer should be offered, given the facts you were "
-                    "handed. Hand over the offer with the clause it comes "
-                    "from."
+                    "Build the models on the list, animate the shots in "
+                    "order, and render the whole thing to one .mp4. Hand "
+                    "over the absolute path of the render and a line per "
+                    "shot on what was built."
                 ),
-                executor=policy,
-                verifier=SupervisorApproval(),
-                step_id="propose",
+                executor=animator,
+                verifier=HumanApproval(),
+                step_id="animate",
             ),
             SOPStep(
-                subject="写回复客户",
+                subject="视频风格化",
                 description=(
-                    "Draft the reply to the customer in Chinese. Offer "
-                    "exactly what was approved and nothing more."
+                    "Restyle the render in the look that suits the story "
+                    "and hand over the absolute path of the result, with "
+                    "the look you chose and why."
                 ),
-                executor=writer,
-                verifier=safety,
-                step_id="reply",
+                executor=colorist,
+                verifier=HumanApproval(),
+                step_id="restyle",
             ),
         ],
-        sop_id="complaint",
+        sop_id="story-to-animation",
     )
 
 
@@ -310,25 +307,28 @@ async def main() -> None:
     """Run the procedure, pausing whenever a person is needed."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="qwen3.7-max")
-    parser.add_argument("--complaint", default=DEFAULT_COMPLAINT)
+    parser.add_argument("--story", default=DEFAULT_STORY)
     args = parser.parse_args()
 
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "Set the DASHSCOPE_API_KEY environment variable before "
-            "running this demo.",
-        )
+        raise RuntimeError("Set DASHSCOPE_API_KEY before running this demo.")
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is not on PATH; step three needs it.")
 
-    here = os.path.dirname(os.path.abspath(__file__))
-    async with LocalWorkspace(workdir=here) as workspace:
-        sop = await build_sop(workspace, args.model, api_key)
+    blender = MCPClient(
+        name="blender",
+        mcp_config=StdioMCPConfig(command="uvx", args=["blender-mcp"]),
+        is_stateful=True,
+    )
+    await blender.connect()
+    try:
+        sop = await build_sop(args.model, api_key, blender)
         engine = SOPEngine(sop)
         renderer = ConsoleRenderer()
 
-        inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent = (
-            UserMsg(name="user", content=args.complaint)
-        )
+        inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent
+        inputs = UserMsg(name="user", content=args.story)
         while True:
             pending: AgentEvent | None = None
             async for event in engine.reply_stream(inputs):
@@ -351,15 +351,17 @@ async def main() -> None:
             phase = engine.state.steps[step.id].phase.value
             print(f"   {step.subject}: {phase}")
 
-        reply = "".join(
+        result = "".join(
             block.text
-            for block in (engine.state.steps["reply"].submission or [])
+            for block in (engine.state.steps["restyle"].submission or [])
             if block.type == "text"
         )
-        if reply:
+        if result:
             print("\n" + "=" * 60)
-            print("给客户的回复：\n")
-            print(reply)
+            print("成片：\n")
+            print(result)
+    finally:
+        await blender.close()
 
 
 if __name__ == "__main__":
