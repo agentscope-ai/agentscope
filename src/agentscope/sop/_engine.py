@@ -115,7 +115,7 @@ class SOPEngine:
                 if not resuming:
                     record.given = self._handover(index)
                 yield CustomEvent(
-                    name="sop.step.started",
+                    name="SOP_STEP_STARTED",
                     value={
                         "step_id": step.id,
                         "attempt": len(record.verifications) + 1,
@@ -127,7 +127,7 @@ class SOPEngine:
                 ):
                     yield event
                 yield CustomEvent(
-                    name="sop.step.ended",
+                    name="SOP_STEP_ENDED",
                     value={"step_id": step.id, "phase": record.phase.value},
                 )
                 inputs, resuming = None, False

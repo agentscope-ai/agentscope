@@ -342,9 +342,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                 for _ in events
             ],
             [
-                ("sop.step.started", {"step_id": "a", "attempt": 1}),
+                ("SOP_STEP_STARTED", {"step_id": "a", "attempt": 1}),
                 RequireUserConfirmEvent,
-                ("sop.step.ended", {"step_id": "a", "phase": "awaiting"}),
+                ("SOP_STEP_ENDED", {"step_id": "a", "phase": "awaiting"}),
             ],
         )
 
@@ -526,7 +526,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(_.name, _.value) for _ in events if isinstance(_, CustomEvent)],
             [
-                ("sop.step.started", {"step_id": "a", "attempt": 1}),
-                ("sop.step.ended", {"step_id": "a", "phase": "pending"}),
+                ("SOP_STEP_STARTED", {"step_id": "a", "attempt": 1}),
+                ("SOP_STEP_ENDED", {"step_id": "a", "phase": "pending"}),
             ],
         )
