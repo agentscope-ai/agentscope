@@ -35,7 +35,7 @@ everyone knows and nobody has seen: **China lifting the World Cup.**
 ```
 分镜与建模需求  ------->  Blender 建模与动画  ------->  视频风格化
 director                  animator                     colorist
-frames, not vibes         Blender over MCP             Wan 2.7 video edit
+frames, not vibes         blender-mcp (uvx)            Wan 2.7 video edit
 |                         |                            |
 gate: a person            gate: a person               gate: a person
 ```
@@ -56,8 +56,8 @@ work, and a person can check each without knowing the next.
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-export BLENDER_MCP_DIR=/path/to/blender_mcp/mcp   # a blender-mcp checkout
-# open Blender, enable the blender-mcp addon, start its server
+uvx blender-mcp install-addon     # once — installs the Blender addon
+# in Blender: press N → "MCP for Blender" tab → Connect to Claude (port 9876)
 
 python main.py
 python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"

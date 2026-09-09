@@ -32,8 +32,8 @@ path and a line on what was built.
 Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
-    export BLENDER_MCP_DIR=/path/to/blender_mcp/mcp   # blender-mcp checkout
-    # open Blender, enable the blender-mcp addon, start its server
+    uvx blender-mcp install-addon      # once; then in Blender: N sidebar →
+                                       # "MCP for Blender" → Connect to Claude
 
     python main.py
     python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"
@@ -335,17 +335,10 @@ async def main() -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise RuntimeError("Set DASHSCOPE_API_KEY before running this demo.")
-    mcp_dir = os.environ.get("BLENDER_MCP_DIR")
-    if not mcp_dir:
-        raise RuntimeError("Set BLENDER_MCP_DIR to your blender-mcp checkout.")
-
     here = os.path.dirname(os.path.abspath(__file__))
     blender = MCPClient(
         name="blender",
-        mcp_config=StdioMCPConfig(
-            command="uv",
-            args=["--directory", mcp_dir, "run", "blender-mcp"],
-        ),
+        mcp_config=StdioMCPConfig(command="uvx", args=["blender-mcp"]),
         is_stateful=True,
     )
     await blender.connect()
