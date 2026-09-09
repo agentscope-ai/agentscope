@@ -105,6 +105,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         self._input_text = ""
         self._usage: dict = {}
         self._activity = False
+        self._ready = asyncio.Event()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -130,6 +131,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         self._ws = await websockets.connect(
             f"{_LIVE_URL}?key={credential.api_key.get_secret_value()}",
         )
+        self._ready.clear()
         self._reader = asyncio.create_task(self._read(), name="gemini-rt")
         await self._send(
             self._setup(
@@ -138,6 +140,10 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 kwargs.get("resumption_handle", ""),
             ),
         )
+        # Realtime input is rejected until the server acknowledges setup.
+        await self._ready.wait()
+        if self._ws is None:
+            raise ModelDisconnectedError("Session closed during setup.")
 
     async def close(self) -> None:
         """Stop reading and close the WebSocket."""
@@ -344,6 +350,8 @@ class GeminiRealtimeModel(RealtimeModelBase):
         except Exception as exc:  # noqa: BLE001
             logger.error("GeminiRealtimeModel: connection lost: %s", exc)
         finally:
+            self._ws = None
+            self._ready.set()  # release a connect() still waiting
             self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
             self._queue.put_nowait(None)
 
@@ -396,18 +404,21 @@ class GeminiRealtimeModel(RealtimeModelBase):
             return events + self._close_response()
 
         if go_away := data.get("goAway"):
-            return [
-                me.SessionEndedEvent(
-                    reason=f"goAway, {go_away.get('timeLeft', '0s')} left",
-                ),
-            ]
+            # Advance notice only; the session ends when the socket does.
+            logger.info(
+                "GeminiRealtimeModel: server closes in %s",
+                go_away.get("timeLeft", "0s"),
+            )
+            return []
 
         if update := data.get("sessionResumptionUpdate"):
             if update.get("resumable"):
                 self.resumption_handle = update.get("newHandle", "")
             return []
 
-        if "setupComplete" not in data:
+        if "setupComplete" in data:
+            self._ready.set()
+        else:
             logger.debug("GeminiRealtimeModel: ignoring %s", list(data))
         return []
 
@@ -423,7 +434,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             # The only notice that the user spoke over the reply; the
             # server has already dropped the rest of it.
             self._user_id = self._user_id or uuid.uuid4().hex
-            self._response_id = ""
+            self._response_id, self._usage = "", {}
             return [me.SpeechStartedEvent(item_id=self._user_id)]
 
         parts = (content.get("modelTurn") or {}).get("parts") or []

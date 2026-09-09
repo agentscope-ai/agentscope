@@ -368,9 +368,21 @@ class GeminiParseTest(unittest.TestCase):
             ],
         )
 
+    def test_setup_complete_releases_connect(self) -> None:
+        """``connect()`` waits on the setup acknowledgement, which the
+        reader flags when it arrives."""
+        self.assertListEqual(
+            [
+                self.model._ready.is_set(),
+                self.model._parse({"setupComplete": {}}),
+                self.model._ready.is_set(),
+            ],
+            [False, [], True],
+        )
+
     def test_session_messages(self) -> None:
-        """Resumption handles are kept, ``goAway`` ends the session and
-        tool-call cancellation is dropped."""
+        """Resumption handles are kept; ``goAway`` and tool-call
+        cancellation carry no event."""
         handles = [
             self.model._parse(
                 {
@@ -392,7 +404,7 @@ class GeminiParseTest(unittest.TestCase):
                 [],
                 "h-1",
                 [],
-                [("SessionEndedEvent", {"reason": "goAway, 10s left"})],
+                [],
             ],
         )
 
