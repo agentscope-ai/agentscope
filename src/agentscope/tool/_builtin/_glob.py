@@ -21,6 +21,8 @@ from .._response import ToolChunk
 if TYPE_CHECKING:
     from ._backend import BackendBase
 
+DEFAULT_HEAD_LIMIT = 200
+
 
 def _default_glob_helper_path() -> str:
     """Resolve the on-disk path of the bundled ``_glob_helper.py`` script.
@@ -52,7 +54,8 @@ Supports glob patterns like "**/*.js" or "src/**/*.ts" and returns
 matching file paths sorted by modification time (newest first).
 
 Use this tool when you need to find files by pattern across the
-codebase."""  # ignore: E501
+codebase. Use head_limit to cap the number of results
+returned."""  # ignore: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -67,6 +70,19 @@ codebase."""  # ignore: E501
                 "type": "string",
                 "description": "The base directory to search from "
                 "(defaults to current working directory)",
+            },
+            "head_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Limit output to first N paths. Defaults to "
+                "200 when unspecified. Pass 0 for unlimited.",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Number of matching files to skip before "
+                "returning results",
             },
         },
         "required": ["pattern"],
@@ -207,6 +223,8 @@ codebase."""  # ignore: E501
         self,
         pattern: str,
         path: str | None = None,
+        head_limit: int | None = None,
+        offset: int = 0,
     ) -> ToolChunk:
         """Execute the glob pattern matching and return the results.
 
@@ -224,6 +242,12 @@ codebase."""  # ignore: E501
             path (`str | None`, optional):
                 Base directory to search from. Defaults to the current
                 working directory when ``None``.
+            head_limit (`int | None`, optional):
+                Maximum number of matching paths to return. Defaults to
+                ``200``. Pass ``0`` for unlimited.
+            offset (`int`, optional):
+                Number of matching paths to skip before returning results.
+                Defaults to ``0``.
 
         Returns:
             `ToolChunk`:
@@ -232,6 +256,24 @@ codebase."""  # ignore: E501
                 is missing or the helper fails, an error chunk with
                 ``ToolResultState.ERROR``.
         """
+        if head_limit is not None and head_limit < 0:
+            return ToolChunk(
+                content=[
+                    TextBlock(text="Error: head_limit must be non-negative."),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
+        if offset < 0:
+            return ToolChunk(
+                content=[
+                    TextBlock(text="Error: offset must be non-negative."),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         base_dir = path if path else await self._backend.getcwd()
 
         # The base must be an existing directory; a regular file would
@@ -287,19 +329,43 @@ codebase."""  # ignore: E501
         except (json.JSONDecodeError, ValueError):
             matches = []
 
-        if len(matches) == 0:
+        if offset >= len(matches):
+            no_match_text = (
+                f"No files found matching pattern: {pattern}"
+                if not matches and offset == 0
+                else (
+                    f"No more files found matching pattern: {pattern} "
+                    f"after offset {offset}."
+                )
+            )
             return ToolChunk(
                 content=[
-                    TextBlock(
-                        text=f"No files found matching pattern: {pattern}",
-                    ),
+                    TextBlock(text=no_match_text),
                 ],
                 state=ToolResultState.RUNNING,
                 is_last=True,
             )
 
+        effective_limit = (
+            head_limit if head_limit is not None else DEFAULT_HEAD_LIMIT
+        )
+        limited = (
+            matches[offset:]
+            if effective_limit == 0
+            else matches[offset : offset + effective_limit]
+        )
+        output = "\n".join(limited)
+        if effective_limit and len(matches) - offset > effective_limit:
+            output += (
+                f"\n\n[Showing results with pagination = "
+                f"limit: {effective_limit}"
+            )
+            if offset:
+                output += f", offset: {offset}"
+            output += "]"
+
         return ToolChunk(
-            content=[TextBlock(text="\n".join(matches))],
+            content=[TextBlock(text=output)],
             state=ToolResultState.RUNNING,
             is_last=True,
         )
