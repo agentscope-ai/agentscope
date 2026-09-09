@@ -498,10 +498,12 @@ class MessageUI(Vertical):
             if widget is not None:
                 yield widget
         if self.message.role == "assistant":
+            footer_content = self._footer_text()
             self._footer = Static(
-                self._footer_text(),
+                footer_content,
                 classes="as-message-footer",
             )
+            self._footer.display = bool(footer_content.plain)
             yield self._footer
         else:
             self._footer = None
@@ -561,13 +563,14 @@ class MessageUI(Vertical):
 
     def _footer_text(self) -> Text:
         running = self.message.finished_at is None
-        icon = "◌" if running else "✓"
-        elapsed = _elapsed(self.message.created_at, self.message.finished_at)
-        text = Text(f"{icon} {elapsed or 'running'}", style="dim")
-        if self.show_usage and self.message.usage is not None:
+        text = Text()
+        if running:
+            text.append("◌ running", style="dim italic")
+        elif self.show_usage and self.message.usage is not None:
             text.append(
-                f"  ↑{self.message.usage.input_tokens}"
+                f"↑{self.message.usage.input_tokens}"
                 f" ↓{self.message.usage.output_tokens}",
+                style="dim",
             )
         if self.message.finished_reason not in (None, "completed"):
             text.append(
@@ -583,7 +586,9 @@ class MessageUI(Vertical):
 
     def _update_footer(self) -> None:
         if self._footer is not None:
-            self._footer.update(self._footer_text())
+            content = self._footer_text()
+            self._footer.update(content)
+            self._footer.display = bool(content.plain)
 
     def apply(self, message: Msg, event: AgentEvent | None = None) -> None:
         self.message = message
@@ -660,8 +665,9 @@ class MessagesUI(VerticalScroll):
     MessagesUI {
         width: 100%;
         height: 1fr;
-        scrollbar-size: 1 1;
-        padding: 0 1;
+        scrollbar-visibility: hidden;
+        padding: 0;
+        background: transparent;
     }
 
     MessageUI {
@@ -688,16 +694,15 @@ class MessagesUI(VerticalScroll):
     }
 
     .as-message-user > .as-message-header {
-        color: $text;
+        color: $foreground;
     }
 
     .as-message-assistant > .as-message-header {
-        color: $primary;
+        color: $foreground;
     }
 
     .as-message-footer {
         height: auto;
-        min-height: 1;
         color: $text-muted;
         margin-top: 1;
     }
@@ -705,6 +710,11 @@ class MessagesUI(VerticalScroll):
     .as-text-block, .as-thinking, .as-tool-group, .as-hint {
         width: 100%;
         height: auto;
+    }
+
+    .as-text-block {
+        padding: 0;
+        background: transparent;
     }
 
     .as-thinking, .as-tool-group, .as-hint {
@@ -730,8 +740,8 @@ class MessagesUI(VerticalScroll):
     .as-tool-group > CollapsibleTitle:focus,
     .as-hint > CollapsibleTitle:hover,
     .as-hint > CollapsibleTitle:focus {
-        background: $primary 10%;
-        color: $primary;
+        background: $foreground 10%;
+        color: $foreground;
         text-style: bold;
     }
 
@@ -755,7 +765,7 @@ class MessagesUI(VerticalScroll):
     .as-tool-call-title {
         width: 100%;
         height: 1;
-        color: $text;
+        color: $foreground;
     }
 
     .as-tool-body {
@@ -780,7 +790,7 @@ class MessagesUI(VerticalScroll):
         messages: Sequence[Msg] = (),
         *,
         show_thinking: bool = True,
-        show_usage: bool = True,
+        show_usage: bool = False,
         id: str | None = None,  # pylint: disable=redefined-builtin
         classes: str | None = None,
         disabled: bool = False,

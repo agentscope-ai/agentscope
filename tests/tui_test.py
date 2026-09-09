@@ -40,6 +40,7 @@ from agentscope.message import (
     ToolResultState,
     UserMsg,
 )
+from agentscope.permission import PermissionBehavior, PermissionRule
 from agentscope.tui import ChatUI, MessagesUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
 from agentscope.tui._launcher import _AgentScopeTUI
@@ -230,6 +231,10 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                     screenshot = app.export_screenshot(simplify=True)
                     message_uis = list(chat.query(MessageUI))
                     tool_group = chat.query_one(ToolGroupUI)
+                    text_block = chat.query_one(TextBlockUI)
+                    footer = chat.query_one(".as-message-footer", Static)
+                    messages_ui = chat.query_one(MessagesUI)
+                    editor = chat.query_one(_ComposerTextArea)
 
                     self.assertEqual(
                         (chat.region.width, chat.region.height),
@@ -240,9 +245,21 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         message_uis[1].region.x,
                     )
                     self.assertEqual(
+                        message_uis[1]
+                        .query_one(".as-message-header", Static)
+                        .region.x,
+                        text_block.region.x,
+                    )
+                    self.assertEqual(
                         len(tool_group.query(Collapsible)),
                         0,
                     )
+                    self.assertFalse(footer.display)
+                    self.assertEqual(
+                        str(messages_ui.styles.scrollbar_visibility),
+                        "hidden",
+                    )
+                    self.assertEqual(editor.styles.background.a, 0)
                     self.assertLessEqual(composer.region.right, size[0])
                     self.assertLessEqual(composer.region.bottom, size[1])
                     self.assertEqual(len(chat.query("Button")), 0)
@@ -402,6 +419,42 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one(HitlUI).display)
             self.assertEqual(editor.text, "draft")
             self.assertTrue(editor.has_focus)
+
+    async def test_permission_rules_are_embedded_in_always_option(
+        self,
+    ) -> None:
+        app = _ChatApp()
+        async with app.run_test() as pilot:
+            hitl = app.query_one(HitlUI)
+            hitl.set_pending(
+                [
+                    (
+                        "r1",
+                        "agent",
+                        ToolCallBlock(
+                            id="c1",
+                            name="Bash",
+                            input='{"command": "git status"}',
+                            state="asking",
+                            suggested_rules=[
+                                PermissionRule(
+                                    tool_name="Bash",
+                                    rule_content="git status",
+                                    behavior=PermissionBehavior.ALLOW,
+                                    source="tool",
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            )
+            await pilot.pause()
+
+            options = app.query_one(OptionList)
+            always = options.get_option_at_index(1)
+            body = app.query_one("#as-hitl-body", Static)
+            self.assertIn("allow Bash (git status)", str(always.prompt))
+            self.assertNotIn("permission rules", str(body.render()).lower())
 
     async def test_external_execution_waiting_replaces_composer(self) -> None:
         app = _ChatApp()

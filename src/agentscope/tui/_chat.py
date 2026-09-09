@@ -196,17 +196,6 @@ class HitlUI(Vertical):
         )
         body = Text(f"{tool_call.name}\n", style="bold")
         body.append(tool_call.input or "{}", style="dim")
-        if tool_call.suggested_rules:
-            body.append(
-                "\n\nSuggested permission rules:",
-                style="italic",
-            )
-            for rule in tool_call.suggested_rules:
-                suffix = f" ({rule.rule_content})" if rule.rule_content else ""
-                body.append(
-                    f"\n  {rule.behavior.value} {rule.tool_name}{suffix}",
-                    style="dim",
-                )
         self.query_one("#as-hitl-body", Static).update(body)
 
         options = self.query_one(OptionList)
@@ -214,8 +203,13 @@ class HitlUI(Vertical):
         if not waiting_external:
             choices.append(Option("Allow once", id="allow"))
             if tool_call.suggested_rules:
+                rules = "; ".join(
+                    f"{rule.behavior.value} {rule.tool_name}"
+                    + (f" ({rule.rule_content})" if rule.rule_content else "")
+                    for rule in tool_call.suggested_rules
+                )
                 choices.append(
-                    Option("Always allow with suggested rules", id="always"),
+                    Option(f"Always allow with {rules}", id="always"),
                 )
             choices.append(Option("Deny", id="deny"))
         choices.append(Option("Interrupt reply", id="interrupt"))
@@ -292,6 +286,7 @@ class ChatUI(Widget):
         width: 100%;
         height: 100%;
         layout: vertical;
+        background: transparent;
     }
 
     ChatUI > MessagesUI {
@@ -302,9 +297,9 @@ class ChatUI(Widget):
         width: 100%;
         height: auto;
         min-height: 3;
-        padding: 0 1;
-        border-top: solid $border;
-        background: $surface;
+        padding: 0;
+        border-top: none;
+        background: transparent;
     }
 
     #as-composer-input {
@@ -313,6 +308,12 @@ class ChatUI(Widget):
         min-height: 3;
         max-height: 10;
         border: none;
+        padding: 0;
+        background: transparent;
+    }
+
+    #as-composer-input .text-area--cursor-line {
+        background: transparent;
     }
 
     .as-composer-hint, .as-hitl-hint {
@@ -326,28 +327,29 @@ class ChatUI(Widget):
         height: auto;
         max-height: 6;
         border: none;
-        background: $surface;
+        padding: 0;
+        background: transparent;
     }
 
     .as-hitl-options > .option-list--option-highlighted,
     .as-hitl-options:focus > .option-list--option-highlighted {
-        color: $primary;
-        background: $primary 10%;
+        color: $foreground;
+        background: $foreground 10%;
         text-style: bold;
     }
 
     .as-hitl-title {
         height: 1;
         text-style: bold;
-        color: $primary;
+        color: $foreground;
     }
 
     .as-hitl-body {
         height: auto;
         max-height: 10;
         overflow-y: auto;
-        padding: 1;
-        background: $boost;
+        padding: 0;
+        background: transparent;
     }
     """
 
@@ -373,7 +375,7 @@ class ChatUI(Widget):
         user_name: str = "user",
         input_enabled: bool = True,
         show_thinking: bool = True,
-        show_usage: bool = True,
+        show_usage: bool = False,
         id: str | None = None,  # pylint: disable=redefined-builtin
         classes: str | None = None,
         disabled: bool = False,
