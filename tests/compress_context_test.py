@@ -189,6 +189,27 @@ class _StructuredOutputFailingMockModel(MockModel):
         self.structured_call_count = 0
         self._fail_times = fail_times
 
+    async def count_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """Keep the compression count below the context size so the retry
+        path is isolated from the overflow/truncation path.
+
+        The initial model-input count (no compression tool) is reported at
+        the context size so compression triggers; the compression-tool count
+        is reported as 1 so ``context_overflow`` stays ``False``.
+        """
+        is_compression_count = bool(
+            tools
+            and tools[0].get("function", {}).get("name")
+            == "generate_structured_output",
+        )
+        if is_compression_count:
+            return 1
+        return self.context_size
+
     async def generate_structured_output(
         self,
         messages: list[Msg],
