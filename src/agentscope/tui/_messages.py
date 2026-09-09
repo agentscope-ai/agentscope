@@ -394,7 +394,7 @@ def _tool_title(pair: _ToolPair) -> str:
         "error": "✗",
         "denied": "⊘",
         "interrupted": "⚠",
-        "running": "…",
+        "running": "→",
     }.get(str(state), "·")
     path = _file_path(pair.call)
     primary = os.path.basename(path) if path else ""
@@ -449,7 +449,7 @@ def _tool_group_title(group: _ToolGroup) -> str:
     summary = ", ".join(pieces) or "Tools"
     if added or removed:
         summary += f"  +{added} -{removed}"
-    return f"{'…' if running else '✓'} {summary}"
+    return f"{'→' if running else '✓'} {summary}"
 
 
 class ToolGroupUI(Collapsible):
@@ -921,6 +921,3 @@ class MessagesUI(VerticalScroll):
             widget.apply(message, event)
         if self.is_mounted:
             self.call_later(self.scroll_end, animate=False)
-
-
-__all__ = ["MessagesUI"]

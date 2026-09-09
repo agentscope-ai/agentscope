@@ -142,6 +142,3 @@ async def launch_tui(
             Name assigned to messages submitted from the composer.
     """
     await _AgentScopeTUI(target, messages, user_name).run_async()
-
-
-__all__ = ["launch_tui"]

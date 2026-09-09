@@ -263,6 +263,7 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                         len(tool_group.query(Collapsible)),
                         0,
                     )
+                    self.assertTrue(str(tool_group.title).startswith("✓"))
                     self.assertFalse(footer.display)
                     self.assertEqual(
                         str(messages_ui.styles.scrollbar_visibility),
@@ -460,6 +461,9 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one(ComposerUI).display)
             hitl = app.query_one(HitlUI)
             self.assertTrue(hitl.display)
+            self.assertTrue(
+                str(app.query_one(ToolGroupUI).title).startswith("→"),
+            )
             self.assertEqual(len(hitl.query(".as-section-rule")), 1)
             options = app.query_one(OptionList)
             self.assertTrue(options.has_focus)

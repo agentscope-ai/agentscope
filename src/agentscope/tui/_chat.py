@@ -552,6 +552,3 @@ class ChatUI(Widget):
         event: HitlUI.InterruptRequested,
     ) -> None:
         self.post_message(self.InterruptRequested(event.reply_id))
-
-
-__all__ = ["ChatUI"]
