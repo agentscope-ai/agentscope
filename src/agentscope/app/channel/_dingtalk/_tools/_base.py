@@ -37,21 +37,6 @@ def _ack(accepted: bool, what: str) -> ToolChunk:
     )
 
 
-def _failure(message: str) -> ToolChunk:
-    """Return a visible, non-successful DingTalk tool result.
-
-    Args:
-        message (`str`): User-actionable failure description.
-
-    Returns:
-        `ToolChunk`: Error result for the agent.
-    """
-    return ToolChunk(
-        content=[TextBlock(text=message)],
-        state=ToolResultState.ERROR,
-    )
-
-
 class _DingTalkToolBase(ToolBase):
     """Base for DingTalk tools bound to a channel and workspace."""
 
@@ -65,16 +50,21 @@ class _DingTalkToolBase(ToolBase):
         self,
         channel: "DingTalkChannel",
         backend: BackendBase,
+        channel_user_id: str = "",
     ) -> None:
         """Bind the live channel and session workspace backend.
 
         Args:
             channel (`DingTalkChannel`): Live DingTalk channel.
             backend (`BackendBase`): Workspace backend for file reads.
+            channel_user_id (`str`, optional): The DingTalk user to act as,
+                for the tools that read with that user's own permissions.
+                The rest act as the bot and leave it empty.
         """
         super().__init__()
         self._channel = channel
         self._backend = backend
+        self._channel_user_id = channel_user_id
 
     async def check_permissions(
         self,
@@ -101,25 +91,3 @@ class _DingTalkToolBase(ToolBase):
             message="Sending to another DingTalk conversation needs the "
             "user's confirmation.",
         )
-
-
-class _DingTalkKnowledgeToolBase(_DingTalkToolBase):
-    """Read-only DingTalk knowledge tool bound to one trusted sender."""
-
-    is_read_only: bool = True
-
-    def __init__(
-        self,
-        channel: "DingTalkChannel",
-        backend: BackendBase,
-        channel_user_id: str,
-    ) -> None:
-        """Bind the tool to the server-supplied current channel user.
-
-        Args:
-            channel (`DingTalkChannel`): Live DingTalk channel.
-            backend (`BackendBase`): Calling session workspace backend.
-            channel_user_id (`str`): Trusted staff id from the inbound event.
-        """
-        super().__init__(channel, backend)
-        self._channel_user_id = channel_user_id

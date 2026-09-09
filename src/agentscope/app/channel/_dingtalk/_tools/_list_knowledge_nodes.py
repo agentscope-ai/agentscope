@@ -5,9 +5,9 @@ import json
 
 from pydantic import Field
 
-from .....message import TextBlock
+from .....message import TextBlock, ToolResultState
 from .....tool import ParamsBase, ToolChunk
-from ._base import _DingTalkKnowledgeToolBase, _failure
+from ._base import _DingTalkToolBase
 
 
 class _ListKnowledgeNodesParams(ParamsBase):
@@ -29,7 +29,7 @@ class _ListKnowledgeNodesParams(ParamsBase):
     )
 
 
-class ListKnowledgeNodes(_DingTalkKnowledgeToolBase):
+class ListKnowledgeNodes(_DingTalkToolBase):
     """List direct children of one DingTalk knowledge node."""
 
     name: str = "ListKnowledgeNodes"
@@ -39,6 +39,7 @@ Pass a ``root_node_id`` from ``ListKnowledgeBases`` or a folder's ``node_id``.
 Nodes with ``has_children=true`` can be browsed again. File nodes whose
 ``category`` is ``ALIDOC`` can be read with ``ReadKnowledgeDocument``. Use a
 returned ``next_token`` to continue the same directory listing."""
+    is_read_only: bool = True
     input_schema: dict = _ListKnowledgeNodesParams.model_json_schema()
 
     async def __call__(
@@ -65,7 +66,10 @@ returned ``next_token`` to continue the same directory listing."""
                 next_token,
             )
         except RuntimeError as exc:
-            return _failure(str(exc))
+            return ToolChunk(
+                content=[TextBlock(text=str(exc))],
+                state=ToolResultState.ERROR,
+            )
         items = [
             {
                 "node_id": item.get("nodeId", ""),

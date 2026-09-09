@@ -5,9 +5,9 @@ import json
 
 from pydantic import Field
 
-from .....message import TextBlock
+from .....message import TextBlock, ToolResultState
 from .....tool import ParamsBase, ToolChunk
-from ._base import _DingTalkKnowledgeToolBase, _failure
+from ._base import _DingTalkToolBase
 
 
 class _ListKnowledgeBasesParams(ParamsBase):
@@ -24,7 +24,7 @@ class _ListKnowledgeBasesParams(ParamsBase):
     )
 
 
-class ListKnowledgeBases(_DingTalkKnowledgeToolBase):
+class ListKnowledgeBases(_DingTalkToolBase):
     """List DingTalk knowledge bases readable by the current sender."""
 
     name: str = "ListKnowledgeBases"
@@ -35,6 +35,7 @@ Use the returned ``root_node_id`` with ``ListKnowledgeNodes`` to browse a
 knowledge base. If ``next_token`` is non-empty, call this tool again with that
 token to continue. Access is evaluated as the current DingTalk sender; no user
 identity can be supplied by the model."""
+    is_read_only: bool = True
     input_schema: dict = _ListKnowledgeBasesParams.model_json_schema()
 
     async def __call__(
@@ -58,7 +59,10 @@ identity can be supplied by the model."""
                 next_token,
             )
         except RuntimeError as exc:
-            return _failure(str(exc))
+            return ToolChunk(
+                content=[TextBlock(text=str(exc))],
+                state=ToolResultState.ERROR,
+            )
         items = [
             {
                 "workspace_id": item.get("workspaceId", ""),

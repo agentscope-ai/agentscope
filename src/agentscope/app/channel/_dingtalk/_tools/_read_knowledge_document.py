@@ -7,9 +7,9 @@ from typing import Any
 
 from pydantic import Field
 
-from .....message import TextBlock
+from .....message import TextBlock, ToolResultState
 from .....tool import ParamsBase, ToolChunk
-from ._base import _DingTalkKnowledgeToolBase, _failure
+from ._base import _DingTalkToolBase
 
 _MAX_CONTENT_CHARS = 20_000
 
@@ -33,7 +33,7 @@ class _ReadKnowledgeDocumentParams(ParamsBase):
     )
 
 
-class ReadKnowledgeDocument(_DingTalkKnowledgeToolBase):
+class ReadKnowledgeDocument(_DingTalkToolBase):
     """Read a plain DingTalk knowledge document for the current sender."""
 
     name: str = "ReadKnowledgeDocument"
@@ -43,6 +43,7 @@ Use a file ``node_id`` returned by ``ListKnowledgeNodes``. The result contains
 Markdown text and may contain ``next_start_index`` for long documents. This
 minimal reader handles headings, paragraphs, lists and quotes; tables and
 other rich blocks are represented by placeholders."""
+    is_read_only: bool = True
     input_schema: dict = _ReadKnowledgeDocumentParams.model_json_schema()
 
     async def __call__(
@@ -69,18 +70,40 @@ other rich blocks are represented by placeholders."""
                 start_index + max_blocks - 1,
             )
         except RuntimeError as exc:
-            return _failure(str(exc))
+            return ToolChunk(
+                content=[TextBlock(text=str(exc))],
+                state=ToolResultState.ERROR,
+            )
         if not node:
-            return _failure("DingTalk returned no metadata for this node.")
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="DingTalk returned no metadata for this node.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+            )
         if str(node.get("type") or "").upper() != "FILE":
-            return _failure(
-                "The selected DingTalk knowledge node is not a document.",
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="The selected DingTalk knowledge node is not "
+                        "a document.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
             )
         category = str(node.get("category") or "").upper()
         if category and category != "ALIDOC":
-            return _failure(
-                f"The selected DingTalk document type '{category}' is not "
-                "supported by the minimal reader.",
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"The selected DingTalk document type "
+                        f"'{category}' is not supported by the minimal "
+                        f"reader.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
             )
 
         markdown, consumed, unsupported, content_truncated = _render_blocks(
