@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The asking user tool class."""
-from typing import Any, ClassVar
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -95,7 +95,7 @@ class _Question(BaseModel):
     )
 
 
-class _Answer(BaseModel):
+class AskUserAnswer(BaseModel):
     """One question's answer, as the caller must return it."""
 
     question: str = Field(
@@ -124,11 +124,14 @@ class AskUserAnswers(BaseModel):
     do that on prose.
     """
 
-    answers: list[_Answer]
+    answers: list[AskUserAnswer]
 
 
-class _AskUserParams(BaseModel):
-    """The full input parameters for the AskUser tool."""
+class AskUserParams(BaseModel):
+    """What a caller asks for — the questions, and their options.
+
+    A model fills this in from :attr:`AskUser.input_schema`; a program
+    building the call itself has this to build it with."""
 
     questions: list[_Question] = Field(
         min_length=1,
@@ -172,16 +175,12 @@ Use this tool when you need to ask the user questions during execution:
 - Put whatever the user must look at to answer — a draft, a diff, an error — in `context` rather than in the question text.
 
 ## What comes back
-`output` is written for you to read. The caller also returns the same answers in `ToolResultBlock.metadata`, shaped by `AskUser.Answers`, for programs that must branch on the choice rather than read prose."""  # noqa: E501
+`output` is written for you to read. The caller also returns the same answers in `ToolResultBlock.metadata`, shaped by `AskUserAnswers`, for programs that must branch on the choice rather than read prose."""  # noqa: E501
     """The description presented to the agent."""
 
-    input_schema: dict[str, Any] = _AskUserParams.model_json_schema()
+    input_schema: dict[str, Any] = AskUserParams.model_json_schema()
 
     metadata_schema: dict[str, Any] | None = AskUserAnswers.model_json_schema()
-
-    Answers: ClassVar[type[BaseModel]] = AskUserAnswers
-    """The shape a caller must return, beside the tool that asks for
-    it — so the two cannot drift apart."""
 
     is_read_only: bool = True
     is_state_injected: bool = False

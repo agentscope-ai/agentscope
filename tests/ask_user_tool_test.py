@@ -7,8 +7,7 @@ from pydantic import ValidationError
 
 from agentscope.message import ToolResultBlock, ToolResultState
 from agentscope.permission import PermissionBehavior, PermissionContext
-from agentscope.tool import AskUser
-from agentscope.tool._builtin._ask_user import _AskUserParams
+from agentscope.tool import AskUser, AskUserAnswers, AskUserParams
 
 
 class AskUserTest(IsolatedAsyncioTestCase):
@@ -40,7 +39,7 @@ class AskUserTest(IsolatedAsyncioTestCase):
         option = {"label": "a", "description": "d"}
         for count in (1, 5):
             with self.assertRaises(ValidationError):
-                _AskUserParams.model_validate(
+                AskUserParams.model_validate(
                     {
                         "questions": [
                             {
@@ -55,7 +54,7 @@ class AskUserTest(IsolatedAsyncioTestCase):
     async def test_a_header_stays_short_enough_to_be_a_chip(self) -> None:
         """It is rendered as a tag, so it cannot run on."""
         with self.assertRaises(ValidationError):
-            _AskUserParams.model_validate(
+            AskUserParams.model_validate(
                 {
                     "questions": [
                         {
@@ -81,7 +80,7 @@ class AskUserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(jsonschema.ValidationError):
             await self.tool.check_external_result(result)
 
-        result.metadata = AskUser.Answers(
+        result.metadata = AskUserAnswers(
             answers=[
                 {"question": "批准吗？", "selected": ["通过"], "other": None},
             ],
