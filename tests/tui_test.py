@@ -13,6 +13,7 @@ import unittest
 
 from textual.app import App, ComposeResult
 from textual.message import Message as TextualMessage
+from textual.widgets import OptionList, Static
 
 from agentscope.event import (
     ReplyEndEvent,
@@ -234,6 +235,7 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertLessEqual(composer.region.right, size[0])
                     self.assertLessEqual(composer.region.bottom, size[1])
+                    self.assertEqual(len(chat.query("Button")), 0)
                     self.assertIn("<svg", screenshot)
 
     async def test_running_reply_keeps_composer_available(self) -> None:
@@ -267,6 +269,34 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len({id(message) for message in observed}), 1)
             self.assertEqual(observed[-1].msg.get_text_content(), "hi")
 
+    async def test_ctrl_c_interrupts_running_reply(self) -> None:
+        observed: list[ChatUI.InterruptRequested] = []
+
+        def hook(message: TextualMessage) -> None:
+            if isinstance(message, ChatUI.InterruptRequested):
+                observed.append(message)
+
+        app = _ChatApp()
+        async with app.run_test(message_hook=hook) as pilot:
+            chat = app.query_one(ChatUI)
+            chat.feed(
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id="running",
+                    name="agent",
+                ),
+            )
+            await pilot.pause()
+
+            hint = app.query_one("#as-composer-hint", Static)
+            self.assertIn("Ctrl+C interrupt", str(hint.render()))
+            app.query_one(_ComposerTextArea).focus()
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+
+            self.assertEqual(len({id(message) for message in observed}), 1)
+            self.assertEqual(observed[-1].reply_id, "running")
+
     async def test_explicit_input_disable(self) -> None:
         app = _ChatApp()
         async with app.run_test() as pilot:
@@ -291,7 +321,9 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(observed[-1].msg.get_text_content(), "a\nb")
 
-    async def test_hitl_replaces_composer_and_posts_confirmation(self) -> None:
+    async def test_hitl_uses_keyboard_selection_and_restores_draft(
+        self,
+    ) -> None:
         observed: list[ChatUI.Confirmed] = []
 
         def hook(message: TextualMessage) -> None:
@@ -342,14 +374,17 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
 
             self.assertFalse(app.query_one(ComposerUI).display)
             self.assertTrue(app.query_one(HitlUI).display)
-            await pilot.click("#as-allow")
+            options = app.query_one(OptionList)
+            self.assertTrue(options.has_focus)
+            self.assertEqual(options.highlighted, 0)
+            await pilot.press("down", "enter")
             await pilot.pause()
 
             self.assertEqual(len({id(message) for message in observed}), 1)
             value = observed[-1].value
             self.assertIsInstance(value, UserConfirmResultEvent)
             self.assertEqual(value.reply_id, "r1")
-            self.assertTrue(value.confirm_results[0].confirmed)
+            self.assertFalse(value.confirm_results[0].confirmed)
 
             chat.feed(value)
             await pilot.pause()
@@ -392,8 +427,12 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertFalse(app.query_one(ComposerUI).display)
-            self.assertFalse(app.query_one("#as-allow").display)
-            self.assertTrue(app.query_one("#as-hitl-abort").display)
+            options = app.query_one(OptionList)
+            self.assertEqual(options.option_count, 1)
+            self.assertEqual(
+                options.get_option_at_index(0).id,
+                "interrupt",
+            )
 
     async def test_edit_tool_uses_authoritative_diff_stats(self) -> None:
         app = _ChatApp()

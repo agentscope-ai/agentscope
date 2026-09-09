@@ -13,11 +13,12 @@ from typing import Sequence
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Static, TextArea
+from textual.widgets import OptionList, Static, TextArea
+from textual.widgets.option_list import Option
 
 from ..event import AgentEvent, ConfirmResult, UserConfirmResultEvent
 from ..message import Msg, ToolCallBlock, UserMsg
@@ -29,6 +30,9 @@ class _ComposerTextArea(TextArea):
 
     class SubmitRequested(Message):
         """Request submission of the current editor contents."""
+
+    class InterruptRequested(Message):
+        """Request interruption of the currently running reply."""
 
     async def _on_key(self, event: events.Key) -> None:
         # Textual reports modified keys in ``event.key`` (e.g.
@@ -44,11 +48,16 @@ class _ComposerTextArea(TextArea):
             event.prevent_default()
             self.insert("\n")
             return
+        if event.key == "ctrl+c":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.InterruptRequested())
+            return
         await super()._on_key(event)
 
 
 class ComposerUI(Vertical):
-    """Multi-line chat composer with send and targeted stop actions."""
+    """Keyboard-driven multiline composer with targeted interruption."""
 
     class Submitted(Message):
         def __init__(self, text: str) -> None:
@@ -72,13 +81,7 @@ class ComposerUI(Vertical):
             soft_wrap=True,
             compact=True,
         )
-        with Horizontal(classes="as-composer-actions"):
-            yield Static(
-                "Enter send · Shift+Enter newline",
-                classes="as-composer-hint",
-            )
-            yield Button("Stop", id="as-stop", variant="warning")
-            yield Button("Send", id="as-send", variant="primary")
+        yield Static(id="as-composer-hint", classes="as-composer-hint")
 
     @property
     def draft(self) -> str:
@@ -90,12 +93,21 @@ class ComposerUI(Vertical):
             return
         editor = self.query_one(_ComposerTextArea)
         editor.disabled = not enabled
-        self.query_one("#as-send", Button).disabled = not enabled
+        self._update_hint()
 
     def set_running_reply(self, reply_id: str | None) -> None:
         self._running_reply_id = reply_id
         if self.is_mounted:
-            self.query_one("#as-stop", Button).display = reply_id is not None
+            self._update_hint()
+
+    def _update_hint(self) -> None:
+        if not self._enabled:
+            hint = "Input disabled"
+        else:
+            hint = "Enter send · Shift+Enter newline"
+            if self._running_reply_id is not None:
+                hint += " · Ctrl+C interrupt"
+        self.query_one("#as-composer-hint", Static).update(hint)
 
     def focus_editor(self) -> None:
         if self.is_mounted and self._enabled:
@@ -119,12 +131,8 @@ class ComposerUI(Vertical):
     def _on_editor_submit(self) -> None:
         self._submit()
 
-    @on(Button.Pressed, "#as-send")
-    def _on_send(self) -> None:
-        self._submit()
-
-    @on(Button.Pressed, "#as-stop")
-    def _on_stop(self) -> None:
+    @on(_ComposerTextArea.InterruptRequested)
+    def _on_interrupt(self) -> None:
         if self._running_reply_id is not None:
             self.post_message(
                 self.InterruptRequested(self._running_reply_id),
@@ -152,11 +160,8 @@ class HitlUI(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(id="as-hitl-title", classes="as-hitl-title")
         yield Static(id="as-hitl-body", classes="as-hitl-body")
-        with Horizontal(classes="as-hitl-actions"):
-            yield Button("Allow", id="as-allow", variant="success")
-            yield Button("Always allow", id="as-always", variant="primary")
-            yield Button("Deny", id="as-deny", variant="error")
-            yield Button("Abort reply", id="as-hitl-abort", variant="warning")
+        yield OptionList(id="as-hitl-options", classes="as-hitl-options")
+        yield Static(id="as-hitl-hint", classes="as-hitl-hint")
 
     def set_pending(
         self,
@@ -174,12 +179,7 @@ class HitlUI(Vertical):
     def focus_action(self) -> None:
         if not self.is_mounted or not self._pending:
             return
-        selector = (
-            "#as-hitl-abort"
-            if self._pending[0][2].state == "submitted"
-            else "#as-allow"
-        )
-        self.query_one(selector, Button).focus()
+        self.query_one(OptionList).focus()
 
     def _render_current(self) -> None:
         _, agent_name, tool_call = self._pending[0]
@@ -206,16 +206,25 @@ class HitlUI(Vertical):
                 )
         self.query_one("#as-hitl-body", Static).update(body)
 
-        confirmable = not waiting_external and not self._submitting
-        self.query_one("#as-allow", Button).display = not waiting_external
-        always = self.query_one("#as-always", Button)
-        always.display = (
-            bool(tool_call.suggested_rules) and not waiting_external
+        options = self.query_one(OptionList)
+        choices: list[Option] = []
+        if not waiting_external:
+            choices.append(Option("Allow once", id="allow"))
+            if tool_call.suggested_rules:
+                choices.append(
+                    Option("Always allow with suggested rules", id="always"),
+                )
+            choices.append(Option("Deny", id="deny"))
+        choices.append(Option("Interrupt reply", id="interrupt"))
+        options.clear_options().add_options(choices)
+        options.highlighted = 0
+        options.disabled = self._submitting
+        hint = (
+            "Submitting…"
+            if self._submitting
+            else "↑/↓ select · Enter confirm · Ctrl+C interrupt"
         )
-        self.query_one("#as-deny", Button).display = not waiting_external
-        for selector in ("#as-allow", "#as-always", "#as-deny"):
-            self.query_one(selector, Button).disabled = not confirmable
-        self.query_one("#as-hitl-abort", Button).disabled = self._submitting
+        self.query_one("#as-hitl-hint", Static).update(hint)
 
     def _confirm(self, confirmed: bool, always: bool = False) -> None:
         if not self._pending or self._submitting:
@@ -244,37 +253,30 @@ class HitlUI(Vertical):
             ),
         )
 
-    @on(Button.Pressed, "#as-allow")
-    def _on_allow(self) -> None:
-        self._confirm(True)
-
-    @on(Button.Pressed, "#as-always")
-    def _on_always(self) -> None:
-        self._confirm(True, always=True)
-
-    @on(Button.Pressed, "#as-deny")
-    def _on_deny(self) -> None:
-        self._confirm(False)
-
-    @on(Button.Pressed, "#as-hitl-abort")
-    def _on_abort(self) -> None:
+    def _interrupt(self) -> None:
         if self._pending and not self._submitting:
             self._submitting = True
             self._render_current()
             self.post_message(self.InterruptRequested(self._pending[0][0]))
 
+    @on(OptionList.OptionSelected, "#as-hitl-options")
+    def _on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_id == "allow":
+            self._confirm(True)
+        elif event.option_id == "always":
+            self._confirm(True, always=True)
+        elif event.option_id == "deny":
+            self._confirm(False)
+        elif event.option_id == "interrupt":
+            self._interrupt()
+
     def on_key(self, event: events.Key) -> None:
         if not self._pending or self._submitting:
             return
-        if event.key in ("y", "1"):
+        if event.key == "ctrl+c":
             event.stop()
-            self._confirm(True)
-        elif event.key in ("a", "2") and self._pending[0][2].suggested_rules:
-            event.stop()
-            self._confirm(True, always=True)
-        elif event.key in ("n", "3"):
-            event.stop()
-            self._confirm(False)
+            event.prevent_default()
+            self._interrupt()
 
 
 class ChatUI(Widget):
@@ -296,7 +298,7 @@ class ChatUI(Widget):
     ComposerUI, HitlUI {
         width: 100%;
         height: auto;
-        min-height: 4;
+        min-height: 3;
         padding: 0 1;
         border-top: solid $border;
         background: $surface;
@@ -310,23 +312,18 @@ class ChatUI(Widget):
         border: none;
     }
 
-    .as-composer-actions, .as-hitl-actions {
+    .as-composer-hint, .as-hitl-hint {
         width: 100%;
-        height: 3;
-        align-vertical: middle;
-    }
-
-    .as-composer-hint {
-        width: 1fr;
         height: 1;
         color: $text-muted;
     }
 
-    .as-composer-actions Button, .as-hitl-actions Button {
-        min-width: 8;
-        width: auto;
-        height: 3;
-        margin-left: 1;
+    .as-hitl-options {
+        width: 100%;
+        height: auto;
+        max-height: 6;
+        border: none;
+        background: $surface;
     }
 
     .as-hitl-title {

@@ -2,7 +2,7 @@
 """Run a full-featured AgentScope agent in the Textual terminal UI.
 
 Set ``DASHSCOPE_API_KEY`` and run ``python main.py``. Use Enter to send,
-Shift+Enter for a newline, and Ctrl+Q to leave the application.
+Shift+Enter for a newline, Ctrl+C to interrupt, and Ctrl+Q to leave.
 """
 
 import argparse
@@ -20,7 +20,7 @@ from agentscope.workspace import LocalWorkspace
 async def main() -> None:
     """Build an Agent with local workspace tools and launch the TUI."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="qwen3.7-max")
+    parser.add_argument("--model", default="qwen3.8-max")
     parser.add_argument(
         "--workdir",
         default=os.path.join(os.path.dirname(__file__), "workspace"),
@@ -36,7 +36,7 @@ async def main() -> None:
             name="Friday",
             system_prompt=(
                 "You are a helpful assistant named Friday. Use tools when "
-                "they help.\n\n" + await workspace.get_instructions()
+                "they help."
             ),
             model=DashScopeChatModel(
                 credential=DashScopeCredential(api_key=api_key),

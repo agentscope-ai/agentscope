@@ -16,9 +16,15 @@ python main.py
 Controls:
 
 - `Enter` sends the current message and `Shift+Enter` inserts a newline.
+- While a reply is running, `Ctrl+C` interrupts that reply.
+- HITL uses `↑`/`↓` to choose an action and `Enter` to confirm it; there are
+  no clickable action buttons.
 - Tool and thinking rows expand with a click or with `Enter` when focused.
 - A pending HITL request replaces the composer until it is resolved.
 - `Ctrl+Q` exits the TUI.
+
+The example defaults to `qwen3.8-max`. `LocalWorkspace` instructions are
+attached automatically when the workspace is passed as the Agent offloader.
 
 ## Embedding the UI
 
@@ -103,3 +109,14 @@ from agentscope.tui import launch_tui
 
 await launch_tui(agent, messages=history, user_name="user")
 ```
+
+## Live CSS editing
+
+Textual can reload external CSS while an app is running. Install its
+development tools, put application overrides in a `.tcss` file referenced by
+the App's `CSS_PATH`, then launch the app with `textual run --dev`.
+
+The AgentScope widgets keep their base theme in `DEFAULT_CSS`, so that they
+work without an application stylesheet. Python-embedded `DEFAULT_CSS` is not
+file-watched; external application CSS can override it and is the recommended
+place for live design iteration.
