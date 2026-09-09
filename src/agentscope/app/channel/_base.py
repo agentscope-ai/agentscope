@@ -34,7 +34,6 @@ from ...types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ._credential_binding import CredentialBindingBase
-    from ..storage import ChannelOrigin
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
 
@@ -464,7 +463,7 @@ class ChannelBase(ABC):
     async def list_tools(  # pylint: disable=unused-argument
         self,
         workspace: "WorkspaceBase",
-        origin: "ChannelOrigin",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Platform tools exposed to the agent — e.g. send a file to a
         different user/group than the conversation. Default: none.
@@ -472,10 +471,12 @@ class ChannelBase(ABC):
         Args:
             workspace (`WorkspaceBase`): The calling session's workspace,
                 so file-sending tools read from it, not the host.
-            origin (`ChannelOrigin`): How the calling session was opened —
-                which chat it serves and, when the platform named one, the
-                user who opened it. Channels whose tools act with that
-                user's own permissions read it; the rest may ignore it.
+            channel_user_id (`str | None`, optional): The platform user the
+                session acts as, for tools that read with that user's own
+                permissions. ``None`` when the session has no single such
+                user — a shared group session, or a chat whose audience the
+                platform cannot classify — and channels whose tools are not
+                user-scoped may ignore it.
         """
         return []
 

@@ -46,7 +46,6 @@ from ._card import (
 from ._openapi import _DingTalkOpenAPI
 
 if TYPE_CHECKING:
-    from ...storage import ChannelOrigin
     from ....tool import ToolBase
     from ....workspace import WorkspaceBase
 
@@ -511,15 +510,16 @@ class DingTalkChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
-        origin: "ChannelOrigin",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Expose DingTalk tools to the agent.
 
         Args:
             workspace (`WorkspaceBase`): Calling session workspace whose
                 backend is used for file reads.
-            origin (`ChannelOrigin`): The calling session's channel origin,
-                naming the chat and its DingTalk sender.
+            channel_user_id (`str | None`, optional): The DingTalk user the
+                session acts as. The knowledge tools read as that user, so
+                they are only equipped when one is given.
 
         Returns:
             `list[ToolBase]`: DingTalk agent tools.
@@ -543,18 +543,12 @@ class DingTalkChannel(ChannelBase):
             SendFile(self, backend),
             SendImage(self, backend),
         ]
-        # Knowledge tools read as the session's sender, so they are only
-        # safe where that sender is the only participant: a group session
-        # is shared, and one member's turn would read with another's
-        # permissions.
-        user_id = origin.channel_user_id
-        is_private = await self.chat_kind(origin.chat_id) is ChatKind.PRIVATE
-        if user_id and is_private:
+        if channel_user_id:
             tools.extend(
                 [
-                    ListKnowledgeBases(self, backend, user_id),
-                    ListKnowledgeNodes(self, backend, user_id),
-                    ReadKnowledgeDocument(self, backend, user_id),
+                    ListKnowledgeBases(self, backend, channel_user_id),
+                    ListKnowledgeNodes(self, backend, channel_user_id),
+                    ReadKnowledgeDocument(self, backend, channel_user_id),
                 ],
             )
         return tools

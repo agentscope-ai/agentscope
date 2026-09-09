@@ -909,8 +909,22 @@ class ChatService:
                     and self._channel_clients is not None
                     else None
                 )
+                chat_kind = (
+                    await channel.chat_kind(channel_origin.chat_id)
+                    if channel is not None and channel_origin is not None
+                    else None
+                )
+                # Channel tools that read as the session's user are only
+                # safe in a 1:1 chat. A group session is shared, so one
+                # member's turn would otherwise read with another's
+                # permissions.
                 channel_tools = (
-                    await channel.list_tools(workspace, channel_origin)
+                    await channel.list_tools(
+                        workspace,
+                        channel_origin.channel_user_id
+                        if chat_kind is ChatKind.PRIVATE
+                        else None,
+                    )
                     if channel is not None and channel_origin is not None
                     else []
                 )
@@ -1072,7 +1086,6 @@ class ChatService:
                 if channel is not None and channel_origin is not None:
                     tools = ", ".join(t.name for t in channel_tools)
                     chat_id = channel_origin.chat_id
-                    kind = await channel.chat_kind(chat_id)
                     name = channel_origin.chat_name or await channel.chat_name(
                         chat_id,
                     )
@@ -1084,13 +1097,13 @@ class ChatService:
                         f"send there are relayed to you here, and your "
                         f"replies are delivered back to that same chat."
                     )
-                    if kind is ChatKind.GROUP:
+                    if chat_kind is ChatKind.GROUP:
                         attachment += (
                             " It is a group chat, so messages may come "
                             "from several different people; each incoming "
                             "user turn is labelled with its sender."
                         )
-                    elif kind is ChatKind.PRIVATE:
+                    elif chat_kind is ChatKind.PRIVATE:
                         attachment += (
                             " It is a one-to-one private chat with a "
                             "single user."
