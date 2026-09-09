@@ -35,7 +35,6 @@ path and a line on what was built.
 Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
-    export DASHSCOPE_WORKSPACE_ID=llm-...     # 业务空间 ID, from the console
     brew install --cask blender
     # install Blender's own MCP add-on (addon/blender_mcp_addon in
     # https://projects.blender.org/lab/blender_mcp) and turn on its
@@ -51,7 +50,6 @@ import urllib.request
 from http import HTTPStatus
 from typing import AsyncGenerator, Type
 
-import dashscope
 import requests
 from dashscope import VideoSynthesis
 from pydantic import BaseModel
@@ -159,6 +157,9 @@ async def restyle_video(video_path: str, look: str) -> str:
             ],
             resolution="720P",
             ratio="adaptive",
+            # Let the model match the render; the default of 5 seconds
+            # would cut a longer one short.
+            duration=-1,
             prompt_extend=True,
         )
         done = VideoSynthesis.wait(task=task, api_key=api_key)
@@ -403,17 +404,6 @@ async def main() -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise RuntimeError("Set DASHSCOPE_API_KEY before running this demo.")
-    workspace_id = os.environ.get("DASHSCOPE_WORKSPACE_ID")
-    if not workspace_id:
-        raise RuntimeError(
-            "Set DASHSCOPE_WORKSPACE_ID — video generation is served on "
-            "the workspace-scoped endpoint.",
-        )
-    # Beijing; the SDK reads this for the video model, while the chat
-    # model carries its own URL.
-    dashscope.base_http_api_url = (
-        f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1"
-    )
     here = os.path.dirname(os.path.abspath(__file__))
     blender = MCPClient(
         name="blender",

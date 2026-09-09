@@ -78,7 +78,6 @@ StdioMCPConfig(
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-export DASHSCOPE_WORKSPACE_ID=llm-...   # 业务空间 ID，控制台可查（北京地域）
 brew install --cask blender
 # install Blender's own MCP add-on — addon/blender_mcp_addon from
 # https://projects.blender.org/lab/blender_mcp — and enable auto-start
@@ -128,6 +127,7 @@ goes to Model Studio's temporary space first and comes back as an
                     "url": _upload(video_path, api_key)}],
             resolution="720P",
             ratio="adaptive",
+            duration=-1,
             prompt_extend=True,
         )
         done = VideoSynthesis.wait(task=task, api_key=api_key)
@@ -138,10 +138,9 @@ The upload is a `getPolicy` call followed by a form POST — the SDK adds
 that will read it. The model's own limits on a reference video are why
 the storyboard is told to stay under **15 seconds** at **≥24 fps**.
 
-Video generation is served on the workspace-scoped endpoint, hence
-`DASHSCOPE_WORKSPACE_ID` — the example pins Beijing. It reaches the
-video model alone: the chat model carries its own URL, so nothing else
-moves with it.
+`duration=-1` is what keeps the styled cut as long as the render — the
+parameter defaults to 5 seconds, which would quietly truncate anything
+longer.
 
 ### Every verifier here is a person
 
