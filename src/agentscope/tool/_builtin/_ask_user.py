@@ -95,8 +95,12 @@ class _Question(BaseModel):
     )
 
 
-class _Answer(BaseModel):
-    """One question's answer, as the caller must return it."""
+class AskUserAnswer(BaseModel):
+    """One question's answer, as the caller must return it.
+
+    An entry of :attr:`AskUserMetadata.answers`; a frontend building
+    them one at a time has this to build them with.
+    """
 
     question: str = Field(
         description="The question this answers, verbatim.",
@@ -124,7 +128,7 @@ class AskUserMetadata(BaseModel):
     that on prose.
     """
 
-    answers: list[_Answer]
+    answers: list[AskUserAnswer]
 
 
 class AskUserParams(BaseModel):

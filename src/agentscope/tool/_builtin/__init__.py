@@ -3,6 +3,7 @@
 
 from ._ask_user import (
     AskUser,
+    AskUserAnswer,
     AskUserMetadata,
     AskUserParams,
 )
@@ -19,6 +20,7 @@ from ._write import Write
 
 __all__ = [
     "AskUser",
+    "AskUserAnswer",
     "AskUserMetadata",
     "AskUserParams",
     "ResetTools",
