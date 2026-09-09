@@ -197,7 +197,10 @@ class HitlUI(Vertical):
         body = Text(f"{tool_call.name}\n", style="bold")
         body.append(tool_call.input or "{}", style="dim")
         if tool_call.suggested_rules:
-            body.append("\n\nSuggested permission rules:", style="yellow")
+            body.append(
+                "\n\nSuggested permission rules:",
+                style="italic",
+            )
             for rule in tool_call.suggested_rules:
                 suffix = f" ({rule.rule_content})" if rule.rule_content else ""
                 body.append(
@@ -326,10 +329,17 @@ class ChatUI(Widget):
         background: $surface;
     }
 
+    .as-hitl-options > .option-list--option-highlighted,
+    .as-hitl-options:focus > .option-list--option-highlighted {
+        color: $primary;
+        background: $primary 10%;
+        text-style: bold;
+    }
+
     .as-hitl-title {
         height: 1;
         text-style: bold;
-        color: $warning;
+        color: $primary;
     }
 
     .as-hitl-body {

@@ -229,9 +229,9 @@ class AttachmentUI(Static):
             label.append(f"  {_human_size(size)}", style="dim")
         else:
             url = str(source.url)
-            label.append("  open", style=f"blue underline link {url}")
+            label.append("  open", style=f"underline link {url}")
         if self.block.finished_at is None:
-            label.append("  receiving…", style="yellow")
+            label.append("  receiving…", style="dim italic")
         return label
 
     def replace(self, block: DataBlock) -> None:
@@ -331,7 +331,7 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
     """Return the built-in detail rendering for one tool invocation."""
     items: list[RenderableType] = []
     if pair.call.input.strip():
-        items.append(Text("input", style="dim cyan"))
+        items.append(Text("input", style="dim"))
         items.append(
             Syntax(
                 _pretty_json(pair.call.input),
@@ -375,11 +375,11 @@ def _tool_body(pair: _ToolPair) -> RenderableType:
     else:
         rendered = Text(output or "(no output)", style="dim")
     state_style = {
-        "success": "green",
-        "error": "red",
-        "denied": "yellow",
-        "interrupted": "yellow",
-        "running": "cyan",
+        "success": "dim",
+        "error": "bold",
+        "denied": "dim italic",
+        "interrupted": "dim italic",
+        "running": "dim italic",
     }.get(str(result.state), "dim")
     items.append(Text(f"output · {result.state}", style=state_style))
     items.append(rendered)
@@ -570,11 +570,14 @@ class MessageUI(Vertical):
                 f" ↓{self.message.usage.output_tokens}",
             )
         if self.message.finished_reason not in (None, "completed"):
-            text.append(f"  {self.message.finished_reason}", style="yellow")
+            text.append(
+                f"  {self.message.finished_reason}",
+                style="italic",
+            )
         if self.message.error is not None:
             text.append(
                 f"  {self.message.error.type}: {self.message.error.message}",
-                style="red",
+                style="bold",
             )
         return text
 
@@ -685,11 +688,11 @@ class MessagesUI(VerticalScroll):
     }
 
     .as-message-user > .as-message-header {
-        color: $primary;
+        color: $text;
     }
 
     .as-message-assistant > .as-message-header {
-        color: $accent;
+        color: $primary;
     }
 
     .as-message-footer {
@@ -719,6 +722,17 @@ class MessagesUI(VerticalScroll):
         background: transparent;
         color: $text-muted;
         text-style: none;
+    }
+
+    .as-thinking > CollapsibleTitle:hover,
+    .as-thinking > CollapsibleTitle:focus,
+    .as-tool-group > CollapsibleTitle:hover,
+    .as-tool-group > CollapsibleTitle:focus,
+    .as-hint > CollapsibleTitle:hover,
+    .as-hint > CollapsibleTitle:focus {
+        background: $primary 10%;
+        color: $primary;
+        text-style: bold;
     }
 
     .as-thinking > Contents,
