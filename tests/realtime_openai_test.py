@@ -70,7 +70,6 @@ class OpenAICardsTest(unittest.TestCase):
                     24000,
                     24000,
                 ),
-                ("gpt-realtime", "openai_realtime", True, 32000, 24000, 24000),
             ],
         )
 
@@ -83,7 +82,6 @@ class OpenAICardsTest(unittest.TestCase):
                 for card in CRED.list_realtime_models()
             },
             {
-                "gpt-realtime": "OpenAIRealtimeModel",
                 "gpt-realtime-1.5": "OpenAIRealtimeModel",
                 "gpt-realtime-2": "OpenAIRealtimeModel",
                 "gpt-realtime-2.1": "OpenAIRealtimeModel",
@@ -164,7 +162,7 @@ class OpenAISessionUpdateTest(unittest.TestCase):
         """Semantic VAD takes an eagerness, not a threshold; an empty
         transcription model drops the block entirely."""
         model = OpenAIRealtimeModel(
-            "gpt-realtime",
+            "gpt-realtime-1.5",
             CRED,
             parameters=OpenAIRealtimeModel.Parameters(
                 voice="cedar",
