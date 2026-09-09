@@ -464,10 +464,7 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             options = app.query_one(OptionList)
             self.assertTrue(options.has_focus)
             self.assertEqual(options.highlighted, 0)
-            self.assertGreaterEqual(
-                options.region.height,
-                options.option_count * 2,
-            )
+            self.assertEqual(options.region.height, options.option_count)
             self.assertTrue(
                 str(options.get_option_at_index(0).prompt).startswith("→ 1."),
             )

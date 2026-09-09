@@ -211,7 +211,7 @@ class HitlUI(Vertical):
         self.query_one("#as-hitl-title", Static).update(
             f"{state} · {agent_name} · {index}/{total}",
         )
-        body = Text(f"{tool_call.name}\n", style="bold")
+        body = Text(f"{tool_call.name}\n\n", style="bold")
         arguments = tool_call.input or "{}"
         body.append(
             "\n".join(f"  {line}" for line in arguments.splitlines()),
@@ -253,7 +253,7 @@ class HitlUI(Vertical):
     @staticmethod
     def _choice_prompt(index: int, label: str, selected: bool) -> str:
         marker = "→" if selected else " "
-        return f"{marker} {index + 1}. {label}\n"
+        return f"{marker} {index + 1}. {label}"
 
     def _refresh_choice_prompts(self) -> None:
         options = self.query_one(OptionList)
@@ -384,6 +384,7 @@ class ChatUI(Widget):
         width: 100%;
         height: auto;
         max-height: 10;
+        margin-top: 1;
         scrollbar-visibility: hidden;
         border: none;
         padding: 0 1;
