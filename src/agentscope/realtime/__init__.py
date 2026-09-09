@@ -35,6 +35,7 @@ from ._transport import (
     TransportFrame,
 )
 from ._vad import SpeechTransition, VADBase
+from ._xai import XAIRealtimeModel
 
 __all__ = [
     # Model
@@ -42,6 +43,7 @@ __all__ = [
     "DashScopeRealtimeModel",
     "DashScopeAudioRealtimeModel",
     "OpenAIRealtimeModel",
+    "XAIRealtimeModel",
     "RealtimeModelCard",
     "TruncationSupport",
     "ModelDisconnectedError",
