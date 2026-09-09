@@ -32,6 +32,7 @@ _CLASS_NAME_MAP = {
     "xai": ProviderNameValues.XAI,
     "moonshot": ProviderNameValues.MOONSHOT,
     "volcengine": ProviderNameValues.VOLCENGINE,
+    "aimlapi": ProviderNameValues.AIMLAPI,
 }
 
 # Map base URL fragments to provider names for OpenAI-compatible APIs
@@ -45,6 +46,7 @@ _BASE_URL_PROVIDER_MAP = [
     ("openai.azure.com", ProviderNameValues.AZURE_AI_OPENAI),
     ("amazonaws.com", ProviderNameValues.AWS_BEDROCK),
     ("api.x.ai", ProviderNameValues.XAI),
+    ("api.aimlapi.com", ProviderNameValues.AIMLAPI),
 ]
 
 

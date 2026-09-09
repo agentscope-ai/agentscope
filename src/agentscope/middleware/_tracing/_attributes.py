@@ -192,6 +192,9 @@ class ProviderNameValues:
     VOLCENGINE = "volcengine"
     """The Volcengine provider name."""
 
+    AIMLAPI = "aimlapi"
+    """The aimlapi.com provider name."""
+
     AZURE_AI_OPENAI = (
         GenAIAttributes.GenAiProviderNameValues.AZURE_AI_OPENAI.value
     )

@@ -157,6 +157,13 @@ ALL_PROVIDERS: list[Provider] = [
         description="Google Gemini models",
     ),
     Provider(
+        name="aimlapi",
+        env_var="AIMLAPI_API_KEY",
+        file_prefix="aimlapi",
+        supported_tests=["call"],
+        description="aimlapi.com aggregator (OpenAI-compatible)",
+    ),
+    Provider(
         name="moonshot",
         env_var="MOONSHOT_API_KEY",
         file_prefix="moonshot",
