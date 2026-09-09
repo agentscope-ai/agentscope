@@ -208,8 +208,10 @@ time or interval"
         invitable_pool = [
             view
             for view in visible_agents
-            if view.data.invite_config.invitable
-            and (view.data.invite_config.invite_description or "").strip()
+            if view.data.chat_config.invite_config.invitable
+            and (
+                view.data.chat_config.invite_config.invite_description or ""
+            ).strip()
         ]
         if invitable_pool:
             tools.append(

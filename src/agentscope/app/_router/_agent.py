@@ -103,21 +103,21 @@ async def get_agent_schema_v2() -> AgentSchemaV2Response:
 
     - ``id``: server-assigned, marked :class:`SkipJsonSchema` on
       :attr:`AgentData.id`.
-    - ``context_config.summary_schema``: internal structured-output
-      spec for the compression model, dropped below since it is not
-      user-editable and there is no equivalent hook on the Pydantic
-      side.
+    - ``chat_config.context_config.summary_schema``: internal
+      structured-output spec for the compression model, dropped below
+      since it is not user-editable and there is no equivalent hook on
+      the Pydantic side.
 
     ``$ref`` inlining is delegated to
     :func:`~agentscope._utils._common._flatten_json_schema` so the
     frontend can render every property from the response body alone.
 
-    The frontend derives its section grouping (identity / context /
-    react / invite) directly from this schema — top-level scalar
-    properties are the "identity" section, and top-level nested-object
-    properties each become their own section. Adding a new
-    user-editable field to :class:`AgentData` is thus enough to have it
-    appear in the create / edit form without a router change.
+    The frontend derives its section grouping directly from this
+    schema — top-level scalar properties are the "identity" section,
+    and every nested object below a mode block (``chat_config``)
+    becomes its own section. Adding a new user-editable field to
+    :class:`AgentData` is thus enough to have it appear in the create /
+    edit form without a router change.
 
     Returns:
         `AgentSchemaV2Response`:
@@ -127,7 +127,11 @@ async def get_agent_schema_v2() -> AgentSchemaV2Response:
     # ``summary_schema`` is Pydantic's structured-output spec fed to the
     # compression model — internal, not user-editable. No pydantic-side
     # hook covers this deep nested field, so drop it after inlining.
-    context_config = schema.get("properties", {}).get("context_config", {})
+    chat_config = schema.get("properties", {}).get("chat_config", {})
+    context_config = chat_config.get("properties", {}).get(
+        "context_config",
+        {},
+    )
     context_config.get("properties", {}).pop("summary_schema", None)
     return AgentSchemaV2Response(schema=schema)
 
@@ -191,18 +195,12 @@ async def create_agent(
         `HTTPException`: 422 if the request body passes
             :class:`CreateAgentRequest` validation but the resulting
             :class:`AgentData` fails its cross-field invariants (e.g.
-            ``invite_config.invitable=True`` without a non-empty
-            ``invite_description``). Symmetrical with
+            ``chat_config.invite_config.invitable=True`` without a
+            non-empty ``invite_description``). Symmetrical with
             :func:`update_agent`.
     """
     try:
-        data = AgentData(
-            name=body.name,
-            system_prompt=body.system_prompt,
-            context_config=body.context_config,
-            react_config=body.react_config,
-            invite_config=body.invite_config,
-        )
+        data = AgentData.model_validate(body.model_dump(exclude_none=True))
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -255,7 +253,9 @@ async def update_agent(
     # ``AgentData.model_validate`` on the merged shape so the
     # ``invite_config`` sub-model's ``invitable ⇒ non-empty description``
     # invariant enforced by ``@model_validator(mode="after")`` produces
-    # an HTTP 422 instead of a stored-but-invalid record.
+    # an HTTP 422 instead of a stored-but-invalid record. A body still
+    # using the pre-``chat_config`` field names is folded in there too,
+    # on top of the stored block rather than over it.
     try:
         updated_data = AgentData.model_validate(
             {**existing.data.model_dump(), **updates},

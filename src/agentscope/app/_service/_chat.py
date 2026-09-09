@@ -1107,14 +1107,15 @@ class ChatService:
 
                 agent_state = session_record.state
                 agent_state.session_id = session_id
+                chat_config = agent_record.data.chat_config
                 agent = self._agent_cls(
                     name=agent_record.data.name,
                     system_prompt=system_prompt,
                     model=model,
                     toolkit=toolkit,
                     model_config=ModelConfig(fallback_model=fallback_model),
-                    context_config=agent_record.data.context_config,
-                    react_config=agent_record.data.react_config,
+                    context_config=chat_config.context_config,
+                    react_config=chat_config.react_config,
                     state=agent_state,
                     middlewares=middlewares,
                     offloader=workspace,
