@@ -62,7 +62,7 @@ class XAIRealtimeModel(RealtimeModelBase):
 
     def __init__(
         self,
-        model_name: str,
+        model: str,
         credential: XAICredential,
         parameters: "XAIRealtimeModel.Parameters | None" = None,
         model_card: RealtimeModelCard | None = None,
@@ -70,7 +70,7 @@ class XAIRealtimeModel(RealtimeModelBase):
         """Initialize the xAI realtime model.
 
         Args:
-            model_name (`str`):
+            model (`str`):
                 The model name, e.g. ``"grok-voice-latest"``.
             credential (`XAICredential`):
                 The xAI credential.
@@ -79,7 +79,7 @@ class XAIRealtimeModel(RealtimeModelBase):
             model_card (`RealtimeModelCard | None`, optional):
                 The model card, looked up by name if omitted.
         """
-        super().__init__(model_name, credential, parameters, model_card)
+        super().__init__(model, credential, parameters, model_card)
         self.parameters: XAIRealtimeModel.Parameters
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
@@ -107,8 +107,7 @@ class XAIRealtimeModel(RealtimeModelBase):
 
         credential: XAICredential = self.credential  # type: ignore
         self._ws = await websockets.connect(
-            f"wss://{credential.api_host}/v1/realtime"
-            f"?model={self.model_name}",
+            f"wss://{credential.api_host}/v1/realtime" f"?model={self.model}",
             additional_headers={
                 "Authorization": f"Bearer "
                 f"{credential.api_key.get_secret_value()}",

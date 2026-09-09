@@ -75,7 +75,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     def __init__(
         self,
-        model_name: str,
+        model: str,
         credential: GeminiCredential,
         parameters: "GeminiRealtimeModel.Parameters | None" = None,
         model_card: RealtimeModelCard | None = None,
@@ -83,7 +83,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """Initialize the Gemini realtime model.
 
         Args:
-            model_name (`str`):
+            model (`str`):
                 The model name, e.g. ``"gemini-3.1-flash-live-preview"``.
             credential (`GeminiCredential`):
                 The Gemini credential.
@@ -92,7 +92,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             model_card (`RealtimeModelCard | None`, optional):
                 The model card, looked up by name if omitted.
         """
-        super().__init__(model_name, credential, parameters, model_card)
+        super().__init__(model, credential, parameters, model_card)
         self.parameters: GeminiRealtimeModel.Parameters
         self.resumption_handle = ""
         """The latest handle the server offered. Not used on reconnect:
@@ -278,7 +278,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 },
             }
         setup: dict[str, Any] = {
-            "model": f"models/{self.model_name}",
+            "model": f"models/{self.model}",
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "speechConfig": {

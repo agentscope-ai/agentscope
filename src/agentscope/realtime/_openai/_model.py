@@ -70,7 +70,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
 
     def __init__(
         self,
-        model_name: str,
+        model: str,
         credential: OpenAICredential,
         parameters: "OpenAIRealtimeModel.Parameters | None" = None,
         model_card: RealtimeModelCard | None = None,
@@ -78,7 +78,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         """Initialize the OpenAI realtime model.
 
         Args:
-            model_name (`str`):
+            model (`str`):
                 The model name, e.g. ``"gpt-realtime-2.1"``.
             credential (`OpenAICredential`):
                 The OpenAI credential.
@@ -87,7 +87,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
             model_card (`RealtimeModelCard | None`, optional):
                 The model card, looked up by name if omitted.
         """
-        super().__init__(model_name, credential, parameters, model_card)
+        super().__init__(model, credential, parameters, model_card)
         self.parameters: OpenAIRealtimeModel.Parameters
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
@@ -125,7 +125,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         # ``https`` -> ``wss``, ``http`` -> ``ws``.
         url = base_url.replace("http", "ws", 1)
         self._ws = await websockets.connect(
-            f"{url}/realtime?model={self.model_name}",
+            f"{url}/realtime?model={self.model}",
             additional_headers=headers,
         )
         self._reader = asyncio.create_task(self._read(), name="openai-rt")

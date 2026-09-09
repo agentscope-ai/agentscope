@@ -58,7 +58,7 @@ class RealtimeModelBase(ABC):
 
     def __init__(
         self,
-        model_name: str,
+        model: str,
         credential: CredentialBase,
         parameters: "RealtimeModelBase.Parameters | None" = None,
         model_card: RealtimeModelCard | None = None,
@@ -66,7 +66,7 @@ class RealtimeModelBase(ABC):
         """Initialize the realtime model.
 
         Args:
-            model_name (`str`):
+            model (`str`):
                 The model name, e.g. ``"qwen3-omni-flash-realtime"``.
             credential (`CredentialBase`):
                 The credential used to authenticate against the provider.
@@ -74,26 +74,26 @@ class RealtimeModelBase(ABC):
                 Provider-specific parameters; defaults are used if omitted.
             model_card (`RealtimeModelCard | None`, optional):
                 The model card. When ``None`` it is looked up by
-                *model_name* among the cards shipped with this class, so
+                *model* among the cards shipped with this class, so
                 that constructing a model by name alone still yields the
                 right sample rates and limits.
 
         Raises:
-            `ValueError`: If no card is given and none matches *model_name*.
+            `ValueError`: If no card is given and none matches *model*.
         """
-        self.model_name = model_name
+        self.model = model
         self.credential = credential
         self.parameters = parameters or self.Parameters()
-        self.card = model_card or self._find_card(model_name)
+        self.card = model_card or self._find_card(model)
 
     @classmethod
-    def _find_card(cls, model_name: str) -> RealtimeModelCard:
-        """Look up the shipped card for *model_name*."""
+    def _find_card(cls, model: str) -> RealtimeModelCard:
+        """Look up the shipped card for *model*."""
         for card in cls.list_models():
-            if card.name == model_name:
+            if card.name == model:
                 return card
         raise ValueError(
-            f"No realtime model card found for {model_name!r} in "
+            f"No realtime model card found for {model!r} in "
             f"{cls.__name__}. Pass `model_card` explicitly for a model "
             f"that ships no card.",
         )

@@ -830,7 +830,7 @@ class RealtimeAgent:
         self._emit(
             ModelCallStartEvent(
                 reply_id=self._reply_id,
-                model_name=self.model.model_name,
+                model_name=self.model.model,
             ),
         )
         return self._reply
