@@ -20,9 +20,8 @@ from agentscope.sop import (
     SOP,
     SOPEngine,
     SOPRunState,
-    SOPRunStatus,
+    SOPPhase,
     SOPStep,
-    SOPStepState,
 )
 from agentscope.types import ReplyFinishedReason
 
@@ -111,8 +110,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         await self._drive(engine, UserMsg(name="user", content="go"))
 
-        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertEqual(engine.phase, SOPPhase.COMPLETED)
         self.assertIn("did A", str(second.asked[0]))
+        self.maxDiff = None
         self.assertDictEqual(
             engine.state.model_dump(exclude={"inputs"}),
             {
@@ -122,7 +122,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                 "steps": {
                     "a": {
                         "step_id": "a",
-                        "state": SOPStepState.COMPLETED,
+                        "phase": SOPPhase.COMPLETED,
                         "given": [
                             {
                                 "name": "user",
@@ -146,7 +146,15 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                                 "error": None,
                             },
                         ],
-                        "submission": "did A",
+                        "submission": [
+                            {
+                                "type": "text",
+                                "text": "did A",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
                         "verifications": [
                             {
                                 "passed": True,
@@ -158,17 +166,28 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                     },
                     "b": {
                         "step_id": "b",
-                        "state": SOPStepState.COMPLETED,
+                        "phase": SOPPhase.COMPLETED,
                         "given": [
                             {
                                 "name": "sop",
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": (
-                                            '<handover from="A">\n'
-                                            "did A\n</handover>"
-                                        ),
+                                        "text": '<handover from="A">',
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": "did A",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": "</handover>",
                                         "id": AnyString(),
                                         "created_at": AnyString(),
                                         "finished_at": None,
@@ -185,7 +204,15 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                                 "error": None,
                             },
                         ],
-                        "submission": "did B",
+                        "submission": [
+                            {
+                                "type": "text",
+                                "text": "did B",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
                         "verifications": [
                             {
                                 "passed": True,
@@ -230,7 +257,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         await self._drive(engine, UserMsg(name="user", content="go"))
 
-        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertEqual(engine.phase, SOPPhase.COMPLETED)
         self.assertIn("amount wrong", str(executor.asked[1]))
         self.assertIn("attempt 2 of 3", str(executor.asked[1]))
         self.assertListEqual(
@@ -284,10 +311,10 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         await self._drive(engine, UserMsg(name="user", content="go"))
 
-        self.assertEqual(engine.status, SOPRunStatus.FAILED)
-        self.assertEqual(engine.state.steps["a"].state, SOPStepState.FAILED)
+        self.assertEqual(engine.phase, SOPPhase.FAILED)
+        self.assertEqual(engine.state.steps["a"].phase, SOPPhase.FAILED)
         # The step behind a failure was never reached.
-        self.assertEqual(engine.state.steps["b"].state, SOPStepState.PENDING)
+        self.assertEqual(engine.state.steps["b"].phase, SOPPhase.PENDING)
 
     async def test_parking_in_the_executor_ends_the_stream(self) -> None:
         """A parked run lets go, and picks up where it stopped."""
@@ -306,13 +333,13 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         events = await self._drive(engine, UserMsg(name="user", content="go"))
 
-        self.assertEqual(engine.status, SOPRunStatus.AWAITING)
+        self.assertEqual(engine.phase, SOPPhase.AWAITING)
         self.assertEqual(len(events), 1)
         self.assertIsInstance(events[0], RequireUserConfirmEvent)
 
         await self._drive(engine, _answer())
 
-        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertEqual(engine.phase, SOPPhase.COMPLETED)
         # The answer went straight to the executor, not wrapped in a brief.
         self.assertIsInstance(executor.asked[1], UserConfirmResultEvent)
 
@@ -334,11 +361,11 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         engine = SOPEngine(sop)
 
         await self._drive(engine, UserMsg(name="user", content="go"))
-        self.assertEqual(engine.status, SOPRunStatus.AWAITING)
+        self.assertEqual(engine.phase, SOPPhase.AWAITING)
 
         await self._drive(engine, _answer())
 
-        self.assertEqual(engine.status, SOPRunStatus.COMPLETED)
+        self.assertEqual(engine.phase, SOPPhase.COMPLETED)
         self.assertEqual(len(executor.asked), 1)
         self.assertEqual(len(verifier.asked), 2)
 
@@ -402,12 +429,12 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         )
         engine2 = SOPEngine(revived, SOPRunState.model_validate_json(stored))
 
-        self.assertEqual(engine2.status, SOPRunStatus.AWAITING)
+        self.assertEqual(engine2.phase, SOPPhase.AWAITING)
         self.assertEqual(engine2.state.id, engine.state.id)
 
         await self._drive(engine2, _answer())
 
-        self.assertEqual(engine2.status, SOPRunStatus.COMPLETED)
+        self.assertEqual(engine2.phase, SOPPhase.COMPLETED)
 
     async def test_a_run_from_another_sop_is_refused(self) -> None:
         """Loading somebody else's run is an error, not a surprise."""

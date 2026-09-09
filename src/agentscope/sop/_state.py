@@ -1,23 +1,26 @@
 # -*- coding: utf-8 -*-
 """The runtime state of a SOP run — the half worth persisting.
 
-The engine reads and writes only what is here. How a step reached its
-verdict is the step's own business and leaves no trace beyond the verdict
-itself.
+A definition is code and can be run any number of times; a run is plain
+data and belongs to exactly one of those times. The engine owns the run
+and hands each step the slice that is its own, so nothing about a run
+ever lives on a step object.
 """
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..message import Msg
+from ..message import DataBlock, Msg, TextBlock
 from .._utils._common import _generate_id, _generate_timestamp
 
 
-class SOPStepState(StrEnum):
-    """Where a step stands in a run.
+class SOPPhase(StrEnum):
+    """Where a step, or a whole run, stands.
 
-    There is no ``verifying``: whether a parked step stopped while working
-    or while being judged is the step's business, not the engine's.
+    One enum for both: a run is only ever as far along as its steps let
+    it be, and the five answers are the same either way. There is no
+    ``verifying`` — whether a parked step stopped while working or while
+    being judged is the step's business, not the engine's.
     """
 
     PENDING = "pending"
@@ -34,16 +37,6 @@ class SOPStepState(StrEnum):
 
     FAILED = "failed"
     """Refused until :attr:`~._schema.SOPStepBase.max_attempts` ran out."""
-
-
-class SOPRunStatus(StrEnum):
-    """Where a run stands overall. Always derived, never stored."""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    AWAITING = "awaiting"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 class VerificationResult(BaseModel):
@@ -69,25 +62,42 @@ class VerificationResult(BaseModel):
 
 
 class SOPStepRunState(BaseModel):
-    """What one step did in one run."""
+    """What one step did in one run.
+
+    Four fields are the engine's contract: the engine writes what the
+    step was given, and every step must keep the other three honest —
+    which phase it is in, what it handed over, and what was decided about
+    each attempt. A step that needs to remember more
+    subclasses this and names the subclass in
+    :attr:`~._schema.SOPStepBase.state_type`; extra fields are kept
+    through a round trip so a run restored from storage still carries
+    them.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     step_id: str
     """The step this belongs to."""
 
-    state: SOPStepState = SOPStepState.PENDING
+    phase: SOPPhase = SOPPhase.PENDING
     """Where the step stands."""
 
     given: list[Msg] = Field(default_factory=list)
-    """What this attempt was handed to work from — the run's inputs for
-    the first step, the one before's handover for the rest. Kept because
-    the verifier needs it too: judging a draft means knowing what the
-    step was asked for, not only what came back."""
+    """What the engine dispatched this attempt with — the run's inputs
+    for the first step, the one before's handover for the rest. Written
+    by the engine, read by the step: a verifier judging a draft has to
+    see what was asked for, and after a park the answer that resumes the
+    attempt is all the step is handed."""
 
-    submission: str | None = None
-    """What the current attempt handed over, once it has. ``None`` means
-    the attempt has not produced anything yet — which is also how a step
-    tells, on resume, that it parked while working rather than while
-    being judged."""
+    submission: list[TextBlock | DataBlock] | None = None
+    """What the current attempt handed over, once it has.
+
+    Blocks rather than text: a step that produces a chart, a file or an
+    image hands it on as readily as a sentence, and the next step reads
+    it the same way. ``None`` — as opposed to empty — means the attempt
+    has not produced anything yet, which is also how a step tells, on
+    resume, that it parked while working rather than while being
+    judged."""
 
     verifications: list[VerificationResult] = Field(default_factory=list)
     """Every settled verdict, oldest first. Its length is the attempt
@@ -96,10 +106,6 @@ class SOPStepRunState(BaseModel):
 
 class SOPRunState(BaseModel):
     """One execution of a SOP, and the whole of what is worth saving.
-
-    Assembled from the steps on the way out by
-    :attr:`~._engine.SOPEngine.state`, and handed back to them on the way
-    in by the engine's constructor.
 
     It covers the SOP's own state and nothing below it: an executor that
     keeps state of its own (an :class:`~..agent.Agent` does) is persisted
@@ -122,15 +128,15 @@ class SOPRunState(BaseModel):
     """When the run was created."""
 
     @property
-    def status(self) -> SOPRunStatus:
+    def phase(self) -> SOPPhase:
         """Where the run stands, worked out from its steps."""
-        states = [_.state for _ in self.steps.values()]
-        if not states or all(_ is SOPStepState.PENDING for _ in states):
-            return SOPRunStatus.PENDING
-        if any(_ is SOPStepState.FAILED for _ in states):
-            return SOPRunStatus.FAILED
-        if all(_ is SOPStepState.COMPLETED for _ in states):
-            return SOPRunStatus.COMPLETED
-        if any(_ is SOPStepState.AWAITING for _ in states):
-            return SOPRunStatus.AWAITING
-        return SOPRunStatus.RUNNING
+        phases = [_.phase for _ in self.steps.values()]
+        if not phases or all(_ is SOPPhase.PENDING for _ in phases):
+            return SOPPhase.PENDING
+        if any(_ is SOPPhase.FAILED for _ in phases):
+            return SOPPhase.FAILED
+        if all(_ is SOPPhase.COMPLETED for _ in phases):
+            return SOPPhase.COMPLETED
+        if any(_ is SOPPhase.AWAITING for _ in phases):
+            return SOPPhase.AWAITING
+        return SOPPhase.RUNNING

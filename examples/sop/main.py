@@ -50,6 +50,7 @@ from agentscope.event import (
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
+    UserInterruptEvent,
 )
 from agentscope.message import (
     AssistantMsg,
@@ -63,9 +64,8 @@ from agentscope.model import DashScopeChatModel
 from agentscope.sop import (
     SOP,
     SOPEngine,
-    SOPRunStatus,
+    SOPPhase,
     SOPStep,
-    StepInputs,
 )
 from agentscope.tool import Toolkit
 from agentscope.types import ReplyFinishedReason
@@ -88,7 +88,12 @@ class SupervisorApproval:
 
     async def reply_stream(  # pylint: disable=unused-argument
         self,
-        inputs: StepInputs = None,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None = None,
         structured_schema: Type[BaseModel] | None = None,
         yield_final_msg: bool = False,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -321,7 +326,9 @@ async def main() -> None:
         engine = SOPEngine(sop)
         renderer = ConsoleRenderer()
 
-        inputs: StepInputs = UserMsg(name="user", content=args.complaint)
+        inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent = (
+            UserMsg(name="user", content=args.complaint)
+        )
         while True:
             pending: AgentEvent | None = None
             async for event in engine.reply_stream(inputs):
@@ -332,18 +339,23 @@ async def main() -> None:
                 ):
                     pending = event
 
-            if engine.status is not SOPRunStatus.AWAITING:
+            if engine.phase is not SOPPhase.AWAITING:
                 break
             if isinstance(pending, RequireUserConfirmEvent):
                 inputs = await answer_confirm(pending)
             else:
                 inputs = await answer_request(pending)
 
-        print(f"\n== run {engine.status.value}")
+        print(f"\n== run {engine.phase.value}")
         for step in sop.steps:
-            print(f"   {step.subject}: {step.state.state.value}")
+            phase = engine.state.steps[step.id].phase.value
+            print(f"   {step.subject}: {phase}")
 
-        reply = engine.state.steps["reply"].submission
+        reply = "".join(
+            block.text
+            for block in (engine.state.steps["reply"].submission or [])
+            if block.type == "text"
+        )
         if reply:
             print("\n" + "=" * 60)
             print("给客户的回复：\n")

@@ -3,30 +3,27 @@
 
 The engine does three things and knows nothing else: it walks the steps
 in order, hands resumption events to whichever one parked, and spends the
-attempt budget. It has no idea what a verifier is — it reads
-:attr:`~._state.SOPStepRunState.verifications` and decides from that
-alone.
+attempt budget. It has no idea what a verifier is — it reads each step's
+:class:`~._state.SOPStepRunState` and decides from that alone.
+
+It also owns the run. A definition is handed in and never written to; a
+step gets its own slice of the run on every call and nothing more.
 """
 from typing import AsyncGenerator
 
-from ._schema import SOP, StepInputs
-from ._state import (
-    SOPRunState,
-    SOPRunStatus,
-    SOPStepState,
-)
+from ._schema import SOP
+from ._state import SOPPhase, SOPRunState
 from ..event import (
     AgentEvent,
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
-from ..message import Msg, UserMsg
-from .._utils._common import _generate_id, _generate_timestamp
+from ..message import Msg, TextBlock, UserMsg
 
 
 class SOPEngine:
-    """Runs a :class:`~._schema.SOP`, shaped like an agent.
+    """One run of a :class:`~._schema.SOP`, shaped like an agent.
 
     Feed it, watch the events, and when something needs a person the
     stream simply ends — nothing stays suspended. Come back with the
@@ -38,57 +35,47 @@ class SOPEngine:
 
         Args:
             sop (`SOP`):
-                The procedure to run.
+                The procedure to run. Never written to.
             state (`SOPRunState | None`, optional):
-                A stored run to carry on from, as handed out by
-                :attr:`state`. Omit to start a new one. Only the SOP's
-                own state is restored: an executor that keeps state of
-                its own — an :class:`~..agent.Agent` does — is restored
-                by whoever built it, before the SOP is handed here.
+                A stored run to carry on from. Omit to start a new one.
+                Only the SOP's own state is restored: an executor that
+                keeps state of its own — an :class:`~..agent.Agent` does
+                — is restored by whoever built it, before the SOP is
+                handed here.
 
         Raises:
             `ValueError`:
                 If the state belongs to a different SOP.
         """
+        if state is not None and state.sop_id != sop.id:
+            raise ValueError(
+                f"State belongs to SOP {state.sop_id}, not {sop.id}.",
+            )
         self.sop = sop
-        self._id = _generate_id()
-        self._created_at = _generate_timestamp()
-        self._inputs: list[Msg] = []
-        if state is not None:
-            if state.sop_id != sop.id:
-                raise ValueError(
-                    f"State belongs to SOP {state.sop_id}, not {sop.id}.",
-                )
-            self._id = state.id
-            self._inputs = list(state.inputs)
-            self._created_at = state.created_at
-            for step in sop.steps:
-                if (record := state.steps.get(step.id)) is not None:
-                    step.state = record
+        self.state = state or SOPRunState(sop_id=sop.id)
+        for step in sop.steps:
+            # A stored run was read back as the base record; a step that
+            # keeps more than that gets it back through its own type.
+            stored = self.state.steps.get(step.id)
+            self.state.steps[step.id] = (
+                step.state_type.model_validate(stored.model_dump())
+                if stored is not None
+                else step.state_type(step_id=step.id)
+            )
 
     @property
-    def state(self) -> SOPRunState:
-        """The run so far, gathered from the steps.
-
-        A live view rather than a copy: the step records in it are the
-        steps' own. Call ``model_dump()`` on it for a snapshot to store.
-        """
-        return SOPRunState(
-            sop_id=self.sop.id,
-            id=self._id,
-            inputs=self._inputs,
-            steps={step.id: step.state for step in self.sop.steps},
-            created_at=self._created_at,
-        )
-
-    @property
-    def status(self) -> SOPRunStatus:
+    def phase(self) -> SOPPhase:
         """Where the run stands overall."""
-        return self.state.status
+        return self.state.phase
 
     async def reply_stream(
         self,
-        inputs: StepInputs = None,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Run the procedure, streaming what happens.
 
@@ -96,7 +83,7 @@ class SOPEngine:
         wherever an agent goes.
 
         Args:
-            inputs (`StepInputs`, optional):
+            inputs:
                 What starts the run, or the answer a parked step was
                 waiting for.
 
@@ -113,33 +100,37 @@ class SOPEngine:
             ),
         )
         if not resuming and inputs is not None:
-            self._inputs = (
+            self.state.inputs = (
                 [inputs] if isinstance(inputs, Msg) else list(inputs)
             )
 
         for index, step in enumerate(self.sop.steps):
-            if step.state.state is SOPStepState.COMPLETED:
+            record = self.state.steps[step.id]
+            if record.phase is SOPPhase.COMPLETED:
                 continue
-            if step.state.state is SOPStepState.FAILED:
+            if record.phase is SOPPhase.FAILED:
                 return
 
             while True:
-                # The answer goes to the step that parked; everyone else
-                # gets what the run knows so far.
+                # The answer goes to the step that parked; a fresh
+                # attempt gets what the run knows so far.
+                if not resuming:
+                    record.given = self._handover(index)
                 async for event in step.reply_stream(
-                    inputs if resuming else self._handover(index),
+                    inputs if resuming else record.given,
+                    record,
                 ):
                     yield event
                 inputs, resuming = None, False
 
-                if step.state.state is SOPStepState.AWAITING:
+                if record.phase is SOPPhase.AWAITING:
                     # Let go of the stream rather than hold a coroutine
                     # open; the caller comes back with an answer.
                     return
-                if step.state.state is SOPStepState.COMPLETED:
+                if record.phase is SOPPhase.COMPLETED:
                     break
-                if len(step.state.verifications) >= step.max_attempts:
-                    step.state.state = SOPStepState.FAILED
+                if len(record.verifications) >= step.max_attempts:
+                    record.phase = SOPPhase.FAILED
                     return
 
     def _handover(self, index: int) -> list[Msg]:
@@ -150,14 +141,15 @@ class SOPEngine:
         predecessor's account, not its files or its conversation.
         """
         if index == 0:
-            return list(self._inputs)
+            return list(self.state.inputs)
         previous = self.sop.steps[index - 1]
         return [
             UserMsg(
                 name="sop",
-                content=(
-                    f'<handover from="{previous.subject}">\n'
-                    f"{previous.state.submission}\n</handover>"
-                ),
+                content=[
+                    TextBlock(text=f'<handover from="{previous.subject}">'),
+                    *(self.state.steps[previous.id].submission or []),
+                    TextBlock(text="</handover>"),
+                ],
             ),
         ]

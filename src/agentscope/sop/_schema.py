@@ -4,23 +4,20 @@
 A step declares **what it is and what it must prove**; how it gets there
 is its own business. :class:`SOPStep` is the shape almost everything
 wants — an executor does the work, a verifier judges it — but the engine
-never looks inside: it reads
-:attr:`~._state.SOPStepRunState.verifications` and nothing else. Anything
+never looks inside: it reads the run state and nothing else. Anything
 that fills that in on time is a step, so subclass :class:`SOPStepBase`
 and do as you like.
+
+A definition holds no run state. The engine owns the run and hands each
+step its own :class:`~._state.SOPStepRunState` on every call, so one
+definition can drive any number of runs, at once if need be.
 """
 from abc import ABC, abstractmethod
-from typing import (
-    AsyncGenerator,
-    Protocol,
-    Type,
-    TypeAlias,
-    runtime_checkable,
-)
+from typing import AsyncGenerator, ClassVar, Protocol, Type, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from ._state import SOPStepRunState, SOPStepState, VerificationResult
+from ._state import SOPPhase, SOPStepRunState, VerificationResult
 from ..event import (
     AgentEvent,
     ExternalExecutionResultEvent,
@@ -29,33 +26,31 @@ from ..event import (
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
-from ..message import Msg, UserMsg
-from ..state import Task
+from ..message import Msg, TextBlock, UserMsg
+from ..pipeline import PipelineProtocol
 from ..types import ReplyFinishedReason
 from .._utils._common import _generate_id
 
-StepInputs: TypeAlias = (
-    Msg
-    | list[Msg]
-    | UserConfirmResultEvent
-    | UserInterruptEvent
-    | ExternalExecutionResultEvent
-    | None
-)
-
 
 @runtime_checkable
-class AgentLike(Protocol):
-    """What a step needs of whatever does its work or judges it.
+class AgentLike(PipelineProtocol, Protocol):
+    """A pipeline that can also be handed a typed task.
 
-    Declared as a plain ``def`` returning an async generator: such a
-    function is called, not awaited, so an ``async def`` here would be
-    satisfied by :class:`~..agent.Agent` least of all.
+    What a step needs of whatever does its work or judges it: everything
+    :class:`~..pipeline.PipelineProtocol` promises, plus a reply that can
+    be asked to end in structured output. A whole SOP satisfies the base
+    protocol but deliberately not this one — an outside schema has no
+    place in a procedure whose steps each carry their own.
     """
 
     def reply_stream(
         self,
-        inputs: StepInputs = None,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None = None,
         structured_schema: Type[BaseModel] | None = None,
         yield_final_msg: bool = False,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -67,9 +62,13 @@ class SOPStepBase(ABC):
 
     Subclasses put whatever they like in :meth:`reply_stream` — the
     contract is only that **one call is one attempt**, and that it either
-    parks or leaves a verdict in
-    :attr:`~._state.SOPStepRunState.verifications`.
+    parks or files a verdict on the state it was handed.
     """
+
+    state_type: ClassVar[type[SOPStepRunState]] = SOPStepRunState
+    """What this step's run state looks like. Subclass
+    :class:`~._state.SOPStepRunState` and name it here when a step has
+    to remember more than the engine's three fields."""
 
     def __init__(
         self,
@@ -77,7 +76,6 @@ class SOPStepBase(ABC):
         description: str,
         step_id: str | None = None,
         max_attempts: int = 3,
-        tasks: list[Task] | None = None,
     ) -> None:
         """Initialize the step.
 
@@ -92,25 +90,38 @@ class SOPStepBase(ABC):
             max_attempts (`int`, defaults to `3`):
                 How many refusals before the run gives up on it. Enforced
                 by the engine, not here.
-            tasks (`list[Task] | None`, optional):
-                Planning tasks to seed the executor's own list with.
         """
         self.subject = subject
         self.description = description
         self.id = step_id or _generate_id()
         self.max_attempts = max_attempts
-        self.tasks = tasks or []
-        self.state = SOPStepRunState(step_id=self.id)
 
     @abstractmethod
     def reply_stream(
         self,
-        inputs: StepInputs = None,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+        state: SOPStepRunState,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Make one attempt at this step, streaming what happens."""
+        """Make one attempt at this step, streaming what happens.
+
+        Args:
+            inputs:
+                What the engine handed over for a fresh attempt, or the
+                answer a parked attempt was waiting for.
+            state (`SOPStepRunState`):
+                This step's record in the run. Read it to pick up where
+                the last call stopped; write its phase, submission and
+                verdicts as the attempt goes.
+        """
 
     def record(
         self,
+        state: SOPStepRunState,
         passed: bool,
         message: str = "",
         verifier: str = "",
@@ -121,7 +132,7 @@ class SOPStepBase(ABC):
         the work rather than from the judging. Whether there is a next
         attempt is the engine's call.
         """
-        self.state.verifications.append(
+        state.verifications.append(
             VerificationResult(
                 passed=passed,
                 message=message,
@@ -129,10 +140,10 @@ class SOPStepBase(ABC):
             ),
         )
         if passed:
-            self.state.state = SOPStepState.COMPLETED
+            state.phase = SOPPhase.COMPLETED
         else:
-            self.state.submission = None
-            self.state.state = SOPStepState.PENDING
+            state.submission = None
+            state.phase = SOPPhase.PENDING
 
 
 class _Handover(BaseModel):
@@ -179,7 +190,6 @@ class SOPStep(SOPStepBase):
         verifier: AgentLike | None = None,
         step_id: str | None = None,
         max_attempts: int = 3,
-        tasks: list[Task] | None = None,
     ) -> None:
         """Initialize the step.
 
@@ -198,40 +208,34 @@ class SOPStep(SOPStepBase):
                 The step identifier, generated when omitted.
             max_attempts (`int`, defaults to `3`):
                 How many refusals before the run gives up on it.
-            tasks (`list[Task] | None`, optional):
-                Planning tasks to seed the executor's own list with.
         """
-        super().__init__(
-            subject,
-            description,
-            step_id,
-            max_attempts,
-            tasks,
-        )
+        super().__init__(subject, description, step_id, max_attempts)
         self.executor = executor
         self.verifier = verifier
 
     async def reply_stream(  # pylint: disable=invalid-overridden-method
         self,
-        inputs: StepInputs = None,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+        state: SOPStepRunState,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Make one attempt: do the work, then have it judged."""
-        self.state.state = SOPStepState.RUNNING
-        if isinstance(inputs, (Msg, list)):
-            self.state.given = (
-                [inputs] if isinstance(inputs, Msg) else list(inputs)
-            )
+        state.phase = SOPPhase.RUNNING
 
-        if self.state.submission is None:
+        if state.submission is None:
             handover = None
             async for event in self.executor.reply_stream(
-                inputs=self._brief(inputs),
+                inputs=self._brief(inputs, state),
                 structured_schema=_Handover,
                 yield_final_msg=True,
             ):
                 yield event
                 if _parked(event):
-                    self.state.state = SOPStepState.AWAITING
+                    state.phase = SOPPhase.AWAITING
                     return
                 if _output := _structured(event):
                     handover = _output.get("handover")
@@ -240,42 +244,63 @@ class SOPStep(SOPStepBase):
                 # Structured output makes this unlikely, but a model can
                 # still burn its turns without producing one.
                 self.record(
+                    state,
                     False,
                     "Your turn ended without a structured output, so "
                     "nothing was handed on.",
                     "sop",
                 )
                 return
-            self.state.submission = handover
+            state.submission = [TextBlock(text=handover)]
             inputs = None
 
         if self.verifier is None:
-            self.record(True)
+            self.record(state, True)
             return
 
         verdict = None
         async for event in self.verifier.reply_stream(
-            inputs=self._question(inputs),
+            inputs=self._question(inputs, state),
             structured_schema=_Verdict,
             yield_final_msg=True,
         ):
             yield event
             if _parked(event):
-                self.state.state = SOPStepState.AWAITING
+                state.phase = SOPPhase.AWAITING
                 return
             if _output := _structured(event):
                 verdict = _output
 
         if verdict is None:
-            self.record(False, "The verifier reached no verdict.", "sop")
+            self.record(
+                state,
+                False,
+                "The verifier reached no verdict.",
+                "sop",
+            )
             return
         self.record(
+            state,
             verdict["passed"],
             verdict.get("message", ""),
             getattr(self.verifier, "name", "verifier"),
         )
 
-    def _brief(self, inputs: StepInputs) -> StepInputs:
+    def _brief(
+        self,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+        state: SOPStepRunState,
+    ) -> (
+        list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+    ):
         """What the executor is asked, on top of whatever came in.
 
         Resumption events are passed straight through — the executor is
@@ -288,11 +313,11 @@ class SOPStep(SOPStepBase):
             f"<system-reminder>You are running one step of the SOP.\n\n"
             f"## {self.subject}\n\n{self.description}\n"
         )
-        if self.state.verifications:
-            last = self.state.verifications[-1]
+        if state.verifications:
+            last = state.verifications[-1]
             text += (
                 f"\nYour last attempt was not accepted:\n{last.message}\n"
-                f"This is attempt {len(self.state.verifications) + 1} of "
+                f"This is attempt {len(state.verifications) + 1} of "
                 f"{self.max_attempts}."
             )
         text += "</system-reminder>"
@@ -302,7 +327,21 @@ class SOPStep(SOPStepBase):
             return [brief]
         return [brief, *(inputs if isinstance(inputs, list) else [inputs])]
 
-    def _question(self, inputs: StepInputs) -> StepInputs:
+    def _question(
+        self,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+        state: SOPStepRunState,
+    ) -> (
+        list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+    ):
         """What the verifier is asked, on top of whatever came in.
 
         It sees what the step was given as well as what came back — a
@@ -319,12 +358,14 @@ class SOPStep(SOPStepBase):
                     f"{self.description}</system-reminder>"
                 ),
             ),
-            *self.state.given,
+            *state.given,
             UserMsg(
                 name="sop",
-                content=(
-                    f"<submission>\n{self.state.submission}\n</submission>"
-                ),
+                content=[
+                    TextBlock(text="<submission>"),
+                    *(state.submission or []),
+                    TextBlock(text="</submission>"),
+                ],
             ),
         ]
 
@@ -353,8 +394,8 @@ class SOP:
     def __init__(
         self,
         name: str,
-        description: str,
         steps: list[SOPStepBase],
+        description: str = "",
         sop_id: str | None = None,
     ) -> None:
         """Initialize the procedure.
@@ -362,14 +403,14 @@ class SOP:
         Args:
             name (`str`):
                 The SOP name.
-            description (`str`):
-                What this procedure is for.
             steps (`list[SOPStepBase]`):
                 The steps, in the order they run.
-            step_id (`str | None`, optional):
+            description (`str`, optional):
+                What this procedure is for.
+            sop_id (`str | None`, optional):
                 The SOP identifier, generated when omitted.
         """
         self.name = name
-        self.description = description
         self.steps = steps
+        self.description = description
         self.id = sop_id or _generate_id()
