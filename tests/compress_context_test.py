@@ -12,6 +12,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import MockModel, AnyString
 
 from agentscope.model import ChatResponse, ChatUsage, StructuredResponse
+from agentscope.exception import StructuredOutputError
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.state import AgentState
 from agentscope.message import (
@@ -158,6 +159,56 @@ class RecordingStructuredMockModel(MockModel):
             messages,
             structured_model,
             **kwargs,
+        )
+
+
+class _StructuredOutputFailingMockModel(MockModel):
+    """A mock model whose ``generate_structured_output`` raises a
+    ``StructuredOutputError`` (a recoverable schema-validation failure) on
+    the first ``fail_times`` calls, then returns a valid summary.
+
+    Overrides ``generate_structured_output`` directly so the agent-layer
+    retry in ``_compress_context_impl`` is exercised without the model
+    strategy ladder.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        fail_times: int = 1,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the failing mock model.
+
+        Args:
+            fail_times: Number of leading calls that fail with
+                ``StructuredOutputError`` before a valid summary is
+                returned.
+        """
+        super().__init__(*args, **kwargs)
+        self.structured_call_count = 0
+        self._fail_times = fail_times
+
+    async def generate_structured_output(
+        self,
+        messages: list[Msg],
+        structured_model: Any,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Fail the leading calls with a validation error, then succeed."""
+        self.structured_call_count += 1
+        if self.structured_call_count <= self._fail_times:
+            raise StructuredOutputError(
+                "'task_overview' is a required property",
+            )
+        return StructuredResponse(
+            content={
+                "task_overview": "1",
+                "current_state": "2",
+                "important_discoveries": "3",
+                "next_steps": "4",
+                "context_to_preserve": "5",
+            },
         )
 
 
@@ -2714,6 +2765,100 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         await agent.compress_context()
 
         self.assertEqual(agent.state, expected_state)
+
+    async def test_compression_retries_on_structured_output_error(self) -> None:
+        """A recoverable schema-validation failure retries with feedback
+        instead of aborting the agent.
+
+        The model's first ``generate_structured_output`` call raises a
+        ``StructuredOutputError`` (e.g. a misspelled field). Compression
+        should retry and succeed on the second call rather than propagating
+        the error and aborting the long-running agent.
+        """
+        model = _StructuredOutputFailingMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        await agent.compress_context()
+
+        # The model was called twice: one failed validation + one success.
+        self.assertEqual(model.structured_call_count, 2)
+        # Compression succeeded — the summary was generated.
+        self.assertIn("# Task Overview\n1", agent.state.summary)
+
+    async def test_compression_exhausts_retries_then_aborts(self) -> None:
+        """When validation never succeeds, the agent still aborts with the
+        error after exhausting retries (no infinite loop)."""
+        # fail_times larger than the retry budget: every call fails.
+        model = _StructuredOutputFailingMockModel(
+            context_size=100,
+            fail_times=99,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+                compression_fallback_to_truncation=False,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        with self.assertRaises(StructuredOutputError):
+            await agent.compress_context()
+
+        # 1 initial attempt + 2 retries = 3 calls, then abort.
+        self.assertEqual(model.structured_call_count, 3)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
