@@ -17,7 +17,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
-from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generic,
+    TypeVar,
+    TYPE_CHECKING,
+)
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -41,6 +49,7 @@ _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
     "❌ Agent encountered an error. Please check the agent configuration."
 )
+_WikiEntry = TypeVar("_WikiEntry", "WikiSpace", "WikiNode")
 # Deserialize a bus event dict back into its typed AgentEvent.
 _EVENT_ADAPTER: TypeAdapter = TypeAdapter(AgentEvent)
 
@@ -188,10 +197,10 @@ class ChatKind(str, Enum):
 
 
 class WikiSpace(BaseModel):
-    """One wiki space (a "knowledge base") visible to a platform user."""
+    """One wiki space — what a platform calls a knowledge base."""
 
     space_id: str
-    """Platform id of the space."""
+    """The space's platform id."""
 
     name: str
     """Display name, as the platform shows it."""
@@ -201,6 +210,8 @@ class WikiSpace(BaseModel):
     :meth:`ChannelBase.list_wiki_nodes`."""
 
     description: str | None = None
+    """What the space is for, when the platform records one."""
+
     url: str | None = None
     """Link to the space in the platform's own UI, for a person to open."""
 
@@ -209,7 +220,10 @@ class WikiNode(BaseModel):
     """One entry in a wiki space's tree — a folder or a document."""
 
     node_id: str
+    """The entry's platform id, used to browse or read it."""
+
     name: str
+    """Display name, as the platform shows it."""
 
     has_children: bool = False
     """Whether it can be browsed with :meth:`ChannelBase.list_wiki_nodes`."""
@@ -218,25 +232,41 @@ class WikiNode(BaseModel):
     """Whether it can be read with :meth:`ChannelBase.read_wiki_document`."""
 
     url: str | None = None
+    """Link to the entry in the platform's own UI, for a person to open."""
+
     modified_time: datetime | None = None
+    """When it last changed, so the agent can judge how current it is."""
+
+
+class WikiPage(BaseModel, Generic[_WikiEntry]):
+    """One page of a wiki listing, and where the next one starts."""
+
+    items: list[_WikiEntry]
+    """The entries on this page, in the platform's own order."""
+
+    next_token: str | None = None
+    """Pass back to the same call for the next page; ``None`` at the end."""
 
 
 class WikiDocument(BaseModel):
     """A bounded read of one wiki document.
 
     Bounded because a document is read in block ranges: a long one costs
-    several calls rather than one unbounded reply the model cannot use.
+    several calls rather than one reply too large for the model to use.
     """
 
     node_id: str
+    """The document's platform id."""
+
     name: str
+    """Display name, as the platform shows it."""
 
     content: list[TextBlock | DataBlock]
     """The range that was read, in the same block types as
     :attr:`ChannelEvent.content`, so it reaches the agent unconverted."""
 
     next_start_index: int | None = None
-    """Where a follow-up read resumes, or ``None`` at the end."""
+    """Where a follow-up read resumes; ``None`` once the document ends."""
 
 
 class ChannelCapability(BaseModel):
@@ -557,11 +587,11 @@ class ChannelBase(ABC):
         channel_user_id: str,
         limit: int,
         next_token: str | None = None,
-    ) -> tuple[list[WikiSpace], str | None]:
+    ) -> WikiPage[WikiSpace]:
         """Wiki spaces readable by one platform user.
 
         Every wiki call names the user it acts as, so the platform applies
-        that user's own permissions rather than the bot's. Default: none,
+        that user's own permissions rather than the bot's. Default: empty,
         for a platform with no wiki.
 
         Args:
@@ -570,10 +600,9 @@ class ChannelBase(ABC):
             next_token (`str | None`, optional): Token from a previous page.
 
         Returns:
-            `tuple[list[WikiSpace], str | None]`: One page, and the token
-            for the next one or ``None`` at the end.
+            `WikiPage[WikiSpace]`: One page of spaces.
         """
-        return [], None
+        return WikiPage(items=[])
 
     async def list_wiki_nodes(  # pylint: disable=unused-argument
         self,
@@ -581,10 +610,10 @@ class ChannelBase(ABC):
         parent_node_id: str,
         limit: int,
         next_token: str | None = None,
-    ) -> tuple[list[WikiNode], str | None]:
+    ) -> WikiPage[WikiNode]:
         """Direct children of one wiki space root or folder.
 
-        Default: none, for a platform with no wiki.
+        Default: empty, for a platform with no wiki.
 
         Args:
             channel_user_id (`str`): The platform user to read as.
@@ -593,10 +622,9 @@ class ChannelBase(ABC):
             next_token (`str | None`, optional): Token from a previous page.
 
         Returns:
-            `tuple[list[WikiNode], str | None]`: One page, and the token
-            for the next one or ``None`` at the end.
+            `WikiPage[WikiNode]`: One page of child entries.
         """
-        return [], None
+        return WikiPage(items=[])
 
     async def read_wiki_document(  # pylint: disable=unused-argument
         self,

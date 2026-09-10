@@ -58,7 +58,7 @@ returned ``next_token`` to continue the same listing."""
             `ToolChunk`: JSON-encoded child entries and the next page token.
         """
         try:
-            nodes, token = await self._channel.list_wiki_nodes(
+            page = await self._channel.list_wiki_nodes(
                 self._channel_user_id,
                 parent_node_id,
                 limit,
@@ -75,9 +75,10 @@ returned ``next_token`` to continue the same listing."""
                     text=json.dumps(
                         {
                             "nodes": [
-                                node.model_dump(mode="json") for node in nodes
+                                node.model_dump(mode="json")
+                                for node in page.items
                             ],
-                            "next_token": token or "",
+                            "next_token": page.next_token or "",
                         },
                         ensure_ascii=False,
                     ),

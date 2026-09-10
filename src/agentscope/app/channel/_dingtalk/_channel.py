@@ -38,6 +38,7 @@ from .._base import (
     ChatKind,
     WikiDocument,
     WikiNode,
+    WikiPage,
     WikiSpace,
     _EVENT_ADAPTER,
 )
@@ -570,7 +571,7 @@ class DingTalkChannel(ChannelBase):
         channel_user_id: str,
         limit: int,
         next_token: str | None = None,
-    ) -> tuple[list[WikiSpace], str | None]:
+    ) -> WikiPage[WikiSpace]:
         """List the DingTalk knowledge bases one user can read.
 
         Args:
@@ -579,8 +580,7 @@ class DingTalkChannel(ChannelBase):
             next_token (`str | None`, optional): Token from a previous page.
 
         Returns:
-            `tuple[list[WikiSpace], str | None]`: One page and its
-            continuation token.
+            `WikiPage[WikiSpace]`: One page of knowledge bases.
 
         Raises:
             `RuntimeError`: If DingTalk rejects the lookup.
@@ -590,8 +590,8 @@ class DingTalkChannel(ChannelBase):
             limit,
             next_token,
         )
-        return (
-            [
+        return WikiPage(
+            items=[
                 WikiSpace(
                     space_id=item["workspaceId"],
                     name=item.get("name") or "",
@@ -602,7 +602,7 @@ class DingTalkChannel(ChannelBase):
                 for item in payload.get("workspaces") or []
                 if isinstance(item, dict) and item.get("workspaceId")
             ],
-            payload.get("nextToken") or None,
+            next_token=payload.get("nextToken") or None,
         )
 
     async def list_wiki_nodes(
@@ -611,7 +611,7 @@ class DingTalkChannel(ChannelBase):
         parent_node_id: str,
         limit: int,
         next_token: str | None = None,
-    ) -> tuple[list[WikiNode], str | None]:
+    ) -> WikiPage[WikiNode]:
         """List the children of one DingTalk knowledge node.
 
         Args:
@@ -621,8 +621,7 @@ class DingTalkChannel(ChannelBase):
             next_token (`str | None`, optional): Token from a previous page.
 
         Returns:
-            `tuple[list[WikiNode], str | None]`: One page and its
-            continuation token.
+            `WikiPage[WikiNode]`: One page of child entries.
 
         Raises:
             `RuntimeError`: If DingTalk rejects the lookup.
@@ -633,13 +632,13 @@ class DingTalkChannel(ChannelBase):
             limit,
             next_token,
         )
-        return (
-            [
+        return WikiPage(
+            items=[
                 _wiki_node(item)
                 for item in payload.get("nodes") or []
                 if isinstance(item, dict) and item.get("nodeId")
             ],
-            payload.get("nextToken") or None,
+            next_token=payload.get("nextToken") or None,
         )
 
     async def read_wiki_document(

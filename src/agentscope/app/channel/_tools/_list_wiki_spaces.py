@@ -52,7 +52,7 @@ cannot supply or change that identity."""
             `ToolChunk`: JSON-encoded spaces and the next page token.
         """
         try:
-            spaces, token = await self._channel.list_wiki_spaces(
+            page = await self._channel.list_wiki_spaces(
                 self._channel_user_id,
                 limit,
                 next_token or None,
@@ -69,9 +69,9 @@ cannot supply or change that identity."""
                         {
                             "spaces": [
                                 space.model_dump(mode="json")
-                                for space in spaces
+                                for space in page.items
                             ],
-                            "next_token": token or "",
+                            "next_token": page.next_token or "",
                         },
                         ensure_ascii=False,
                     ),
