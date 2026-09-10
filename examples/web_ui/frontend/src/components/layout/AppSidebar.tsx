@@ -54,7 +54,7 @@ export function AppSidebar() {
 	return (
 		<Sidebar
 			collapsible="none"
-			className="w-[calc(var(--sidebar-width-icon)+1px)]! bg-transparent"
+			className="w-[calc(var(--sidebar-width-icon)+1px)]! bg-sidebar text-sidebar-foreground"
 		>
 			<SidebarHeader>
 				<div className="flex items-center justify-center size-8 mt-2 rounded-full bg-primary">

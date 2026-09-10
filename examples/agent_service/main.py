@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """The example script to start the agent service."""
+import asyncio
 import os
+import sys
+
+# Windows: ProactorEventLoop is required for asyncio.create_subprocess_exec
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import uvicorn
 from fastapi.middleware import Middleware
@@ -45,6 +51,8 @@ if os.getenv("AMAP_API_KEY"):
 storage = RedisStorage(
     host="localhost",
     port=6379,
+    password="123456",
+    protocol=2,
 )
 
 vector_store = QdrantStore(location=":memory:")
@@ -160,10 +168,16 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
 
 
 if __name__ == "__main__":
-    # Start the service
+    import uvicorn
+    
+    # Windows: ProactorEventLoop is required for asyncio.create_subprocess_exec
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+    # Start the service (reload=False to ensure event loop policy is respected)
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,  # Disable reload on Windows to avoid event loop issues
     )
