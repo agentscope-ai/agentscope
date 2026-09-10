@@ -447,7 +447,8 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    # Merge same-id Base64 chunks like ToolResponse.append_chunk.
+                    # Merge same-id Base64 chunks like
+                    # ToolResponse.append_chunk.
                     merge_target: DataBlock | None = None
                     for output_block in block.output:
                         if (
@@ -466,7 +467,9 @@ class Msg(BaseModel):
                         merge_target.source.data = base64.b64encode(
                             existing + incoming,
                         ).decode("ascii")
-                        merge_target.source.media_type = src.media_type
+                        merge_target.source.media_type = (
+                            src.media_type or merge_target.source.media_type
+                        )
                     else:
                         block.output.append(
                             DataBlock(id=event.block_id, source=src),
