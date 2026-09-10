@@ -3,7 +3,7 @@ name: Deploy Sphinx documentation to Pages
 on:
   push:
     branches:
-      - main
+      - v1
 
 jobs:
   build_en:

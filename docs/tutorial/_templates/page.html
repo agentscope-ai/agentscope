@@ -118,6 +118,21 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
+          <div class="admonition warning">
+            {% if language in ("zh_CN", "zh-CN") %}
+            <p class="admonition-title">AgentScope 1.x 文档</p>
+            <p>本页适用于 AgentScope 1.x，与 2.x API 不兼容。
+              新项目请查看<a href="https://docs.agentscope.io/stable/zh/index">当前稳定版文档</a>；
+              升级已有项目请查看<a href="https://docs.agentscope.io/stable/zh/others/change-log">迁移指南</a>。
+            </p>
+            {% else %}
+            <p class="admonition-title">AgentScope 1.x documentation</p>
+            <p>This page applies to AgentScope 1.x and is not compatible with 2.x APIs.
+              For new projects, use the <a href="https://docs.agentscope.io/stable/en/index">current stable documentation</a>.
+              To upgrade an existing project, follow the <a href="https://docs.agentscope.io/stable/en/others/change-log">migration guide</a>.
+            </p>
+            {% endif %}
+          </div>
           {% block content %}{{ body }}{% endblock %}
         </article>
       </div>
