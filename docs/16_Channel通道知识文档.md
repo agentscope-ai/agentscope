@@ -1,10 +1,33 @@
 # AgentScope Channel 通道知识文档
 
-> **版本**：v2.0.6（新增文档，覆盖 #1997）  
+> **版本**：v2.0.8（新增文档，覆盖 #1997）
+> **v2.0.7 / v2.0.8 更新**：#2285 新增 DingTalk 通道（`DingTalkChannel`，支持流式卡片、交互绑定凭证 #2484、免入站连接发送 #2409、长连接独立 worker #2390、谁产生谁回 #2395）；#2487 启动中状态显示为 connecting；#2261 表单字段本地化  
 > **适用对象**：开发者、架构师、技术面试官  
 > **文档目标**：理解 Channel 通道系统的设计原理、核心架构、实现机制和面试要点  
 > **官方文档**：https://docs.agentscope.io/zh/deploy/channel/{overview,feishu,discord}  
 > **覆盖提交**：#1997 feat(channel): implement channel（85 文件 / +8755 行）、#2261 fix(channel): 表单本地化
+
+---
+
+## ⚠️ v2.0.7 / v2.0.8 新增：DingTalk 通道
+
+**文件**：`src/agentscope/app/channel/_dingtalk/_channel.py`（#2285）
+
+`DingTalkChannel` 把 AgentScope Agent 接入钉钉群/单聊：
+
+```python
+from agentscope.app.channel import DingTalkChannel
+channel = DingTalkChannel(
+    credentials=DingTalkChannel.Credentials(app_key=..., app_secret=...),
+    config=DingTalkChannel.Config(agent_id=..., ...),
+)
+await channel.start_listening()
+```
+
+- 流式回复以「流式卡片」呈现（`_open_streaming_card`/`_update_streaming_card`/`_finish_streaming_card`）；
+- 支持交互式绑定凭证（#2484）、免入站连接也能发消息（#2409）、长连接由独立 worker 持有（#2390）、「谁产生回复谁负责投递」（#2395）；
+- `chat_kind`/`chat_name`/`list_bot_chats`/`list_tools`/`search_users`/`send_*_to` 等管理 API；
+- 启动中状态显示为 `connecting` 而非 `stopped`（#2487）；表单字段本地化（#2261）。
 
 ---
 

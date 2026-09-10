@@ -1,6 +1,7 @@
 # AgentScope Hub 与市场知识文档
 
-> **版本**：v2.0.6（含 main 未发版更新，截至 2026-08-20）  
+> **版本**：v2.0.8（基于 upstream/main，截至 2026-09）
+> **v2.0.7 / v2.0.8 更新**：本模块在 v2.0.7/v2.0.8 无实质变更（版本对齐至 v2.0.8），既有 #2291/#2230 仍适用  
 > **适用对象**：开发者、架构师、技术面试官  
 > **文档目标**：理解 Hub 系统（MCP 市场 / Skill 市场）的设计原理、安装流程、数据模型和面试要点  
 > **覆盖提交**：#2197 feat(hub): support to install MCP and skills from MCP/skill hubs、#2214 fix(hub): scope ClawHub card ids by owner

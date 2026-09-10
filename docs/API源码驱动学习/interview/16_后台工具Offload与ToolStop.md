@@ -37,7 +37,7 @@ flowchart TD
 
 | 层级 | 文件 | 关键点 |
 |---|---|---|
-| Offload 中间件 | `src/agentscope/app/middleware/_tool_offload_middleware.py` | 工具超时后后台运行，返回 synthetic ToolResponse，完成后 inbox+wakeup |
+| Offload 中间件 | `src/agentscope/app/middleware/_tool_offload_middleware.py` | 工具超时后后台运行，返回 synthetic ToolResponse，完成后 inbox+wakeup；默认 `timeout_secs=30.0`（提交 `122c2cdd` 由 10s 提到 30s） |
 | 后台任务管理 | `src/agentscope/app/_manager/_background_task_manager.py` | 本地 task 缓存、Redis registry、ToolStop、关闭时清理 |
 | 取消分发 | `src/agentscope/app/_manager/_cancel_dispatcher.py` | 监听 session cancel 和 task cancel channel |
 | 消息总线 | `src/agentscope/app/message_bus/_base.py`、`src/agentscope/app/message_bus/_keys.py` | `registry_*`、`task_cancel_channel`、`bg_tasks` |
