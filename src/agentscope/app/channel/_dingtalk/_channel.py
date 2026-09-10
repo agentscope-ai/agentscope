@@ -1256,7 +1256,7 @@ def _wiki_node(node: dict[str, Any]) -> WikiNode:
             and str(node.get("category") or "ALIDOC").upper() == "ALIDOC"
         ),
         url=node.get("url") or None,
-        modified_time=node.get("modifiedTime") or None,
+        updated_at=node.get("modifiedTime") or None,
     )
 
 

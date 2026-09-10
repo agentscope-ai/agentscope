@@ -1339,7 +1339,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
                         "has_children": False,
                         "is_document": True,
                         "url": None,
-                        "modified_time": None,
+                        "updated_at": None,
                     },
                 ],
                 "next_token": "",

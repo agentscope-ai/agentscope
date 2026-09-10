@@ -234,7 +234,7 @@ class WikiNode(BaseModel):
     url: str | None = None
     """Link to the entry in the platform's own UI, for a person to open."""
 
-    modified_time: datetime | None = None
+    updated_at: datetime | None = None
     """When it last changed, so the agent can judge how current it is."""
 
 
