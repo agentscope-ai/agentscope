@@ -250,7 +250,7 @@ class ToolCallArgumentRepairTest(IsolatedAsyncioTestCase):
                     "id": "record_call_0",
                     "name": "record",
                     "output": "Input validation failed for tool 'record': "
-                    "'many' is not of type 'integer'",
+                    "'many' is not of type 'integer' (at $.value)",
                     "state": "error",
                     "metadata": {},
                     "created_at": AnyString(),
@@ -258,6 +258,105 @@ class ToolCallArgumentRepairTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_nested_validation_errors_include_instance_paths(
+        self,
+    ) -> None:
+        """Test that nested validation errors identify their instance paths."""
+        cases = [
+            (
+                "nested_type",
+                {
+                    "type": "object",
+                    "properties": {"city": {"type": "integer"}},
+                    "required": ["city"],
+                },
+                '{"value": {"city": "many"}}',
+                "'many' is not of type 'integer' (at $.value.city)",
+            ),
+            (
+                "array_item",
+                {"type": "array", "items": {"type": "integer"}},
+                '{"value": ["many"]}',
+                "'many' is not of type 'integer' (at $.value[0])",
+            ),
+            (
+                "nested_array_object",
+                {
+                    "type": "object",
+                    "properties": {
+                        "locations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "city": {"type": "integer"},
+                                },
+                                "required": ["city"],
+                            },
+                        },
+                    },
+                    "required": ["locations"],
+                },
+                '{"value": {"locations": [{"city": 1}, '
+                + '{"city": "many"}]}}',
+                "'many' is not of type 'integer' "
+                "(at $.value.locations[1].city)",
+            ),
+            (
+                "missing_nested",
+                {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+                '{"value": {}}',
+                "'city' is a required property (at $.value)",
+            ),
+        ]
+
+        for case_name, value_schema, raw_input, expected_error in cases:
+            with self.subTest(case_name):
+                tool = _RecordTool(value_schema)
+                tool_call = ToolCallBlock(
+                    id=f"record_call_{case_name}",
+                    name="record",
+                    input=raw_input,
+                )
+                model = MockModel()
+                model.set_responses(
+                    [
+                        ChatResponse(content=[tool_call], is_last=True),
+                        ChatResponse(
+                            content=[TextBlock(text="Done")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                agent = Agent(
+                    name="Friday",
+                    system_prompt="You're a helpful assistant.",
+                    model=model,
+                    toolkit=Toolkit(tools=[tool]),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                )
+
+                await agent.reply(
+                    UserMsg(name="user", content="Record nested value"),
+                )
+
+                result = agent.state.context[-1].get_content_blocks(
+                    "tool_result",
+                )[0]
+                self.assertEqual(
+                    result.output,
+                    "Input validation failed for tool 'record': "
+                    + expected_error,
+                )
+                self.assertListEqual(tool.permission_inputs, [])
+                self.assertListEqual(tool.executed, [])
 
 
 if __name__ == "__main__":
