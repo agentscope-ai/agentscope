@@ -1282,12 +1282,9 @@ def _render_blocks(
     for block in sorted(blocks, key=_block_index):
         rendered = _render_block(block)
         added = len(rendered) + (2 if parts else 0)
-        if total + added > _MAX_DOCUMENT_CHARS:
-            # A single oversized block would otherwise return nothing and
-            # no way to resume, so emit a prefix and stop before it.
-            if not parts:
-                parts.append(rendered[:_MAX_DOCUMENT_CHARS])
-                last_index = _block_index(block)
+        # Stop before the block that would overflow, never inside one: the
+        # resume index counts whole blocks, so a split tail is unreachable.
+        if parts and total + added > _MAX_DOCUMENT_CHARS:
             return "\n\n".join(parts), last_index + 1
         parts.append(rendered)
         last_index = _block_index(block)
@@ -1326,7 +1323,14 @@ def _render_table(detail: dict[str, Any]) -> str:
     row count is spelled ``rolSize`` by the platform.
     """
     rows = [
-        [str(cell) for cell in row]
+        [
+            str(cell)
+            .replace("\\", "\\\\")
+            .replace("|", "\\|")
+            .replace("\r", " ")
+            .replace("\n", " ")
+            for cell in row
+        ]
         for row in detail.get("cells") or []
         if isinstance(row, list)
     ]

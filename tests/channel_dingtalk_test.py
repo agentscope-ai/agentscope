@@ -1370,7 +1370,8 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_oversized_document_block_is_truncated(self) -> None:
+    async def test_an_oversized_block_is_returned_whole(self) -> None:
+        """A block is never split: its tail could never be requested."""
         from agentscope.app.channel._tools import ReadWikiDocument
 
         media_api = _FakeMediaOpenAPI()
@@ -1404,7 +1405,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
                 "next_start_index": 1,
             },
         )
-        self.assertEqual(document.content[1].text, "x" * 20_000)
+        self.assertEqual(document.content[1].text, "x" * 30_000)
 
     async def test_a_folder_node_is_not_a_readable_document(self) -> None:
         from agentscope.app.channel._tools import ReadWikiDocument
@@ -1796,36 +1797,82 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         node = await api.get_wiki_node("staff-1", "doc/1")
         blocks = await api.read_document_blocks("staff-1", "doc/1", 0, 49)
 
-        self.assertEqual(spaces["nextToken"], "space-next")
-        self.assertEqual(nodes["nodes"][0]["nodeId"], "doc/1")
-        self.assertEqual(node["nodeId"], "doc/1")
-        self.assertEqual(blocks[0]["paragraph"]["text"], "hello")
+        self.assertDictEqual(
+            spaces,
+            {
+                "workspaces": [{"workspaceId": "space/1"}],
+                "nextToken": "space-next",
+            },
+        )
+        self.assertDictEqual(nodes, {"nodes": [{"nodeId": "doc/1"}]})
+        self.assertDictEqual(node, {"nodeId": "doc/1"})
+        self.assertListEqual(
+            blocks,
+            [
+                {
+                    "blockType": "paragraph",
+                    "paragraph": {"text": "hello"},
+                    "index": 0,
+                },
+            ],
+        )
         # One profile lookup for four calls: the unionId is cached.
         self.assertEqual(len(http.posts), 2)
-        self.assertEqual(
-            http.gets[0],
-            (
-                "https://api.dingtalk.com/v2.0/wiki/workspaces",
-                {
-                    "headers": {
-                        "x-acs-dingtalk-access-token": "token",
-                        "Content-Type": "application/json",
+        headers = {
+            "x-acs-dingtalk-access-token": "token",
+            "Content-Type": "application/json",
+        }
+        self.assertListEqual(
+            http.gets,
+            [
+                (
+                    "https://api.dingtalk.com/v2.0/wiki/workspaces",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "maxResults": 20,
+                            "withPermissionRole": True,
+                        },
                     },
-                    "params": {
-                        "operatorId": "union-1",
-                        "maxResults": 20,
-                        "withPermissionRole": True,
+                ),
+                (
+                    "https://api.dingtalk.com/v2.0/wiki/nodes",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "parentNodeId": "root-1",
+                            "maxResults": 50,
+                            "nextToken": "node-next",
+                            "withPermissionRole": True,
+                        },
                     },
-                },
-            ),
-        )
-        self.assertEqual(http.gets[1][1]["params"]["parentNodeId"], "root-1")
-        self.assertEqual(http.gets[1][1]["params"]["nextToken"], "node-next")
-        self.assertTrue(http.gets[2][0].endswith("/nodes/doc%2F1"))
-        self.assertTrue(http.gets[3][0].endswith("/documents/doc%2F1/blocks"))
-        self.assertEqual(
-            http.gets[3][1]["params"],
-            {"operatorId": "union-1", "startIndex": 0, "endIndex": 49},
+                ),
+                (
+                    "https://api.dingtalk.com/v2.0/wiki/nodes/doc%2F1",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "withPermissionRole": True,
+                            "withStatisticalInfo": True,
+                        },
+                    },
+                ),
+                (
+                    "https://api.dingtalk.com/v1.0/doc/suites/documents/"
+                    "doc%2F1/blocks",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "startIndex": 0,
+                            "endIndex": 49,
+                        },
+                    },
+                ),
+            ],
         )
 
     async def test_wiki_get_surfaces_a_permission_error(self) -> None:
