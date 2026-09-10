@@ -870,8 +870,12 @@ class MessagesUI(VerticalScroll):
         """A safe snapshot of the messages currently being rendered."""
         return tuple(msg.model_copy(deep=True) for msg in self._messages)
 
-    def _current_messages(self) -> tuple[Msg, ...]:
-        """Return internal messages for sibling TUI components."""
+    def current_messages(self) -> tuple[Msg, ...]:
+        """Return live messages for coordinated sibling UI components.
+
+        Unlike :attr:`messages`, this avoids deep copies. Callers must treat
+        the returned models as read-only.
+        """
         return tuple(self._messages)
 
     def compose(self) -> ComposeResult:

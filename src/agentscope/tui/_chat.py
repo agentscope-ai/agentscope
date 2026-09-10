@@ -4,7 +4,7 @@
 # Textual handlers and nested message payloads are intentionally tiny and
 # inherit their behavioral documentation from their owning widgets.
 # pylint: disable=missing-function-docstring,missing-class-docstring
-# pylint: disable=attribute-defined-outside-init,protected-access
+# pylint: disable=attribute-defined-outside-init
 
 from __future__ import annotations
 
@@ -26,9 +26,11 @@ from ..event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
 )
-from ..message import Msg, ToolCallBlock, UserMsg
+from ..message import Msg, ToolCallBlock, ToolCallState, UserMsg
 from ._ask_user import AskUserUI
 from ._messages import MessagesUI
+
+_ASK_USER_TOOL_NAME = "AskUser"
 
 
 class _ComposerTextArea(TextArea):
@@ -206,8 +208,7 @@ class HitlUI(Vertical):
 
     def _render_current(self) -> None:
         _, agent_name, tool_call = self._pending[0]
-        waiting_external = tool_call.state == "submitted"
-        index = 1
+        waiting_external = tool_call.state == ToolCallState.SUBMITTED
         total = len(self._pending)
         state = (
             "Waiting for external execution"
@@ -215,7 +216,7 @@ class HitlUI(Vertical):
             else "Approval required"
         )
         self.query_one("#as-hitl-title", Static).update(
-            f"{state} · {agent_name} · {index}/{total}",
+            f"{state} · {agent_name} · 1/{total}",
         )
         body = Text(f"{tool_call.name}\n\n", style="bold")
         arguments = tool_call.input or "{}"
@@ -242,8 +243,11 @@ class HitlUI(Vertical):
         choice_specs.append(("Interrupt reply", "interrupt"))
         self._choice_labels = [label for label, _ in choice_specs]
         choices = [
-            Option(self._choice_prompt(index, label, index == 0), id=key)
-            for index, (label, key) in enumerate(choice_specs)
+            Option(
+                self._choice_prompt(choice_index, label, choice_index == 0),
+                id=key,
+            )
+            for choice_index, (label, key) in enumerate(choice_specs)
         ]
         options.clear_options().add_options(choices)
         options.highlighted = 0
@@ -277,7 +281,7 @@ class HitlUI(Vertical):
         if not self._pending or self._submitting:
             return
         reply_id, _, tool_call = self._pending[0]
-        if tool_call.state == "submitted":
+        if tool_call.state == ToolCallState.SUBMITTED:
             return
         self._submitting = True
         self._render_current()
@@ -470,7 +474,6 @@ class ChatUI(Widget):
         self.show_thinking = show_thinking
         self.show_usage = show_usage
         self.input_enabled = input_enabled
-        self._hitl_active = False
         self._dismissed_external_call_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
@@ -496,7 +499,20 @@ class ChatUI(Widget):
         return self.query_one(MessagesUI).messages
 
     def _current_messages(self) -> tuple[Msg, ...]:
-        return self.query_one(MessagesUI)._current_messages()
+        return self.query_one(MessagesUI).current_messages()
+
+    def is_reply_parked(self, reply_id: str) -> bool:
+        """Whether a reply is waiting for confirmation or external input."""
+        return any(
+            message.id == reply_id
+            and any(
+                isinstance(block, ToolCallBlock)
+                and block.state
+                in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+                for block in message.content
+            )
+            for message in self._current_messages()
+        )
 
     async def set_messages(self, messages: Sequence[Msg]) -> None:
         await self.query_one(MessagesUI).set_messages(messages)
@@ -519,15 +535,15 @@ class ChatUI(Widget):
             for block in message.content:
                 if (
                     isinstance(block, ToolCallBlock)
-                    and block.state == "submitted"
+                    and block.state == ToolCallState.SUBMITTED
                 ):
                     submitted_ids.add(block.id)
                 if (
                     isinstance(block, ToolCallBlock)
                     and block.state
                     in (
-                        "asking",
-                        "submitted",
+                        ToolCallState.ASKING,
+                        ToolCallState.SUBMITTED,
                     )
                     and block.id not in self._dismissed_external_call_ids
                 ):
@@ -548,22 +564,12 @@ class ChatUI(Widget):
         pending = self._pending_tools()
         ask_pending: list[tuple[str, str, ToolCallBlock]] = []
         hitl_pending: list[tuple[str, str, ToolCallBlock]] = []
-        if (
-            pending
-            and pending[0][2].name == "AskUser"
-            and pending[0][2].state == "submitted"
-        ):
-            ask_pending = [
-                item
-                for item in pending
-                if item[2].name == "AskUser" and item[2].state == "submitted"
-            ]
-        else:
-            for item in pending:
-                if item[2].name == "AskUser" and item[2].state == "submitted":
-                    break
-                hitl_pending.append(item)
-        self._hitl_active = bool(pending)
+        ask_user_first = bool(pending and self._is_ask_user(pending[0][2]))
+        active_pending = ask_pending if ask_user_first else hitl_pending
+        for item in pending:
+            if self._is_ask_user(item[2]) != ask_user_first:
+                break
+            active_pending.append(item)
         hitl.set_pending(hitl_pending)
         ask_user.set_pending(ask_pending)
         composer.display = not pending
@@ -575,6 +581,13 @@ class ChatUI(Widget):
             self.call_later(hitl.focus_action)
         else:
             self.call_later(composer.focus_editor)
+
+    @staticmethod
+    def _is_ask_user(tool_call: ToolCallBlock) -> bool:
+        return (
+            tool_call.name == _ASK_USER_TOOL_NAME
+            and tool_call.state == ToolCallState.SUBMITTED
+        )
 
     @on(Collapsible.Expanded)
     @on(Collapsible.Collapsed)

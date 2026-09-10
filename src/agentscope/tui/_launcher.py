@@ -12,6 +12,7 @@ from typing import Sequence, TypeAlias
 from textual import on
 from textual.app import App, ComposeResult
 
+from .._logging import logger
 from ..agent import Agent
 from ..event import (
     ExternalExecutionResultEvent,
@@ -58,6 +59,7 @@ class _AgentScopeTUI(App[None]):
         self.user_name = user_name
         self._tasks: set[asyncio.Task[None]] = set()
         self._reply_tasks: dict[str, asyncio.Task[None]] = {}
+        self._reply_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield ChatUI(
@@ -67,28 +69,36 @@ class _AgentScopeTUI(App[None]):
         )
 
     def _start_stream(self, inputs: _TUIInput) -> None:
-        # Deliberately do not serialize submissions. Agent/Pipeline owns the
-        # policy for inputs arriving while another reply is active.
+        # The standalone application accepts input while a reply is running,
+        # but queues each reply_stream call so one target context is never
+        # mutated by concurrent replies.
         task = asyncio.create_task(self._consume(inputs))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
     async def _consume(self, inputs: _TUIInput) -> None:
-        chat = self.query_one(ChatUI)
-        task = asyncio.current_task()
-        owned_reply_ids: set[str] = set()
-        try:
-            async for item in self.target.reply_stream(inputs):
-                if isinstance(item, ReplyStartEvent) and task is not None:
-                    self._reply_tasks[item.reply_id] = task
-                    owned_reply_ids.add(item.reply_id)
-                chat.feed(item)
-        except Exception as error:  # pylint: disable=broad-exception-caught
-            self.notify(str(error), title="Agent error", severity="error")
-        finally:
-            for reply_id in owned_reply_ids:
-                if self._reply_tasks.get(reply_id) is task:
-                    self._reply_tasks.pop(reply_id, None)
+        async with self._reply_lock:
+            chat = self.query_one(ChatUI)
+            task = asyncio.current_task()
+            owned_reply_ids: set[str] = set()
+            if not isinstance(inputs, Msg) and task is not None:
+                self._reply_tasks[inputs.reply_id] = task
+                owned_reply_ids.add(inputs.reply_id)
+            try:
+                async for item in self.target.reply_stream(inputs):
+                    if isinstance(item, ReplyStartEvent) and task is not None:
+                        self._reply_tasks[item.reply_id] = task
+                        owned_reply_ids.add(item.reply_id)
+                    chat.feed(item)
+            # The standalone UI must keep running if its target fails.
+            # pylint: disable-next=broad-exception-caught
+            except Exception as error:
+                logger.exception("TUI reply stream failed")
+                self.notify(str(error), title="Agent error", severity="error")
+            finally:
+                for reply_id in owned_reply_ids:
+                    if self._reply_tasks.get(reply_id) is task:
+                        self._reply_tasks.pop(reply_id, None)
 
     @on(ChatUI.Submitted)
     def _on_submitted(self, event: ChatUI.Submitted) -> None:
@@ -111,18 +121,7 @@ class _AgentScopeTUI(App[None]):
     @on(ChatUI.InterruptRequested)
     def _on_interrupt(self, event: ChatUI.InterruptRequested) -> None:
         chat = self.query_one(ChatUI)
-        message = next(
-            (msg for msg in chat.messages if msg.id == event.reply_id),
-            None,
-        )
-        parked = bool(
-            message
-            and any(
-                getattr(block, "state", None) in ("asking", "submitted")
-                for block in message.content
-            ),
-        )
-        if parked:
+        if chat.is_reply_parked(event.reply_id):
             self._start_stream(UserInterruptEvent(reply_id=event.reply_id))
             return
         task = self._reply_tasks.get(event.reply_id)

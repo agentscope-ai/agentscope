@@ -32,6 +32,7 @@ from agentscope.event import (
     ToolResultEndEvent,
     ToolResultStartEvent,
     UserConfirmResultEvent,
+    UserInterruptEvent,
 )
 from agentscope.message import (
     AssistantMsg,
@@ -40,6 +41,7 @@ from agentscope.message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
     ToolResultState,
     UserMsg,
@@ -802,6 +804,42 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             )
             await AskUser().check_external_result(result)
 
+    async def test_invalid_ask_user_input_returns_error_result(self) -> None:
+        observed: list[ChatUI.ExternalExecutionSubmitted] = []
+
+        def hook(message: TextualMessage) -> None:
+            if isinstance(message, ChatUI.ExternalExecutionSubmitted):
+                observed.append(message)
+
+        app = _ChatApp(
+            [
+                AssistantMsg(
+                    name="agent",
+                    id="reply",
+                    content=[
+                        ToolCallBlock(
+                            id="ask",
+                            name="AskUser",
+                            input=json.dumps({"questions": []}),
+                            state=ToolCallState.SUBMITTED,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        async with app.run_test(message_hook=hook) as pilot:
+            await pilot.pause()
+
+            unique = {id(message): message for message in observed}
+            self.assertEqual(len(unique), 1)
+            result = next(iter(unique.values())).value.execution_results[0]
+            self.assertEqual(result.state, ToolResultState.ERROR)
+            self.assertEqual(result.metadata, {"answers": []})
+            self.assertIn("Invalid AskUser input", result.output)
+            await AskUser().check_external_result(result)
+            self.assertFalse(app.query_one(AskUserUI).display)
+            self.assertTrue(app.query_one(ComposerUI).display)
+
     async def test_edit_tool_uses_authoritative_diff_stats(self) -> None:
         app = _ChatApp()
         async with app.run_test() as pilot:
@@ -968,7 +1006,110 @@ class _FakeTarget:
         self.done.set()
 
 
+class _SerialTarget:
+    def __init__(self) -> None:
+        self.first_started = asyncio.Event()
+        self.release_first = asyncio.Event()
+        self.done = asyncio.Event()
+        self.inputs: list[str] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def reply_stream(
+        self,
+        inputs: Msg,
+    ) -> AsyncGenerator[Any, None]:
+        text = inputs.get_text_content()
+        self.inputs.append(text)
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        reply_id = f"reply-{len(self.inputs)}"
+        try:
+            yield ReplyStartEvent(
+                session_id="s",
+                reply_id=reply_id,
+                name="agent",
+            )
+            if text == "first":
+                self.first_started.set()
+                await self.release_first.wait()
+            yield ReplyEndEvent(session_id="s", reply_id=reply_id)
+        finally:
+            self.active -= 1
+            if len(self.inputs) == 2 and self.active == 0:
+                self.done.set()
+
+
 class LauncherTest(unittest.IsolatedAsyncioTestCase):
+    async def test_launcher_serializes_concurrent_submissions(self) -> None:
+        target = _SerialTarget()
+        app = _AgentScopeTUI(target, [], "user")
+        async with app.run_test(size=(80, 24)) as pilot:
+            app._start_stream(UserMsg(name="user", content="first"))
+            await asyncio.wait_for(target.first_started.wait(), timeout=1)
+            app._start_stream(UserMsg(name="user", content="second"))
+            await pilot.pause()
+
+            self.assertEqual(target.inputs, ["first"])
+            self.assertEqual(target.max_active, 1)
+
+            target.release_first.set()
+            await asyncio.wait_for(target.done.wait(), timeout=1)
+            self.assertEqual(target.inputs, ["first", "second"])
+            self.assertEqual(target.max_active, 1)
+
+    async def test_interrupt_parked_reply_sends_event(self) -> None:
+        target = _FakeTarget()
+        app = _AgentScopeTUI(
+            target,
+            [
+                AssistantMsg(
+                    name="agent",
+                    id="parked",
+                    content=[
+                        ToolCallBlock(
+                            id="call",
+                            name="Bash",
+                            input="{}",
+                            state=ToolCallState.ASKING,
+                        ),
+                    ],
+                ),
+            ],
+            "user",
+        )
+        async with app.run_test(size=(80, 24)):
+            with patch.object(app, "_start_stream") as start_stream:
+                app._on_interrupt(ChatUI.InterruptRequested("parked"))
+
+            event = start_stream.call_args.args[0]
+            self.assertIsInstance(event, UserInterruptEvent)
+            self.assertEqual(event.reply_id, "parked")
+
+    async def test_tool_result_state_does_not_make_reply_parked(self) -> None:
+        target = _FakeTarget()
+        app = _AgentScopeTUI(
+            target,
+            [
+                AssistantMsg(
+                    name="agent",
+                    id="finished-tool",
+                    content=[
+                        ToolResultBlock(
+                            id="call",
+                            name="Bash",
+                            output="done",
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+            "user",
+        )
+        async with app.run_test(size=(80, 24)):
+            chat = app.query_one(ChatUI)
+            self.assertFalse(chat.is_reply_parked("finished-tool"))
+
     async def test_launcher_forwards_submission_and_streams_reply(
         self,
     ) -> None:

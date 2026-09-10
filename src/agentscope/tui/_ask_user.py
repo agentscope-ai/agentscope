@@ -201,6 +201,8 @@ class AskUserUI(Vertical):
             self._load_current()
         if self.is_mounted and pending:
             self._render_form()
+            if self._error is not None:
+                self.call_later(self._submit_invalid)
 
     def _load_current(self) -> None:
         self._params = None
@@ -249,7 +251,7 @@ class AskUserUI(Vertical):
             preview_widget.display = False
             options.display = False
             other.display = False
-            hint.update("Ctrl+C interrupt")
+            hint.update("Returning invalid input to the agent…")
             return
 
         assert self._params is not None
@@ -402,12 +404,37 @@ class AskUserUI(Vertical):
         for answer in answers:
             value = answer.other or ", ".join(answer.selected)
             lines.append(f"{answer.question}\n{value}")
+        self._post_result(
+            output="\n\n".join(lines),
+            state=ToolResultState.SUCCESS,
+            metadata=metadata,
+        )
+
+    def _submit_invalid(self) -> None:
+        if self._error is None:
+            return
+        metadata = AskUserMetadata(answers=[]).model_dump(mode="json")
+        self._post_result(
+            output=self._error,
+            state=ToolResultState.ERROR,
+            metadata=metadata,
+        )
+
+    def _post_result(
+        self,
+        *,
+        output: str,
+        state: ToolResultState,
+        metadata: dict[str, Any],
+    ) -> None:
+        if self._submitting or not self._pending:
+            return
         reply_id, _, tool_call = self._pending[0]
         result = ToolResultBlock(
             id=tool_call.id,
             name=tool_call.name,
-            output="\n\n".join(lines),
-            state=ToolResultState.SUCCESS,
+            output=output,
+            state=state,
             metadata=metadata,
         )
         self._submitting = True

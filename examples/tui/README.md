@@ -112,7 +112,9 @@ chat.input_enabled = True
 ```
 
 For an Agent or `PipelineProtocol`, the standalone launcher wires the same
-events automatically:
+events automatically. It keeps the composer available while a reply is
+running and queues submissions, calling ``reply_stream`` serially so a shared
+agent context is never mutated by concurrent replies:
 
 ```python
 from agentscope.tui import launch_tui
