@@ -1319,8 +1319,8 @@ def _render_table(detail: dict[str, Any]) -> str:
     """Render a DingTalk table block as a Markdown table.
 
     DingTalk carries the cell text inside the block as a 2-D array, so a
-    table reaches the agent whole rather than as a placeholder. Note the
-    row count is spelled ``rolSize`` by the platform.
+    table reaches the agent whole rather than as a placeholder, and counts
+    as the single block its index refers to.
     """
     rows = [
         [
@@ -1335,7 +1335,7 @@ def _render_table(detail: dict[str, Any]) -> str:
         if isinstance(row, list)
     ]
     if not rows:
-        size = f"{detail.get('rolSize', '?')}x{detail.get('colSize', '?')}"
+        size = f"{detail.get('rowSize', '?')}x{detail.get('colSize', '?')}"
         return f"[Table: {size}, no cell content]"
     width = max(len(row) for row in rows)
     header, *body = [row + [""] * (width - len(row)) for row in rows]

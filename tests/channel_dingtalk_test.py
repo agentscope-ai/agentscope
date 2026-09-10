@@ -1277,7 +1277,7 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             {
                 "blockType": "table",
                 "table": {
-                    "rolSize": 2,
+                    "rowSize": 2,
                     "colSize": 2,
                     "cells": [["Step", "Owner"], ["Deploy", "Alice"]],
                 },
