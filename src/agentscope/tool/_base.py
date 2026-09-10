@@ -290,6 +290,20 @@ class ToolBase(ABC):
         if self.metadata_schema is not None:
             jsonschema.validate(result.metadata, self.metadata_schema)
 
+    def validate_input(self, tool_input: dict[str, Any]) -> None:
+        """Validate one parsed tool input.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The parsed tool arguments.
+
+        Raises:
+            `jsonschema.ValidationError`:
+                If the input violates :attr:`input_schema` or additional
+                tool-specific constraints.
+        """
+        jsonschema.validate(tool_input, self.input_schema)
+
     async def check_read_only(
         self,
         tool_input: dict[str, Any],

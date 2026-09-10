@@ -2502,7 +2502,7 @@ class Agent:
             # Validate the parsed input with the tool schema
             # TODO: Maybe some logic to mix the validation error in runtime
             try:
-                jsonschema.validate(parsed_input, tool.input_schema)
+                tool.validate_input(parsed_input)
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
