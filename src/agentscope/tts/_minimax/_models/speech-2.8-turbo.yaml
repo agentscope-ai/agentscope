@@ -1,0 +1,11 @@
+name: speech-2.8-turbo
+label: MiniMax Speech 2.8 Turbo
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+
+parameter_overrides: {}
