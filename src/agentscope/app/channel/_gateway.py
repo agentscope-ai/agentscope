@@ -324,6 +324,7 @@ class ChannelGateway:
                 channel_id=record.id,
                 chat_id=event.chat_id,
                 chat_name=event.chat_name or None,
+                channel_user_id=event.channel_user_id or None,
             ),
         )
 

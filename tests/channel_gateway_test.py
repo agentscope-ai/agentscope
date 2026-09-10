@@ -320,6 +320,18 @@ class _RecordingStorage:
         self.upserts.append(kwargs)
 
 
+class _InboundStorage(_RecordingStorage):
+    """Storage stub for one normal inbound channel message."""
+
+    def __init__(self, record: ChannelRecord) -> None:
+        super().__init__()
+        self.record = record
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Return the configured channel by id."""
+        return self.record if channel_id == self.record.id else None
+
+
 def _channel_record(user_id: str) -> ChannelRecord:
     return ChannelRecord(
         id="chan-1",
@@ -377,6 +389,43 @@ class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
             storage.workspace_ids[0],
             storage.workspace_ids[1],
         )
+
+
+class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
+    """The gateway records the trusted sender on the session's origin."""
+
+    async def test_session_origin_carries_the_trusted_sender(self) -> None:
+        record = _channel_record("owner-1")
+        storage = _InboundStorage(record)
+        bus = InMemoryMessageBus()
+        gateway = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await gateway.process(
+            ChannelEvent(
+                channel_id=record.id,
+                channel_user_id="staff-1",
+                chat_id="group:cid-1",
+                chat_name="Product",
+                content=[TextBlock(text="hello")],
+            ),
+        )
+
+        self.assertEqual(
+            storage.upserts[0]["origin"],
+            ChannelOrigin(
+                channel_id=record.id,
+                chat_id="group:cid-1",
+                chat_name="Product",
+                channel_user_id="staff-1",
+            ),
+        )
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(queued), 1)
+        self.assertNotIn("channel_user_id", queued[0][1])
 
 
 class FeishuPostParseTest(IsolatedAsyncioTestCase):
@@ -522,6 +571,7 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
                 channel_id="chan-1",
                 chat_id="group:cid-1",
                 chat_name="产品群",
+                channel_user_id="u",
             ),
         )
 
@@ -535,6 +585,7 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
                 channel_id="chan-1",
                 chat_id="group:cid-1",
                 chat_name=None,
+                channel_user_id="u",
             ),
         )
 

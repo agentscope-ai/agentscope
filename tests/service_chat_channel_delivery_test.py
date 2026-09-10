@@ -24,6 +24,7 @@ from agentscope.app.channel import (
     ChannelEvent,
     ChannelStatus,
     ChannelTypeRegistry,
+    ChatKind,
 )
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.event import ReplyEndEvent, ReplyStartEvent
@@ -52,6 +53,7 @@ class _RecordingChannel(ChannelBase):
     display_name = "Fake"
     platform_bot_id_field = "bot_id"
     instances: list["_RecordingChannel"] = []
+    tool_user_ids: list[str | None] = []
 
     class Credentials(BaseModel):
         """Credentials for the fake platform."""
@@ -97,6 +99,24 @@ class _RecordingChannel(ChannelBase):
         async for evt in events:
             self.seen.append(evt.get("type", ""))
         self.done.set()
+
+    async def list_tools(
+        self,
+        workspace: object,
+        channel_user_id: str | None = None,
+    ) -> list:
+        """Record the trusted user the service equips tools with."""
+        del workspace
+        self.tool_user_ids.append(channel_user_id)
+        return []
+
+    async def chat_kind(self, chat_id: str) -> ChatKind | None:
+        """Classify a chat by an id prefix the tests control."""
+        if chat_id.startswith("private:"):
+            return ChatKind.PRIVATE
+        if chat_id.startswith("group:"):
+            return ChatKind.GROUP
+        return None
 
 
 class _Storage:
@@ -145,6 +165,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         """Isolate the instances each test observes."""
         _RecordingChannel.instances.clear()
+        _RecordingChannel.tool_user_ids.clear()
 
     def _fixture(self, source: SessionOrigin) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
@@ -297,5 +318,47 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         clients = await self._run(UserOrigin())
         try:
             self.assertListEqual(_RecordingChannel.instances, [])
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_a_private_chat_equips_tools_with_its_user(self) -> None:
+        """A 1:1 session has one sender, so tools may act as them."""
+        clients = await self._run(
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="private:chat-1",
+                channel_user_id="staff-1",
+            ),
+        )
+        try:
+            self.assertListEqual(_RecordingChannel.tool_user_ids, ["staff-1"])
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_a_group_chat_equips_tools_with_no_user(self) -> None:
+        """A shared session must not let tools act as one member."""
+        clients = await self._run(
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="group:chat-1",
+                channel_user_id="staff-1",
+            ),
+        )
+        try:
+            self.assertListEqual(_RecordingChannel.tool_user_ids, [None])
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_an_unclassifiable_chat_equips_no_user(self) -> None:
+        """An audience the platform cannot classify is treated as shared."""
+        clients = await self._run(
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="chat-1",
+                channel_user_id="staff-1",
+            ),
+        )
+        try:
+            self.assertListEqual(_RecordingChannel.tool_user_ids, [None])
         finally:
             await clients.__aexit__(None, None, None)
