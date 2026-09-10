@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OpenAI realtime model."""
+
 import asyncio
 import base64
 import json
@@ -128,6 +129,11 @@ class OpenAIRealtimeModel(RealtimeModelBase):
             f"{url}/realtime?model={self.model}",
             additional_headers=headers,
         )
+        # A previous session leaves its terminal SessionEndedEvent and the
+        # None sentinel in the queue; a new events() iterator would stop
+        # on them before seeing anything from this session.
+        while not self._queue.empty():
+            self._queue.get_nowait()
         self._reader = asyncio.create_task(self._read(), name="openai-rt")
         await self._send(self._session_update(instructions, tools))
 

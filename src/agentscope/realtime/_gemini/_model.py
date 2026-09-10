@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Gemini Live API realtime model."""
+
 import asyncio
 import base64
 import json
@@ -132,6 +133,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
             f"{_LIVE_URL}?key={credential.api_key.get_secret_value()}",
         )
         self._ready.clear()
+        # A previous session leaves its terminal SessionEndedEvent and the
+        # None sentinel in the queue; a new events() iterator would stop
+        # on them before seeing anything from this session.
+        while not self._queue.empty():
+            self._queue.get_nowait()
         self._reader = asyncio.create_task(self._read(), name="gemini-rt")
         await self._send(
             self._setup(

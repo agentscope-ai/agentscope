@@ -106,6 +106,12 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 "X-DashScope-DataInspection": "disable",
             },
         )
+
+        # A previous session leaves its terminal SessionEndedEvent and the
+        # None sentinel in the queue; a new events() iterator would stop
+        # on them before seeing anything from this session.
+        while not self._queue.empty():
+            self._queue.get_nowait()
         self._reader = asyncio.create_task(self._read(), name="dashscope-rt")
         await self._send(self._session_update(instructions, tools))
 
