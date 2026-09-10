@@ -52,7 +52,7 @@ from agentscope.tool import AskUser
 from agentscope.tui import ChatUI, MessagesUI
 from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
-from agentscope.tui._launcher import _AgentScopeTUI, _Conversation
+from agentscope.tui._launcher import _AgentScopeTUI
 from agentscope.tui._messages import (
     MessageUI,
     TextBlockUI,
@@ -65,12 +65,21 @@ _conversations = WeakKeyDictionary()
 
 
 async def _publish(ui: MessagesUI | ChatUI, item: Any) -> None:
-    """Deliver backend-owned snapshots to a display-only widget."""
+    """Assemble test events outside the UI and publish the changed Msg."""
     if ui not in _conversations:
-        _conversations[ui] = _Conversation(ui.messages)
+        _conversations[ui] = {msg.id: msg for msg in ui.messages}
     conversation = _conversations[ui]
-    conversation.feed(item)
-    await ui.set_messages(conversation.messages)
+    if isinstance(item, Msg):
+        message = item
+    else:
+        message = conversation.get(item.reply_id)
+        if message is None:
+            name = item.name if isinstance(item, ReplyStartEvent) else "agent"
+            message = AssistantMsg(name=name, content=[], id=item.reply_id)
+        if not isinstance(item, ReplyStartEvent):
+            message.append_event(item)
+    conversation[message.id] = message
+    await ui.update_message(message)
 
 
 class _MessagesApp(App):
@@ -92,6 +101,39 @@ class _ChatApp(App):
 
 
 class MessagesUITest(unittest.IsolatedAsyncioTestCase):
+    async def test_update_message_only_compares_the_target(self) -> None:
+        history = [
+            UserMsg(name="user", content="History", id=f"history-{index}")
+            for index in range(100)
+        ]
+        active = AssistantMsg(
+            name="agent",
+            id="active",
+            content=[TextBlock(id="text", text="First")],
+        )
+        app = _MessagesApp([*history, active])
+        async with app.run_test() as pilot:
+            ui = app.query_one(MessagesUI)
+            original = ui._message_uis["active"]
+            comparisons = []
+            equal = Msg.__eq__
+
+            def compare(message: Msg, other: object) -> bool:
+                comparisons.append(message.id)
+                return equal(message, other)
+
+            active.content[0].text = "First and second"
+            with patch.object(Msg, "__eq__", compare):
+                await ui.update_message(active)
+            await pilot.pause()
+
+            self.assertListEqual(comparisons, ["active"])
+            self.assertIs(ui._message_uis["active"], original)
+            self.assertEqual(
+                original.query_one(TextBlockUI).source,
+                "First and second",
+            )
+
     async def test_mutated_snapshot_preserves_existing_widgets(self) -> None:
         message = AssistantMsg(
             name="agent",
@@ -1162,13 +1204,21 @@ class LauncherTest(unittest.IsolatedAsyncioTestCase):
             app._start_stream(UserMsg(name="user", content="second"))
             await pilot.pause()
 
-            self.assertEqual(target.inputs, ["first"])
+            self.assertListEqual(target.inputs, ["first"])
             self.assertEqual(target.max_active, 1)
+            self.assertListEqual(
+                [
+                    msg.get_text_content()
+                    for msg in app.query_one(ChatUI).messages
+                ],
+                ["first", None, "second"],
+            )
 
             target.release_first.set()
             await asyncio.wait_for(target.done.wait(), timeout=1)
-            self.assertEqual(target.inputs, ["first", "second"])
+            self.assertListEqual(target.inputs, ["first", "second"])
             self.assertEqual(target.max_active, 1)
+            self.assertDictEqual(app._replies, {})
 
     async def test_interrupt_parked_reply_sends_event(self) -> None:
         target = _FakeTarget()

@@ -63,6 +63,13 @@ history_ui = app.query_one("#history", MessagesUI)
 await history_ui.set_messages(await load_messages())
 ```
 
+For streaming, publish only the changed message. Its ID selects an existing
+widget, or appends a new one, without comparing the rest of the history:
+
+```python
+await history_ui.update_message(message)
+```
+
 `ChatUI` adds the composer and HITL controls while leaving execution and
 concurrency policy to the containing application:
 
@@ -82,8 +89,8 @@ class RuntimeApp(App):
 
     async def consume_messages(self) -> None:
         chat = self.query_one("#chat", ChatUI)
-        async for messages in runtime.message_snapshots:
-            await chat.set_messages(messages)
+        async for message in runtime.changed_messages:
+            await chat.update_message(message)
 
     @on(ChatUI.Submitted)
     async def submit(self, event: ChatUI.Submitted) -> None:
@@ -105,10 +112,11 @@ class RuntimeApp(App):
         await runtime.interrupt(event.reply_id)
 ```
 
-Here `runtime` is your application's backend. It owns the history, applies
-events with `Msg.append_event()`, and publishes complete message snapshots.
-It also decides when submitted user messages enter that history. Mutating
-the original messages does not refresh the UI until `set_messages()` is called.
+Here `runtime` is your application's backend. It applies events with
+`Msg.append_event()` and publishes the changed Msg. Use `set_messages()` for
+initial history or session replacement, and `update_message()` for live
+updates, including newly submitted user messages. Mutating the original
+messages alone does not refresh the UI.
 Unchanged messages reuse their display copies and widgets; changed Markdown
 blocks stream appended text without rebuilding the conversation.
 
@@ -135,6 +143,11 @@ from agentscope.tui import launch_tui
 
 await launch_tui(agent, messages=history, user_name="user")
 ```
+
+The launcher displays submitted messages immediately, before waiting for the
+reply queue. It retains only unfinished replies in a dictionary keyed by
+reply ID, including replies waiting for HITL. After displaying `ReplyEndEvent`,
+it releases that reply; the UI keeps its own historical display copy.
 
 ## Live CSS editing
 

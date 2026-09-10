@@ -15,9 +15,9 @@ from textual.app import App, ComposeResult
 from .._logging import logger
 from ..agent import Agent
 from ..event import (
-    AgentEvent,
     ExternalExecutionResultEvent,
     ReplyStartEvent,
+    ReplyEndEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
@@ -31,38 +31,6 @@ _TUIInput: TypeAlias = (
     | ExternalExecutionResultEvent
     | UserInterruptEvent
 )
-
-
-class _Conversation:
-    """Accumulate backend events into the messages displayed by the UI."""
-
-    def __init__(self, messages: Sequence[Msg] = ()) -> None:
-        self.messages = [message.model_copy(deep=True) for message in messages]
-        self._by_id = {message.id: message for message in self.messages}
-
-    def feed(self, item: AgentEvent | Msg) -> None:
-        if isinstance(item, Msg):
-            message = item.model_copy(deep=True)
-            previous = self._by_id.get(message.id)
-            if previous is None:
-                self.messages.append(message)
-            else:
-                self.messages[self.messages.index(previous)] = message
-            self._by_id[message.id] = message
-            return
-        reply_id = getattr(item, "reply_id", None)
-        if reply_id is None:
-            return
-        message = self._by_id.get(reply_id)
-        if message is None:
-            name = item.name if isinstance(item, ReplyStartEvent) else "agent"
-            message = AssistantMsg(name=name, content=[], id=reply_id)
-            self.messages.append(message)
-            self._by_id[reply_id] = message
-        if isinstance(item, ReplyStartEvent):
-            message.name = item.name
-        else:
-            message.append_event(item)
 
 
 class _AgentScopeTUI(App[None]):
@@ -88,7 +56,12 @@ class _AgentScopeTUI(App[None]):
         # user's terminal background rather than Textual's dark theme.
         super().__init__(ansi_color=True)
         self.target = target
-        self._conversation = _Conversation(messages)
+        self._initial_messages = messages
+        self._replies = {
+            msg.id: msg.model_copy(deep=True)
+            for msg in messages
+            if msg.role == "assistant" and msg.finished_at is None
+        }
         self.user_name = user_name
         self._tasks: set[asyncio.Task[None]] = set()
         self._reply_tasks: dict[str, asyncio.Task[None]] = {}
@@ -96,7 +69,7 @@ class _AgentScopeTUI(App[None]):
 
     def compose(self) -> ComposeResult:
         yield ChatUI(
-            self._conversation.messages,
+            self._initial_messages,
             user_name=self.user_name,
             id="agentscope-chat",
         )
@@ -110,23 +83,59 @@ class _AgentScopeTUI(App[None]):
         task.add_done_callback(self._tasks.discard)
 
     async def _consume(self, inputs: _TUIInput) -> None:
+        chat = self.query_one(ChatUI)
+        if isinstance(inputs, Msg):
+            await chat.update_message(inputs)
         async with self._reply_lock:
-            chat = self.query_one(ChatUI)
             task = asyncio.current_task()
             owned_reply_ids: set[str] = set()
             if not isinstance(inputs, Msg) and task is not None:
                 self._reply_tasks[inputs.reply_id] = task
                 owned_reply_ids.add(inputs.reply_id)
             try:
-                if isinstance(inputs, (Msg, UserConfirmResultEvent)):
-                    self._conversation.feed(inputs)
-                    await chat.set_messages(self._conversation.messages)
+                if isinstance(inputs, UserConfirmResultEvent):
+                    message = self._replies.get(inputs.reply_id)
+                    if message is not None:
+                        message.append_event(inputs)
+                        await chat.update_message(message)
                 async for item in self.target.reply_stream(inputs):
                     if isinstance(item, ReplyStartEvent) and task is not None:
                         self._reply_tasks[item.reply_id] = task
                         owned_reply_ids.add(item.reply_id)
-                    self._conversation.feed(item)
-                    await chat.set_messages(self._conversation.messages)
+                    if isinstance(item, Msg):
+                        message = item.model_copy(deep=True)
+                        if (
+                            message.role == "assistant"
+                            and message.finished_at is None
+                        ):
+                            self._replies[message.id] = message
+                    else:
+                        reply_id = getattr(item, "reply_id", None)
+                        if reply_id is None:
+                            continue
+                        message = self._replies.get(reply_id)
+                        if message is None:
+                            name = (
+                                item.name
+                                if isinstance(item, ReplyStartEvent)
+                                else "agent"
+                            )
+                            message = AssistantMsg(
+                                name=name,
+                                content=[],
+                                id=reply_id,
+                            )
+                            self._replies[reply_id] = message
+                        if isinstance(item, ReplyStartEvent):
+                            message.name = item.name
+                        else:
+                            message.append_event(item)
+                    await chat.update_message(message)
+                    if (
+                        isinstance(item, ReplyEndEvent)
+                        or message.finished_at is not None
+                    ):
+                        self._replies.pop(message.id, None)
             # The standalone UI must keep running if its target fails.
             # pylint: disable-next=broad-exception-caught
             except Exception as error:

@@ -852,6 +852,9 @@ class MessagesUI(VerticalScroll):
         self.show_usage = show_usage
         self._messages = [msg.model_copy(deep=True) for msg in messages]
         self._by_id = {msg.id: msg for msg in self._messages}
+        self._indices = {
+            msg.id: index for index, msg in enumerate(self._messages)
+        }
         self._message_uis: dict[str, MessageUI] = {}
 
     @property
@@ -894,6 +897,7 @@ class MessagesUI(VerticalScroll):
         previous_by_id = self._by_id
         self._messages = copied
         self._by_id = {msg.id: msg for msg in copied}
+        self._indices = {msg.id: index for index, msg in enumerate(copied)}
 
         for msg_id in set(current_ids) - set(incoming_ids):
             await self._message_uis.pop(msg_id).remove()
@@ -912,4 +916,22 @@ class MessagesUI(VerticalScroll):
                 else:
                     self.move_child(widget, after=previous_widget)
             previous_widget = widget
+        self.scroll_end(animate=False)
+
+    async def update_message(self, message: Msg) -> None:
+        """Update one message by ID, appending it if it is new."""
+        previous = self._by_id.get(message.id)
+        if previous == message:
+            return
+        copied = message.model_copy(deep=True)
+        self._by_id[copied.id] = copied
+        if previous is None:
+            self._indices[copied.id] = len(self._messages)
+            self._messages.append(copied)
+            widget = self._new_message_ui(copied)
+            self._message_uis[copied.id] = widget
+            await self.mount(widget)
+        else:
+            self._messages[self._indices[copied.id]] = copied
+            await self._message_uis[copied.id].apply(copied)
         self.scroll_end(animate=False)

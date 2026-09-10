@@ -469,6 +469,11 @@ class ChatUI(Widget):
     ) -> None:
         super().__init__(id=id, classes=classes, disabled=disabled)
         self._initial_messages = messages
+        self._active_messages = {
+            msg.id: msg.model_copy(deep=True)
+            for msg in messages
+            if msg.role == "assistant" and msg.finished_at is None
+        }
         self.user_name = user_name
         self.show_thinking = show_thinking
         self.show_usage = show_usage
@@ -498,7 +503,7 @@ class ChatUI(Widget):
         return self.query_one(MessagesUI).messages
 
     def _current_messages(self) -> tuple[Msg, ...]:
-        return self.query_one(MessagesUI).current_messages()
+        return tuple(self._active_messages.values())
 
     def is_reply_parked(self, reply_id: str) -> bool:
         """Whether a reply is waiting for confirmation or external input."""
@@ -515,6 +520,20 @@ class ChatUI(Widget):
 
     async def set_messages(self, messages: Sequence[Msg]) -> None:
         await self.query_one(MessagesUI).set_messages(messages)
+        self._active_messages = {
+            msg.id: msg.model_copy(deep=True)
+            for msg in messages
+            if msg.role == "assistant" and msg.finished_at is None
+        }
+        self._sync_interaction_area()
+
+    async def update_message(self, message: Msg) -> None:
+        """Update one message and its associated interaction controls."""
+        await self.query_one(MessagesUI).update_message(message)
+        if message.role == "assistant" and message.finished_at is None:
+            self._active_messages[message.id] = message.model_copy(deep=True)
+        else:
+            self._active_messages.pop(message.id, None)
         self._sync_interaction_area()
 
     def watch_input_enabled(self, enabled: bool) -> None:
