@@ -122,18 +122,12 @@ class _FakeMediaOpenAPI:
         self.streaming_card_calls: list[tuple[str, str, str]] = []
         self.streaming_updates: list[tuple[str, str, str, bool, bool]] = []
         self.streaming_update_success = True
-        self.union_id: str | None = "union-1"
-        self.knowledge_bases: dict[str, Any] = {
-            "knowledge_bases": [],
-            "next_token": "",
-        }
-        self.knowledge_nodes: dict[str, Any] = {
-            "nodes": [],
-            "next_token": "",
-        }
-        self.knowledge_node: dict[str, Any] = {}
+        self.wiki_workspaces: dict[str, Any] = {"workspaces": []}
+        self.wiki_nodes: dict[str, Any] = {"nodes": []}
+        self.wiki_node: dict[str, Any] = {}
         self.document_blocks: list[dict[str, Any]] = []
-        self.knowledge_calls: list[tuple[Any, ...]] = []
+        self.wiki_calls: list[tuple[Any, ...]] = []
+        self.wiki_error: Exception | None = None
 
     async def download_media(
         self,
@@ -165,64 +159,57 @@ class _FakeMediaOpenAPI:
         del query
         return self.search_result[:limit]
 
-    async def resolve_union_id(self, user_id: str) -> str | None:
-        self.knowledge_calls.append(("resolve_union_id", user_id))
-        return self.union_id
+    def _wiki_call(self, *call: Any) -> None:
+        self.wiki_calls.append(call)
+        if self.wiki_error is not None:
+            raise self.wiki_error
 
-    async def list_knowledge_bases(
+    async def list_wiki_workspaces(
         self,
-        operator_id: str,
+        user_id: str,
         limit: int,
-        next_token: str = "",
+        next_token: str | None = None,
     ) -> dict[str, Any]:
-        self.knowledge_calls.append(
-            ("list_knowledge_bases", operator_id, limit, next_token),
-        )
-        return self.knowledge_bases
+        self._wiki_call("list_wiki_workspaces", user_id, limit, next_token)
+        return self.wiki_workspaces
 
-    async def list_knowledge_nodes(
+    async def list_wiki_nodes(
         self,
-        operator_id: str,
+        user_id: str,
         parent_node_id: str,
         limit: int,
-        next_token: str = "",
+        next_token: str | None = None,
     ) -> dict[str, Any]:
-        self.knowledge_calls.append(
-            (
-                "list_knowledge_nodes",
-                operator_id,
-                parent_node_id,
-                limit,
-                next_token,
-            ),
+        self._wiki_call(
+            "list_wiki_nodes",
+            user_id,
+            parent_node_id,
+            limit,
+            next_token,
         )
-        return self.knowledge_nodes
+        return self.wiki_nodes
 
-    async def get_knowledge_node(
+    async def get_wiki_node(
         self,
-        operator_id: str,
+        user_id: str,
         node_id: str,
     ) -> dict[str, Any]:
-        self.knowledge_calls.append(
-            ("get_knowledge_node", operator_id, node_id),
-        )
-        return self.knowledge_node
+        self._wiki_call("get_wiki_node", user_id, node_id)
+        return self.wiki_node
 
     async def read_document_blocks(
         self,
-        operator_id: str,
+        user_id: str,
         doc_key: str,
         start_index: int,
         end_index: int,
     ) -> list[dict[str, Any]]:
-        self.knowledge_calls.append(
-            (
-                "read_document_blocks",
-                operator_id,
-                doc_key,
-                start_index,
-                end_index,
-            ),
+        self._wiki_call(
+            "read_document_blocks",
+            user_id,
+            doc_key,
+            start_index,
+            end_index,
         )
         return self.document_blocks
 
@@ -1240,44 +1227,41 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(read_decision.behavior, PermissionBehavior.ALLOW)
         self.assertEqual(send_decision.behavior, PermissionBehavior.ASK)
 
-    async def test_knowledge_tools_are_bound_to_current_sender(self) -> None:
-        from agentscope.app.channel._dingtalk._tools import (
-            ListKnowledgeBases,
-            ListKnowledgeNodes,
-            ReadKnowledgeDocument,
+    async def test_wiki_tools_are_bound_to_current_sender(self) -> None:
+        from agentscope.app.channel._tools import (
+            ListWikiNodes,
+            ListWikiSpaces,
+            ReadWikiDocument,
         )
 
         media_api = _FakeMediaOpenAPI()
-        media_api.knowledge_bases = {
-            "knowledge_bases": [
+        media_api.wiki_workspaces = {
+            "workspaces": [
                 {
                     "workspaceId": "space-1",
                     "name": "Engineering",
                     "rootNodeId": "root-1",
-                    "permissionRole": "VIEWER",
+                    "url": "https://example.invalid/space-1",
                 },
             ],
-            "next_token": "spaces-next",
+            "nextToken": "spaces-next",
         }
-        media_api.knowledge_nodes = {
+        media_api.wiki_nodes = {
             "nodes": [
                 {
                     "nodeId": "doc-1",
-                    "workspaceId": "space-1",
                     "name": "Runbook",
                     "type": "FILE",
                     "category": "ALIDOC",
+                    "hasChildren": False,
                 },
             ],
-            "next_token": "",
         }
-        media_api.knowledge_node = {
+        media_api.wiki_node = {
             "nodeId": "doc-1",
-            "workspaceId": "space-1",
             "name": "Runbook",
             "type": "FILE",
             "category": "ALIDOC",
-            "statisticalInfo": {"wordCount": 12},
         }
         media_api.document_blocks = [
             {
@@ -1292,15 +1276,16 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             },
             {
                 "blockType": "table",
-                "table": {"rowSize": 2, "colSize": 3},
+                "table": {
+                    "rolSize": 2,
+                    "colSize": 2,
+                    "cells": [["Step", "Owner"], ["Deploy", "Alice"]],
+                },
                 "index": 2,
             },
         ]
         channel, _ = _channel_with_openapi(media_api)
-        workspace = cast(
-            WorkspaceBase,
-            _FakeWorkspace(_FakeBackend()),
-        )
+        workspace = cast(WorkspaceBase, _FakeWorkspace(_FakeBackend()))
 
         tools = await channel.list_tools(workspace, "staff-1")
 
@@ -1312,9 +1297,9 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
                 "SendMessage",
                 "SendFile",
                 "SendImage",
-                "ListKnowledgeBases",
-                "ListKnowledgeNodes",
-                "ReadKnowledgeDocument",
+                "ListWikiSpaces",
+                "ListWikiNodes",
+                "ReadWikiDocument",
             ],
         )
         for tool in tools[5:]:
@@ -1325,45 +1310,72 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             decision = await tool.check_permissions({}, PermissionContext())
             self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
-        spaces = await cast(ListKnowledgeBases, tools[5])(10, "")
-        nodes = await cast(ListKnowledgeNodes, tools[6])("root-1", 25, "")
-        document = await cast(ReadKnowledgeDocument, tools[7])("doc-1", 0, 3)
+        spaces = await cast(ListWikiSpaces, tools[5])(10, "")
+        nodes = await cast(ListWikiNodes, tools[6])("root-1", 25, "")
+        document = await cast(ReadWikiDocument, tools[7])("doc-1", 0, 3)
 
-        self.assertEqual(
-            json.loads(spaces.content[0].text)["knowledge_bases"][0]["name"],
-            "Engineering",
+        self.assertDictEqual(
+            json.loads(spaces.content[0].text),
+            {
+                "spaces": [
+                    {
+                        "space_id": "space-1",
+                        "name": "Engineering",
+                        "root_node_id": "root-1",
+                        "description": None,
+                        "url": "https://example.invalid/space-1",
+                    },
+                ],
+                "next_token": "spaces-next",
+            },
+        )
+        self.assertDictEqual(
+            json.loads(nodes.content[0].text),
+            {
+                "nodes": [
+                    {
+                        "node_id": "doc-1",
+                        "name": "Runbook",
+                        "has_children": False,
+                        "is_document": True,
+                        "url": None,
+                        "modified_time": None,
+                    },
+                ],
+                "next_token": "",
+            },
+        )
+        # A full page may have more behind it, so a resume point is given.
+        self.assertDictEqual(
+            json.loads(document.content[0].text),
+            {
+                "node_id": "doc-1",
+                "name": "Runbook",
+                "start_index": 0,
+                "next_start_index": 3,
+            },
         )
         self.assertEqual(
-            json.loads(nodes.content[0].text)["nodes"][0]["node_id"],
-            "doc-1",
+            document.content[1].text,
+            "## Deploy\n\nRun the release command.\n\n"
+            "| Step | Owner |\n| --- | --- |\n| Deploy | Alice |",
         )
-        document_result = json.loads(document.content[0].text)
-        self.assertIn("## Deploy", document_result["markdown"])
-        self.assertIn("Run the release command.", document_result["markdown"])
-        self.assertEqual(document_result["unsupported_block_types"], ["table"])
-        self.assertEqual(document_result["next_start_index"], 3)
         self.assertListEqual(
-            media_api.knowledge_calls,
+            media_api.wiki_calls,
             [
-                ("resolve_union_id", "staff-1"),
-                ("list_knowledge_bases", "union-1", 10, ""),
-                ("resolve_union_id", "staff-1"),
-                ("list_knowledge_nodes", "union-1", "root-1", 25, ""),
-                ("resolve_union_id", "staff-1"),
-                ("get_knowledge_node", "union-1", "doc-1"),
-                ("read_document_blocks", "union-1", "doc-1", 0, 2),
+                ("list_wiki_workspaces", "staff-1", 10, None),
+                ("list_wiki_nodes", "staff-1", "root-1", 25, None),
+                ("get_wiki_node", "staff-1", "doc-1"),
+                ("read_document_blocks", "staff-1", "doc-1", 0, 2),
             ],
         )
 
     async def test_oversized_document_block_is_truncated(self) -> None:
-        from agentscope.app.channel._dingtalk._tools import (
-            ReadKnowledgeDocument,
-        )
+        from agentscope.app.channel._tools import ReadWikiDocument
 
         media_api = _FakeMediaOpenAPI()
-        media_api.knowledge_node = {
+        media_api.wiki_node = {
             "nodeId": "doc-1",
-            "workspaceId": "space-1",
             "name": "Runbook",
             "type": "FILE",
             "category": "ALIDOC",
@@ -1381,28 +1393,41 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             "staff-1",
         )
 
-        document = await cast(ReadKnowledgeDocument, tools[7])("doc-1", 0, 1)
+        document = await cast(ReadWikiDocument, tools[7])("doc-1", 0, 1)
 
         self.assertDictEqual(
             json.loads(document.content[0].text),
             {
-                "document": {
-                    "node_id": "doc-1",
-                    "workspace_id": "space-1",
-                    "name": "Runbook",
-                    "url": "",
-                    "modified_time": "",
-                    "word_count": None,
-                },
-                "markdown": "x" * 20_000,
+                "node_id": "doc-1",
+                "name": "Runbook",
                 "start_index": 0,
-                "returned_blocks": 1,
                 "next_start_index": 1,
-                "unsupported_block_types": [],
             },
         )
+        self.assertEqual(document.content[1].text, "x" * 20_000)
 
-    async def test_knowledge_tools_hidden_without_channel_sender(self) -> None:
+    async def test_a_folder_node_is_not_a_readable_document(self) -> None:
+        from agentscope.app.channel._tools import ReadWikiDocument
+
+        media_api = _FakeMediaOpenAPI()
+        media_api.wiki_node = {
+            "nodeId": "folder-1",
+            "name": "Runbooks",
+            "type": "FOLDER",
+            "hasChildren": True,
+        }
+        channel, _ = _channel_with_openapi(media_api)
+        tools = await channel.list_tools(
+            cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            "staff-1",
+        )
+
+        document = await cast(ReadWikiDocument, tools[7])("folder-1", 0, 10)
+
+        self.assertEqual(document.state, ToolResultState.ERROR)
+        self.assertIn("not a readable", document.content[0].text)
+
+    async def test_wiki_tools_hidden_without_channel_sender(self) -> None:
         channel = _channel()
         workspace = cast(WorkspaceBase, _FakeWorkspace(_FakeBackend()))
 
@@ -1419,9 +1444,12 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_knowledge_identity_failure_is_visible(self) -> None:
+    async def test_wiki_identity_failure_is_visible(self) -> None:
         media_api = _FakeMediaOpenAPI()
-        media_api.union_id = None
+        media_api.wiki_error = RuntimeError(
+            "DingTalk could not resolve the current user's unionId. "
+            "Check the application's contact permission.",
+        )
         channel, _ = _channel_with_openapi(media_api)
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
@@ -1736,56 +1764,19 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         self.assertEqual(users[1]["user_id"], "user-2")
         self.assertEqual(users[1]["name"], "")
 
-    async def test_resolve_union_id_uses_profile_and_cache(self) -> None:
+    async def test_wiki_gets_resolve_and_cache_the_operator(self) -> None:
+        """Every wiki call acts as the sender's resolved unionId."""
         api, http = _openapi(
             {
                 "errcode": 0,
-                "result": {
-                    "userid": "staff-1",
-                    "unionid": "union-1",
-                    "name": "Alice",
-                },
+                "result": {"userid": "staff-1", "unionid": "union-1"},
             },
-        )
-
-        first = await api.resolve_union_id("staff-1")
-        second = await api.resolve_union_id("staff-1")
-
-        self.assertEqual(first, "union-1")
-        self.assertEqual(second, "union-1")
-        self.assertEqual(len(http.posts), 2)
-        self.assertEqual(
-            http.posts[1][1]["json"],
-            {"userid": "staff-1", "language": "zh_CN"},
-        )
-
-    async def test_knowledge_openapi_uses_operator_scoped_gets(self) -> None:
-        api, http = _openapi(
             {
-                "workspaces": [
-                    {
-                        "workspaceId": "space/1",
-                        "name": "Engineering",
-                    },
-                ],
+                "workspaces": [{"workspaceId": "space/1"}],
                 "nextToken": "space-next",
             },
-            {
-                "nodes": [
-                    {
-                        "nodeId": "doc/1",
-                        "type": "FILE",
-                        "category": "ALIDOC",
-                    },
-                ],
-            },
-            {
-                "node": {
-                    "nodeId": "doc/1",
-                    "type": "FILE",
-                    "category": "ALIDOC",
-                },
-            },
+            {"nodes": [{"nodeId": "doc/1"}]},
+            {"node": {"nodeId": "doc/1"}},
             {
                 "success": True,
                 "result": {
@@ -1800,25 +1791,17 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             },
         )
 
-        spaces = await api.list_knowledge_bases("union-1", 20)
-        nodes = await api.list_knowledge_nodes(
-            "union-1",
-            "root-1",
-            50,
-            "node-next",
-        )
-        node = await api.get_knowledge_node("union-1", "doc/1")
-        blocks = await api.read_document_blocks(
-            "union-1",
-            "doc/1",
-            0,
-            49,
-        )
+        spaces = await api.list_wiki_workspaces("staff-1", 20)
+        nodes = await api.list_wiki_nodes("staff-1", "root-1", 50, "node-next")
+        node = await api.get_wiki_node("staff-1", "doc/1")
+        blocks = await api.read_document_blocks("staff-1", "doc/1", 0, 49)
 
-        self.assertEqual(spaces["next_token"], "space-next")
+        self.assertEqual(spaces["nextToken"], "space-next")
         self.assertEqual(nodes["nodes"][0]["nodeId"], "doc/1")
         self.assertEqual(node["nodeId"], "doc/1")
         self.assertEqual(blocks[0]["paragraph"]["text"], "hello")
+        # One profile lookup for four calls: the unionId is cached.
+        self.assertEqual(len(http.posts), 2)
         self.assertEqual(
             http.gets[0],
             (
@@ -1836,46 +1819,35 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
                 },
             ),
         )
-        self.assertEqual(
-            http.gets[1][1]["params"]["parentNodeId"],
-            "root-1",
-        )
-        self.assertIn("nextToken", http.gets[1][1]["params"])
+        self.assertEqual(http.gets[1][1]["params"]["parentNodeId"], "root-1")
+        self.assertEqual(http.gets[1][1]["params"]["nextToken"], "node-next")
         self.assertTrue(http.gets[2][0].endswith("/nodes/doc%2F1"))
-        self.assertTrue(
-            http.gets[3][0].endswith("/documents/doc%2F1/blocks"),
-        )
+        self.assertTrue(http.gets[3][0].endswith("/documents/doc%2F1/blocks"))
         self.assertEqual(
             http.gets[3][1]["params"],
+            {"operatorId": "union-1", "startIndex": 0, "endIndex": 49},
+        )
+
+    async def test_wiki_get_surfaces_a_permission_error(self) -> None:
+        api, _ = _openapi(
             {
-                "operatorId": "union-1",
-                "startIndex": 0,
-                "endIndex": 49,
+                "errcode": 0,
+                "result": {"userid": "staff-1", "unionid": "union-1"},
+            },
+            {
+                "code": "Forbidden.AccessDenied",
+                "message": "missing Wiki permission",
             },
         )
 
-    async def test_knowledge_openapi_surfaces_permission_error(self) -> None:
-        http = _OpenAPIHTTP(
-            [
-                _FakeResponse(
-                    {"accessToken": "token", "expireIn": 7200},
-                ),
-                _FakeResponse(
-                    {
-                        "code": "Forbidden.AccessDenied",
-                        "message": "missing Wiki permission",
-                    },
-                    status_code=403,
-                ),
-            ],
-        )
-        api = _DingTalkOpenAPI("client", "secret", http)
+        with self.assertRaisesRegex(RuntimeError, "missing Wiki permission"):
+            await api.list_wiki_workspaces("staff-1", 20)
 
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "missing Wiki permission",
-        ):
-            await api.list_knowledge_bases("union-1", 20)
+    async def test_an_unresolvable_sender_is_reported(self) -> None:
+        api, _ = _openapi({"errcode": 0, "result": {"userid": "staff-1"}})
+
+        with self.assertRaisesRegex(RuntimeError, "contact permission"):
+            await api.list_wiki_workspaces("staff-1", 20)
 
     async def test_create_deliver_and_update_group_approval_card(self) -> None:
         api, http = _openapi({}, {}, {}, {})

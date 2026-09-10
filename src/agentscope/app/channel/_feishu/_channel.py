@@ -938,7 +938,7 @@ class FeishuChannel(ChannelBase):
             page_token = payload.get("page_token", "")
         return results
 
-    async def list_tools(  # pylint: disable=unused-argument
+    async def list_tools(
         self,
         workspace: "WorkspaceBase",
         channel_user_id: str | None = None,
@@ -950,8 +950,7 @@ class FeishuChannel(ChannelBase):
                 The calling session's workspace; the send-file tools read
                 their payload from its backend by absolute path.
             channel_user_id (`str | None`, optional): The platform user
-                the session acts as. Feishu tools are not user-scoped and
-                ignore it.
+                the session acts as, passed through to the inherited tools.
 
         Returns:
             `list[ToolBase]`: The Feishu agent tools.
@@ -971,7 +970,7 @@ class FeishuChannel(ChannelBase):
             SendMessage(self, backend),
             SendFile(self, backend),
             SendImage(self, backend),
-        ]
+        ] + await super().list_tools(workspace, channel_user_id)
 
     # -- Agent-tool operations (act on chats/users other than the current) --
 

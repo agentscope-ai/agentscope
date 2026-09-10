@@ -52,115 +52,106 @@ class _DingTalkOpenAPI:
         self._token_lock = asyncio.Lock()
         self._union_ids: dict[str, str] = {}
 
-    async def resolve_union_id(self, user_id: str) -> str | None:
-        """Resolve a DingTalk staff id to the union id used by Wiki APIs.
+    async def _operator_id(self, user_id: str) -> str:
+        """Resolve a staff id to the union id the wiki APIs act as.
 
         Args:
             user_id (`str`): Enterprise staff id from the robot callback.
 
         Returns:
-            `str | None`: User union id, or ``None`` when it cannot be
-            resolved with the application's contact permission.
+            `str`: The user's union id.
+
+        Raises:
+            `RuntimeError`: If the application cannot read the profile.
         """
         cached = self._union_ids.get(user_id)
         if cached:
             return cached
         token = await self._access_token()
-        if token is None:
-            return None
-        detail = await self._user_detail(token, user_id)
+        detail = await self._user_detail(token, user_id) if token else None
         union_id = str((detail or {}).get("union_id") or "")
         if not union_id:
-            return None
+            raise RuntimeError(
+                "DingTalk could not resolve the current user's unionId. "
+                "Check the application's contact permission.",
+            )
         if len(self._union_ids) >= _UNION_ID_CACHE_SIZE:
             self._union_ids.pop(next(iter(self._union_ids)))
         self._union_ids[user_id] = union_id
         return union_id
 
-    async def list_knowledge_bases(
+    async def list_wiki_workspaces(
         self,
-        operator_id: str,
+        user_id: str,
         limit: int,
-        next_token: str = "",
+        next_token: str | None = None,
     ) -> dict[str, Any]:
-        """List knowledge bases visible to one DingTalk operator.
+        """List the wiki workspaces visible to one DingTalk user.
 
         Args:
-            operator_id (`str`): Current user's union id.
+            user_id (`str`): The staff id to act as.
             limit (`int`): Maximum results requested from DingTalk.
-            next_token (`str`): Optional pagination token.
+            next_token (`str | None`): Optional pagination token.
 
         Returns:
-            `dict[str, Any]`: ``knowledge_bases`` and ``next_token``.
+            `dict[str, Any]`: DingTalk's ``workspaces`` and ``nextToken``.
 
         Raises:
             `RuntimeError`: If DingTalk rejects the lookup.
         """
-        payload = await self._knowledge_get(
+        return await self._wiki_get(
             "/v2.0/wiki/workspaces",
-            operator_id,
+            user_id,
             {
                 "maxResults": limit,
                 "nextToken": next_token,
                 "withPermissionRole": True,
             },
-            "knowledge-base listing",
+            "wiki-workspace listing",
         )
-        workspaces = payload.get("workspaces")
-        return {
-            "knowledge_bases": (
-                workspaces if isinstance(workspaces, list) else []
-            ),
-            "next_token": str(payload.get("nextToken") or ""),
-        }
 
-    async def list_knowledge_nodes(
+    async def list_wiki_nodes(
         self,
-        operator_id: str,
+        user_id: str,
         parent_node_id: str,
         limit: int,
-        next_token: str = "",
+        next_token: str | None = None,
     ) -> dict[str, Any]:
-        """List direct children of one DingTalk knowledge node.
+        """List the direct children of one DingTalk wiki node.
 
         Args:
-            operator_id (`str`): Current user's union id.
-            parent_node_id (`str`): Knowledge-base root or folder node id.
+            user_id (`str`): The staff id to act as.
+            parent_node_id (`str`): Workspace root or folder node id.
             limit (`int`): Maximum results requested from DingTalk.
-            next_token (`str`): Optional pagination token.
+            next_token (`str | None`): Optional pagination token.
 
         Returns:
-            `dict[str, Any]`: ``nodes`` and ``next_token``.
+            `dict[str, Any]`: DingTalk's ``nodes`` and ``nextToken``.
 
         Raises:
             `RuntimeError`: If DingTalk rejects the lookup.
         """
-        payload = await self._knowledge_get(
+        return await self._wiki_get(
             "/v2.0/wiki/nodes",
-            operator_id,
+            user_id,
             {
                 "parentNodeId": parent_node_id,
                 "maxResults": limit,
                 "nextToken": next_token,
                 "withPermissionRole": True,
             },
-            "knowledge-node listing",
+            "wiki-node listing",
         )
-        nodes = payload.get("nodes")
-        return {
-            "nodes": nodes if isinstance(nodes, list) else [],
-            "next_token": str(payload.get("nextToken") or ""),
-        }
 
-    async def get_knowledge_node(
+    async def get_wiki_node(
         self,
-        operator_id: str,
+        user_id: str,
         node_id: str,
     ) -> dict[str, Any]:
-        """Get metadata for one DingTalk knowledge node.
+        """Get the metadata of one DingTalk wiki node.
 
         Args:
-            operator_id (`str`): Current user's union id.
+            user_id (`str`): The staff id to act as.
             node_id (`str`): Wiki node identifier.
 
         Returns:
@@ -170,21 +161,21 @@ class _DingTalkOpenAPI:
         Raises:
             `RuntimeError`: If DingTalk rejects the lookup.
         """
-        payload = await self._knowledge_get(
+        payload = await self._wiki_get(
             f"/v2.0/wiki/nodes/{quote(node_id, safe='')}",
-            operator_id,
+            user_id,
             {
                 "withPermissionRole": True,
                 "withStatisticalInfo": True,
             },
-            "knowledge-node lookup",
+            "wiki-node lookup",
         )
         node = payload.get("node")
         return node if isinstance(node, dict) else {}
 
     async def read_document_blocks(
         self,
-        operator_id: str,
+        user_id: str,
         doc_key: str,
         start_index: int,
         end_index: int,
@@ -192,7 +183,7 @@ class _DingTalkOpenAPI:
         """Read a bounded range of DingTalk document blocks.
 
         Args:
-            operator_id (`str`): Current user's union id.
+            user_id (`str`): The staff id to act as.
             doc_key (`str`): Document key (Wiki node ids normally work).
             start_index (`int`): First block index, inclusive.
             end_index (`int`): Last block index, inclusive.
@@ -203,9 +194,9 @@ class _DingTalkOpenAPI:
         Raises:
             `RuntimeError`: If DingTalk rejects the lookup.
         """
-        payload = await self._knowledge_get(
+        payload = await self._wiki_get(
             f"/v1.0/doc/suites/documents/{quote(doc_key, safe='')}/blocks",
-            operator_id,
+            user_id,
             {"startIndex": start_index, "endIndex": end_index},
             "document-block reading",
         )
@@ -762,18 +753,18 @@ class _DingTalkOpenAPI:
             logger.exception("DingTalk message send failed")
             return False
 
-    async def _knowledge_get(
+    async def _wiki_get(
         self,
         path: str,
-        operator_id: str,
+        user_id: str,
         params: dict[str, Any],
         operation: str,
     ) -> dict[str, Any]:
-        """Issue an authenticated, permission-sensitive knowledge GET.
+        """Issue an authenticated GET that acts as one DingTalk user.
 
         Args:
             path (`str`): Absolute path below ``api.dingtalk.com``.
-            operator_id (`str`): Current user's union id.
+            user_id (`str`): The staff id to act as.
             params (`dict[str, Any]`): Additional query parameters.
             operation (`str`): Human-readable operation for errors.
 
@@ -790,8 +781,8 @@ class _DingTalkOpenAPI:
                 f"DingTalk {operation} failed: no application access token.",
             )
         query = {
-            "operatorId": operator_id,
-            **{key: value for key, value in params.items() if value != ""},
+            "operatorId": await self._operator_id(user_id),
+            **{k: v for k, v in params.items() if v is not None and v != ""},
         }
         try:
             response = await self._http.get(

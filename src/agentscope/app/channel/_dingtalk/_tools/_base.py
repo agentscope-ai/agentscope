@@ -50,21 +50,16 @@ class _DingTalkToolBase(ToolBase):
         self,
         channel: "DingTalkChannel",
         backend: BackendBase,
-        channel_user_id: str = "",
     ) -> None:
         """Bind the live channel and session workspace backend.
 
         Args:
             channel (`DingTalkChannel`): Live DingTalk channel.
             backend (`BackendBase`): Workspace backend for file reads.
-            channel_user_id (`str`, optional): The DingTalk user to act as,
-                for the tools that read with that user's own permissions.
-                The rest act as the bot and leave it empty.
         """
         super().__init__()
         self._channel = channel
         self._backend = backend
-        self._channel_user_id = channel_user_id
 
     async def check_permissions(
         self,

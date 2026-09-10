@@ -187,10 +187,63 @@ class ChatKind(str, Enum):
     PRIVATE = "private"
 
 
+class WikiSpace(BaseModel):
+    """One wiki space (a "knowledge base") visible to a platform user."""
+
+    space_id: str
+    """Platform id of the space."""
+
+    name: str
+    """Display name, as the platform shows it."""
+
+    root_node_id: str
+    """Where browsing starts; pass it to
+    :meth:`ChannelBase.list_wiki_nodes`."""
+
+    description: str | None = None
+    url: str | None = None
+    """Link to the space in the platform's own UI, for a person to open."""
+
+
+class WikiNode(BaseModel):
+    """One entry in a wiki space's tree — a folder or a document."""
+
+    node_id: str
+    name: str
+
+    has_children: bool = False
+    """Whether it can be browsed with :meth:`ChannelBase.list_wiki_nodes`."""
+
+    is_document: bool = False
+    """Whether it can be read with :meth:`ChannelBase.read_wiki_document`."""
+
+    url: str | None = None
+    modified_time: datetime | None = None
+
+
+class WikiDocument(BaseModel):
+    """A bounded read of one wiki document.
+
+    Bounded because a document is read in block ranges: a long one costs
+    several calls rather than one unbounded reply the model cannot use.
+    """
+
+    node_id: str
+    name: str
+
+    content: list[TextBlock | DataBlock]
+    """The range that was read, in the same block types as
+    :attr:`ChannelEvent.content`, so it reaches the agent unconverted."""
+
+    next_start_index: int | None = None
+    """Where a follow-up read resumes, or ``None`` at the end."""
+
+
 class ChannelCapability(BaseModel):
     """Platform capability declaration for gateway degradation decisions.
 
-    All flags describe the send direction (agent → platform).
+    Flags describe the send direction (agent → platform) unless the flag
+    says otherwise.
     """
 
     text: bool = True
@@ -209,6 +262,12 @@ class ChannelCapability(BaseModel):
 
     max_message_length: int = 4000
     """Max characters per message; longer replies are split before send."""
+
+    wiki: bool = False
+    """Whether the platform has a wiki the agent can browse and read as
+    the message sender — the read direction, unlike the flags above. A
+    channel that sets it implements the three wiki methods on
+    :class:`ChannelBase`, and inherits the tools that call them."""
 
 
 class ChannelBase(ABC):
@@ -466,7 +525,11 @@ class ChannelBase(ABC):
         channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Platform tools exposed to the agent — e.g. send a file to a
-        different user/group than the conversation. Default: none.
+        different user/group than the conversation.
+
+        Default: the wiki tools, for a platform that has a wiki and a
+        session that acts as a known user. A subclass adds its own
+        platform tools to what this returns.
 
         Args:
             workspace (`WorkspaceBase`): The calling session's workspace,
@@ -475,10 +538,92 @@ class ChannelBase(ABC):
                 session acts as, for tools that read with that user's own
                 permissions. ``None`` when the session has no single such
                 user — a shared group session, or a chat whose audience the
-                platform cannot classify — and channels whose tools are not
-                user-scoped may ignore it.
+                platform cannot classify.
         """
-        return []
+        from ._tools import ListWikiNodes, ListWikiSpaces, ReadWikiDocument
+
+        if not (self.capabilities.wiki and channel_user_id):
+            return []
+        return [
+            ListWikiSpaces(self, channel_user_id),
+            ListWikiNodes(self, channel_user_id),
+            ReadWikiDocument(self, channel_user_id),
+        ]
+
+    # -- Optional wiki access, read as one platform user --
+
+    async def list_wiki_spaces(  # pylint: disable=unused-argument
+        self,
+        channel_user_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> tuple[list[WikiSpace], str | None]:
+        """Wiki spaces readable by one platform user.
+
+        Every wiki call names the user it acts as, so the platform applies
+        that user's own permissions rather than the bot's. Default: none,
+        for a platform with no wiki.
+
+        Args:
+            channel_user_id (`str`): The platform user to read as.
+            limit (`int`): Maximum spaces to return.
+            next_token (`str | None`, optional): Token from a previous page.
+
+        Returns:
+            `tuple[list[WikiSpace], str | None]`: One page, and the token
+            for the next one or ``None`` at the end.
+        """
+        return [], None
+
+    async def list_wiki_nodes(  # pylint: disable=unused-argument
+        self,
+        channel_user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> tuple[list[WikiNode], str | None]:
+        """Direct children of one wiki space root or folder.
+
+        Default: none, for a platform with no wiki.
+
+        Args:
+            channel_user_id (`str`): The platform user to read as.
+            parent_node_id (`str`): The space root or folder to browse.
+            limit (`int`): Maximum children to return.
+            next_token (`str | None`, optional): Token from a previous page.
+
+        Returns:
+            `tuple[list[WikiNode], str | None]`: One page, and the token
+            for the next one or ``None`` at the end.
+        """
+        return [], None
+
+    async def read_wiki_document(  # pylint: disable=unused-argument
+        self,
+        channel_user_id: str,
+        node_id: str,
+        start_index: int,
+        max_blocks: int,
+    ) -> WikiDocument | None:
+        """Read a bounded range of one wiki document.
+
+        Default: ``None``, for a platform with no wiki.
+
+        Args:
+            channel_user_id (`str`): The platform user to read as.
+            node_id (`str`): The document to read.
+            start_index (`int`): First block index to read.
+            max_blocks (`int`): Maximum blocks to read.
+
+        Returns:
+            `WikiDocument | None`: The range that was read, or ``None``
+            when the node is not a document this platform can read.
+
+        Raises:
+            `RuntimeError`: If the platform refuses the read, with a
+            message naming what the operator has to fix.
+        """
+        return None
 
     def _split_long_message(self, text: str) -> list[str]:
         """Split text into chunks within the platform length limit.
