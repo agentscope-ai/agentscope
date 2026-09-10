@@ -55,24 +55,6 @@ def _to_blocks(content: str | list) -> list:
     return content
 
 
-def _merge_base64_delta(existing: str, incoming: str) -> str:
-    """Merge independently encoded base64 chunks without corrupting padding.
-
-    Mirrors tool._response._merge_base64_chunks (kept local here because the
-    message package sits below the tool package in the dependency graph).
-    """
-    try:
-        merged = base64.b64decode(existing, validate=True) + base64.b64decode(
-            incoming,
-            validate=True,
-        )
-    except Exception:
-        # Keep compatibility with placeholder strings that are not valid
-        # base64 payloads (e.g. some tests / hand-built fixtures).
-        return existing + incoming
-    return base64.b64encode(merged).decode("ascii")
-
-
 class Usage(BaseModel):
     """The token usage information of a message."""
 
@@ -465,8 +447,7 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    # Merge same-id Base64 chunks, mirroring
-                    # ToolResponse.append_chunk.
+                    # Merge same-id Base64 chunks like ToolResponse.append_chunk.
                     merge_target: DataBlock | None = None
                     for output_block in block.output:
                         if (
@@ -480,13 +461,10 @@ class Msg(BaseModel):
                         src,
                         Base64Source,
                     ):
-                        # Each delta is an independently encoded chunk (with
-                        # its own padding); decode, concat bytes, re-encode.
-                        merged = base64.b64decode(
-                            merge_target.source.data,
-                        ) + base64.b64decode(src.data)
+                        existing = base64.b64decode(merge_target.source.data)
+                        incoming = base64.b64decode(src.data)
                         merge_target.source.data = base64.b64encode(
-                            merged,
+                            existing + incoming,
                         ).decode("ascii")
                         merge_target.source.media_type = src.media_type
                     else:
