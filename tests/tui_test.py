@@ -12,6 +12,7 @@ import json
 from typing import Any
 import unittest
 from unittest.mock import patch
+from weakref import WeakKeyDictionary
 
 from textual.app import App, ComposeResult
 from textual.message import Message as TextualMessage
@@ -51,13 +52,25 @@ from agentscope.tool import AskUser
 from agentscope.tui import ChatUI, MessagesUI
 from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
-from agentscope.tui._launcher import _AgentScopeTUI
+from agentscope.tui._launcher import _AgentScopeTUI, _Conversation
 from agentscope.tui._messages import (
     MessageUI,
     TextBlockUI,
     ThinkingUI,
     ToolGroupUI,
 )
+
+
+_conversations = WeakKeyDictionary()
+
+
+async def _publish(ui: MessagesUI | ChatUI, item: Any) -> None:
+    """Deliver backend-owned snapshots to a display-only widget."""
+    if ui not in _conversations:
+        _conversations[ui] = _Conversation(ui.messages)
+    conversation = _conversations[ui]
+    conversation.feed(item)
+    await ui.set_messages(conversation.messages)
 
 
 class _MessagesApp(App):
@@ -79,6 +92,60 @@ class _ChatApp(App):
 
 
 class MessagesUITest(unittest.IsolatedAsyncioTestCase):
+    async def test_mutated_snapshot_preserves_existing_widgets(self) -> None:
+        message = AssistantMsg(
+            name="agent",
+            id="reply",
+            content=[TextBlock(id="text", text="Hello")],
+        )
+        app = _MessagesApp([message])
+        async with app.run_test() as pilot:
+            ui = app.query_one(MessagesUI)
+            original = app.query_one(MessageUI)
+            text = app.query_one(TextBlockUI)
+            message.content[0].text = "Hello world"
+            self.assertEqual(text.source, "Hello")
+
+            await ui.set_messages([message])
+            await pilot.pause()
+            self.assertIs(app.query_one(TextBlockUI), text)
+            self.assertEqual(text.source, "Hello world")
+
+            await ui.set_messages(
+                [message, UserMsg(name="user", content="Next", id="next")],
+            )
+            self.assertIs(ui._message_uis["reply"], original)
+            self.assertIs(original.query_one(TextBlockUI), text)
+
+            await ui.set_messages([message])
+            self.assertListEqual(list(ui._message_uis), ["reply"])
+            self.assertIs(app.query_one(MessageUI), original)
+
+    async def test_snapshot_keeps_expanded_thinking_when_text_changes(
+        self,
+    ) -> None:
+        message = AssistantMsg(
+            name="agent",
+            content=[
+                ThinkingBlock(id="thought", thinking="Checking"),
+                TextBlock(id="text", text="Answer"),
+            ],
+        )
+        app = _MessagesApp([message])
+        async with app.run_test() as pilot:
+            ui = app.query_one(MessagesUI)
+            thinking = app.query_one(ThinkingUI)
+            thinking.collapsed = False
+            message.content[1].text = "A revised answer"
+            await ui.set_messages([message])
+            await pilot.pause()
+            self.assertIs(app.query_one(ThinkingUI), thinking)
+            self.assertFalse(thinking.collapsed)
+            self.assertEqual(
+                app.query_one(TextBlockUI).source,
+                "A revised answer",
+            )
+
     async def test_running_thinking_updates_elapsed_title(self) -> None:
         msg = AssistantMsg(
             name="agent",
@@ -139,30 +206,40 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
         app = _MessagesApp([])
         async with app.run_test() as pilot:
             ui = app.query_one(MessagesUI)
-            ui.feed(
+            await _publish(
+                ui,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="r1",
                     name="planner",
                 ),
             )
-            ui.feed(
+            await _publish(
+                ui,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="r2",
                     name="executor",
                 ),
             )
-            ui.feed(TextBlockStartEvent(reply_id="r1", block_id="t1"))
-            ui.feed(TextBlockStartEvent(reply_id="r2", block_id="t2"))
-            ui.feed(
+            await _publish(
+                ui,
+                TextBlockStartEvent(reply_id="r1", block_id="t1"),
+            )
+            await _publish(
+                ui,
+                TextBlockStartEvent(reply_id="r2", block_id="t2"),
+            )
+            await _publish(
+                ui,
                 TextBlockDeltaEvent(
                     reply_id="r2",
                     block_id="t2",
                     delta="execute",
                 ),
             )
-            ui.feed(
+            await _publish(
+                ui,
                 TextBlockDeltaEvent(
                     reply_id="r1",
                     block_id="t1",
@@ -179,27 +256,32 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
         app = _MessagesApp([])
         async with app.run_test() as pilot:
             ui = app.query_one(MessagesUI)
-            ui.feed(
+            await _publish(
+                ui,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="r1",
                     name="agent",
                 ),
             )
-            ui.feed(TextBlockStartEvent(reply_id="r1", block_id="t1"))
+            await _publish(
+                ui,
+                TextBlockStartEvent(reply_id="r1", block_id="t1"),
+            )
             await pilot.pause()
             message_widget = app.query_one(MessageUI)
             text_widget = app.query_one(TextBlockUI)
 
-            ui.feed(
+            await _publish(
+                ui,
                 TextBlockDeltaEvent(
                     reply_id="r1",
                     block_id="t1",
                     delta="hello",
                 ),
             )
-            ui.feed(TextBlockEndEvent(reply_id="r1", block_id="t1"))
-            ui.feed(ReplyEndEvent(session_id="s", reply_id="r1"))
+            await _publish(ui, TextBlockEndEvent(reply_id="r1", block_id="t1"))
+            await _publish(ui, ReplyEndEvent(session_id="s", reply_id="r1"))
             await pilot.pause()
 
             self.assertIs(message_widget, app.query_one(MessageUI))
@@ -208,6 +290,13 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatUITest(unittest.IsolatedAsyncioTestCase):
+    async def test_submission_does_not_append_history(self) -> None:
+        app = _ChatApp()
+        async with app.run_test() as pilot:
+            await pilot.press("h", "i", "enter")
+            await pilot.pause()
+            self.assertListEqual(list(app.query_one(ChatUI).messages), [])
+
     async def test_visual_layout_at_supported_terminal_sizes(self) -> None:
         finished_at = "2026-01-01T00:00:01+00:00"
         history: list[Msg] = [
@@ -347,7 +436,8 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
         app = _ChatApp()
         async with app.run_test(message_hook=hook) as pilot:
             chat = app.query_one(ChatUI)
-            chat.feed(
+            await _publish(
+                chat,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="running",
@@ -378,7 +468,8 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
         app = _ChatApp()
         async with app.run_test(message_hook=hook) as pilot:
             chat = app.query_one(ChatUI)
-            chat.feed(
+            await _publish(
+                chat,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="running",
@@ -456,29 +547,36 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             editor = app.query_one(_ComposerTextArea)
             editor.focus()
             await pilot.press("d", "r", "a", "f", "t")
-            chat.feed(
+            await _publish(
+                chat,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="r1",
                     name="agent",
                 ),
             )
-            chat.feed(
+            await _publish(
+                chat,
                 ToolCallStartEvent(
                     reply_id="r1",
                     tool_call_id="c1",
                     tool_call_name="Edit",
                 ),
             )
-            chat.feed(
+            await _publish(
+                chat,
                 ToolCallDeltaEvent(
                     reply_id="r1",
                     tool_call_id="c1",
                     delta='{"file_path": "demo.py"}',
                 ),
             )
-            chat.feed(ToolCallEndEvent(reply_id="r1", tool_call_id="c1"))
-            chat.feed(
+            await _publish(
+                chat,
+                ToolCallEndEvent(reply_id="r1", tool_call_id="c1"),
+            )
+            await _publish(
+                chat,
                 RequireUserConfirmEvent(
                     reply_id="r1",
                     tool_calls=[
@@ -612,22 +710,28 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
         app = _ChatApp()
         async with app.run_test() as pilot:
             chat = app.query_one(ChatUI)
-            chat.feed(
+            await _publish(
+                chat,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="r1",
                     name="agent",
                 ),
             )
-            chat.feed(
+            await _publish(
+                chat,
                 ToolCallStartEvent(
                     reply_id="r1",
                     tool_call_id="c1",
                     tool_call_name="external_tool",
                 ),
             )
-            chat.feed(ToolCallEndEvent(reply_id="r1", tool_call_id="c1"))
-            chat.feed(
+            await _publish(
+                chat,
+                ToolCallEndEvent(reply_id="r1", tool_call_id="c1"),
+            )
+            await _publish(
+                chat,
                 RequireExternalExecutionEvent(
                     reply_id="r1",
                     tool_calls=[
@@ -844,36 +948,44 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
         app = _ChatApp()
         async with app.run_test() as pilot:
             chat = app.query_one(ChatUI)
-            chat.feed(
+            await _publish(
+                chat,
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="r1",
                     name="agent",
                 ),
             )
-            chat.feed(
+            await _publish(
+                chat,
                 ToolCallStartEvent(
                     reply_id="r1",
                     tool_call_id="c1",
                     tool_call_name="Edit",
                 ),
             )
-            chat.feed(
+            await _publish(
+                chat,
                 ToolCallDeltaEvent(
                     reply_id="r1",
                     tool_call_id="c1",
                     delta='{"file_path": "demo.py"}',
                 ),
             )
-            chat.feed(ToolCallEndEvent(reply_id="r1", tool_call_id="c1"))
-            chat.feed(
+            await _publish(
+                chat,
+                ToolCallEndEvent(reply_id="r1", tool_call_id="c1"),
+            )
+            await _publish(
+                chat,
                 ToolResultStartEvent(
                     reply_id="r1",
                     tool_call_id="c1",
                     tool_call_name="Edit",
                 ),
             )
-            chat.feed(
+            await _publish(
+                chat,
                 ToolResultEndEvent(
                     reply_id="r1",
                     tool_call_id="c1",

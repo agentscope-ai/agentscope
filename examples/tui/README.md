@@ -1,9 +1,9 @@
 # Terminal UI
 
 This example runs an AgentScope agent in the optional Textual terminal UI.
-The UI restores historical `Msg` objects, incrementally consumes
-`AgentEvent` streams, renders Markdown and tools, and handles tool-call
-confirmation without launching the web service.
+The UI renders `Msg` snapshots, Markdown, tools, and tool-call confirmation.
+The standalone launcher consumes Agent events and maintains the messages;
+the display widgets do not consume events or modify conversation history.
 
 ## Quickstart
 
@@ -77,10 +77,13 @@ class RuntimeApp(App):
     def compose(self) -> ComposeResult:
         yield ChatUI(messages=history, id="chat")
 
-    async def consume_events(self) -> None:
+    def on_mount(self) -> None:
+        self.run_worker(self.consume_messages())
+
+    async def consume_messages(self) -> None:
         chat = self.query_one("#chat", ChatUI)
-        async for item in runtime.events:
-            chat.feed(item)
+        async for messages in runtime.message_snapshots:
+            await chat.set_messages(messages)
 
     @on(ChatUI.Submitted)
     async def submit(self, event: ChatUI.Submitted) -> None:
@@ -101,6 +104,17 @@ class RuntimeApp(App):
     async def interrupt(self, event: ChatUI.InterruptRequested) -> None:
         await runtime.interrupt(event.reply_id)
 ```
+
+Here `runtime` is your application's backend. It owns the history, applies
+events with `Msg.append_event()`, and publishes complete message snapshots.
+It also decides when submitted user messages enter that history. Mutating
+the original messages does not refresh the UI until `set_messages()` is called.
+Unchanged messages reuse their display copies and widgets; changed Markdown
+blocks stream appended text without rebuilding the conversation.
+
+HITL and AskUser are derived from message blocks. Answered cards are dismissed
+locally while the backend processes their results; this does not modify Msg
+objects or append tool results in the UI.
 
 The ordinary composer can be toggled independently. Pending HITL always
 replaces it until confirmation or external execution completes:

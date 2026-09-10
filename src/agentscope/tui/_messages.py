@@ -25,9 +25,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Collapsible, Markdown, Static
 
-from ..event import AgentEvent, EventType, ReplyStartEvent
 from ..message import (
-    AssistantMsg,
     Base64Source,
     ContentBlock,
     DataBlock,
@@ -114,48 +112,31 @@ class TextBlockUI(Markdown):
         self.block_id = block.id
         self._finished = block.finished_at is not None
         self._stream = None
-        self._stop_requested = False
+        self._text = block.text
 
     def on_mount(self) -> None:
         if not self._finished:
             self._stream = Markdown.get_stream(self)
 
-    def append_delta(self, delta: str) -> None:
-        if not delta:
-            return
-        if self._stream is None:
-            self.update(self.source + delta)
-        else:
-            self.run_worker(
-                self._stream.write(delta),
-                group=f"markdown-{self.block_id}",
-                exclusive=False,
-            )
-
-    def finish(self) -> None:
-        self._finished = True
-        if self._stream is not None and not self._stop_requested:
-            self._stop_requested = True
-            self.run_worker(
-                self._stop_stream(),
-                group=f"markdown-stop-{self.block_id}",
-            )
-
-    async def _stop_stream(self) -> None:
-        stream = self._stream
-        if stream is not None:
-            await stream.stop()
-            if self._stream is stream:
+    async def replace(self, block: TextBlock) -> None:
+        text = block.text
+        if self._stream is not None and text.startswith(self._text):
+            await self._stream.write(text[len(self._text) :])
+            if block.finished_at is not None:
+                await self._stream.stop()
                 self._stream = None
+        else:
+            if self._stream is not None:
+                await self._stream.stop()
+                self._stream = None
+            await self.update(text)
+        self._text = text
+        self._finished = block.finished_at is not None
 
     async def on_unmount(self) -> None:
         if self._stream is not None:
             await self._stream.stop()
             self._stream = None
-
-    def replace(self, block: TextBlock) -> None:
-        self._finished = block.finished_at is not None
-        self.update(block.text)
 
 
 class ThinkingUI(Collapsible):
@@ -192,10 +173,6 @@ class ThinkingUI(Collapsible):
 
     def _update_title(self) -> None:
         self.title = self._title_text()
-
-    def append_delta(self, delta: str) -> None:
-        if delta:
-            self.markdown.update(self.markdown.source + delta)
 
     def replace(self, block: ThinkingBlock) -> None:
         self.block = block
@@ -632,76 +609,88 @@ class MessageUI(Vertical):
             self._footer.update(content)
             self._footer.display = bool(content.plain)
 
-    def apply(self, message: Msg, event: AgentEvent | None = None) -> None:
+    async def apply(self, message: Msg) -> None:
+        previous = self.message
         self.message = message
+        self.query_one(".as-message-header", Static).update(
+            self._header_text(),
+        )
         self._update_footer()
         if message.finished_at is not None and self._timer is not None:
             self._timer.pause()
 
-        if event is None:
-            self.call_later(self.recompose)
-            return
-        event_type = event.type
-        if event_type in (EventType.REPLY_END, EventType.MODEL_CALL_END):
-            return
-        if event_type == EventType.TEXT_BLOCK_DELTA:
-            widget = self._block_uis.get(event.block_id)
-            if isinstance(widget, TextBlockUI):
-                widget.append_delta(event.delta)
-                return
-        elif event_type == EventType.TEXT_BLOCK_END:
-            widget = self._block_uis.get(event.block_id)
-            if isinstance(widget, TextBlockUI):
-                widget.finish()
-                return
-        elif event_type == EventType.THINKING_BLOCK_DELTA:
-            widget = self._block_uis.get(event.block_id)
-            if isinstance(widget, ThinkingUI):
-                widget.append_delta(event.delta)
-                return
-        elif event_type == EventType.THINKING_BLOCK_END:
-            widget = self._block_uis.get(event.block_id)
-            block = message._find_block("thinking", event.block_id)
-            if isinstance(widget, ThinkingUI) and isinstance(
+        old_blocks = _group_tool_calls(previous.content)
+        new_blocks = _group_tool_calls(message.content)
+        old_keys = [
+            tuple(pair.call.id for pair in block.calls)
+            if isinstance(block, _ToolGroup)
+            else block.id
+            for block in old_blocks
+        ]
+        new_keys = [
+            tuple(pair.call.id for pair in block.calls)
+            if isinstance(block, _ToolGroup)
+            else block.id
+            for block in new_blocks
+        ]
+        old_by_key = dict(zip(old_keys, old_blocks))
+        old_widgets = set(self._block_uis.values())
+        next_widgets: dict[str, object] = {}
+        retained: set[Widget] = set()
+        ordered: list[Widget] = []
+        for key, block in zip(new_keys, new_blocks):
+            block_id = key[0] if isinstance(key, tuple) else key
+            widget = self._block_uis.get(block_id)
+            old_block = old_by_key.get(key)
+            if isinstance(widget, Widget) and old_block == block:
+                pass
+            elif isinstance(widget, TextBlockUI) and isinstance(
+                block,
+                TextBlock,
+            ):
+                await widget.replace(block)
+            elif isinstance(widget, ThinkingUI) and isinstance(
                 block,
                 ThinkingBlock,
             ):
                 widget.replace(block)
-                return
-        elif event_type in (
-            EventType.DATA_BLOCK_DELTA,
-            EventType.DATA_BLOCK_END,
-        ):
-            widget = self._block_uis.get(event.block_id)
-            block = message._find_block("data", event.block_id)
-            if isinstance(widget, AttachmentUI) and isinstance(
+            elif isinstance(widget, AttachmentUI) and isinstance(
                 block,
                 DataBlock,
             ):
                 widget.replace(block)
-                return
-        elif event_type in (
-            EventType.TOOL_CALL_DELTA,
-            EventType.TOOL_CALL_END,
-            EventType.TOOL_RESULT_START,
-            EventType.TOOL_RESULT_TEXT_DELTA,
-            EventType.TOOL_RESULT_DATA_DELTA,
-            EventType.TOOL_RESULT_END,
-            EventType.REQUIRE_USER_CONFIRM,
-            EventType.USER_CONFIRM_RESULT,
-            EventType.REQUIRE_EXTERNAL_EXECUTION,
-            EventType.EXTERNAL_EXECUTION_RESULT,
-        ):
-            # Recompose this message only. Expansion state is deliberately
-            # preserved at the conversation/message level, while tool content
-            # remains authoritative from Msg.append_event().
-            self.call_later(self.recompose)
-            return
-        self.call_later(self.recompose)
+            else:
+                collapsed = (
+                    widget.collapsed
+                    if isinstance(widget, Collapsible)
+                    else True
+                )
+                widget = self._make_block_ui(block)
+                if widget is None:
+                    continue
+                if isinstance(widget, Collapsible):
+                    widget.collapsed = collapsed
+                await self.mount(widget)
+            retained.add(widget)
+            ordered.append(widget)
+            if isinstance(block, _ToolGroup):
+                for pair in block.calls:
+                    next_widgets[pair.call.id] = widget
+            else:
+                next_widgets[block.id] = widget
+
+        for widget in old_widgets - retained:
+            if isinstance(widget, Widget) and widget.is_mounted:
+                await widget.remove()
+        self._block_uis = next_widgets
+        previous_widget = self.query_one(".as-message-header", Static)
+        for widget in ordered:
+            self.move_child(widget, after=previous_widget)
+            previous_widget = widget
 
 
 class MessagesUI(VerticalScroll):
-    """Render historical Msg objects and incrementally apply AgentEvents."""
+    """Render authoritative message snapshots without consuming events."""
 
     DEFAULT_CSS = """
     MessagesUI {
@@ -894,72 +883,33 @@ class MessagesUI(VerticalScroll):
 
     async def set_messages(self, messages: Sequence[Msg]) -> None:
         """Reconcile an authoritative full conversation snapshot."""
-        copied = [msg.model_copy(deep=True) for msg in messages]
+        copied = [
+            self._by_id[msg.id]
+            if self._by_id.get(msg.id) == msg
+            else msg.model_copy(deep=True)
+            for msg in messages
+        ]
         incoming_ids = [msg.id for msg in copied]
         current_ids = [msg.id for msg in self._messages]
         previous_by_id = self._by_id
         self._messages = copied
         self._by_id = {msg.id: msg for msg in copied}
 
-        if incoming_ids != current_ids:
-            await self.remove_children()
-            self._message_uis = {}
-            widgets = []
-            for message in copied:
+        for msg_id in set(current_ids) - set(incoming_ids):
+            await self._message_uis.pop(msg_id).remove()
+        previous_widget = None
+        for message in copied:
+            widget = self._message_uis.get(message.id)
+            if widget is None:
                 widget = self._new_message_ui(message)
                 self._message_uis[message.id] = widget
-                widgets.append(widget)
-            if widgets:
-                await self.mount(*widgets)
-        else:
-            for message in copied:
-                widget = self._message_uis.get(message.id)
-                previous = previous_by_id.get(message.id)
-                if (
-                    widget is not None
-                    and previous is not None
-                    and previous.model_dump() != message.model_dump()
-                ):
-                    widget.apply(message)
+                await self.mount(widget)
+            elif previous_by_id[message.id] != message:
+                await widget.apply(message)
+            if incoming_ids != current_ids:
+                if previous_widget is None:
+                    self.move_child(widget, before=0)
+                else:
+                    self.move_child(widget, after=previous_widget)
+            previous_widget = widget
         self.scroll_end(animate=False)
-
-    def feed(self, item: AgentEvent | Msg) -> None:
-        """Apply one complete message or streaming event to the display."""
-        event: AgentEvent | None = None
-        if isinstance(item, Msg):
-            message = item.model_copy(deep=True)
-            existing = self._by_id.get(message.id)
-            if existing is None:
-                self._messages.append(message)
-            else:
-                index = self._messages.index(existing)
-                self._messages[index] = message
-            self._by_id[message.id] = message
-        else:
-            event = item
-            reply_id = getattr(item, "reply_id", None)
-            if reply_id is None:
-                return
-            message = self._by_id.get(reply_id)
-            if message is None:
-                name = (
-                    item.name if isinstance(item, ReplyStartEvent) else "agent"
-                )
-                message = AssistantMsg(name=name, content=[], id=reply_id)
-                self._messages.append(message)
-                self._by_id[reply_id] = message
-            elif isinstance(item, ReplyStartEvent):
-                message.name = item.name
-            if not isinstance(item, ReplyStartEvent):
-                message.append_event(item)
-
-        widget = self._message_uis.get(message.id)
-        if widget is None:
-            widget = self._new_message_ui(message)
-            self._message_uis[message.id] = widget
-            if self.is_mounted:
-                self.call_later(self.mount, widget)
-        else:
-            widget.apply(message, event)
-        if self.is_mounted:
-            self.call_later(self.scroll_end, animate=False)

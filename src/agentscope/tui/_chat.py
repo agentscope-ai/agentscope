@@ -21,7 +21,6 @@ from textual.widgets import Collapsible, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from ..event import (
-    AgentEvent,
     ConfirmResult,
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
@@ -474,7 +473,7 @@ class ChatUI(Widget):
         self.show_thinking = show_thinking
         self.show_usage = show_usage
         self.input_enabled = input_enabled
-        self._dismissed_external_call_ids: set[str] = set()
+        self._dismissed_call_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield MessagesUI(
@@ -518,37 +517,25 @@ class ChatUI(Widget):
         await self.query_one(MessagesUI).set_messages(messages)
         self._sync_interaction_area()
 
-    def feed(self, item: AgentEvent | Msg) -> None:
-        self.query_one(MessagesUI).feed(item)
-        self.call_later(self._sync_interaction_area)
-
     def watch_input_enabled(self, enabled: bool) -> None:
         if self.is_mounted:
             self.query_one(ComposerUI).set_enabled(enabled)
 
     def _pending_tools(self) -> list[tuple[str, str, ToolCallBlock]]:
         pending: list[tuple[str, str, ToolCallBlock]] = []
-        submitted_ids: set[str] = set()
+        pending_ids: set[str] = set()
         for message in self._current_messages():
             if message.role != "assistant" or message.finished_at is not None:
                 continue
             for block in message.content:
-                if (
-                    isinstance(block, ToolCallBlock)
-                    and block.state == ToolCallState.SUBMITTED
+                if isinstance(block, ToolCallBlock) and block.state in (
+                    ToolCallState.ASKING,
+                    ToolCallState.SUBMITTED,
                 ):
-                    submitted_ids.add(block.id)
-                if (
-                    isinstance(block, ToolCallBlock)
-                    and block.state
-                    in (
-                        ToolCallState.ASKING,
-                        ToolCallState.SUBMITTED,
-                    )
-                    and block.id not in self._dismissed_external_call_ids
-                ):
-                    pending.append((message.id, message.name, block))
-        self._dismissed_external_call_ids.intersection_update(submitted_ids)
+                    pending_ids.add(block.id)
+                    if block.id not in self._dismissed_call_ids:
+                        pending.append((message.id, message.name, block))
+        self._dismissed_call_ids.intersection_update(pending_ids)
         return pending
 
     def _latest_running_reply_id(self) -> str | None:
@@ -604,7 +591,6 @@ class ChatUI(Widget):
     @on(ComposerUI.Submitted)
     def _on_composer_submitted(self, event: ComposerUI.Submitted) -> None:
         msg = UserMsg(name=self.user_name, content=event.text)
-        self.query_one(MessagesUI).feed(msg)
         self.post_message(self.Submitted(msg))
 
     @on(ComposerUI.InterruptRequested)
@@ -616,19 +602,16 @@ class ChatUI(Widget):
 
     @on(HitlUI.Confirmed)
     def _on_hitl_confirmed(self, event: HitlUI.Confirmed) -> None:
-        # Reconcile the outgoing decision immediately. The runtime may not
-        # produce another event until a long-running allowed tool completes,
-        # but the approval prompt has already been answered and must not stay
-        # visible throughout that execution.
-        self.feed(event.value)
+        self._dismissed_call_ids.update(
+            result.tool_call.id for result in event.value.confirm_results
+        )
+        self._sync_interaction_area()
         self.post_message(self.Confirmed(event.value))
 
     @on(AskUserUI.Submitted)
     def _on_ask_user_submitted(self, event: AskUserUI.Submitted) -> None:
-        # Hide the completed form immediately. Feeding the outgoing external
-        # result here would duplicate the ToolResultBlock when the runtime
-        # streams its validated result back, so dismissal is tracked locally.
-        self._dismissed_external_call_ids.add(event.tool_call_id)
+        # Dismiss the form locally without changing authoritative messages.
+        self._dismissed_call_ids.add(event.tool_call_id)
         self._sync_interaction_area()
         self.post_message(self.ExternalExecutionSubmitted(event.value))
 
