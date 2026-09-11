@@ -325,7 +325,7 @@ class SOPStep(SOPStepBase):
         Resumption events are passed straight through — the executor is
         mid-reply and expects the answer, not a fresh instruction.
         """
-        if not isinstance(inputs, (Msg, list, type(None))):
+        if inputs is not None and not isinstance(inputs, (Msg, list)):
             return inputs
 
         text = (
