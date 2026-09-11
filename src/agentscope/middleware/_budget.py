@@ -131,16 +131,21 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
             elif isinstance(event, ReplyEndEvent):
                 # Clean up the token counting number
-                agent.state.middle_context[middleware_key].pop(
+                agent.state.middle_context.get(middleware_key, {}).pop(
                     event.reply_id,
                     None,
                 )
 
             elif isinstance(event, ModelCallEndEvent):
-                # Update the used tokens
-                if middleware_key not in agent.state.middle_context:
-                    agent.state.middle_context[middleware_key] = {}
-                agent.state.middle_context[middleware_key][event.reply_id] += (
+                # Update the used tokens. Don't assume the counter exists:
+                # an outer middleware may swallow the ReplyEndEvent to force
+                # another reasoning round, and by then the counter for this
+                # reply has already been popped above.
+                bucket = agent.state.middle_context.setdefault(
+                    middleware_key,
+                    {},
+                )
+                bucket[event.reply_id] = bucket.get(event.reply_id, 0) + (
                     self.input_token_weight * event.input_tokens
                     + self.output_token_weight * event.output_tokens
                 )
