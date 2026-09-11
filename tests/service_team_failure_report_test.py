@@ -353,11 +353,19 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
 
     async def test_assembly_failure_reaches_the_leader(self) -> None:
         """A worker that never assembled is reported as well."""
-        delivered = await self._run(
-            self.worker_session,
-            self.worker_agent.id,
-            [],
-            model_fails=True,
+        with patch(
+            "agentscope.app._service._chat.logger.exception",
+        ) as log_exception:
+            delivered = await self._run(
+                self.worker_session,
+                self.worker_agent.id,
+                [],
+                model_fails=True,
+            )
+
+        log_exception.assert_called_once_with(
+            "Failed to prepare chat run for session 'session-w' and "
+            "agent 'agent-w'.",
         )
         self.assertEqual(len(delivered), 1)
         self.assertDictEqual(

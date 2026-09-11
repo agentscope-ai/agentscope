@@ -1,7 +1,13 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Onborda, OnbordaProvider } from 'onborda';
 import { useMemo, useState } from 'react';
-import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
+import {
+	createBrowserRouter,
+	createHashRouter,
+	Navigate,
+	RouterProvider,
+	useNavigate,
+} from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { MCPHubPage } from './pages/mcp';
@@ -32,7 +38,10 @@ function SetupPageRoute() {
 	);
 }
 
-const router = createBrowserRouter([
+const isElectron = !!(window as { electronAPI?: unknown }).electronAPI;
+const createRouter = isElectron ? createHashRouter : createBrowserRouter;
+
+const router = createRouter([
 	{
 		element: <AppLayout />,
 		errorElement: <RouteError />,
@@ -67,7 +76,9 @@ const router = createBrowserRouter([
 
 function App() {
 	const { t } = useTranslation();
-	const [setupComplete, setSetupComplete] = useState(() => !!localStorage.getItem('server_url'));
+	const [setupComplete, setSetupComplete] = useState(
+		() => isElectron || !!localStorage.getItem('server_url'),
+	);
 	const tours = useMemo(() => [buildChatTour(t)], [t]);
 
 	if (!setupComplete) {

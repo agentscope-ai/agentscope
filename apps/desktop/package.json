@@ -1,0 +1,35 @@
+{
+	"name": "agentscope-desktop",
+	"version": "1.0.0",
+	"description": "AgentScope Desktop application.",
+	"author": "SysML team of Alibaba Tongyi Lab",
+	"private": true,
+	"packageManager": "pnpm@10.34.5",
+	"engines": {
+		"node": ">=22.12.0"
+	},
+	"main": "electron-dist/main.js",
+	"scripts": {
+		"backend:build": "python build_backend.py",
+		"frontend:dev": "pnpm --dir ../../examples/web_ui --filter frontend dev",
+		"frontend:build": "pnpm --dir ../../examples/web_ui --filter frontend build:electron",
+		"electron:typecheck": "pnpm exec tsc -p electron/tsconfig.json --noEmit",
+		"electron:compile": "pnpm exec tsc -p electron/tsconfig.json",
+		"electron:test": "pnpm exec tsc -p electron/tsconfig.test.json && node --test electron-test-dist/tests/backend.test.js",
+		"electron:stage": "pnpm frontend:build && pnpm electron:compile",
+		"electron:dev": "pnpm electron:compile && concurrently \"pnpm frontend:dev\" \"pnpm exec wait-on http://localhost:5173 && pnpm exec electron .\"",
+		"electron:pack": "pnpm electron:stage && pnpm exec electron-builder --dir --config electron-builder.yml",
+		"electron:build": "pnpm backend:build && pnpm electron:stage && pnpm exec electron-builder --config electron-builder.yml"
+	},
+	"dependencies": {
+		"tree-kill": "^1.2.2"
+	},
+	"devDependencies": {
+		"@types/node": "^24.12.4",
+		"concurrently": "^8.2.2",
+		"electron": "^43.1.1",
+		"electron-builder": "^26.15.3",
+		"typescript": "^7.0.2",
+		"wait-on": "^9.0.10"
+	}
+}

@@ -14,10 +14,13 @@ module runs on Windows too.  Only the handful of cases that genuinely
 rely on a POSIX shell / POSIX-only utilities are skipped on Windows.
 """
 
+import asyncio
 import os
+import signal
 import sys
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool import ExecResult, LocalBackend
@@ -142,6 +145,100 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.exit_code, -1)
         self.assertEqual(result.stderr, b"timed out")
+
+    async def test_cancellation_terminates_process_tree(self) -> None:
+        """Cancelling a local command must clean up its OS descendants."""
+        fake_process = MagicMock()
+        fake_process.communicate = AsyncMock(
+            side_effect=asyncio.CancelledError(),
+        )
+        fake_process.returncode = None
+
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=fake_process),
+            ),
+            patch.object(
+                LocalBackend,
+                "_terminate_process_tree",
+                new=AsyncMock(),
+            ) as terminate,
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.backend.exec_shell(["long-running-tool"])
+
+        terminate.assert_awaited_once_with(fake_process, grace=1.0)
+
+    async def test_terminate_process_tree_uses_platform_tree_kill(
+        self,
+    ) -> None:
+        """Process cleanup must target descendants on every platform."""
+        # pylint: disable=protected-access
+        fake_process = MagicMock()
+        fake_process.pid = 4321
+        fake_process.returncode = None
+        fake_process.wait = AsyncMock(return_value=0)
+
+        if _IS_WINDOWS:
+            taskkill = MagicMock()
+            taskkill.wait = AsyncMock(return_value=0)
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=taskkill),
+            ) as create_process:
+                await self.backend._terminate_process_tree(
+                    fake_process,
+                    grace=1.0,
+                )
+
+            self.assertEqual(
+                create_process.await_args.args,
+                ("taskkill", "/PID", "4321", "/T", "/F"),
+            )
+            fake_process.kill.assert_called_once_with()
+            fake_process.wait.assert_awaited_once_with()
+        else:
+            with patch("os.killpg") as kill_process_group:
+                await self.backend._terminate_process_tree(
+                    fake_process,
+                    grace=1.0,
+                )
+
+            kill_process_group.assert_called_once_with(
+                4321,
+                signal.SIGTERM,
+            )
+            fake_process.wait.assert_awaited_once_with()
+
+    async def test_windows_process_tree_waits_are_bounded(self) -> None:
+        """Windows cleanup must return when process handles do not signal."""
+        # pylint: disable=protected-access
+        fake_process = MagicMock()
+        fake_process.pid = 4321
+        fake_process.returncode = None
+        fake_process.wait = AsyncMock(side_effect=asyncio.TimeoutError())
+        taskkill = MagicMock()
+        taskkill.wait = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        with (
+            patch(
+                "agentscope.tool._builtin._backend.os.name",
+                "nt",
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=taskkill),
+            ),
+        ):
+            await self.backend._terminate_process_tree(
+                fake_process,
+                grace=0.01,
+            )
+
+        taskkill.kill.assert_called_once_with()
+        fake_process.kill.assert_called_once_with()
+        fake_process.wait.assert_awaited_once_with()
 
 
 class TestLocalBackendFileIO(IsolatedAsyncioTestCase):

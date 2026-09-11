@@ -1,0 +1,9 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"outDir": "../electron-test-dist",
+		"rootDir": ".",
+		"sourceMap": false
+	},
+	"include": ["backend.ts", "tests/**/*.ts", "types/*.d.ts"]
+}

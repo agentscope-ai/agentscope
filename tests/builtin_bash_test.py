@@ -25,13 +25,16 @@ from agentscope.tool._builtin._backend import (
 class BashSubprocessKwargsTest(unittest.TestCase):
     """Test platform-specific subprocess kwargs."""
 
-    def test_non_windows_subprocess_kwargs_are_empty(self) -> None:
-        """On non-Windows the helper returns no extra subprocess kwargs."""
+    def test_non_windows_subprocess_uses_a_new_session(self) -> None:
+        """POSIX commands need a process group for descendant cleanup."""
         with patch(
             "agentscope.tool._builtin._backend.os.name",
             "posix",
         ):
-            self.assertEqual(_subprocess_creation_kwargs(), {})
+            self.assertEqual(
+                _subprocess_creation_kwargs(),
+                {"start_new_session": True},
+            )
 
     def test_windows_subprocess_kwargs_hide_console(self) -> None:
         """On Windows the helper sets ``creationflags`` to hide the console."""

@@ -75,6 +75,18 @@ storage-sql = [
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
 ]
+# ------------ Desktop application ------------
+desktop = [
+    "agentscope[service]",
+    "agentscope[storage-sql]",
+    "agentscope[tools]",
+    "aiosqlite",
+    "qdrant-client>=1.16.2,<2",
+]
+desktop-build = [
+    "agentscope[desktop]",
+    "pyinstaller>=6.13,<7",
+]
 # S3-compatible blob store
 storage-s3 = ["aioboto3"]
 # ------------ Channel ------------
