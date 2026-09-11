@@ -72,13 +72,23 @@ from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
     RequireExternalExecutionEvent,
+    ToolResultEndEvent,
+    ToolResultStartEvent,
+    ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
 from agentscope.mcp import MCPClient, StdioMCPConfig
-from agentscope.message import AssistantMsg, Msg, ToolCallBlock
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    ToolCallBlock,
+    ToolResultState,
+)
 from agentscope.model import DashScopeChatModel
+from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.sop import SOP, SOPEngine, SOPStep
+from agentscope.state import AgentState
 from agentscope.tool import (
     AskUser,
     AskUserMetadata,
@@ -175,6 +185,7 @@ class HumanApproval:
 
     def __init__(self) -> None:
         self.reply_id = ""
+        self.call_id = ""
 
     async def reply_stream(  # pylint: disable=unused-argument
         self,
@@ -190,6 +201,7 @@ class HumanApproval:
         """Ask a person, or read what they answered."""
         if not isinstance(inputs, ExternalExecutionResultEvent):
             self.reply_id = _generate_id()
+            self.call_id = _generate_id()
             # A reply of its own, so the question and the answer land in
             # one bubble under this name rather than an anonymous one.
             yield ReplyStartEvent(
@@ -202,7 +214,7 @@ class HumanApproval:
                 tool_calls=[
                     ToolCallBlock(
                         type="tool_call",
-                        id=_generate_id(),
+                        id=self.call_id,
                         name=AskUser.name,
                         input=AskUserParams(
                             questions=[
@@ -242,6 +254,25 @@ class HumanApproval:
         await AskUser().check_external_result(result)
         answer = AskUserMetadata.model_validate(result.metadata).answers[0]
         approved = answer.selected == ["Approve"]
+
+        # Close the call we opened. Whoever asks reports the result: it is
+        # what ends the tool call and puts the answer on screen.
+        yield ToolResultStartEvent(
+            reply_id=self.reply_id,
+            tool_call_id=self.call_id,
+            tool_call_name=AskUser.name,
+        )
+        yield ToolResultTextDeltaEvent(
+            reply_id=self.reply_id,
+            tool_call_id=self.call_id,
+            delta=answer.other or ", ".join(answer.selected),
+        )
+        yield ToolResultEndEvent(
+            reply_id=self.reply_id,
+            tool_call_id=self.call_id,
+            state=ToolResultState.SUCCESS,
+            metadata=result.metadata or {},
+        )
         yield ReplyEndEvent(session_id="sop", reply_id=self.reply_id)
         yield AssistantMsg(
             name=self.name,
@@ -274,6 +305,14 @@ async def build_sop(
             model=model_name,
         )
 
+    def unattended() -> AgentState:
+        """Let tools run without asking — the SOP's own gates are the
+        review, and a prompt per tool call would only be noise in front
+        of them."""
+        return AgentState(
+            permission_context=PermissionContext(mode=PermissionMode.BYPASS),
+        )
+
     director = Agent(
         name="director",
         system_prompt=(
@@ -287,6 +326,7 @@ async def build_sop(
             "step paints it. The whole thing must run under 15 seconds."
         ),
         model=model(),
+        state=unattended(),
         toolkit=Toolkit(tools=await workspace.list_tools()),
         offloader=workspace,
     )
@@ -319,6 +359,7 @@ async def build_sop(
             "`.blend` file and will not see your scene."
         ),
         model=model(),
+        state=unattended(),
         toolkit=Toolkit(tools=await workspace.list_tools(), mcps=[blender]),
         offloader=workspace,
     )
@@ -333,6 +374,7 @@ async def build_sop(
             "of the result and why that look."
         ),
         model=model(),
+        state=unattended(),
         toolkit=Toolkit(
             tools=await workspace.list_tools() + [FunctionTool(restyle_video)],
         ),
