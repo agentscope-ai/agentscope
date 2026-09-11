@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The AGUI middleware class."""
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
 
 from starlette.types import ASGIApp
 
@@ -40,9 +39,6 @@ if TYPE_CHECKING:
     from ag_ui.core.events import BaseEvent as AGUIBaseEvent
 else:
     AGUIBaseEvent = Any
-
-
-_TOOL_RESULT_MESSAGE_ID_SEPARATOR = ":"
 
 
 class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
@@ -219,17 +215,12 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
                     [],
                 ),
             )
-            # ``reply_id`` is shared by all tool results of one reply, so
-            # combine encoded IDs with the per-tool ``tool_call_id`` for the
-            # result message ID. The separator stays unambiguous because it is
-            # not emitted by ``quote(..., safe="")``.
+            # ``reply_id`` is shared by every tool result of one reply, so
+            # qualify it with ``tool_call_id`` to keep each result its own
+            # message.
             return AGUIToolCallResultEvent(
                 tool_call_id=event.tool_call_id,
-                message_id=(
-                    f"{quote(event.reply_id, safe='')}"
-                    f"{_TOOL_RESULT_MESSAGE_ID_SEPARATOR}"
-                    f"{quote(event.tool_call_id, safe='')}"
-                ),
+                message_id=f"{event.reply_id}:{event.tool_call_id}",
                 content=content or str(event.state),
             )
 
