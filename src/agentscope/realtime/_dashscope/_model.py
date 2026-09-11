@@ -92,6 +92,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         """Open the WebSocket and send the session config."""
         import websockets
 
+        self._queue = asyncio.Queue()
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
                 update={"turn_detection": "none"},
