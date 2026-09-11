@@ -17,6 +17,8 @@ from agentscope.event import (
 from agentscope.message import Msg
 from agentscope.realtime import (
     AudioFrame,
+    ControlFrame,
+    ControlFrameType,
     ModelDisconnectedError,
     PlayoutPosition,
     RealtimeModelBase,
@@ -89,6 +91,8 @@ class ScriptedModel(RealtimeModelBase):
         self.calls: list[str] = []
         self.sessions = 0
         self.instructions = ""
+        self.connect_error: Exception | None = None
+        self.push_text_error: Exception | None = None
         self._open = asyncio.Event()
         self._requested = asyncio.Event()
 
@@ -100,6 +104,8 @@ class ScriptedModel(RealtimeModelBase):
     ) -> None:
         """Record a session open, its instructions and the turn-detection
         request."""
+        if self.connect_error is not None:
+            raise self.connect_error
         self.sessions += 1
         self._open.clear()
         self.instructions = instructions
@@ -132,6 +138,8 @@ class ScriptedModel(RealtimeModelBase):
     async def push_text(self, text: str) -> None:
         """Record a text turn; the agent gates on ``supports_text_input``
         before ever calling this."""
+        if self.push_text_error is not None:
+            raise self.push_text_error
         self.calls.append(f"push_text({text!r})")
 
     async def push_tool_result(self, block: ToolResultBlock) -> None:
@@ -363,6 +371,70 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [(m.role, m.get_text_content()) for m in agent.state.context],
             [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
         )
+
+    async def test_provider_timeout_reconnects_on_text(self) -> None:
+        """Text reconnects a timed-out provider without duplicating the
+        new turn in the reconnect instructions."""
+        model = ScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            self.assertFalse(agent._connected)  # pylint: disable=W0212
+            await agent.send("hello")
+
+        self.assertEqual(model.sessions, 2)
+        self.assertEqual(model.instructions, "be brief")
+        self.assertIn("push_text('hello')", model.calls)
+        self.assertListEqual(
+            [(m.role, m.get_text_content()) for m in agent.state.context],
+            [("user", "hello")],
+        )
+
+    async def test_failed_text_delivery_does_not_change_context(self) -> None:
+        """A disconnect while sending text leaves no undelivered turn."""
+        model = ScriptedModel([[]])
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+        error = ModelDisconnectedError("Not connected.")
+
+        async with agent:
+            model.push_text_error = error
+            with self.assertRaisesRegex(
+                ModelDisconnectedError,
+                "Not connected",
+            ):
+                await agent._on_control(  # pylint: disable=W0212
+                    ControlFrame(
+                        type=ControlFrameType.TEXT,
+                        data={"text": "hello"},
+                    ),
+                )
+            self.assertFalse(agent._connected)  # pylint: disable=W0212
+
+        self.assertListEqual(agent.state.context, [])
+
+    async def test_failed_text_reconnect_does_not_change_context(self) -> None:
+        """A failed reconnect leaves no undelivered text turn."""
+        model = ScriptedModel(
+            [[me.SessionEndedEvent(reason="idle")]],
+        )
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            model.connect_error = RuntimeError("reconnect failed")
+            with self.assertRaisesRegex(RuntimeError, "reconnect failed"):
+                await agent.send("hello")
+
+        self.assertListEqual(agent.state.context, [])
 
     async def test_local_vad_owns_turns(self) -> None:
         """Passing a VAD disables provider turn detection, reports the
