@@ -13,13 +13,18 @@ Talk to a DashScope speech-to-speech model through your microphone.
 The agent owns the model session, you own the transport, and one
 `agent.reply_stream(transport)` borrows both until the transport ends.
 
+The conversation is shown by `agentscope.tui`: `launch_realtime_ui()` renders
+the events of that stream — what you said, what the agent replied, the tools
+it called — and hands what you confirm or type back to `agent.send()`. The
+audio itself never reaches the view; the transport plays it.
+
 ## Prerequisites
 
 - Python 3.11 or newer
-- AgentScope with the realtime extra:
+- AgentScope with the realtime and TUI extras:
 
   ```bash
-  pip install "agentscope[realtime]"
+  pip install "agentscope[realtime,tui]"
   ```
 
   `sounddevice` needs PortAudio: it is bundled on macOS and Windows; on
@@ -33,7 +38,7 @@ export DASHSCOPE_API_KEY=sk-...
 python examples/realtime/local_mic.py
 ```
 
-Speak, hear the reply, and speak over it to interrupt. `Ctrl-C` quits.
+Speak, hear the reply, and speak over it to interrupt. `Ctrl-Q` quits.
 
 The default model is `qwen-audio-3.0-realtime-plus`. Any card listed for the
 credential works; the class is looked up from the card, the same way the
@@ -45,23 +50,13 @@ REALTIME_MODEL=qwen3.5-omni-flash-realtime python examples/realtime/local_mic.py
 
 An unknown name prints the available ones.
 
-Every reply ends with a diagnostic line: how it finished, the model's time to
-first audio byte (`ttfb`), the user's end-to-end wait (`e2e`), and the
-assistant message as it now stands in the context — after a barge-in that is
-only the part you actually heard.
-
 ### Tools
 
-The example registers `Bash`, `Edit`, `Write` and `Read`. When the model
-calls one that needs permission, the terminal asks:
-
-```
-  [permission] Bash({"command": "ls"})
-  allow? [y/N]
-```
-
-The prompt runs in a thread, so audio keeps flowing while you decide. The
-agent gives up on a prompt after five minutes.
+The example registers `Bash`, `Edit`, `Write` and `Read`. When the model calls
+one that needs permission, the composer is replaced by an approval card
+showing the call and its arguments; pick an answer with the arrow keys and
+`Enter`. Audio keeps flowing while the card is up, and the agent gives up on
+an unanswered one after five minutes.
 
 ## Tips
 
@@ -90,4 +85,5 @@ agent gives up on a prompt after five minutes.
   dropped silently on the provider side. The cards under
   `agentscope/realtime/_dashscope/` list each model's limits.
 - **Typed input** only works on models that accept text
-  (`qwen-audio-3.0-realtime-*`); the Omni models are audio-in only.
+  (`qwen-audio-3.0-realtime-*`); the Omni models are audio-in only, and the
+  composer is disabled for them.
