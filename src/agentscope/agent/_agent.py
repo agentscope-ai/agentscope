@@ -2506,7 +2506,7 @@ class Agent:
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
-                    f"{e.message}",
+                    f"{e.message} (at {e.json_path})",
                 ) from e
 
         # The exceptions that
