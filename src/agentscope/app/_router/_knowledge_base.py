@@ -395,9 +395,9 @@ async def update_knowledge_base(
 ) -> KnowledgeBaseView:
     """Update mutable fields on a knowledge base.
 
-    Only ``name`` and ``description`` can be updated.  The embedding
-    model configuration is pinned at creation time and cannot be
-    changed.
+    ``name``, ``description``, and ``chunker_config`` can be updated.
+    Changing the chunker configuration reindexes every existing
+    document. The embedding model configuration remains pinned.
 
     Args:
         body (`UpdateKnowledgeBaseRequest`):
@@ -418,6 +418,7 @@ async def update_knowledge_base(
         knowledge_base_id=knowledge_base_id,
         name=body.name,
         description=body.description,
+        chunker_config=body.chunker_config,
     )
     # Only reachable via ``_require_edit`` inside the service, so the
     # caller definitionally has edit permission.

@@ -146,6 +146,26 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._SESSION_LOCK.format(sid=session_id)
 
     # ------------------------------------------------------------------
+    # Knowledge-base mutation lock
+    # ------------------------------------------------------------------
+
+    _KNOWLEDGE_BASE_MUTATION_LOCK = (
+        "agentscope:knowledge_base:mutation_lock:{uid}:{kbid}"
+    )
+
+    @classmethod
+    def knowledge_base_mutation_lock(
+        cls,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> str:
+        """Per-knowledge-base lock for configuration and documents."""
+        return cls._KNOWLEDGE_BASE_MUTATION_LOCK.format(
+            uid=user_id,
+            kbid=knowledge_base_id,
+        )
+
+    # ------------------------------------------------------------------
     # Session inbox
     # ------------------------------------------------------------------
 
