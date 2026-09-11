@@ -964,6 +964,68 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_keeps_property_names(self) -> None:
+        """Schema keywords used as property names are preserved."""
+        for keyword in (
+            "properties",
+            "patternProperties",
+            "dependentSchemas",
+            "dependencies",
+        ):
+            with self.subTest(keyword=keyword):
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            "$defs": {"Name": {"type": "string"}},
+                            keyword: {
+                                "definitions": {"$ref": "#/$defs/Name"},
+                                "$defs": {"$ref": "#/$defs/Name"},
+                                "$ref": {"$ref": "#/$defs/Name"},
+                            },
+                        },
+                    ),
+                    {
+                        keyword: {
+                            "definitions": {"type": "string"},
+                            "$defs": {"type": "string"},
+                            "$ref": {"type": "string"},
+                        },
+                    },
+                )
+
+    def test_flatten_keeps_instance_values(self) -> None:
+        """Instance data stays intact, including next to a schema $ref."""
+        data = {
+            "definitions": {"x": 1},
+            "$defs": {"x": 2},
+        }
+        for keyword, value in (
+            ("default", data),
+            ("const", data),
+            ("enum", [{"$ref": "#/$defs/Value"}]),
+            ("examples", [{"nested": data}]),
+        ):
+            for with_ref in (False, True):
+                with self.subTest(keyword=keyword, with_ref=with_ref):
+                    prop = {keyword: value}
+                    if with_ref:
+                        prop["$ref"] = "#/$defs/Value"
+                    else:
+                        prop["type"] = "object"
+                    self.assertEqual(
+                        _flatten_json_schema(
+                            {
+                                "$defs": {"Value": {"type": "object"}},
+                                "properties": {"value": prop},
+                            },
+                        ),
+                        {
+                            "properties": {
+                                "value": {"type": "object", keyword: value},
+                            },
+                        },
+                    )
+
     def test_flatten_legacy_definitions_ref(self) -> None:
         """Legacy 'definitions' keyword is resolved like '$defs'."""
         self.assertEqual(

@@ -16,6 +16,15 @@ from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
 
+# These mappings use property names as keys and schemas as values.
+_SCHEMA_MAP_KEYWORDS = frozenset(
+    {"properties", "patternProperties", "dependentSchemas", "dependencies"},
+)
+# These keywords hold instance data, which must be kept verbatim.
+_INSTANCE_VALUE_KEYWORDS = frozenset(
+    {"default", "const", "enum", "examples"},
+)
+
 _id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
 _timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
 
@@ -345,67 +354,49 @@ def _flatten_json_schema(schema: dict) -> dict:
     if not defs:
         return schema
 
-    schema_map_keywords = {
-        "properties",
-        "patternProperties",
-        "dependentSchemas",
-        "dependencies",
-    }
-
-    def _resolve_ref(
-        obj: Any,
-        visited: frozenset = frozenset(),
-        is_schema_map: bool = False,
-    ) -> Any:
+    def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
             return [_resolve_ref(item, visited) for item in obj]
         if not isinstance(obj, dict):
             return obj
-        if is_schema_map:
-            return {
-                key: _resolve_ref(value, visited) for key, value in obj.items()
-            }
+
+        resolved: dict[str, Any] = {}
         if "$ref" in obj:
             ref_path = obj["$ref"]
-            if isinstance(ref_path, str) and (
-                ref_path.startswith("#/$defs/")
-                or ref_path.startswith("#/definitions/")
+            if not isinstance(ref_path, str) or not ref_path.startswith(
+                ("#/$defs/", "#/definitions/"),
             ):
-                def_name = ref_path.split("/")[-1]
-                if def_name in visited:
-                    logger.warning(
-                        "Circular reference detected for '%s' in tool "
-                        "schema",
-                        def_name,
-                    )
-                    return {
-                        "type": "object",
-                        "description": f"(circular: {def_name})",
-                    }
-                if def_name in defs:
-                    resolved = _resolve_ref(
-                        defs[def_name],
-                        visited | {def_name},
-                    )
-                    for key, value in obj.items():
-                        if key != "$ref":
-                            resolved[key] = _resolve_ref(
-                                value,
-                                visited | {def_name},
-                                key in schema_map_keywords,
-                            )
-                    return resolved
-            return obj
-        result: dict[str, Any] = {}
+                return obj
+
+            def_name = ref_path.split("/")[-1]
+            if def_name in visited:
+                logger.warning(
+                    "Circular reference detected for '%s' in tool schema",
+                    def_name,
+                )
+                return {
+                    "type": "object",
+                    "description": f"(circular: {def_name})",
+                }
+            if def_name not in defs:
+                return obj
+
+            visited = visited | {def_name}
+            resolved = _resolve_ref(defs[def_name], visited)
+
         for key, value in obj.items():
-            if key in ("$defs", "definitions"):
+            if key in ("$ref", "$defs", "definitions"):
                 continue
-            result[key] = _resolve_ref(
-                value,
-                visited,
-                key in schema_map_keywords,
-            )
-        return result
+            if key in _INSTANCE_VALUE_KEYWORDS:
+                resolved[key] = value
+            elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+                resolved[key] = {
+                    name: _resolve_ref(sub, visited)
+                    for name, sub in value.items()
+                }
+            else:
+                resolved[key] = _resolve_ref(value, visited)
+        return resolved
 
     return _resolve_ref(schema)
 
