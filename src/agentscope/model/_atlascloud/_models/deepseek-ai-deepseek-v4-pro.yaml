@@ -1,0 +1,20 @@
+name: deepseek-ai/deepseek-v4-pro
+label: DeepSeek V4 Pro
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1048576
+output_size: 393216
+
+parameter_overrides:
+  max_tokens:
+    maximum: 393216
+  voice:
+    hidden: true
