@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.app._bus_ops import (
     has_pending_inbox_or_release,
     register_inbox_consumer,
@@ -421,9 +423,27 @@ class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
         )
 
         inbox = await bus.queue_drain(MessageBusKeys.inbox(session_id))
-        self.assertEqual(len(inbox), 1)
-        self.assertEqual(inbox[0][1]["type"], "hint")
-        self.assertEqual(inbox[0][1]["hint"][0]["text"], "late message")
+        self.assertListEqual(
+            [payload for _entry_id, payload in inbox],
+            [
+                {
+                    "type": "hint",
+                    "hint": [
+                        {
+                            "type": "text",
+                            "text": "late message",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "id": AnyString(),
+                    "source": '{"label": "channel", "sublabel": "member-1"}',
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                },
+            ],
+        )
 
 
 class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
