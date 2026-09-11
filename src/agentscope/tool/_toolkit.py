@@ -63,6 +63,12 @@ Skills are a collection of instructions, scripts, and resources to extend your c
 """  # noqa: E501
 
 
+_ALREADY_ACTIVE_TOOL_GROUP_HINT = (
+    "Already active. Its tools are currently available; do not activate it "
+    "again unless you need to change the active group set."
+)
+
+
 class Toolkit:
     """Toolkit is the core module to register, manage and delete tool
     functions, MCP clients, Agent skills in AgentScope.
@@ -218,7 +224,19 @@ class Toolkit:
         # Get all available tools
         tools_dict = await self._get_available_tools(groups)
         for tool in tools_dict.values():
-            function_schemas.append(tool.get_tool_schema())
+            tool_schema = tool.get_tool_schema()
+            if tool is self.builtin_meta_tool:
+                properties = tool_schema["function"]["parameters"][
+                    "properties"
+                ]
+                for group_name in set(groups or []):
+                    if group_name in properties:
+                        properties[group_name]["description"] = (
+                            f"{properties[group_name]['description']}\n\n"
+                            f"{_ALREADY_ACTIVE_TOOL_GROUP_HINT}"
+                        )
+
+            function_schemas.append(tool_schema)
 
         return function_schemas
 
