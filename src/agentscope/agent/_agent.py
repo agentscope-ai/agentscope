@@ -513,6 +513,7 @@ class Agent:
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
+        self._update_context_usage(estimated_tokens, cfg)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
@@ -738,6 +739,9 @@ class Agent:
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
+            kwargs = await self._prepare_model_input()
+            estimated_tokens = await self.model.count_tokens(**kwargs)
+            self._update_context_usage(estimated_tokens, cfg)
 
             # The compression call is not covered by the model call events,
             # so record its cost on the context tail to keep it in the token
@@ -1556,6 +1560,7 @@ class Agent:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
             input_tokens = await self.model.count_tokens(**kwargs)
+            self._update_context_usage(input_tokens, self.context_config)
 
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
@@ -1805,6 +1810,11 @@ class Agent:
             list(completed_response.content),
             completed_response.usage,
         )
+        kwargs = await self._prepare_model_input(
+            system_prompt=kwargs["messages"][0].content,
+        )
+        estimated_tokens = await self.model.count_tokens(**kwargs)
+        self._update_context_usage(estimated_tokens, self.context_config)
 
         # A thinking-only response is an intermediate reasoning step rather
         # than a user-visible final answer. Keep the ReAct loop running so the
@@ -3240,7 +3250,10 @@ class Agent:
 
         return result
 
-    async def _prepare_model_input(self) -> dict[str, Any]:
+    async def _prepare_model_input(
+        self,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
         the current context.
 
@@ -3250,7 +3263,14 @@ class Agent:
         """
         # The system prompt
         messages = [
-            SystemMsg(name="system", content=await self._get_system_prompt()),
+            SystemMsg(
+                name="system",
+                content=(
+                    system_prompt
+                    if system_prompt is not None
+                    else await self._get_system_prompt()
+                ),
+            ),
         ]
         # The compressed summary
         if self.state.summary:
@@ -3401,6 +3421,23 @@ class Agent:
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    def _update_context_usage(
+        self,
+        current_tokens: int | float,
+        context_config: ContextConfig,
+    ) -> None:
+        """Record the latest context-window usage in agent state."""
+        current = max(0, int(current_tokens))
+        context_window = max(0, int(self.model.context_size))
+        threshold = max(
+            0,
+            int(context_config.trigger_ratio * self.model.context_size),
+        )
+        self.state.context_usage.current_tokens = current
+        self.state.context_usage.compression_threshold_tokens = threshold
+        self.state.context_usage.context_window_tokens = context_window
+        self.state.context_usage.trigger_ratio = context_config.trigger_ratio
 
     def _update_tool_call_state(
         self,
