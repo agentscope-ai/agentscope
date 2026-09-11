@@ -12,6 +12,7 @@
   loop.
 """
 import asyncio
+import json
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -309,6 +310,53 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
         return agent, model
+
+    async def test_interrupted_partial_tool_input_is_repaired(self) -> None:
+        """Partially streamed tool arguments remain valid in history."""
+        agent, model = self._make_agent([])
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-partial",
+                                name="write",
+                                input=(
+                                    '{"file_path": "/tmp/test.py", '
+                                    '"content": "unfinished'
+                                ),
+                            ),
+                        ],
+                        is_last=False,
+                    ),
+                    asyncio.CancelledError(),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in agent.reply_stream(
+            UserMsg(name="user", content="Write a file"),
+        ):
+            events.append(event)
+
+        _assert_interrupted_end(
+            self,
+            events,
+            reply_id=agent.state.reply_id,
+            session_id=agent.state.session_id,
+        )
+        tool_call = agent.state.context[-1].content[0]
+        self.assertIsInstance(tool_call, ToolCallBlock)
+        assert isinstance(tool_call, ToolCallBlock)
+        self.assertDictEqual(
+            json.loads(tool_call.input),
+            {
+                "file_path": "/tmp/test.py",
+                "content": "unfinished",
+            },
+        )
 
     async def test_sequential_tool_cancelled_mid_execution(self) -> None:
         """Sequential batch: model emits one slow sequential tool call,

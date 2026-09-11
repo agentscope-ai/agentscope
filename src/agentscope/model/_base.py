@@ -34,6 +34,28 @@ _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
+def _repair_tool_call_arguments(response: ChatResponse) -> ChatResponse:
+    """Repair incomplete tool arguments in a final model response."""
+    for block in response.content:
+        if not isinstance(block, ToolCallBlock):
+            continue
+
+        try:
+            parsed = json.loads(block.input)
+            if isinstance(parsed, dict):
+                continue
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            parsed = _json_loads_with_repair(block.input)
+        except ToolJSONDecodeError:
+            continue
+        block.input = json.dumps(parsed, ensure_ascii=False)
+
+    return response
+
+
 class ChatModelBase:
     """The base class for chat models."""
 
@@ -255,7 +277,7 @@ class ChatModelBase:
         # Consume the model calling result
         # =====================================================================
         if isinstance(res, ChatResponse):
-            return res
+            return _repair_tool_call_arguments(res)
 
         async def _stream() -> AsyncGenerator[ChatResponse, None]:
             """The wrapper around model calling."""
@@ -279,13 +301,14 @@ class ChatModelBase:
                             continue
                     else:
                         yield_acc_res = False
+                        _repair_tool_call_arguments(chunk)
                     yield chunk
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
 
             if yield_acc_res:
-                yield acc_res.build()
+                yield _repair_tool_call_arguments(acc_res.build())
 
         return _stream()
 
