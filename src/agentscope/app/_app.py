@@ -242,7 +242,8 @@ def create_app(
             Reusable blueprints for sub-agent creation within teams.
             Each template defines a sub-agent *type* (e.g. ``"researcher"``,
             ``"coder"``) with pre-configured system prompt, context config,
-            ReAct config, permission context, and task context. When
+            ReAct config, permission context, task context, and the MCPs
+            and skills every worker of that type is equipped with. When
             registered, the ``AgentCreate`` tool exposes a
             ``subagent_type`` parameter so the leader agent can route to
             the appropriate template.  See
