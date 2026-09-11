@@ -215,6 +215,9 @@ class Toolkit:
         """
         function_schemas = []
 
+        # Keep the reset_tools schema aligned with the current runtime state.
+        self.builtin_meta_tool.tool.activated_groups = groups or []
+
         # Get all available tools
         tools_dict = await self._get_available_tools(groups)
         for tool in tools_dict.values():
