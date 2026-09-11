@@ -60,6 +60,12 @@ class ChannelOrigin(BaseModel):
     because the name arrives with the inbound message: a node that never
     holds the connection cannot look it up."""
 
+    channel_user_id: str | None = None
+    """The platform user who opened the session, when the platform named
+    one. Channels whose tools act with the sender's own permissions read
+    it to bind those tools; ``None`` on sessions created before it was
+    recorded."""
+
 
 class TeamOrigin(BaseModel):
     """A session a team minted for one of its members.

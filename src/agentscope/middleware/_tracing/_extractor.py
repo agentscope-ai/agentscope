@@ -31,6 +31,7 @@ _CLASS_NAME_MAP = {
     "deepseek": ProviderNameValues.DEEPSEEK,
     "xai": ProviderNameValues.XAI,
     "moonshot": ProviderNameValues.MOONSHOT,
+    "volcengine": ProviderNameValues.VOLCENGINE,
 }
 
 # Map base URL fragments to provider names for OpenAI-compatible APIs
@@ -39,6 +40,7 @@ _BASE_URL_PROVIDER_MAP = [
     ("dashscope", ProviderNameValues.DASHSCOPE),
     ("deepseek", ProviderNameValues.DEEPSEEK),
     ("moonshot", ProviderNameValues.MOONSHOT),
+    ("volces.com", ProviderNameValues.VOLCENGINE),
     ("generativelanguage.googleapis.com", ProviderNameValues.GCP_GEMINI),
     ("openai.azure.com", ProviderNameValues.AZURE_AI_OPENAI),
     ("amazonaws.com", ProviderNameValues.AWS_BEDROCK),

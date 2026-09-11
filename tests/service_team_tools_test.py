@@ -31,6 +31,13 @@ from agentscope.app._tool import (
     TeamSay,
 )
 from agentscope.app._types import SubAgentTemplate
+from agentscope.app._router._session import _build_team_detail
+from agentscope.app._service import ResourceAccessService
+from agentscope.app.access import (
+    ResourceAccessPolicyBase,
+    ResourceKind,
+    ResourceRef,
+)
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     TeamOrigin,
@@ -39,7 +46,9 @@ from agentscope.app.storage import (
     AgentRecord,
     RedisStorage,
     SessionConfig,
+    StorageBase,
 )
+from agentscope.message import ToolResultState
 from agentscope.permission import (
     AdditionalWorkingDirectory,
     PermissionBehavior,
@@ -100,6 +109,31 @@ def _make_agent_record(
             react_config=ReActConfig(),
         ),
     )
+
+
+class _SharedAgentPolicy(ResourceAccessPolicyBase):
+    """Mutable sharing policy used to exercise grant revocation."""
+
+    def __init__(self, owner_id: str, agent_id: str) -> None:
+        self.owner_id = owner_id
+        self.agent_id = agent_id
+        self.allowed = True
+
+    async def list_accessible(
+        self,
+        viewer_id: str,
+        kind: ResourceKind,
+        storage: StorageBase,
+    ) -> list[ResourceRef]:
+        if not self.allowed or kind != ResourceKind.AGENT:
+            return []
+        return [
+            ResourceRef(
+                kind=ResourceKind.AGENT,
+                owner_id=self.owner_id,
+                resource_id=self.agent_id,
+            ),
+        ]
 
 
 class _TeamToolsTestBase(IsolatedAsyncioTestCase):
@@ -1474,6 +1508,178 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
             max_count=10,
         )
         self.assertEqual(primary_inbox, [])
+
+
+class TestAgentInviteCrossOwner(_AgentInviteTestBase):
+    """A viewer can invite an agent exposed by the access policy."""
+
+    async def _make_shared_agent(
+        self,
+    ) -> tuple[AgentRecord, _SharedAgentPolicy, ResourceAccessService]:
+        """Store a shared agent and expose it through a mutable policy."""
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        shared_owner = "platform-owner"
+        shared_agent = AgentRecord(
+            user_id=shared_owner,
+            source="user",
+            data=AgentData(
+                name="Shared Specialist",
+                system_prompt="I am a shared specialist.",
+                context_config=ContextConfig(),
+                react_config=ReActConfig(),
+                invite_config=InviteConfig(
+                    invitable=True,
+                    invite_description="Shared expert.",
+                ),
+            ),
+        )
+        await self.storage.upsert_agent(shared_owner, shared_agent)
+        await self.storage.upsert_session(
+            user_id=shared_owner,
+            agent_id=shared_agent.id,
+            config=SessionConfig(workspace_id="owner-private-workspace"),
+        )
+        policy = _SharedAgentPolicy(shared_owner, shared_agent.id)
+        access = ResourceAccessService(self.storage, policy)
+        return shared_agent, policy, access
+
+    async def test_invites_shared_agent(self) -> None:
+        """The borrowed session belongs to the viewer, while the team
+        roster preserves the shared agent definition's real owner."""
+        shared_agent, _policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+
+        chunk = await tool(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+
+        self.assertNotEqual(
+            chunk.state,
+            ToolResultState.ERROR,
+            chunk.content[0].text,
+        )
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        member = team.data.members[0]
+        self.assertEqual(member.owner_id, shared_agent.user_id)
+
+        borrowed = await self.storage.get_session(
+            self.user_id,
+            shared_agent.id,
+            member.session_id,
+        )
+        self.assertIsNotNone(borrowed)
+        self.assertNotEqual(
+            borrowed.config.workspace_id,
+            "owner-private-workspace",
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                shared_agent.user_id,
+                shared_agent.id,
+                member.session_id,
+            ),
+        )
+
+        await TeamDelete(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )()
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                shared_agent.id,
+                member.session_id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(
+                shared_agent.user_id,
+                shared_agent.id,
+            ),
+        )
+
+    async def test_rejects_shared_agent_after_access_revoked(self) -> None:
+        """Invocation rechecks a share captured in the toolkit snapshot."""
+        shared_agent, policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+        policy.allowed = False
+
+        chunk = await tool(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertIn("no longer invitable", chunk.content[0].text)
+
+    async def test_revoked_agent_is_hidden_from_team_detail(self) -> None:
+        """A stale roster must not bypass a revoked cross-owner grant."""
+        shared_agent, policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+        invite = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+        result = await invite(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+        self.assertNotEqual(result.state, ToolResultState.ERROR)
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        policy.allowed = False
+
+        detail = await _build_team_detail(
+            self.storage,
+            access,
+            self.user_id,
+            team,
+        )
+        self.assertEqual(detail.members, [])
 
 
 class TestAgentInviteRejections(_AgentInviteTestBase):

@@ -209,6 +209,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "type": "TEXT_BLOCK_END",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
+                    "text": None,
                 },
                 {
                     "id": AnyString(),
@@ -405,6 +406,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "type": "TEXT_BLOCK_END",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
+                    "text": None,
                 },
                 {
                     "id": AnyString(),
@@ -430,6 +432,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "type": "TEXT_BLOCK_END",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
+                    "text": None,
                 },
                 {
                     "id": AnyString(),

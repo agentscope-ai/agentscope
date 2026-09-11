@@ -645,7 +645,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
             else:  # invited — only the borrowed session goes
                 await self._delete_session_impl(
                     sess,
-                    member.owner_id,
+                    user_id,
                     member.agent_id,
                     member.session_id,
                 )

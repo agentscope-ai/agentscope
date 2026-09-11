@@ -731,14 +731,16 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 		}
 		case 'tool_call_group': {
 			const { title, insertions, deletions } = summarizeToolGroup(block.calls, t);
-			const allFinished = block.calls.some((c) => !c.result || c.result.state === 'running');
+			const hasRunningCall = block.calls.some(
+				(c) => !c.result || c.result.state === 'running',
+			);
 			return (
 				<Collapsible defaultOpen={false}>
 					<CollapsibleTrigger asChild>
 						<div
 							className={cn(
 								'group w-full flex gap-2 items-center text-sm text-muted-foreground cursor-pointer hover:text-primary',
-								allFinished && 'shimmer',
+								hasRunningCall && 'shimmer',
 							)}
 						>
 							<span>{title}</span>

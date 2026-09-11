@@ -5,10 +5,10 @@ Unlike :class:`AgentCreate`, which spawns a brand-new worker
 (``source='team'``) from a :class:`SubAgentTemplate`, this tool
 **borrows** a pre-existing user-owned agent by minting a fresh
 team-scoped :class:`SessionRecord` on top of the *existing*
-:class:`AgentRecord`.  The borrowed agent keeps its system prompt,
-context/react configs, workspace, MCP, skills, and model choice; only
-a new session is created so it can hold a parallel conversation for
-the team.
+:class:`AgentRecord`. The borrowed agent keeps its definition, including
+its system prompt and context/react configs. Workspace and model are taken
+from the *caller's* own session of that agent, so a cross-owner borrow
+never picks up the owner's MCPs, skills, cache, or session permissions.
 
 When the team is dissolved or the leader is deleted, only the borrowed
 session is cleaned up — the underlying :class:`AgentRecord` survives
@@ -34,6 +34,7 @@ from ..._utils._common import _generate_id
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
+    from .._service._access import ResourceAccessService
     from ..storage import AgentRecord, StorageBase
     from ..workspace_manager import WorkspaceManagerBase
 
@@ -168,6 +169,7 @@ class AgentInvite(_TeamToolBase):
         session_id: str,
         agent_id: str,
         invitable_pool: list["AgentRecord"],
+        resource_access_service: "ResourceAccessService | None" = None,
     ) -> None:
         """Bind the base dependencies plus the invitable pool snapshot.
 
@@ -187,7 +189,13 @@ class AgentInvite(_TeamToolBase):
                 The calling agent id.
             invitable_pool (`list[AgentRecord]`):
                 Snapshot of currently-invitable agents. Must be
-                non-empty — the caller skips construction otherwise.
+                non-empty — the caller skips construction otherwise. When
+                no access service is supplied, the constructor is responsible
+                for ensuring every snapshot entry is safe for the caller.
+            resource_access_service (`ResourceAccessService | None`):
+                Resolves the selected agent against the caller's current
+                access grants. ``None`` preserves direct construction for
+                owner-only integrations.
         """
         super().__init__(
             storage,
@@ -201,6 +209,7 @@ class AgentInvite(_TeamToolBase):
         self._pool_by_id: dict[str, "AgentRecord"] = {
             a.id: a for a in invitable_pool
         }
+        self._resource_access_service = resource_access_service
 
         # Build enum + a human-readable per-target rundown for the LLM.
         enum_values = [
@@ -266,12 +275,24 @@ class AgentInvite(_TeamToolBase):
 
             team = await self._require_leader_team("invite members")
 
-            # Re-fetch fresh — the snapshot could be stale if the user
-            # just toggled the invite off.
-            fresh = await self._storage.get_agent(
-                self._user_id,
-                invited.id,
-            )
+            # Re-fetch fresh — both the invite settings and a cross-owner
+            # access grant may have changed since the toolkit snapshot
+            # was assembled. Without an access service the pool is
+            # trusted to hold only entries the caller may use.
+            access = self._resource_access_service
+            if access is None:
+                fresh = await self._storage.get_agent(
+                    invited.user_id,
+                    invited.id,
+                )
+            else:
+                fresh = await access.try_resolve_agent(
+                    self._user_id,
+                    invited.id,
+                )
+                # Same id under a different owner is a different agent.
+                if fresh is not None and fresh.user_id != invited.user_id:
+                    fresh = None
             if (
                 fresh is None
                 or not fresh.data.invite_config.invitable
@@ -321,13 +342,11 @@ class AgentInvite(_TeamToolBase):
             # not block the invite.
             leader_name = leader.name if leader else leader_session.agent_id
 
-            # Prefer the invited agent's own primary session for
-            # workspace + chat-model reuse: it already has any MCP /
-            # skills / cache set up. Fall back to a freshly-generated
-            # workspace id + the leader's chat model when the agent has
-            # never been opened — the underlying workspace is created
-            # lazily by the workspace manager on first chat, so a bare
-            # id is enough.
+            # Reuse the caller's own primary session of this agent for
+            # workspace + model, else a fresh workspace and the leader's
+            # model. The lookup is caller-scoped, so a cross-owner borrow
+            # never reuses the owner's session, MCPs, skills, or cache.
+            # The workspace is created lazily on first chat.
             invited_sessions = await self._storage.list_sessions(
                 self._user_id,
                 invited.id,
@@ -402,7 +421,7 @@ class AgentInvite(_TeamToolBase):
             team.data.members = [
                 *existing_members,
                 TeamMember(
-                    owner_id=self._user_id,
+                    owner_id=invited.user_id,
                     agent_id=invited.id,
                     session_id=borrowed.id,
                     role="invited",
