@@ -2,6 +2,10 @@
 """The formatter module in agentscope."""
 
 from ._formatter_base import FormatterBase
+from ._aimlapi_formatter import (
+    AIMLAPIChatFormatter,
+    AIMLAPIMultiAgentFormatter,
+)
 from ._dashscope_formatter import (
     DashScopeChatFormatter,
     DashScopeMultiAgentFormatter,
@@ -45,6 +49,8 @@ from ._volcengine_formatter import (
 
 __all__ = [
     "FormatterBase",
+    "AIMLAPIChatFormatter",
+    "AIMLAPIMultiAgentFormatter",
     "DashScopeChatFormatter",
     "DashScopeMultiAgentFormatter",
     "OpenAIChatFormatter",
