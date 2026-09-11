@@ -424,6 +424,8 @@ class RealtimeAgent:
         Raises:
             `NotImplementedError`: For a text turn when the provider takes
                 no text input.
+            `ModelDisconnectedError`: If the provider disconnects before it
+                accepts the text turn.
         """
         match inputs:
             case UserInterruptEvent():
@@ -447,8 +449,14 @@ class RealtimeAgent:
                 )
                 text = msg.get_text_content() or ""
                 await self._barge_in()
+                if not self._connected:
+                    await self.connect()
+                try:
+                    await self.model.push_text(text)
+                except ModelDisconnectedError:
+                    self._mark_disconnected()
+                    raise
                 self.state.context.append(msg)
-                await self.model.push_text(text)
 
     async def interrupt(self) -> None:
         """Stop the active reply, as when the user presses stop."""
