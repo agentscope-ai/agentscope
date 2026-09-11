@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
-from agentscope.model import ChatResponse
+from agentscope.model import ChatResponse, ChatUsage
 from agentscope.state import AgentState
 from agentscope.tool import ToolBase, Toolkit, ToolChunk
 from agentscope.permission import (
@@ -144,6 +144,55 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_structured_reply_preserves_accumulated_usage(self) -> None:
+        """A structured reply exposes usage from every model call."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Let me think more.")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                ),
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="structured_call_1",
+                            name="GenerateStructuredOutput",
+                            input=(
+                                '{"city": "Hangzhou", ' '"temperature": 25.0}'
+                            ),
+                        ),
+                    ],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=50,
+                        time=0.2,
+                        cache_input_tokens=7,
+                        cache_creation_input_tokens=3,
+                    ),
+                ),
+            ],
+        )
+
+        res = await self.agent.reply(
+            UserMsg(name="user", content="Weather in Hangzhou?"),
+            structured_schema=WeatherReport,
+        )
+
+        self.assertIsNotNone(res.usage)
+        self.assertEqual(res.usage.input_tokens, 180)
+        self.assertEqual(res.usage.output_tokens, 90)
+        self.assertEqual(res.usage.cache_input_tokens, 12)
+        self.assertEqual(res.usage.cache_creation_input_tokens, 5)
+        self.assertEqual(self.model.cnt, 2)
+
     async def test_defaults_and_extra_fields(self) -> None:
         """In process the model class validates the output directly, so
         defaults are filled and extra fields are dropped."""
@@ -175,6 +224,13 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
     async def test_validation_error_retry(self) -> None:
         """An invalid structured output produces an error tool result, and
         the model retries in the next reasoning round."""
+        self.structured_tool_call.usage = ChatUsage(
+            input_tokens=100,
+            output_tokens=50,
+            time=0.2,
+            cache_input_tokens=7,
+            cache_creation_input_tokens=3,
+        )
         self.model.set_responses(
             [
                 ChatResponse(
@@ -186,6 +242,13 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                         ),
                     ],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
                 ),
                 self.structured_tool_call,
             ],
@@ -241,6 +304,11 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+        self.assertIsNotNone(res.usage)
+        self.assertEqual(res.usage.input_tokens, 180)
+        self.assertEqual(res.usage.output_tokens, 90)
+        self.assertEqual(res.usage.cache_input_tokens, 12)
+        self.assertEqual(res.usage.cache_creation_input_tokens, 5)
 
     async def test_forced_generation_at_max_iters(self) -> None:
         """Once ``max_iters`` is reached, the agent forces the structured
