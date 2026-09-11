@@ -2,7 +2,6 @@
 """Native tool-result tests for the OpenAI Responses formatter."""
 import re
 import tempfile
-from functools import partial
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -148,13 +147,12 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
     async def test_unsupported_base64_audio_fallback(self) -> None:
         """Unsupported Base64 audio is persisted and returned as text."""
         fmt = OpenAIResponseFormatter()
-        named_temp_file = tempfile.NamedTemporaryFile
 
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch(
-                "agentscope.formatter._formatter_base.tempfile."
-                "NamedTemporaryFile",
-                side_effect=partial(named_temp_file, dir=temp_dir),
+                "agentscope.formatter._formatter_base."
+                "_get_unsupported_media_temp_dir",
+                return_value=temp_dir,
             ):
                 res = await fmt.format(
                     [
