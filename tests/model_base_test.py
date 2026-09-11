@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Unit tests for :class:`agentscope.model.ChatModelBase.__call__` — the
 retry / accumulation / interrupt wrapper around ``_call_api``."""
 import asyncio
 import base64
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import AnyString, MockModel
 
@@ -18,17 +20,26 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.model import (
+    ChatModelBase,
     ChatResponse,
     ChatUsage,
     FinishedReason,
     StructuredResponse,
 )
-from agentscope.exception import StructuredOutputError
+from agentscope.exception import (
+    ModelFirstChunkTimeoutError,
+    ModelStreamIdleTimeoutError,
+    StructuredOutputError,
+)
 from agentscope.tool import ToolChoice
 
 
 class _BadRequestError(Exception):
     """A provider "bad request" error used to exercise strategy fallback."""
+
+
+class _TransientError(Exception):
+    """A transient provider error used to exercise retry behavior."""
 
 
 class StructuredOutputStrategyMockModel(MockModel):
@@ -44,6 +55,7 @@ class StructuredOutputStrategyMockModel(MockModel):
         self.responses = list(responses or [])
         self.reject_forced = reject_forced
         self.structured_calls: list[tuple[str | None, dict[str, Any]]] = []
+        self.structured_deadlines: list[float | None] = []
 
     def _get_disable_thinking_kwargs(self) -> dict:
         """Expose a provider-specific thinking toggle."""
@@ -56,18 +68,25 @@ class StructuredOutputStrategyMockModel(MockModel):
         """Declare the provider error that permits a strategy fallback."""
         return (_BadRequestError,)
 
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[type[Exception], ...]:
+        """Declare the transient provider error used by retry tests."""
+        return (_TransientError,)
+
     async def _call_api_with_structured_output(
         self,
         model_name: str,
         messages: list,
         structured_model: Any,
         tool_choice: ToolChoice | None = None,
+        _first_chunk_deadline: float | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
         """Return or raise the configured result for one strategy."""
         del model_name, messages, structured_model
         mode = tool_choice.mode if tool_choice is not None else None
         self.structured_calls.append((mode, kwargs))
+        self.structured_deadlines.append(_first_chunk_deadline)
         await asyncio.sleep(0)
 
         if self.reject_forced and mode == "generate_structured_output":
@@ -1165,6 +1184,61 @@ class StructuredOutputStrategyTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_strategies_and_retries_share_deadline(self) -> None:
+        """All attempts in one public call use one absolute deadline."""
+        model = StructuredOutputStrategyMockModel(
+            responses=[
+                _TransientError("retry"),
+                _BadRequestError("fallback"),
+                StructuredResponse(content={}),
+            ],
+        )
+        model.max_retries = 1
+        model.retry_delay = 0.0
+
+        await model.generate_structured_output(self.messages, self.schema)
+
+        deadline = model.structured_deadlines[0]
+        self.assertIsNotNone(deadline)
+        self.assertEqual(
+            (model.structured_calls, model.structured_deadlines),
+            (
+                [
+                    ("generate_structured_output", {}),
+                    ("generate_structured_output", {}),
+                    ("auto", {}),
+                ],
+                [deadline, deadline, deadline],
+            ),
+        )
+
+    async def test_retry_sleep_uses_shared_deadline(self) -> None:
+        """Retry backoff cannot exceed the public first-chunk budget."""
+        model = StructuredOutputStrategyMockModel(
+            responses=[_TransientError("retry")],
+        )
+        model.max_retries = 1
+        model.retry_delay = 0.1
+        model.stream_first_chunk_timeout = 0.02
+
+        with self.assertRaises(ModelFirstChunkTimeoutError) as raised:
+            await model.generate_structured_output(self.messages, self.schema)
+
+        self.assertEqual(
+            (
+                raised.exception.model,
+                raised.exception.timeout,
+                model.structured_calls,
+                len(model.structured_deadlines),
+            ),
+            (
+                "mock-model",
+                0.02,
+                [("generate_structured_output", {})],
+                1,
+            ),
+        )
+
     async def test_success_does_not_permanently_promote_strategy(self) -> None:
         """Every call starts from the strongest immutable strategy."""
         model = StructuredOutputStrategyMockModel(
@@ -1284,3 +1358,316 @@ class StructuredOutputStrategyTest(IsolatedAsyncioTestCase):
                 ("auto", {}),
             ],
         )
+
+
+class ChatModelStreamTimeoutTest(IsolatedAsyncioTestCase):
+    """Tests for progress-based model stream timeouts."""
+
+    @staticmethod
+    def _chunk(text: str) -> ChatResponse:
+        """Build a streaming text chunk."""
+        return ChatResponse(
+            content=[TextBlock(text=text, id="text-1")],
+            is_last=False,
+        )
+
+    async def test_first_chunk_timeout_covers_api_call(self) -> None:
+        """The first deadline starts before ``_call_api``."""
+        model = MockModel(stream_first_chunk_timeout=0.02)
+
+        async def stalled_call(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            await asyncio.Event().wait()
+
+        model._call_api = AsyncMock(side_effect=stalled_call)
+
+        with self.assertRaises(ModelFirstChunkTimeoutError) as raised:
+            await model([])
+
+        self.assertEqual(
+            (
+                raised.exception.model,
+                raised.exception.timeout,
+                str(raised.exception),
+                model._call_api.call_count,
+            ),
+            (
+                "mock-model",
+                0.02,
+                "Model 'mock-model' produced no initial stream content "
+                "within 0.02 seconds.",
+                1,
+            ),
+        )
+
+    async def test_idle_timeout_closes_stream(self) -> None:
+        """A stalled stream closes after its first content chunk."""
+        closed = asyncio.Event()
+
+        async def stalled_stream() -> AsyncGenerator[ChatResponse, None]:
+            try:
+                yield self._chunk("first")
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+        model = MockModel(
+            stream_first_chunk_timeout=1.0,
+            stream_idle_timeout=0.02,
+        )
+        model._call_api = AsyncMock(return_value=stalled_stream())
+
+        stream = await model([])
+        first = await anext(stream)
+        with self.assertRaises(ModelStreamIdleTimeoutError) as raised:
+            await anext(stream)
+
+        self.assertEqual(
+            (
+                _dump(first),
+                raised.exception.model,
+                raised.exception.timeout,
+                str(raised.exception),
+                closed.is_set(),
+            ),
+            (
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": "first",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                "mock-model",
+                0.02,
+                "Model 'mock-model' stream produced no content for "
+                "0.02 seconds.",
+                True,
+            ),
+        )
+
+    async def test_empty_chunks_do_not_reset_idle_deadline(self) -> None:
+        """Carrier chunks cannot keep a stalled model alive."""
+        closed = asyncio.Event()
+
+        async def carrier_stream() -> AsyncGenerator[ChatResponse, None]:
+            try:
+                yield self._chunk("first")
+                while True:
+                    await asyncio.sleep(0.005)
+                    yield ChatResponse(content=[], is_last=False)
+            finally:
+                closed.set()
+
+        model = MockModel(
+            stream_first_chunk_timeout=1.0,
+            stream_idle_timeout=0.03,
+        )
+        model._call_api = AsyncMock(return_value=carrier_stream())
+
+        stream = await model([])
+        first = await anext(stream)
+        with self.assertRaises(ModelStreamIdleTimeoutError):
+            await anext(stream)
+
+        self.assertEqual(
+            (_dump(first), closed.is_set()),
+            (
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": "first",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                True,
+            ),
+        )
+
+    async def test_content_resets_idle_deadline(self) -> None:
+        """Each meaningful chunk receives a fresh idle deadline."""
+
+        async def progressing_stream() -> AsyncGenerator[ChatResponse, None]:
+            yield self._chunk("first")
+            await asyncio.sleep(0.05)
+            yield self._chunk(" second")
+            await asyncio.sleep(0.05)
+
+        model = MockModel(
+            stream_first_chunk_timeout=1.0,
+            stream_idle_timeout=0.15,
+        )
+        model._call_api = AsyncMock(return_value=progressing_stream())
+
+        stream = await model([])
+        responses = [response async for response in stream]
+
+        self.assertEqual(
+            [_dump(response) for response in responses],
+            [
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": "first",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": " second",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": "first second",
+                        },
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+    async def test_none_disables_idle_timeout(self) -> None:
+        """An explicit ``None`` permits an arbitrary inter-chunk delay."""
+
+        async def delayed_stream() -> AsyncGenerator[ChatResponse, None]:
+            yield self._chunk("first")
+            await asyncio.sleep(0.03)
+            yield self._chunk(" second")
+
+        model = MockModel(
+            stream_first_chunk_timeout=1.0,
+            stream_idle_timeout=None,
+        )
+        model._call_api = AsyncMock(return_value=delayed_stream())
+
+        stream = await model([])
+        responses = [response async for response in stream]
+
+        self.assertEqual(
+            [block.text for block in responses[-1].content],
+            ["first second"],
+        )
+
+    async def test_slow_consumer_is_not_stream_idleness(self) -> None:
+        """Downstream chunk processing does not consume the idle budget."""
+
+        async def ready_stream() -> AsyncGenerator[ChatResponse, None]:
+            yield self._chunk("first")
+            yield self._chunk(" second")
+
+        model = MockModel(
+            stream_first_chunk_timeout=1.0,
+            stream_idle_timeout=0.05,
+        )
+        model._call_api = AsyncMock(return_value=ready_stream())
+
+        stream = await model([])
+        first = await anext(stream)
+        await asyncio.sleep(0.15)
+        second = await anext(stream)
+
+        self.assertEqual(
+            [_dump(first), _dump(second)],
+            [
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": "first",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "text": " second",
+                        },
+                    ],
+                    is_last=False,
+                ),
+            ],
+        )
+        await stream.aclose()
+
+    async def test_non_stream_call_ignores_stream_timeouts(self) -> None:
+        """Stream deadlines do not affect non-stream model calls."""
+        expected = ChatResponse(
+            content=[TextBlock(text="complete")],
+            is_last=True,
+        )
+
+        async def delayed_call(*args: Any, **kwargs: Any) -> ChatResponse:
+            del args, kwargs
+            await asyncio.sleep(0.03)
+            return expected
+
+        model = MockModel(
+            stream=False,
+            stream_first_chunk_timeout=0.01,
+            stream_idle_timeout=0.01,
+        )
+        model._call_api = AsyncMock(side_effect=delayed_call)
+
+        response = await model([])
+
+        self.assertIs(response, expected)
+
+    def test_timeout_values_must_be_positive_or_none(self) -> None:
+        """Invalid timeout values fail during model construction."""
+        for name in (
+            "stream_first_chunk_timeout",
+            "stream_idle_timeout",
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    f"{name} must be greater than 0 or None.",
+                ):
+                    MockModel(**{name: 0.0})
+
+    async def test_structured_output_uses_first_chunk_timeout(self) -> None:
+        """Structured-output streams share the first-content deadline."""
+        model = MockModel(stream_first_chunk_timeout=0.02)
+
+        async def stalled_call(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            await asyncio.Event().wait()
+
+        model._call_api = AsyncMock(side_effect=stalled_call)
+
+        with self.assertRaises(ModelFirstChunkTimeoutError):
+            await ChatModelBase._call_api_with_structured_output(
+                model,
+                model_name=model.model,
+                messages=[UserMsg(name="user", content="test")],
+                structured_model={
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+                _first_chunk_deadline=model._new_first_chunk_deadline(),
+            )
+
+        self.assertEqual(model._call_api.call_count, 1)

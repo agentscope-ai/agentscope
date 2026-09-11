@@ -18,7 +18,11 @@ from agentscope.app._service._errors import (
     _classify_type,
     _GENERIC_MESSAGE,
 )
-from agentscope.exception import DeveloperOrientedException
+from agentscope.exception import (
+    DeveloperOrientedException,
+    ModelFirstChunkTimeoutError,
+    ModelStreamIdleTimeoutError,
+)
 from agentscope.types import ErrorType
 
 
@@ -99,6 +103,27 @@ class ClassifyErrorTest(unittest.TestCase):
         self.assertEqual(
             _classify_type(ConnectionError()),
             ErrorType.CONNECTION,
+        )
+
+    def test_model_stream_timeouts_are_connection_errors(self) -> None:
+        """Progress timeouts surface as connection failures in the UI."""
+        errors = (
+            ModelFirstChunkTimeoutError("model", 120.0),
+            ModelStreamIdleTimeoutError("model", 30.0),
+        )
+
+        self.assertEqual(
+            [_classify_error(error).model_dump() for error in errors],
+            [
+                {
+                    "type": ErrorType.CONNECTION,
+                    "message": _GENERIC_MESSAGE[ErrorType.CONNECTION],
+                },
+                {
+                    "type": ErrorType.CONNECTION,
+                    "message": _GENERIC_MESSAGE[ErrorType.CONNECTION],
+                },
+            ],
         )
 
     def test_cause_chain_is_walked(self) -> None:

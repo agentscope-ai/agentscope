@@ -87,6 +87,8 @@ class DeepSeekChatModel(ChatModelBase):
         context_size: int = 65536,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        stream_first_chunk_timeout: float | None = 120.0,
+        stream_idle_timeout: float | None = 30.0,
     ) -> None:
         """Initialize the DeepSeek chat model.
 
@@ -114,6 +116,11 @@ class DeepSeekChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            stream_first_chunk_timeout (`float | None`, defaults to `120.0`):
+                Maximum seconds from call start to initial meaningful stream
+                content. Delay before first iteration counts toward it.
+            stream_idle_timeout (`float | None`, defaults to `30.0`):
+                Maximum seconds between meaningful chunks and stream end.
         """
         super().__init__(
             credential=credential,
@@ -123,6 +130,8 @@ class DeepSeekChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            stream_first_chunk_timeout=stream_first_chunk_timeout,
+            stream_idle_timeout=stream_idle_timeout,
         )
         self.formatter = formatter or DeepSeekChatFormatter()
         self.client_kwargs = client_kwargs or {}
