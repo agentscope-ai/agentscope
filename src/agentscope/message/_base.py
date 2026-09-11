@@ -472,12 +472,16 @@ class Msg(BaseModel):
             case EventType.REQUIRE_USER_CONFIRM:
                 for tool_call in event.tool_calls:
                     b = self._find_block("tool_call", tool_call.id)
-                    if b is not None:
-                        assert isinstance(b, ToolCallBlock)
-                        # Update the state
-                        b.state = ToolCallState.ASKING
-                        # Record the suggestions
-                        b.suggested_rules = tool_call.suggested_rules
+                    if b is None:
+                        # A caller that never streamed the call — a SOP
+                        # verifier, say — still carries it on the event.
+                        b = tool_call.model_copy(deep=True)
+                        self.content.append(b)
+                    assert isinstance(b, ToolCallBlock)
+                    # Update the state
+                    b.state = ToolCallState.ASKING
+                    # Record the suggestions
+                    b.suggested_rules = tool_call.suggested_rules
 
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:
@@ -496,9 +500,11 @@ class Msg(BaseModel):
             case EventType.REQUIRE_EXTERNAL_EXECUTION:
                 for tool_call in event.tool_calls:
                     b = self._find_block("tool_call", tool_call.id)
-                    if b is not None:
-                        assert isinstance(b, ToolCallBlock)
-                        b.state = ToolCallState.SUBMITTED
+                    if b is None:
+                        b = tool_call.model_copy(deep=True)
+                        self.content.append(b)
+                    assert isinstance(b, ToolCallBlock)
+                    b.state = ToolCallState.SUBMITTED
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
                 # Skip results whose tool_call already has a tool_result

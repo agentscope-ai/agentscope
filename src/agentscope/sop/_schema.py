@@ -246,12 +246,15 @@ class SOPStep(SOPStepBase):
                 structured_schema=_Handover,
                 yield_final_msg=True,
             ):
+                if _output := _structured(event):
+                    # The handover is state, not conversation: yielding it
+                    # would put a second copy of the reply on screen.
+                    handover = _output.get("handover")
+                    continue
                 yield event
                 if _parked(event):
                     state.phase = SOPPhase.AWAITING
                     return
-                if _output := _structured(event):
-                    handover = _output.get("handover")
 
             if handover is None:
                 # Structured output makes this unlikely, but a model can
@@ -277,12 +280,15 @@ class SOPStep(SOPStepBase):
             structured_schema=_Verdict,
             yield_final_msg=True,
         ):
+            if _output := _structured(event):
+                # Likewise the verdict: it belongs in the run state, and
+                # its message carries no content to show.
+                verdict = _output
+                continue
             yield event
             if _parked(event):
                 state.phase = SOPPhase.AWAITING
                 return
-            if _output := _structured(event):
-                verdict = _output
 
         if verdict is None:
             self.record(

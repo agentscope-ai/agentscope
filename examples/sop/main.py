@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Turn one line of text into a stylised animation, one signed-off step at
-a time — the shot everyone knows and nobody has seen: China lifting the
-World Cup.
+a time — a ship crossing a planet, alone between the stars.
 
 Three milestones, and a person signs off on each: the shot list with its
 motion spelled out in frames, the animation Blender rendered from it, the
@@ -9,10 +8,10 @@ restyled video that goes out. How any of them gets done is the agents'
 business.
 
 Why Blender in the middle, rather than a video model straight from the
-text: **motion you can dictate.** The captain's arms rise over exactly 40
-frames, the camera pushes in at a fixed speed, the confetti falls under
-real gravity. A diffusion model guesses at all of that; Blender does what
-it is told.
+text: **motion you can dictate.** The ship drifts across frame at a fixed
+speed, the camera pushes in over exactly 40 frames, the planet keeps its
+scale against the hull. A diffusion model guesses at all of that; Blender
+does what it is told.
 
 So Blender renders a **white model** — untextured grey geometry, correct
 motion, correct camera — and Wan 3.0 paints it. Physics from the one that
@@ -21,12 +20,17 @@ can be told; looks from the one that is good at looks.
 Three things are worth watching for.
 
 **Every verifier here is a person, and none of them holds anything open.**
-:class:`HumanApproval` asks and stops. The stream ends, this program
-blocks on ``input()`` with no agent suspended behind it, and the run
-picks up when the answer arrives — a second later or a week.
+:class:`HumanApproval` asks and stops. The stream ends with no agent
+suspended behind it, and the run picks up when the answer arrives — a
+second later or a week.
 
-**A refusal comes back as a critique.** Say ``n`` and give a reason; the
-executor gets it verbatim on its next attempt, with which attempt it is.
+**The whole thing runs in the terminal UI.** A SOP engine is a pipeline,
+so :func:`~agentscope.tui.launch_tui` drives it exactly as it drives an
+agent; the verifier asks through the standard
+:class:`~agentscope.tool.AskUser` tool and the UI draws the form.
+
+**A refusal comes back as a critique.** Pick *Send back* and say why; the
+executor gets that verbatim on its next attempt, with which attempt it is.
 
 **The agents share one workspace and hand over accounts, not files.**
 Every render lands in ``workspace/``; what crosses between steps is the
@@ -35,141 +39,121 @@ path and a line on what was built.
 Prerequisites::
 
     export DASHSCOPE_API_KEY=sk-...
-    brew install --cask blender
-    # install Blender's own MCP add-on (addon/blender_mcp_addon in
-    # https://projects.blender.org/lab/blender_mcp) and turn on its
-    # auto-start; the MCP server itself is fetched from that repo by uvx
+    python setup_blender.py   # once — Blender 5.1+ and its MCP add-on
 
     python main.py
-    python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"
+    python main.py --blender /path/to/blender
+
+Then describe a scene in the composer, e.g. ``马里奥跳起顶碎砖块，金币弹
+出的那一下``.
+
+Blender is started headless here and shut down on the way out. Leave one
+open with the add-on connected and that one is used instead, so you can
+watch the scene being built.
 """
 import argparse
 import asyncio
+import contextlib
 import os
-import urllib.request
-from http import HTTPStatus
-from typing import AsyncGenerator, Type
+import shutil
+import socket
+import subprocess
+import time
+from typing import AsyncGenerator, Iterator, Type
 
-import requests
-from dashscope import VideoSynthesis
 from pydantic import BaseModel
+from wan_video import restyle_video
 
 from agentscope.agent import Agent
-from agentscope.console import ConsoleRenderer
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     AgentEvent,
-    ConfirmResult,
     ExternalExecutionResultEvent,
+    ReplyEndEvent,
+    ReplyStartEvent,
     RequireExternalExecutionEvent,
-    RequireUserConfirmEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
 from agentscope.mcp import MCPClient, StdioMCPConfig
-from agentscope.message import (
-    AssistantMsg,
-    Msg,
-    ToolCallBlock,
-    ToolResultBlock,
-    ToolResultState,
-    UserMsg,
-)
+from agentscope.message import AssistantMsg, Msg, ToolCallBlock
 from agentscope.model import DashScopeChatModel
-from agentscope.sop import SOP, SOPEngine, SOPPhase, SOPStep
-from agentscope.tool import FunctionTool, Toolkit
+from agentscope.sop import SOP, SOPEngine, SOPStep
+from agentscope.tool import (
+    AskUser,
+    AskUserMetadata,
+    AskUserParams,
+    FunctionTool,
+    Toolkit,
+)
+from agentscope.tui import launch_tui
 from agentscope.types import ReplyFinishedReason
 from agentscope.workspace import LocalWorkspace
 from agentscope._utils._common import _generate_id
 
-DEFAULT_STORY = "世界杯决赛终场哨响，中国队队长在队友的簇拥下走上领奖台，" + "双手举起大力神杯，彩带从天而降，看台上红旗翻涌。"
+
+BLENDER_PORT = 9876
 
 
-VIDEO_MODEL = "wan3.0-video"
+def _blender_listening() -> bool:
+    """Whether Blender's MCP add-on has a socket up."""
+    with socket.socket() as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex(("127.0.0.1", BLENDER_PORT)) == 0
 
 
-def _upload(video_path: str, api_key: str) -> str:
-    """Put a local file in Model Studio's temporary space, as an
-    ``oss://`` URL good for 48 hours.
+@contextlib.contextmanager
+def blender_running(blender: str | None) -> Iterator[None]:
+    """Make sure something is listening on Blender's MCP port.
 
-    A reference video has to be reachable by the service: unlike an
-    image it cannot be inlined as base64, so a local render has to go
-    somewhere first. The upload is bound to the model that will read it.
+    A Blender that is already up is used as it is — leave the GUI open
+    and you can watch the scene being built. Otherwise one is started
+    headless here, and killed on the way out, so the only thing this
+    demo asks of the machine is that Blender be installed.
     """
-    policy = requests.get(
-        "https://dashscope.aliyuncs.com/api/v1/uploads",
-        params={"action": "getPolicy", "model": VIDEO_MODEL},
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=30,
-    ).json()["data"]
-
-    name = os.path.basename(video_path)
-    key = f"{policy['upload_dir']}/{name}"
-    with open(video_path, "rb") as handle:
-        response = requests.post(
-            policy["upload_host"],
-            files={
-                "OSSAccessKeyId": (None, policy["oss_access_key_id"]),
-                "Signature": (None, policy["signature"]),
-                "policy": (None, policy["policy"]),
-                "x-oss-object-acl": (None, policy["x_oss_object_acl"]),
-                "x-oss-forbid-overwrite": (
-                    None,
-                    policy["x_oss_forbid_overwrite"],
-                ),
-                "key": (None, key),
-                "success_action_status": (None, "200"),
-                "file": (name, handle),
-            },
-            timeout=600,
+    if _blender_listening():
+        yield
+        return
+    if blender is None:
+        raise RuntimeError(
+            "Blender 5.1+ with its MCP add-on is needed. Put it on PATH "
+            "or pass --blender /path/to/blender.",
         )
-    response.raise_for_status()
-    return f"oss://{key}"
 
-
-async def restyle_video(video_path: str, look: str) -> str:
-    """Paint a white-model render in a described look, and return the
-    path of the result.
-
-    The render goes in as a reference video, so its motion, timing and
-    framing are what come back; the look is what changes.
-
-    Args:
-        video_path (`str`):
-            Absolute path to the render. At most 15 seconds, mp4 or mov,
-            at least 16 fps — the model's own limits on a reference.
-        look (`str`):
-            What it should look like, e.g. ``"把整个画面改成 1990 年代
-            手绘体育动画，赛璐璐上色，胶片颗粒"``.
-    """
-    api_key = os.environ["DASHSCOPE_API_KEY"]
-
-    def run() -> str:
-        task = VideoSynthesis.async_call(
-            api_key=api_key,
-            model=VIDEO_MODEL,
-            prompt=look,
-            media=[
-                {
-                    "type": "reference_video",
-                    "url": _upload(video_path, api_key),
-                },
-            ],
-            resolution="720P",
-            ratio="adaptive",
-            # Let the model match the render; the default of 5 seconds
-            # would cut a longer one short.
-            duration=-1,
-            prompt_extend=True,
-        )
-        done = VideoSynthesis.wait(task=task, api_key=api_key)
-        if done.status_code != HTTPStatus.OK:
-            raise RuntimeError(f"{done.code}: {done.message}")
-        out = f"{os.path.splitext(video_path)[0]}.styled.mp4"
-        urllib.request.urlretrieve(done.output.video_url, out)
-        return out
-
-    return await asyncio.to_thread(run)
+    # Its own session, so Ctrl+C reaches this program alone and Blender
+    # goes down through the terminate() below.
+    process = subprocess.Popen(  # pylint: disable=consider-using-with
+        [
+            blender,
+            "--background",
+            "--online-mode",
+            "--command",
+            "blender_mcp",
+            "--port",
+            str(BLENDER_PORT),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        for _ in range(150):
+            if _blender_listening():
+                break
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"'{blender} --command blender_mcp' exited with "
+                    f"{process.returncode}. Blender 5.1+ with the MCP "
+                    f"add-on installed and enabled is required.",
+                )
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("Blender never opened its MCP port.")
+        yield
+    finally:
+        process.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=10)
 
 
 class HumanApproval:
@@ -179,9 +163,18 @@ class HumanApproval:
     does, so the step cannot tell the difference: asked with nothing to
     go on, it posts its question and stops; asked again with an answer,
     it turns that answer into a verdict.
+
+    It asks through :class:`~agentscope.tool.AskUser` — not because a
+    model chose that tool, but because the name and its schema are what
+    every front end already knows how to draw. The answer comes back in
+    ``metadata``, shaped by :class:`~agentscope.tool.AskUserMetadata`,
+    so the verdict is read rather than guessed at.
     """
 
     name = "reviewer"
+
+    def __init__(self) -> None:
+        self.reply_id = ""
 
     async def reply_stream(  # pylint: disable=unused-argument
         self,
@@ -196,34 +189,68 @@ class HumanApproval:
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Ask a person, or read what they answered."""
         if not isinstance(inputs, ExternalExecutionResultEvent):
-            question = "\n\n".join(
-                block.text
-                for msg in (inputs or [])
-                for block in msg.content
-                if block.type == "text"
+            self.reply_id = _generate_id()
+            # A reply of its own, so the question and the answer land in
+            # one bubble under this name rather than an anonymous one.
+            yield ReplyStartEvent(
+                session_id="sop",
+                reply_id=self.reply_id,
+                name=self.name,
             )
             yield RequireExternalExecutionEvent(
-                reply_id=_generate_id(),
+                reply_id=self.reply_id,
                 tool_calls=[
                     ToolCallBlock(
                         type="tool_call",
                         id=_generate_id(),
-                        name="ask_user",
-                        input=question,
+                        name=AskUser.name,
+                        input=AskUserParams(
+                            questions=[
+                                {
+                                    "question": "Approve this and move on?",
+                                    "header": "Review",
+                                    "context": "\n\n".join(
+                                        block.text
+                                        for msg in (inputs or [])
+                                        for block in msg.content
+                                        if block.type == "text"
+                                    ),
+                                    "options": [
+                                        {
+                                            "label": "Approve",
+                                            "description": (
+                                                "Hand it on to the next step."
+                                            ),
+                                        },
+                                        {
+                                            "label": "Send back",
+                                            "description": (
+                                                "Say what should change; the "
+                                                "step tries again."
+                                            ),
+                                        },
+                                    ],
+                                },
+                            ],
+                        ).model_dump_json(),
                     ),
                 ],
             )
             return
 
-        answer = str(inputs.execution_results[0].output).strip()
-        approved = answer.lower() in ("y", "yes", "是", "同意", "通过")
+        result = inputs.execution_results[0]
+        await AskUser().check_external_result(result)
+        answer = AskUserMetadata.model_validate(result.metadata).answers[0]
+        approved = answer.selected == ["Approve"]
+        yield ReplyEndEvent(session_id="sop", reply_id=self.reply_id)
         yield AssistantMsg(
             name=self.name,
             content="",
             finished_reason=ReplyFinishedReason.COMPLETED,
             structured_output={
                 "passed": approved,
-                "message": "" if approved else answer,
+                # Whatever they typed instead of picking is the critique.
+                "message": "" if approved else (answer.other or "Sent back."),
             },
         )
 
@@ -247,7 +274,6 @@ async def build_sop(
             model=model_name,
         )
 
-    shared = await workspace.list_tools()
     director = Agent(
         name="director",
         system_prompt=(
@@ -255,13 +281,13 @@ async def build_sop(
             "scene into numbered shots at 24 fps. For every shot give the "
             "camera (position, move, speed), each subject's motion as a "
             "start pose, end pose and frame range, and what physics "
-            "applies — gravity on confetti, easing on a lift. Then list "
+            "applies — inertia on a drift, easing on a push-in. Then list "
             "everything to model: people, props, crowd, with a one-line "
             "note on shape and scale — no colours or materials, a later "
             "step paints it. The whole thing must run under 15 seconds."
         ),
         model=model(),
-        toolkit=Toolkit(tools=shared),
+        toolkit=Toolkit(tools=await workspace.list_tools()),
         offloader=workspace,
     )
     blocker = Agent(
@@ -276,10 +302,24 @@ async def build_sop(
             "keyframe exactly the ranges it gives and set the camera "
             "moves it specifies. Render one .mp4 under "
             f"{workspace.workdir}, at most 15 seconds and at least 24 "
-            "fps, and report its absolute path."
+            "fps, and report its absolute path.\n\n"
+            # Four facts about this setup, each of which otherwise costs
+            # an attempt to rediscover.
+            "This Blender runs headless, which makes four things true:\n"
+            "- Render with Cycles on the CPU. EEVEE needs a GPU surface "
+            "here and takes the whole process down with it.\n"
+            "- For video output set `image_settings.media_type` to "
+            "'VIDEO' before `file_format` to 'FFMPEG'. Doing it the 4.x "
+            'way raises `enum "FFMPEG" not found` on Blender 5.\n'
+            "- Rendering often answers `Empty response from Blender`. "
+            "That is the call outrunning the render, not a failure — "
+            "check whether the file appeared before you retry.\n"
+            "- Use `execute_blender_code` to reach this running Blender. "
+            "`execute_blender_code_for_cli` starts a separate one from a "
+            "`.blend` file and will not see your scene."
         ),
         model=model(),
-        toolkit=Toolkit(tools=[*shared, *await blender.list_tools()]),
+        toolkit=Toolkit(tools=await workspace.list_tools(), mcps=[blender]),
         offloader=workspace,
     )
     colorist = Agent(
@@ -293,7 +333,9 @@ async def build_sop(
             "of the result and why that look."
         ),
         model=model(),
-        toolkit=Toolkit(tools=[*shared, FunctionTool(restyle_video)]),
+        toolkit=Toolkit(
+            tools=await workspace.list_tools() + [FunctionTool(restyle_video)],
+        ),
         offloader=workspace,
     )
 
@@ -342,63 +384,11 @@ async def build_sop(
     )
 
 
-async def answer_confirm(
-    pending: RequireUserConfirmEvent,
-) -> UserConfirmResultEvent:
-    """Answer a tool-call confirmation an agent stopped on."""
-    results = []
-    for tool_call in pending.tool_calls:
-        reply = await asyncio.to_thread(
-            input,
-            f"Allow '{tool_call.name}'? [y]es / [N]o ",
-        )
-        results.append(
-            ConfirmResult(
-                confirmed=reply.strip().lower() in ("y", "yes"),
-                tool_call=tool_call,
-            ),
-        )
-    return UserConfirmResultEvent(
-        reply_id=pending.reply_id,
-        confirm_results=results,
-    )
-
-
-async def answer_request(
-    pending: RequireExternalExecutionEvent,
-) -> ExternalExecutionResultEvent:
-    """Answer a question something parked on — here, an approval.
-
-    Nothing is suspended behind this prompt: the run let go of its stream
-    before we got here, and picks up from its state afterwards.
-    """
-    results = []
-    for tool_call in pending.tool_calls:
-        print("\n" + "-" * 60)
-        print(tool_call.input)
-        print("-" * 60)
-        reply = await asyncio.to_thread(input, "Approve? [y/N] ")
-        if reply.strip().lower() not in ("y", "yes"):
-            reply = await asyncio.to_thread(input, "What should change? ")
-        results.append(
-            ToolResultBlock(
-                id=tool_call.id,
-                name=tool_call.name,
-                output=reply.strip() or "Not approved as it stands.",
-                state=ToolResultState.SUCCESS,
-            ),
-        )
-    return ExternalExecutionResultEvent(
-        reply_id=pending.reply_id,
-        execution_results=results,
-    )
-
-
 async def main() -> None:
     """Run the procedure, pausing whenever a person is needed."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="qwen3.7-max")
-    parser.add_argument("--story", default=DEFAULT_STORY)
+    parser.add_argument("--blender", default=shutil.which("blender"))
     args = parser.parse_args()
 
     api_key = os.environ.get("DASHSCOPE_API_KEY")
@@ -418,53 +408,36 @@ async def main() -> None:
         ),
         is_stateful=True,
     )
-    await blender.connect()
-    try:
-        async with LocalWorkspace(
-            workdir=os.path.join(here, "workspace"),
-        ) as workspace:
-            sop = await build_sop(workspace, blender, args.model, api_key)
-            engine = SOPEngine(sop)
-            renderer = ConsoleRenderer()
+    async with contextlib.AsyncExitStack() as stack:
+        stack.enter_context(blender_running(args.blender))
+        await blender.connect()
+        stack.push_async_callback(blender.close)
+        workspace = await stack.enter_async_context(
+            LocalWorkspace(workdir=os.path.join(here, "workspace")),
+        )
 
-            inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent
-            inputs = UserMsg(name="user", content=args.story)
-            while True:
-                pending: AgentEvent | None = None
-                async for event in engine.reply_stream(inputs):
-                    renderer.render(event)
-                    if isinstance(
-                        event,
-                        (
-                            RequireUserConfirmEvent,
-                            RequireExternalExecutionEvent,
-                        ),
-                    ):
-                        pending = event
+        sop = await build_sop(workspace, blender, args.model, api_key)
+        engine = SOPEngine(sop)
 
-                if engine.phase is not SOPPhase.AWAITING:
-                    break
-                if isinstance(pending, RequireUserConfirmEvent):
-                    inputs = await answer_confirm(pending)
-                else:
-                    inputs = await answer_request(pending)
+        # The engine is a pipeline, so the TUI drives it exactly as it
+        # drives an agent: approvals park the run, the stream ends, and
+        # the answer starts it again. Describe the scene in the composer
+        # to begin.
+        await launch_tui(engine)
 
-            print(f"\n== run {engine.phase.value}")
-            for step in sop.steps:
-                phase = engine.state.steps[step.id].phase.value
-                print(f"   {step.subject}: {phase}")
+    print(f"\n== run {engine.phase.value}")
+    for step in sop.steps:
+        print(f"   {step.subject}: {engine.state.steps[step.id].phase.value}")
 
-            result = "".join(
-                block.text
-                for block in (engine.state.steps["restyle"].submission or [])
-                if block.type == "text"
-            )
-            if result:
-                print("\n" + "=" * 60)
-                print("成片：\n")
-                print(result)
-    finally:
-        await blender.close()
+    result = "".join(
+        block.text
+        for block in (engine.state.steps["restyle"].submission or [])
+        if block.type == "text"
+    )
+    if result:
+        print("\n" + "=" * 60)
+        print("成片：\n")
+        print(result)
 
 
 if __name__ == "__main__":

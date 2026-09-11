@@ -29,8 +29,8 @@ the same conclusion, until the attempt limit ends it.
 
 ## The demo
 
-`main.py` turns one line of text into a stylised animation — the shot
-everyone knows and nobody has seen: **China lifting the World Cup.**
+`main.py` turns one line of text into a stylised animation — say **a ship
+crossing a planet, alone between the stars.**
 
 ```
 分镜与建模需求  ------->  Blender 白膜动画  ------->  风格化上色
@@ -44,9 +44,9 @@ gate: a person            gate: a person             gate: a person
 ### Why Blender in the middle
 
 A video model straight from the text would *guess* at the motion. Blender
-does what it is told: the captain's arms rise over exactly 40 frames, the
-camera pushes in at one fixed speed, the confetti falls under real
-gravity.
+does what it is told: the ship drifts across frame at one fixed speed, the
+camera pushes in over exactly 40 frames, the planet keeps its scale
+against the hull.
 
 So the middle step renders a **white model** — grey untextured geometry,
 right shapes, right motion, right camera, no materials and no lighting
@@ -78,17 +78,35 @@ StdioMCPConfig(
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-brew install --cask blender
-# install Blender's own MCP add-on — addon/blender_mcp_addon from
-# https://projects.blender.org/lab/blender_mcp — and enable auto-start
-# in its preferences. The MCP server is fetched from that repo by uvx.
+
+# Once: Blender 5.1+ plus its MCP add-on, which is not on
+# extensions.blender.org and so has to be built from source.
+python setup_blender.py
+python setup_blender.py --blender /path/to/blender   # already have one
 
 python main.py
-python main.py --story "马里奥跳起顶碎砖块，金币弹出的那一下"
 ```
 
-Say `n` at any approval and give a reason: it goes back to that step's
-agent word for word, along with which attempt this is.
+Describe a scene in the composer to start, e.g. `马里奥跳起顶碎砖块，金币
+弹出的那一下`.
+
+`main.py` starts Blender headless and shuts it down on the way out, so
+nothing has to be running first. Leave a Blender open with the add-on
+connected and that one is used instead, and you can watch the scene
+being built.
+
+### Approvals happen in the terminal UI
+
+The whole run is driven by `launch_tui(engine)` — the SOP engine is a
+`PipelineProtocol`, so the TUI drives it exactly as it drives an agent.
+When a step needs signing off, the verifier asks through the standard
+`AskUser` tool and the TUI draws the form; picking **Send back** and
+typing a reason puts that reason in front of the step's agent word for
+word, along with which attempt this is.
+
+Nothing is held open behind that form. The verifier posts its question
+and the stream ends; the answer starts the run again from its state — a
+second later or a week.
 
 ### The agents share one workspace
 
