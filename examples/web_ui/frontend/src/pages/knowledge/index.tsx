@@ -42,6 +42,8 @@ import {
 	SidebarMenuItem,
 } from '@/components/ui/sidebar.tsx';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases.ts';
+import { cn } from '@/lib/utils.ts';
+import { formatChunkerParameterValue } from '@/utils/chunker.ts';
 
 interface DetailPanelProps {
 	knowledgeBase?: KnowledgeBaseView;
@@ -104,11 +106,27 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 	);
 }
 
-function ConfigItem({ label, value }: { label: string; value: string }) {
+function ConfigItem({
+	label,
+	value,
+	wrap = false,
+	className,
+}: {
+	label: string;
+	value: string;
+	wrap?: boolean;
+	className?: string;
+}) {
 	return (
-		<div className="flex min-w-0 flex-col gap-y-0.5">
+		<div className={cn('flex min-w-0 flex-col gap-y-0.5', className)}>
 			<span className="text-muted-foreground text-xs">{label}</span>
-			<span className="truncate text-sm text-foreground" title={value}>
+			<span
+				className={cn(
+					'text-sm text-foreground',
+					wrap ? 'break-words whitespace-normal' : 'truncate',
+				)}
+				title={value}
+			>
 				{value}
 			</span>
 		</div>
@@ -138,13 +156,21 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 				})
 			: null;
 
-	const chunkerValue = chunker
-		? Object.keys(chunker.parameters).length > 0
-			? `${chunker.type} · ${Object.entries(chunker.parameters)
-					.map(([k, v]) => `${k}=${String(v)}`)
-					.join(', ')}`
-			: chunker.type
-		: '—';
+	const chunkerValue = (() => {
+		if (!chunker) return '—';
+		const typeLabel = t(`chunker-types.${chunker.type}.label`, {
+			defaultValue: chunker.type,
+		});
+		const parameters = Object.entries(chunker.parameters)
+			.map(([key, value]) => {
+				const parameterLabel = t(`chunker-types.${chunker.type}.params.${key}.label`, {
+					defaultValue: key,
+				});
+				return `${parameterLabel}=${formatChunkerParameterValue(value)}`;
+			})
+			.join(', ');
+		return parameters ? `${typeLabel} · ${parameters}` : typeLabel;
+	})();
 
 	return (
 		<div className="flex flex-col gap-y-3">
@@ -161,7 +187,12 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 					label={t('knowledge.config.credential')}
 					value={knowledgeBase.credential_name ?? embedding.credential_id}
 				/>
-				<ConfigItem label={t('knowledge.config.chunker')} value={chunkerValue} />
+				<ConfigItem
+					label={t('knowledge.config.chunker')}
+					value={chunkerValue}
+					wrap
+					className="col-span-2 sm:col-span-3"
+				/>
 				<ConfigItem
 					label={t('knowledge.config.counts')}
 					value={t('knowledge.config.countsValue', {

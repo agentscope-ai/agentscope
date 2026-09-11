@@ -32,7 +32,13 @@ from .message_bus import MessageBus
 from .storage import StorageBase
 from ..agent import Agent
 from ..credential import CredentialFactory, CredentialBase
-from ..rag import ApproxTokenChunker, ChunkerBase, ParserBase, TextParser
+from ..rag import (
+    ApproxTokenChunker,
+    ChunkerBase,
+    ParserBase,
+    RecursiveTokenChunker,
+    TextParser,
+)
 
 from .._logging import logger
 from .._version import __version__
@@ -168,7 +174,8 @@ def create_app(
             The chunker classes users can choose from when creating a
             knowledge base.  The chunker type and parameters are pinned
             on the knowledge base record and reconstructed by the index
-            worker.  Defaults to ``[ApproxTokenChunker]`` when
+            worker. Defaults to
+            ``[ApproxTokenChunker, RecursiveTokenChunker]`` when
             ``knowledge_base_manager`` is set.
         blob_store (`BlobStoreBase | None`, optional):
             Backend storing uploaded document bytes between the
@@ -332,7 +339,7 @@ def create_app(
         chunker_classes = list(
             knowledge_chunkers
             if knowledge_chunkers is not None
-            else [ApproxTokenChunker],
+            else [ApproxTokenChunker, RecursiveTokenChunker],
         )
         # Backward compatibility: the deprecated ``knowledge_chunker``
         # instance is only used for its class.
