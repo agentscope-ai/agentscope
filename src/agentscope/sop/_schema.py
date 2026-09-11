@@ -1,19 +1,13 @@
 # -*- coding: utf-8 -*-
-"""The SOP definition — what a person writes, and can read back.
+"""The SOP definition — what a person writes and can read back.
 
-A step declares **what it is and what it must prove**; how it gets there
-is its own business. :class:`SOPStep` is the shape almost everything
-wants — an executor does the work, a verifier judges it — but the engine
-never looks inside: it reads the run state and nothing else. Anything
-that fills that in on time is a step, so subclass :class:`SOPStepBase`
-and do as you like.
-
-A definition holds no run state. The engine owns the run and hands each
-step its own :class:`~._state.SOPStepRunState` on every call, so one
-definition can drive any number of runs, at once if need be.
+:class:`SOPStep` is the usual shape: an executor does the work and a
+verifier judges it. The engine never looks inside a step, so anything
+that fills in its :class:`~._state.SOPStepRunState` on time will do —
+subclass :class:`SOPStepBase` for the rest.
 """
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, ClassVar, Protocol, Type, runtime_checkable
+from typing import AsyncGenerator, ClassVar, Protocol, Type
 
 from pydantic import BaseModel, Field
 
@@ -32,15 +26,11 @@ from ..types import ReplyFinishedReason
 from .._utils._common import _generate_id
 
 
-@runtime_checkable
 class AgentLike(PipelineProtocol, Protocol):
-    """A pipeline that can also be handed a typed task.
+    """What a step needs of whatever does its work or judges it.
 
-    What a step needs of whatever does its work or judges it: everything
-    :class:`~..pipeline.PipelineProtocol` promises, plus a reply that can
-    be asked to end in structured output. A whole SOP satisfies the base
-    protocol but deliberately not this one — an outside schema has no
-    place in a procedure whose steps each carry their own.
+    :class:`~..pipeline.PipelineProtocol` plus a reply that can be asked
+    to end in structured output.
     """
 
     def reply_stream(
@@ -246,13 +236,18 @@ class SOPStep(SOPStepBase):
                 structured_schema=_Handover,
                 yield_final_msg=True,
             ):
-                if _output := _structured(event):
+                if isinstance(event, Msg) and (
+                    event.finished_reason == ReplyFinishedReason.COMPLETED
+                ):
                     # The handover is state, not conversation: yielding it
                     # would put a second copy of the reply on screen.
-                    handover = _output.get("handover")
+                    handover = (event.structured_output or {}).get("handover")
                     continue
                 yield event
-                if _parked(event):
+                if isinstance(
+                    event,
+                    (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+                ):
                     state.phase = SOPPhase.AWAITING
                     return
 
@@ -280,13 +275,18 @@ class SOPStep(SOPStepBase):
             structured_schema=_Verdict,
             yield_final_msg=True,
         ):
-            if _output := _structured(event):
+            if isinstance(event, Msg) and (
+                event.finished_reason == ReplyFinishedReason.COMPLETED
+            ):
                 # Likewise the verdict: it belongs in the run state, and
                 # its message carries no content to show.
-                verdict = _output
+                verdict = event.structured_output
                 continue
             yield event
-            if _parked(event):
+            if isinstance(
+                event,
+                (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+            ):
                 state.phase = SOPPhase.AWAITING
                 return
 
@@ -387,24 +387,6 @@ class SOPStep(SOPStepBase):
                 ],
             ),
         ]
-
-
-def _parked(event: AgentEvent | Msg) -> bool:
-    """Whether this event means someone outside has to answer."""
-    return isinstance(
-        event,
-        (RequireUserConfirmEvent, RequireExternalExecutionEvent),
-    )
-
-
-def _structured(event: AgentEvent | Msg) -> dict | None:
-    """The structured output of a finished reply, if this is one."""
-    if (
-        isinstance(event, Msg)
-        and event.finished_reason == ReplyFinishedReason.COMPLETED
-    ):
-        return event.structured_output
-    return None
 
 
 class SOP:

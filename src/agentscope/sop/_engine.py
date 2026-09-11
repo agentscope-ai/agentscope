@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """Running a SOP.
 
-The engine does three things and knows nothing else: it walks the steps
-in order, hands resumption events to whichever one parked, and spends the
-attempt budget. It has no idea what a verifier is — it reads each step's
-:class:`~._state.SOPStepRunState` and decides from that alone.
-
-It also owns the run. A definition is handed in and never written to; a
-step gets its own slice of the run on every call and nothing more.
+The engine walks the steps in order, hands resumption events to
+whichever one parked, and spends the attempt budget. It decides from
+each step's :class:`~._state.SOPStepRunState` alone, never from how the
+step reached it.
 """
 from typing import AsyncGenerator
 

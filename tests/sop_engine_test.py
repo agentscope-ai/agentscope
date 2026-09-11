@@ -314,9 +314,11 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         await self._drive(engine, UserMsg(name="user", content="go"))
 
         self.assertEqual(engine.phase, SOPPhase.FAILED)
-        self.assertEqual(engine.state.steps["a"].phase, SOPPhase.FAILED)
         # The step behind a failure was never reached.
-        self.assertEqual(engine.state.steps["b"].phase, SOPPhase.PENDING)
+        self.assertDictEqual(
+            {_: state.phase for _, state in engine.state.steps.items()},
+            {"a": SOPPhase.FAILED, "b": SOPPhase.PENDING},
+        )
 
     async def test_parking_in_the_executor_ends_the_stream(self) -> None:
         """A parked run lets go, and picks up where it stopped."""

@@ -18,9 +18,7 @@ class SOPPhase(StrEnum):
     """Where a step, or a whole run, stands.
 
     One enum for both: a run is only ever as far along as its steps let
-    it be, and the five answers are the same either way. There is no
-    ``verifying`` — whether a parked step stopped while working or while
-    being judged is the step's business, not the engine's.
+    it be.
     """
 
     PENDING = "pending"
@@ -64,14 +62,10 @@ class VerificationResult(BaseModel):
 class SOPStepRunState(BaseModel):
     """What one step did in one run.
 
-    Four fields are the engine's contract: the engine writes what the
-    step was given, and every step must keep the other three honest —
-    which phase it is in, what it handed over, and what was decided about
-    each attempt. A step that needs to remember more
-    subclasses this and names the subclass in
-    :attr:`~._schema.SOPStepBase.state_type`; extra fields are kept
-    through a round trip so a run restored from storage still carries
-    them.
+    The engine writes :attr:`given`; the step keeps the other three
+    honest. To remember more, subclass this and name the subclass in
+    :attr:`~._schema.SOPStepBase.state_type` — extra fields survive a
+    round trip through storage.
     """
 
     model_config = ConfigDict(extra="allow")
