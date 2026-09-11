@@ -166,6 +166,51 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
                 "Two and a half",
             )
 
+    async def test_rebuilt_tool_group_keeps_its_place(self) -> None:
+        message = AssistantMsg(
+            name="agent",
+            id="reply",
+            content=[
+                TextBlock(id="before", text="Before"),
+                ToolCallBlock(
+                    type="tool_call",
+                    id="call",
+                    name="Bash",
+                    input="{}",
+                    state=ToolCallState.ALLOWED,
+                ),
+                TextBlock(id="after", text="After"),
+            ],
+        )
+        app = _MessagesApp([message])
+        async with app.run_test() as pilot:
+            ui = app.query_one(MessagesUI)
+            widget = ui._message_uis["reply"]
+
+            # A finished tool rebuilds the group widget, which mounts at
+            # the end; it has to be moved back between the two texts.
+            message.content.append(
+                ToolResultBlock(
+                    id="call",
+                    name="Bash",
+                    output="done",
+                    state=ToolResultState.SUCCESS,
+                ),
+            )
+            await ui.update_message(message)
+            await pilot.pause()
+
+            self.assertListEqual(
+                [type(child).__name__ for child in widget.children],
+                [
+                    "Static",
+                    "TextBlockUI",
+                    "ToolGroupUI",
+                    "TextBlockUI",
+                    "Static",
+                ],
+            )
+
     async def test_mutated_snapshot_preserves_existing_widgets(self) -> None:
         message = AssistantMsg(
             name="agent",
