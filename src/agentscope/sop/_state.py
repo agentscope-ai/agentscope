@@ -70,9 +70,6 @@ class SOPStepRunState(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    step_id: str
-    """The step this belongs to."""
-
     phase: SOPPhase = SOPPhase.PENDING
     """Where the step stands."""
 
@@ -106,17 +103,14 @@ class SOPRunState(BaseModel):
     by whoever built it, the same way it is built.
     """
 
-    sop_id: str
-    """The SOP being run."""
-
     id: str = Field(default_factory=_generate_id)
     """The run identifier."""
 
     inputs: list[Msg] = Field(default_factory=list)
     """What the run was started with, and what its first step reads."""
 
-    steps: dict[str, SOPStepRunState] = Field(default_factory=dict)
-    """``step_id`` → how that step is going."""
+    steps: list[SOPStepRunState] = Field(default_factory=list)
+    """How each step is going, in the order the SOP declares them."""
 
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the run was created."""
@@ -124,7 +118,7 @@ class SOPRunState(BaseModel):
     @property
     def phase(self) -> SOPPhase:
         """Where the run stands, worked out from its steps."""
-        phases = [_.phase for _ in self.steps.values()]
+        phases = [_.phase for _ in self.steps]
         if not phases or all(_ is SOPPhase.PENDING for _ in phases):
             return SOPPhase.PENDING
         if any(_ is SOPPhase.FAILED for _ in phases):

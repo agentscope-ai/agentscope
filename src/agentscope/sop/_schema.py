@@ -23,7 +23,6 @@ from ..event import (
 from ..message import Msg, TextBlock, UserMsg
 from ..pipeline import PipelineProtocol
 from ..types import ReplyFinishedReason
-from .._utils._common import _generate_id
 
 
 class AgentLike(PipelineProtocol, Protocol):
@@ -64,7 +63,6 @@ class SOPStepBase(ABC):
         self,
         subject: str,
         description: str,
-        step_id: str | None = None,
         max_attempts: int = 3,
     ) -> None:
         """Initialize the step.
@@ -75,15 +73,12 @@ class SOPStepBase(ABC):
             description (`str`):
                 What this step must achieve — the destination, not the
                 route.
-            step_id (`str | None`, optional):
-                The step identifier, generated when omitted.
             max_attempts (`int`, defaults to `3`):
                 How many refusals before the run gives up on it. Enforced
                 by the engine, not here.
         """
         self.subject = subject
         self.description = description
-        self.id = step_id or _generate_id()
         self.max_attempts = max_attempts
 
     @abstractmethod
@@ -178,7 +173,6 @@ class SOPStep(SOPStepBase):
         description: str,
         executor: AgentLike,
         verifier: AgentLike | None = None,
-        step_id: str | None = None,
         max_attempts: int = 3,
     ) -> None:
         """Initialize the step.
@@ -194,12 +188,10 @@ class SOPStep(SOPStepBase):
             verifier (`AgentLike | None`, optional):
                 Judges it. ``None`` accepts whatever comes back, which is
                 right for a step that only has to happen.
-            step_id (`str | None`, optional):
-                The step identifier, generated when omitted.
             max_attempts (`int`, defaults to `3`):
                 How many refusals before the run gives up on it.
         """
-        super().__init__(subject, description, step_id, max_attempts)
+        super().__init__(subject, description, max_attempts)
         self.executor = executor
         self.verifier = verifier
 
@@ -397,7 +389,6 @@ class SOP:
         name: str,
         steps: list[SOPStepBase],
         description: str = "",
-        sop_id: str | None = None,
     ) -> None:
         """Initialize the procedure.
 
@@ -408,10 +399,7 @@ class SOP:
                 The steps, in the order they run.
             description (`str`, optional):
                 What this procedure is for.
-            sop_id (`str | None`, optional):
-                The SOP identifier, generated when omitted.
         """
         self.name = name
         self.steps = steps
         self.description = description
-        self.id = sop_id or _generate_id()

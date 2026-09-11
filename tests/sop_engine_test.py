@@ -24,6 +24,7 @@ from agentscope.sop import (
     SOPRunState,
     SOPPhase,
     SOPStep,
+    SOPStepRunState,
 )
 from agentscope.types import ReplyFinishedReason
 
@@ -103,10 +104,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
             name="demo",
             description="d",
             steps=[
-                SOPStep("A", "do a", first, step_id="a"),
-                SOPStep("B", "do b", second, step_id="b"),
+                SOPStep("A", "do a", first),
+                SOPStep("B", "do b", second),
             ],
-            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
 
@@ -118,12 +118,10 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             engine.state.model_dump(exclude={"inputs"}),
             {
-                "sop_id": "sop-1",
                 "id": AnyString(),
                 "created_at": AnyString(),
-                "steps": {
-                    "a": {
-                        "step_id": "a",
+                "steps": [
+                    {
                         "phase": SOPPhase.COMPLETED,
                         "given": [
                             {
@@ -166,8 +164,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                             },
                         ],
                     },
-                    "b": {
-                        "step_id": "b",
+                    {
                         "phase": SOPPhase.COMPLETED,
                         "given": [
                             {
@@ -224,7 +221,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                             },
                         ],
                     },
-                },
+                ],
             },
         )
 
@@ -252,8 +249,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
-            sop_id="sop-1",
+            steps=[SOPStep("A", "do a", executor, verifier)],
         )
         engine = SOPEngine(sop)
 
@@ -263,7 +259,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertIn("amount wrong", str(executor.asked[1]))
         self.assertIn("attempt 2 of 3", str(executor.asked[1]))
         self.assertListEqual(
-            [_.model_dump() for _ in engine.state.steps["a"].verifications],
+            [_.model_dump() for _ in engine.state.steps[0].verifications],
             [
                 {
                     "passed": False,
@@ -302,12 +298,10 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                     "do a",
                     executor,
                     verifier,
-                    step_id="a",
                     max_attempts=2,
                 ),
-                SOPStep("B", "do b", _Scripted("two", []), step_id="b"),
+                SOPStep("B", "do b", _Scripted("two", [])),
             ],
-            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
 
@@ -315,9 +309,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(engine.phase, SOPPhase.FAILED)
         # The step behind a failure was never reached.
-        self.assertDictEqual(
-            {_: state.phase for _, state in engine.state.steps.items()},
-            {"a": SOPPhase.FAILED, "b": SOPPhase.PENDING},
+        self.assertListEqual(
+            [_.phase for _ in engine.state.steps],
+            [SOPPhase.FAILED, SOPPhase.PENDING],
         )
 
     async def test_parking_in_the_executor_ends_the_stream(self) -> None:
@@ -330,8 +324,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
-            sop_id="sop-1",
+            steps=[SOPStep("A", "do a", executor, verifier)],
         )
         engine = SOPEngine(sop)
 
@@ -344,9 +337,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                 for _ in events
             ],
             [
-                ("SOP_STEP_STARTED", {"step_id": "a", "attempt": 1}),
+                ("SOP_STEP_STARTED", {"step": "A", "attempt": 1}),
                 RequireUserConfirmEvent,
-                ("SOP_STEP_ENDED", {"step_id": "a", "phase": "awaiting"}),
+                ("SOP_STEP_ENDED", {"step": "A", "phase": "awaiting"}),
             ],
         )
 
@@ -368,8 +361,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
-            sop_id="sop-1",
+            steps=[SOPStep("A", "do a", executor, verifier)],
         )
         engine = SOPEngine(sop)
 
@@ -392,8 +384,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", executor, verifier, step_id="a")],
-            sop_id="sop-1",
+            steps=[SOPStep("A", "do a", executor, verifier)],
         )
         engine = SOPEngine(sop)
 
@@ -414,10 +405,8 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                     "do a",
                     _Scripted("ex", [[_park()]]),
                     _Scripted("ve", []),
-                    step_id="a",
                 ),
             ],
-            sop_id="sop-1",
         )
         engine = SOPEngine(sop)
         await self._drive(engine, UserMsg(name="user", content="go"))
@@ -435,10 +424,8 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                         [[_finished("ex", {"handover": "did A"})]],
                     ),
                     _Scripted("ve", [[_finished("ve", {"passed": True})]]),
-                    step_id="a",
                 ),
             ],
-            sop_id="sop-1",
         )
         engine2 = SOPEngine(revived, SOPRunState.model_validate_json(stored))
 
@@ -449,19 +436,21 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(engine2.phase, SOPPhase.COMPLETED)
 
-    async def test_a_run_from_another_sop_is_refused(self) -> None:
-        """Loading somebody else's run is an error, not a surprise."""
+    async def test_a_run_from_an_edited_sop_is_refused(self) -> None:
+        """Editing the SOP retires the runs of the old one."""
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", _Scripted("ex", []), step_id="a")],
-            sop_id="sop-1",
+            steps=[SOPStep("A", "do a", _Scripted("ex", []))],
         )
         with self.assertRaises(ValueError) as ctx:
-            SOPEngine(sop, SOPRunState(sop_id="other"))
+            SOPEngine(
+                sop,
+                SOPRunState(steps=[SOPStepRunState(), SOPStepRunState()]),
+            )
         self.assertEqual(
             str(ctx.exception),
-            "State belongs to SOP other, not sop-1.",
+            "State has 2 steps, but this SOP has 1.",
         )
 
     async def test_an_interrupt_abandons_the_attempt_without_charging_it(
@@ -477,8 +466,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", executor, step_id="a")],
-            sop_id="sop-1",
+            steps=[SOPStep("A", "do a", executor)],
         )
         engine = SOPEngine(sop)
         await self._drive(engine, UserMsg(name="user", content="go"))
@@ -492,9 +480,8 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(executor.asked[1], UserInterruptEvent)
         self.assertEqual(len(executor.asked), 2)
         self.assertDictEqual(
-            engine.state.steps["a"].model_dump(),
+            engine.state.steps[0].model_dump(),
             {
-                "step_id": "a",
                 "phase": SOPPhase.PENDING,
                 # What the abandoned attempt was dispatched with stays on
                 # record; the next dispatch overwrites it.
@@ -528,7 +515,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(_.name, _.value) for _ in events if isinstance(_, CustomEvent)],
             [
-                ("SOP_STEP_STARTED", {"step_id": "a", "attempt": 1}),
-                ("SOP_STEP_ENDED", {"step_id": "a", "phase": "pending"}),
+                ("SOP_STEP_STARTED", {"step": "A", "attempt": 1}),
+                ("SOP_STEP_ENDED", {"step": "A", "phase": "pending"}),
             ],
         )

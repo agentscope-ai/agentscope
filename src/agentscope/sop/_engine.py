@@ -6,6 +6,7 @@ whichever one parked, and spends the attempt budget. It decides from
 each step's :class:`~._state.SOPStepRunState` alone, never from how the
 step reached it.
 """
+from itertools import zip_longest
 from typing import AsyncGenerator
 
 from ._schema import SOP
@@ -43,23 +44,24 @@ class SOPEngine:
 
         Raises:
             `ValueError`:
-                If the state belongs to a different SOP.
+                If the state has a different number of steps than the
+                SOP, which means the procedure was edited since.
         """
-        if state is not None and state.sop_id != sop.id:
+        self.state = state or SOPRunState()
+        if self.state.steps and len(self.state.steps) != len(sop.steps):
             raise ValueError(
-                f"State belongs to SOP {state.sop_id}, not {sop.id}.",
+                f"State has {len(self.state.steps)} steps, but this SOP "
+                f"has {len(sop.steps)}.",
             )
         self.sop = sop
-        self.state = state or SOPRunState(sop_id=sop.id)
-        for step in sop.steps:
-            # A stored run was read back as the base record; a step that
-            # keeps more than that gets it back through its own type.
-            stored = self.state.steps.get(step.id)
-            self.state.steps[step.id] = (
-                step.state_type.model_validate(stored.model_dump())
-                if stored is not None
-                else step.state_type(step_id=step.id)
-            )
+        # A stored run was read back as the base record; a step that
+        # keeps more than that gets it back through its own type.
+        self.state.steps = [
+            step.state_type.model_validate(stored.model_dump())
+            if stored is not None
+            else step.state_type()
+            for step, stored in zip_longest(sop.steps, self.state.steps)
+        ]
 
     @property
     def phase(self) -> SOPPhase:
@@ -100,7 +102,7 @@ class SOPEngine:
             )
 
         for index, step in enumerate(self.sop.steps):
-            record = self.state.steps[step.id]
+            record = self.state.steps[index]
             if record.phase is SOPPhase.COMPLETED:
                 continue
             if record.phase is SOPPhase.FAILED:
@@ -114,7 +116,7 @@ class SOPEngine:
                 yield CustomEvent(
                     name="SOP_STEP_STARTED",
                     value={
-                        "step_id": step.id,
+                        "step": step.subject,
                         "attempt": len(record.verifications) + 1,
                     },
                 )
@@ -125,7 +127,10 @@ class SOPEngine:
                     yield event
                 yield CustomEvent(
                     name="SOP_STEP_ENDED",
-                    value={"step_id": step.id, "phase": record.phase.value},
+                    value={
+                        "step": step.subject,
+                        "phase": record.phase.value,
+                    },
                 )
                 inputs, resuming = None, False
 
@@ -157,7 +162,7 @@ class SOPEngine:
                 name="sop",
                 content=[
                     TextBlock(text=f'<handover from="{previous.subject}">'),
-                    *(self.state.steps[previous.id].submission or []),
+                    *(self.state.steps[index - 1].submission or []),
                     TextBlock(text="</handover>"),
                 ],
             ),
