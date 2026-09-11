@@ -2,6 +2,7 @@
 """The message module in agentscope."""
 
 from ._block import (
+    BlockBase,
     ContentBlock,
     ContentBlockTypes,
     TextBlock,
@@ -19,6 +20,7 @@ from ._base import Msg, UserMsg, AssistantMsg, SystemMsg, Usage
 
 
 __all__ = [
+    "BlockBase",
     "TextBlock",
     "ThinkingBlock",
     "HintBlock",

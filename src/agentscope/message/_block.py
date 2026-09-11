@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The content blocks of messages."""
+from abc import abstractmethod
 from enum import StrEnum
 from typing import Literal, List, TypeAlias, Any
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
@@ -8,7 +9,24 @@ from .._utils._common import _generate_id, _generate_timestamp
 from ..permission import PermissionRule
 
 
-class TextBlock(BaseModel):
+class BlockBase(BaseModel):
+    """Base class for all content blocks.
+
+    Defines the polymorphic contract used by ``ChatModelBase.count_tokens``
+    to flatten a block into its text segments and count its nested data
+    blocks.
+    """
+
+    @abstractmethod
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+
+    @abstractmethod
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+
+
+class TextBlock(BlockBase):
     """The text block."""
 
     type: Literal["text"] = "text"
@@ -22,8 +40,16 @@ class TextBlock(BaseModel):
     finished_at: str | None = None
     """The finished time of the block"""
 
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+        return [self.text]
 
-class ThinkingBlock(BaseModel):
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+        return 0
+
+
+class ThinkingBlock(BlockBase):
     """The thinking block.
 
     Allows extra provider-specific fields (e.g. Anthropic's ``signature``,
@@ -51,6 +77,14 @@ class ThinkingBlock(BaseModel):
     """The creation time of the block"""
     finished_at: str | None = None
     """The finished time of the block"""
+
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+        return [self.thinking]
+
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+        return 0
 
 
 class Base64Source(BaseModel):
@@ -80,7 +114,7 @@ class URLSource(BaseModel):
         return str(url)
 
 
-class DataBlock(BaseModel):
+class DataBlock(BlockBase):
     """The data block for binary content (images, audio, video, etc.)."""
 
     type: Literal["data"] = "data"
@@ -97,8 +131,16 @@ class DataBlock(BaseModel):
     finished_at: str | None = None
     """The finished time of the block"""
 
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+        return []
 
-class HintBlock(BaseModel):
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+        return 1
+
+
+class HintBlock(BlockBase):
     """A block used to provide instructions or hints to the LLM during the
     reasoning-acting loop. When passed to the LLM API, the hint block is
     converted into a user message.
@@ -124,6 +166,21 @@ class HintBlock(BaseModel):
     finished_at: str | None = Field(default_factory=_generate_timestamp)
     """The finished time of the block"""
 
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+        if isinstance(self.hint, str):
+            return [self.hint]
+        texts: list[str] = []
+        for block in self.hint:
+            texts.extend(block.extract_text())
+        return texts
+
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+        if isinstance(self.hint, str):
+            return 0
+        return sum(block.count_data_blocks() for block in self.hint)
+
 
 class ToolCallState(StrEnum):
     """The state of the tool call."""
@@ -135,7 +192,7 @@ class ToolCallState(StrEnum):
     FINISHED = "finished"
 
 
-class ToolCallBlock(BaseModel):
+class ToolCallBlock(BlockBase):
     """The tool call block."""
 
     model_config = ConfigDict(use_enum_values=True)
@@ -181,6 +238,14 @@ class ToolCallBlock(BaseModel):
     finished_at: str | None = None
     """The finished time of the block"""
 
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+        return [self.input]
+
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+        return 0
+
 
 class ToolResultState(StrEnum):
     """The tool result state."""
@@ -192,7 +257,7 @@ class ToolResultState(StrEnum):
     RUNNING = "running"
 
 
-class ToolResultBlock(BaseModel):
+class ToolResultBlock(BlockBase):
     """The tool result block."""
 
     model_config = ConfigDict(use_enum_values=True)
@@ -214,6 +279,21 @@ class ToolResultBlock(BaseModel):
     """The creation time of the block"""
     finished_at: str | None = None
     """The finished time of the block"""
+
+    def extract_text(self) -> list[str]:
+        """Return the text segments contributed by this block."""
+        if isinstance(self.output, str):
+            return [self.output]
+        texts: list[str] = []
+        for block in self.output:
+            texts.extend(block.extract_text())
+        return texts
+
+    def count_data_blocks(self) -> int:
+        """Return the number of data blocks nested in this block."""
+        if isinstance(self.output, str):
+            return 0
+        return sum(block.count_data_blocks() for block in self.output)
 
 
 ContentBlock: TypeAlias = (
