@@ -34,6 +34,7 @@ from ...event import (
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
+    ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
     ToolResultEndEvent,
@@ -979,6 +980,15 @@ class RealtimeAgent:
                 reply_id=reply_id,
                 tool_call_id=call.id,
                 tool_call_name=call.name,
+            ),
+        )
+        # The provider delivers the arguments in one piece, so a single
+        # delta carries them; without it consumers rebuild an empty input.
+        self._emit(
+            ToolCallDeltaEvent(
+                reply_id=reply_id,
+                tool_call_id=call.id,
+                delta=call.input,
             ),
         )
         self._emit(ToolCallEndEvent(reply_id=reply_id, tool_call_id=call.id))

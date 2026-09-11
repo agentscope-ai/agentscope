@@ -661,6 +661,58 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
         )
         self.assertIn("tool_result(c1,'boom')", model.calls)
 
+    async def test_tool_call_arguments_reach_the_event_stream(self) -> None:
+        """A client rebuilding the reply from the event stream sees the
+        tool call's arguments, not an empty input."""
+        model = ScriptedModel([_tool_script("stream_tool")])
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            toolkit=Toolkit(tools=[StreamTool()]),
+        )
+        rebuilt = Msg(id="r1", role="assistant", name="Friday", content=[])
+        async with agent:
+            transport = FakeTransport(frames=4)
+            async with transport:
+                async for event in agent.reply_stream(transport):
+                    if getattr(event, "reply_id", None) == "r1":
+                        rebuilt.append_event(event)
+
+        self.assertListEqual(
+            [b.model_dump() for b in rebuilt.content],
+            [
+                {
+                    "type": "tool_call",
+                    "id": "c1",
+                    "name": "stream_tool",
+                    "input": '{"q": "x"}',
+                    "state": "finished",
+                    "suggested_rules": [],
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                },
+                {
+                    "type": "tool_result",
+                    "id": "c1",
+                    "name": "stream_tool",
+                    "output": [
+                        {
+                            "type": "text",
+                            "text": "x-ax-b",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "state": "success",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                },
+            ],
+        )
+
 
 class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
     """The complete event stream of a turn that calls a tool and then
@@ -865,6 +917,15 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "reply_id": "r1",
                     "tool_call_id": "c1",
                     "tool_call_name": "stream_tool",
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {},
+                    "type": "TOOL_CALL_DELTA",
+                    "reply_id": "r1",
+                    "tool_call_id": "c1",
+                    "delta": '{"q": "x"}',
                 },
                 {
                     "id": AnyString(),
