@@ -1074,7 +1074,63 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
         )
 
     # ------------------------------------------------------------------
-    # 14) stream usage carried by a trailing usage-only chunk
+    # 14) stream tool-call metadata carried by a later delta
+    # ------------------------------------------------------------------
+    async def test_stream_tool_call_metadata_on_later_delta(self) -> None:
+        """Provider metadata on a later tool-call delta must survive."""
+        deltas = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="search",
+                        input='{"query":',
+                    ),
+                ],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="",
+                        input='"hello"}',
+                        thought_signature="sig-abc",
+                    ),
+                ],
+                is_last=False,
+                id="chunk-2",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "tool_call",
+                        "id": "tool-1",
+                        "name": "search",
+                        "input": '{"query":"hello"}',
+                        "state": "pending",
+                        "suggested_rules": [],
+                        "thought_signature": "sig-abc",
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 15) stream usage carried by a trailing usage-only chunk
     # ------------------------------------------------------------------
     async def test_stream_usage_absorbed_into_accumulated(self) -> None:
         """OpenAI-compatible APIs emit a trailing usage-only chunk with
