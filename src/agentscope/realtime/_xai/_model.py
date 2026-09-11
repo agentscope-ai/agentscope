@@ -113,6 +113,17 @@ class XAIRealtimeModel(RealtimeModelBase):
                 f"{credential.api_key.get_secret_value()}",
             },
         )
+
+        # A previous session leaves its terminal SessionEndedEvent and the
+        # None sentinel in the queue, and a reader that is still running
+        # would add them after the drain. Stop that reader first (its
+        # finally block enqueues the terminal events), then empty the queue
+        # so a new events() iterator only sees this session.
+        if self._reader is not None:
+            self._reader.cancel()
+            await asyncio.gather(self._reader, return_exceptions=True)
+        while not self._queue.empty():
+            self._queue.get_nowait()
         self._reader = asyncio.create_task(self._read(), name="xai-rt")
         await self._send(self._session_update(instructions, tools))
 
