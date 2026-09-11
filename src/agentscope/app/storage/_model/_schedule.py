@@ -104,6 +104,12 @@ class ScheduleData(BaseModel):
         "retrieval.",
     )
 
+    channel_id: str | None = Field(
+        default=None,
+        description="Optional channel whose schedule-specific tools are "
+        "explicitly authorized for this unattended task.",
+    )
+
 
 class ScheduleRecord(_RecordBase):
     """Persisted schedule record."""

@@ -40,6 +40,7 @@ class _FakeChannel(ChannelBase):
     channel_type = "fake"
     display_name = "Fake"
     platform_bot_id_field = "bot_id"
+    supports_scheduled_tools = True
 
     class Credentials(BaseModel):
         """Credentials for the fake platform."""
@@ -108,13 +109,26 @@ class _Storage:
         return self.record
 
 
-def _record(bot_id: str = "bot-1", enabled: bool = True) -> ChannelRecord:
+class _UnsupportedChannel(_FakeChannel):
+    """A registered adapter that does not opt in to scheduled tools."""
+
+    channel_type = "unsupported"
+    supports_scheduled_tools = False
+
+
+def _record(
+    bot_id: str = "bot-1",
+    enabled: bool = True,
+    *,
+    channel_type: str = "fake",
+    user_id: str = "owner-1",
+) -> ChannelRecord:
     """Build a minimal enabled channel record for the fake platform."""
     now = datetime.now().isoformat()
     return ChannelRecord(
         id="chan-1",
-        channel_type="fake",
-        user_id="owner-1",
+        channel_type=channel_type,
+        user_id=user_id,
         enabled=enabled,
         credentials={"bot_id": bot_id},
         routing=RoutingConfig(
@@ -218,6 +232,66 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
             type_registry=ChannelTypeRegistry([]),
         )
         self.assertIsNone(await clients.get("chan-1"))
+
+    async def test_scheduled_client_accepts_owned_disabled_channel(
+        self,
+    ) -> None:
+        """Scheduled tools need REST only, not an inbound connection."""
+        clients = self._clients(_Storage(_record(enabled=False)))
+
+        channel = await clients.get_scheduled("chan-1", "owner-1")
+
+        self.assertIsInstance(channel, _FakeChannel)
+        self.assertFalse(channel.listened)
+
+    async def test_scheduled_client_revalidates_owner_and_capability(
+        self,
+    ) -> None:
+        """Stale or forged schedule references fail closed."""
+        storage = _Storage(_record(enabled=False, user_id="another-user"))
+        clients = self._clients(storage)
+        self.assertIsNone(await clients.get_scheduled("chan-1", "owner-1"))
+
+        storage.record = _record(
+            enabled=False,
+            channel_type="unsupported",
+        )
+        clients = ChannelClients(
+            storage=storage,
+            message_bus=InMemoryMessageBus(),
+            type_registry=ChannelTypeRegistry(
+                [_FakeChannel, _UnsupportedChannel],
+            ),
+        )
+        self.assertIsNone(await clients.get_scheduled("chan-1", "owner-1"))
+
+    async def test_scheduled_client_final_check_rejects_rotation(
+        self,
+    ) -> None:
+        """A client borrowed before a record update is no longer current."""
+        storage = _Storage(_record(enabled=False))
+        clients = self._clients(storage)
+        channel = await clients.get_scheduled("chan-1", "owner-1")
+        self.assertIsNotNone(channel)
+        self.assertTrue(
+            await clients.is_scheduled_current(
+                "chan-1",
+                "owner-1",
+                channel,
+            ),
+        )
+
+        rotated = _record(enabled=False, bot_id="bot-2")
+        rotated.updated_at = "2099-01-01T00:00:00"
+        storage.record = rotated
+
+        self.assertFalse(
+            await clients.is_scheduled_current(
+                "chan-1",
+                "owner-1",
+                channel,
+            ),
+        )
 
 
 class ChannelDeliveryTest(IsolatedAsyncioTestCase):

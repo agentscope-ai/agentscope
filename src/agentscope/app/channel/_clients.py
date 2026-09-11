@@ -125,10 +125,103 @@ class ChannelClients:
             `ChannelBase | None`: The instance, or ``None`` when the
             record is gone, disabled, or its type is not registered.
         """
+        return await self._get(channel_id)
+
+    async def get_scheduled(
+        self,
+        channel_id: str,
+        user_id: str,
+    ) -> ChannelBase | None:
+        """Return a schedule-authorised REST client for ``channel_id``.
+
+        Unlike :meth:`get`, this accepts a disabled record: no long
+        connection is opened, so using its explicit scheduled-tool whitelist
+        does not re-enable inbound traffic. Ownership and adapter capability
+        are revalidated for stale or legacy schedule records.
+
+        Args:
+            channel_id (`str`): The selected channel.
+            user_id (`str`): Owner of the scheduled run.
+
+        Returns:
+            `ChannelBase | None`: A capable owned client, otherwise ``None``.
+        """
+        return await self._get(
+            channel_id,
+            allow_disabled=True,
+            expected_user_id=user_id,
+            require_scheduled_tools=True,
+        )
+
+    async def is_scheduled_current(
+        self,
+        channel_id: str,
+        user_id: str,
+        channel: ChannelBase,
+    ) -> bool:
+        """Revalidate a borrowed schedule client before exposing its tools.
+
+        Args:
+            channel_id (`str`): Selected channel id.
+            user_id (`str`): Owner of the scheduled run.
+            channel (`ChannelBase`): Client returned by
+                :meth:`get_scheduled` earlier in the same assembly.
+
+        Returns:
+            `bool`: Whether the record, owner, capability, version, and cached
+            client identity still match.
+        """
+        try:
+            record = await self._storage.get_channel(channel_id)
+        except Exception:  # pylint: disable=broad-except
+            return False
+        if record is None or record.user_id != user_id:
+            return False
+        channel_cls = self._types.get(record.channel_type)
+        if channel_cls is None or not channel_cls.supports_scheduled_tools:
+            return False
+        cached = self._cache.get(channel_id)
+        return (
+            cached is not None
+            and cached[0] == str(record.updated_at)
+            and cached[1] is channel
+        )
+
+    async def _get(
+        self,
+        channel_id: str,
+        *,
+        allow_disabled: bool = False,
+        expected_user_id: str | None = None,
+        require_scheduled_tools: bool = False,
+    ) -> ChannelBase | None:
+        """Build one cached client after applying access/capability gates.
+
+        Args:
+            channel_id (`str`): Channel record to resolve.
+            allow_disabled (`bool`): Whether a disabled record is usable.
+            expected_user_id (`str | None`): Required owner when provided.
+            require_scheduled_tools (`bool`): Require the adapter's explicit
+                scheduled-tool capability.
+
+        Returns:
+            `ChannelBase | None`: A matching client, otherwise ``None``.
+        """
         record = await self._storage.get_channel(channel_id)
-        if record is None or not record.enabled:
+        if record is None:
             self._retire(channel_id)
             return None
+        if not allow_disabled and not record.enabled:
+            self._retire(channel_id)
+            return None
+        if expected_user_id is not None and record.user_id != expected_user_id:
+            self._retire(channel_id)
+            return None
+        if require_scheduled_tools:
+            channel_cls = self._types.get(record.channel_type)
+            if channel_cls is None or not channel_cls.supports_scheduled_tools:
+                self._retire(channel_id)
+                return None
 
         version = str(record.updated_at)
         cached = self._cache.get(channel_id)
