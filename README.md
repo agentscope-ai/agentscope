@@ -31,6 +31,7 @@
             alt="pypi"
         />
     </a>
+<a href="https://inspect.software/software/agentscope-ai/agentscope"><img src="https://raw.githubusercontent.com/inspect-software/badges/main/v1/a/agentscope-ai/agentscope.svg" alt="inspect.software score badge for agentscope-ai/agentscope" /></a>
     <a href="https://discord.gg/eYMpfnkG8h">
         <img
             src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white"
