@@ -5,6 +5,9 @@ import asyncio
 import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
+
+from pydantic import BaseModel
 
 from utils import AnyString, MockModel
 
@@ -78,6 +81,12 @@ class StructuredOutputStrategyMockModel(MockModel):
                 raise response
             return response
         return StructuredResponse(content={})
+
+
+class _ThinkingParameters(BaseModel):
+    """Model parameters used to exercise the common thinking guard."""
+
+    thinking_enable: bool
 
 
 def _dump(chat_response: ChatResponse) -> dict:
@@ -164,6 +173,39 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_non_stream_warns_on_unexpected_thinking(self) -> None:
+        """Disabled thinking warns while preserving a non-stream response."""
+        self.model.parameters = _ThinkingParameters(thinking_enable=False)
+        response = ChatResponse(
+            content=[ThinkingBlock(thinking="unexpected", id="think-1")],
+            is_last=True,
+        )
+        self.model.set_responses([response])
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            result = await self.model(messages=self.messages)
+
+        self.assertIs(result, response)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("thinking is disabled", captured.output[0])
+
+    async def test_non_stream_does_not_warn_when_thinking_enabled(
+        self,
+    ) -> None:
+        """Expected thinking content does not produce a warning."""
+        self.model.parameters = _ThinkingParameters(thinking_enable=True)
+        response = ChatResponse(
+            content=[ThinkingBlock(thinking="expected", id="think-1")],
+            is_last=True,
+        )
+        self.model.set_responses([response])
+
+        with patch("agentscope.model._base.logger.warning") as mock_warning:
+            result = await self.model(messages=self.messages)
+
+        self.assertIs(result, response)
+        mock_warning.assert_not_called()
+
     # ------------------------------------------------------------------
     # 2) non-stream CancelledError raised from inside _call_api
     # ------------------------------------------------------------------
@@ -240,6 +282,31 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_warns_once_on_unexpected_thinking(self) -> None:
+        """Multiple unexpected thinking deltas produce one warning."""
+        self.model.parameters = _ThinkingParameters(thinking_enable=False)
+        deltas = [
+            ChatResponse(
+                content=[ThinkingBlock(thinking="un", id="think-1")],
+                is_last=False,
+            ),
+            ChatResponse(
+                content=[ThinkingBlock(thinking="expected", id="think-1")],
+                is_last=False,
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            gen = await self.model(messages=self.messages)
+            responses = [response async for response in gen]
+
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("thinking is disabled", captured.output[0])
+        self.assertEqual(len(responses[-1].content), 1)
+        self.assertIsInstance(responses[-1].content[0], ThinkingBlock)
+        self.assertEqual(responses[-1].content[0].thinking, "unexpected")
 
     # ------------------------------------------------------------------
     # 4) stream CancelledError raised while consuming the generator

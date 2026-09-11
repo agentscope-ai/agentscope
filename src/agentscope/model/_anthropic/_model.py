@@ -184,6 +184,10 @@ class AnthropicChatModel(ChatModelBase):
             return self.parameters.thinking_mode
         return "enabled" if self.parameters.thinking_enable else None
 
+    def _is_thinking_disabled(self) -> bool:
+        """Whether the effective Anthropic thinking mode is disabled."""
+        return self._thinking_mode() in (None, "disabled")
+
     async def _call_api(
         self,
         model_name: str,
