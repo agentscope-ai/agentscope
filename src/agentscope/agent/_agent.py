@@ -743,6 +743,26 @@ class Agent:
             estimated_tokens = await self.model.count_tokens(**kwargs)
             self._update_context_usage(estimated_tokens, cfg)
 
+            # The compression call is not covered by the model call events,
+            # so record its cost on the context tail to keep it in the token
+            # accounting
+            if res is not None and res.usage is not None:
+                if not self.state.context:
+                    # The whole context is compressed, so carry the cost by an
+                    # empty message, which is skipped by the formatters
+                    self.state.append_context(self.name, [])
+
+                self.state.context[-1].append_usage(
+                    Usage(
+                        input_tokens=res.usage.input_tokens,
+                        output_tokens=res.usage.output_tokens,
+                        cache_input_tokens=res.usage.cache_input_tokens or 0,
+                        cache_creation_input_tokens=(
+                            res.usage.cache_creation_input_tokens or 0
+                        ),
+                    ),
+                )
+
             logger.info(
                 "[AGENT %s]: The context compression finished.",
                 self.name,
@@ -1790,7 +1810,9 @@ class Agent:
             list(completed_response.content),
             completed_response.usage,
         )
-        kwargs = await self._prepare_model_input()
+        kwargs = await self._prepare_model_input(
+            system_prompt=kwargs["messages"][0].content,
+        )
         estimated_tokens = await self.model.count_tokens(**kwargs)
         self._update_context_usage(estimated_tokens, self.context_config)
 
@@ -1997,6 +2019,13 @@ class Agent:
         elif isinstance(event, ExternalExecutionResultEvent):
             # Directly append the execution results into context
             for tool_result in event.execution_results:
+                # Whoever executed this promised a shape; a result that
+                # breaks it is their bug to fix, and the reply stays
+                # parked so they can send it again.
+                tool = await self.toolkit.get_tool(tool_result.name)
+                if tool is not None:
+                    await tool.check_external_result(tool_result)
+
                 async for evt in self._convert_tool_chunk_to_event(
                     tool_result.id,
                     tool_result.output,
@@ -2487,7 +2516,7 @@ class Agent:
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
-                    f"{e.message}",
+                    f"{e.message} (at {e.json_path})",
                 ) from e
 
         # The exceptions that
@@ -3221,7 +3250,10 @@ class Agent:
 
         return result
 
-    async def _prepare_model_input(self) -> dict[str, Any]:
+    async def _prepare_model_input(
+        self,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
         the current context.
 
@@ -3231,7 +3263,14 @@ class Agent:
         """
         # The system prompt
         messages = [
-            SystemMsg(name="system", content=await self._get_system_prompt()),
+            SystemMsg(
+                name="system",
+                content=(
+                    system_prompt
+                    if system_prompt is not None
+                    else await self._get_system_prompt()
+                ),
+            ),
         ]
         # The compressed summary
         if self.state.summary:
@@ -3474,17 +3513,8 @@ class Agent:
 
         self.state.append_context(self.name, persisted_blocks)
 
-        tail = self.state.context[-1]
         if msg_usage is not None:
-            if tail.usage is None:
-                tail.usage = msg_usage
-            else:
-                tail.usage.input_tokens += msg_usage.input_tokens
-                tail.usage.output_tokens += msg_usage.output_tokens
-                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
-                tail.usage.cache_creation_input_tokens += (
-                    msg_usage.cache_creation_input_tokens
-                )
+            self.state.context[-1].append_usage(msg_usage)
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""

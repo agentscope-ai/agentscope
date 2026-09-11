@@ -92,6 +92,12 @@ class _JsonRecordMixin(_Base):
     # Populated by subclasses; see class docstring.
     _record_cls: ClassVar[type]
     _indexed_fields: ClassVar[tuple[str, ...]] = ()
+    _index_paths: ClassVar[dict[str, str]] = {}
+
+    @classmethod
+    def get_index_paths(cls) -> dict[str, str]:
+        """Return ``column -> dotted path`` for columns fed from nesting."""
+        return cls._index_paths
 
     @classmethod
     def get_indexed_fields(cls) -> tuple[str, ...]:
@@ -170,10 +176,16 @@ class SessionRow(_JsonRecordMixin):
     _indexed_fields = (
         "user_id",
         "agent_id",
-        "source",
-        "source_schedule_id",
         "team_id",
     )
+
+    # Fed from inside ``source``, which is a tagged union rather than a
+    # flat field. Same column names and same indexes as before the
+    # nesting, so no migration is needed.
+    _index_paths: ClassVar[dict[str, str]] = {
+        "source": "origin.type",
+        "source_schedule_id": "origin.schedule_id",
+    }
 
 
 class ScheduleRow(_JsonRecordMixin):

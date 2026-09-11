@@ -111,10 +111,25 @@ export interface AgentSchemaV2Response {
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule' | 'channel';
+/** How a session came to exist — fixed when it is created. */
+export type SessionOrigin =
+	| { type: 'user' }
+	| { type: 'schedule'; schedule_id: string }
+	| {
+			type: 'channel';
+			channel_id: string;
+			chat_id: string;
+			chat_name: string | null;
+	  }
+	| { type: 'team' };
+
+/** The tag of a {@link SessionOrigin}. */
+export type SessionSourceKind = SessionOrigin['type'];
 
 export interface SessionConfig {
 	name: string;
+	/** Who owns `name` — see the backend's `SessionNaming`. */
+	naming: { auto: boolean };
 	chat_model_config: ChatModelConfig;
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
@@ -145,9 +160,7 @@ export interface AgentState extends Record<string, unknown> {
 export interface SessionRecord extends RecordBase {
 	user_id: string;
 	agent_id: string;
-	source: SessionSource;
-	source_schedule_id: string | null;
-	source_channel_id: string | null;
+	origin: SessionOrigin;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called

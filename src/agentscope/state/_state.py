@@ -124,6 +124,11 @@ class ToolContext(BaseModel):
             if entry.file_path != file_path
         ]
 
+        # An entry that cannot fit even in an empty cache must not evict
+        # unrelated entries or make the configured byte limit ineffective.
+        if new_entry_bytes > self.max_cache_bytes:
+            return
+
         # Evict the oldest entries if exceeding max_cache_files
         while len(self.read_file_cache) >= self.max_cache_files:
             self.read_file_cache.pop(0)

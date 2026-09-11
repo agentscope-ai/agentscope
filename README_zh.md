@@ -72,16 +72,16 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-09] `功能`:** [agentscope-skill](https://github.com/agentscope-ai/skills/tree/main/skills/agentscope-skill) 已适配 AgentScope v2。
+- **[2026-09] `集成`:** `RealtimeAgent` 支持 DashScope、OpenAI、Gemini 与 xAI 的实时语音 API。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/full-duplex)
+- **[2026-09] `功能` `实验性`:** 支持实时语音智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/overview)
+- **[2026-09] `功能`:** 支持 A2A 协议 —— 通过 `A2AAgent` 与任意远端 A2A 智能体对话。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/a2a)
 - **[2026-08] `功能`:** 支持流水线 —— 按照固化逻辑运行多智能体，并向外提供统一接口。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/overview)
 - **[2026-08] `集成`:** 支持钉钉（DingTalk）频道。[文档](https://docs.agentscope.io/latest/zh/deploy/channel/dingtalk)
 - **[2026-08] `功能`:** 支持 Console —— 在终端中测试与调试智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
 - **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
 - **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
 - **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
-- **[2026-08] `功能`:** 支持 MCP & Skill Hub —— 浏览 hub、安装到个人库、再添加到工作区。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
-- **[2026-07] `集成`:** 集成 Daytona 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
-- **[2026-07] `集成`:** 集成 K8s，OpenSandbox 工作区/沙箱实现。 [文档](https://docs.agentscope.io/latest/en/building-blocks/workspace)
-- **[2026-07] `集成`:** 集成 ReMe 长期记忆。 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/long-term-memory)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
@@ -127,7 +127,7 @@ SDK 层 —— 用一整套丰富的构建模块组合出你的智能体：
 |---|---|
 | [**ReAct**](https://docs.agentscope.io/latest/zh/building-blocks/agent/overview) | 推理-行动循环，支持结构化输出、实时中断与恢复、以及批量（顺序 / 并发）工具执行 |
 | [**工具集**](https://docs.agentscope.io/latest/zh/building-blocks/tool/overview) | 智能体自主工具管理（囊括 Python 工具、MCP 与 Skill）；内置编码工具（Shell、文件编辑、搜索）与任务/规划工具开箱即用 |
-| [**模型**](https://docs.agentscope.io/latest/zh/building-blocks/model/overview) | LLM、Embedding、TTS，覆盖主流厂商（OpenAI、Anthropic、Gemini、DashScope、DeepSeek、Moonshot、xAI、Ollama） |
+| [**模型**](https://docs.agentscope.io/latest/zh/building-blocks/model/overview) | LLM、Embedding、TTS，覆盖主流厂商（OpenAI、Anthropic、Gemini、DashScope、DeepSeek、Moonshot、Volcengine、xAI、Ollama） |
 | [**上下文**](https://docs.agentscope.io/latest/zh/building-blocks/context/overview) | 自动压缩、工具结果卸载、以及上下文注入（系统提示、RAG、记忆），均由内置中间件实现 |
 | [**事件系统**](https://docs.agentscope.io/latest/zh/building-blocks/message-and-event) | 统一事件总线，将推理、工具调用与多模态内容（文本、图像、音频）流式推送到前端 |
 | [**权限与 HITL**](https://docs.agentscope.io/latest/zh/building-blocks/permission-system/overview) | 对工具和资源的细粒度控制、确认、bypass 模式 |

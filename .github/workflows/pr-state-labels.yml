@@ -1,0 +1,54 @@
+name: PR State Labels
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize, edited]
+  workflow_run:
+    workflows: [PR Review Relay]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  actions: read
+
+env:
+  MAINTAINERS: DavdGao qbc2016
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  # New commits (or a fresh PR) hand the ball back to the maintainers.
+  on-push:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    env:
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - if: github.event.action != 'edited' && !github.event.pull_request.draft
+        run: |
+          gh pr edit "$PR" --add-label "state: awaiting review" --remove-label "state: awaiting changes"
+
+      - if: github.event.action == 'opened' || github.event.action == 'edited'
+        run: |
+          linked=$(gh pr view "$PR" --json closingIssuesReferences --jq '.closingIssuesReferences | length')
+          if [ "$linked" = 0 ]; then
+            gh pr edit "$PR" --add-label "no linked issue"
+          else
+            gh pr edit "$PR" --remove-label "no linked issue"
+          fi
+
+  # A maintainer review hands the ball to the author.
+  on-review:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh run download ${{ github.event.workflow_run.id }} -n review
+      - run: |
+          read -r number author reviewer state < <(jq -r '"\(.number) \(.author) \(.reviewer) \(.state)"' review.json)
+          case " $MAINTAINERS " in *" $reviewer "*) ;; *) exit 0 ;; esac
+          if [ "$reviewer" = "$author" ]; then exit 0; fi
+          if [ "$state" = approved ]; then
+            gh pr edit "$number" --remove-label "state: awaiting review" --remove-label "state: awaiting changes"
+          else
+            gh pr edit "$number" --add-label "state: awaiting changes" --remove-label "state: awaiting review"
+          fi

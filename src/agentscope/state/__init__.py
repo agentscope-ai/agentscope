@@ -9,6 +9,8 @@ from ._state import (
     ToolContext,
 )
 from ._task import Task
+from ._a2a_state import A2AAgentState
+
 
 __all__ = [
     "Task",
@@ -17,4 +19,5 @@ __all__ = [
     "ReplyContext",
     "ToolContext",
     "AgentState",
+    "A2AAgentState",
 ]

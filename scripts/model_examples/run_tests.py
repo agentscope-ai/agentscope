@@ -169,6 +169,13 @@ ALL_PROVIDERS: list[Provider] = [
         description="Moonshot AI (Kimi) models",
     ),
     Provider(
+        name="volcengine",
+        env_var="VOLCENGINE_API_KEY",
+        file_prefix="volcengine",
+        supported_tests=["call", "multiagent"],
+        description="Volcengine Ark / Doubao models",
+    ),
+    Provider(
         name="xai",
         env_var="XAI_API_KEY",
         file_prefix="xai",

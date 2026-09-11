@@ -22,14 +22,14 @@ from ..._logging import logger
 from ...message import DataBlock, HintBlock, TextBlock, UserMsg
 from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox, enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     ChannelRecord,
     ChatModelConfig,
     SessionConfig,
     SessionScope,
-    SessionSource,
+    ChannelOrigin,
     StorageBase,
 )
 from ..workspace_manager import WorkspaceManagerBase
@@ -132,7 +132,12 @@ class ChannelGateway:
             event.channel_id,
         ):
             target = (session.agent_id, session.id)
-            if target == guess or session.source_chat_id != event.chat_id:
+            chat_id = (
+                session.origin.chat_id
+                if isinstance(session.origin, ChannelOrigin)
+                else None
+            )
+            if target == guess or chat_id != event.chat_id:
                 continue
             if await self._resume(record.user_id, target, event):
                 return
@@ -205,9 +210,12 @@ class ChannelGateway:
         # A reply already in flight → inject the input as a hint so the
         # live run folds it in. Otherwise start a fresh user turn.
         if await self._bus.is_locked(MessageBusKeys.session_lock(session_id)):
-            await self._bus.queue_push(
-                MessageBusKeys.inbox(session_id),
-                HintBlock(
+            await deliver_to_inbox(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                payload=HintBlock(
                     hint=content,
                     source=json.dumps(
                         {
@@ -315,10 +323,12 @@ class ChannelGateway:
             config=session_config,
             state=initial_state,
             session_id=session_id,
-            source=SessionSource.CHANNEL,
-            source_chat_id=event.chat_id,
-            source_chat_name=event.chat_name or None,
-            source_channel_id=record.id,
+            origin=ChannelOrigin(
+                channel_id=record.id,
+                chat_id=event.chat_id,
+                chat_name=event.chat_name or None,
+                channel_user_id=event.channel_user_id or None,
+            ),
         )
 
     @staticmethod

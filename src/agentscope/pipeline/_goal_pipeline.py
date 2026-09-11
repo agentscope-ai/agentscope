@@ -36,7 +36,7 @@ class _VerificationResult(BaseModel):
 
     result: Literal["pass", "fail", "impossible"] = Field(
         description=(
-            "The verfication result, which can be 'pass', 'fail', or "
+            "The verification result, which can be 'pass', 'fail', or "
             "'impossible'. 'impossible' means the given goal is impossible to "
             "achieve, and the executor should stop trying."
         ),
@@ -303,6 +303,10 @@ class GoalPipeline:
                     break_loop = True
                 else:
                     self._iters += 1
+                    if self.verifier_reset_context:
+                        # Only the conversation, tool/task state stays
+                        self.verifier.state.context.clear()
+                        self.verifier.state.summary = ""
                     if self._iters >= self.max_iters:
                         # Out of attempts; the work never passed
                         break_loop = True

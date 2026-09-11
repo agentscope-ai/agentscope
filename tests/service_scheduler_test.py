@@ -38,7 +38,7 @@ from agentscope.app.storage import (
     RedisStorage,
     ScheduleData,
     ScheduleRecord,
-    SessionSource,
+    ScheduleOrigin,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
@@ -150,14 +150,8 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
         self.assertEqual(len(sessions), 1)
         session = sessions[0]
         self.assertEqual(
-            {
-                "source": session.source,
-                "source_schedule_id": session.source_schedule_id,
-            },
-            {
-                "source": SessionSource.SCHEDULE,
-                "source_schedule_id": record.id,
-            },
+            session.origin,
+            ScheduleOrigin(schedule_id=record.id),
         )
 
         # Inbox has the wrapped HintBlock.
