@@ -407,6 +407,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "connect(session=1,td_off=True)",
                 "push_audio",
                 "commit_turn",
+                "request_response",
                 "push_audio",
                 "push_audio",
                 "close",
