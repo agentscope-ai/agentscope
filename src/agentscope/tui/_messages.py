@@ -683,10 +683,15 @@ class MessageUI(Vertical):
             if isinstance(widget, Widget) and widget.is_mounted:
                 await widget.remove()
         self._block_uis = next_widgets
-        previous_widget = self.query_one(".as-message-header", Static)
-        for widget in ordered:
-            self.move_child(widget, after=previous_widget)
-            previous_widget = widget
+        if new_keys != old_keys or retained != old_widgets:
+            # Reordering detaches and reinserts every block, so only do it
+            # when the layout actually changed — not on every delta. A
+            # rebuilt widget (a tool group, say) is mounted at the end,
+            # so it counts even when the keys are the same.
+            previous_widget = self.query_one(".as-message-header", Static)
+            for widget in ordered:
+                self.move_child(widget, after=previous_widget)
+                previous_widget = widget
 
 
 class MessagesUI(VerticalScroll):
