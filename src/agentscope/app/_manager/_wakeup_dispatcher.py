@@ -61,6 +61,10 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
 # to avoid a hot re-enqueue loop while the lock is held.
 _RESUME_RETRY_BACKOFF_SECS = 0.1
 
+# Keep each queue operation bounded while allowing startup to consume a
+# backlog over multiple calls.
+_WAKEUP_DRAIN_BATCH_SIZE = 64
+
 
 class WakeupDispatcher:
     """One asyncio task per process, draining the shared trigger queue.
@@ -127,7 +131,9 @@ class WakeupDispatcher:
             name="wakeup-dispatcher",
         )
         await ready.wait()
-        await self._drain_and_dispatch()
+        while True:
+            if not await self._drain_and_dispatch():
+                break
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -175,17 +181,23 @@ class WakeupDispatcher:
                 "WakeupDispatcher loop crashed; subscription ended.",
             )
 
-    async def _drain_and_dispatch(self) -> None:
-        """Read up to a batch of trigger entries and dispatch each."""
+    async def _drain_and_dispatch(self) -> bool:
+        """Read a batch of trigger entries and dispatch each.
+
+        Returns:
+            `bool`:
+                Whether the queue returned a full batch and may still have
+                more entries to drain.
+        """
         try:
             raw_entries = await self._bus.queue_drain(
                 MessageBusKeys.wakeup_queue(),
-                max_count=64,
+                max_count=_WAKEUP_DRAIN_BATCH_SIZE,
             )
             entries = [payload for _, payload in raw_entries]
         except Exception:  # pylint: disable=broad-except
             logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
-            return
+            return False
 
         for payload in entries:
             try:
@@ -207,6 +219,8 @@ class WakeupDispatcher:
                 kind=kind,
                 raw_input=payload.get("input"),
             )
+
+        return len(raw_entries) == _WAKEUP_DRAIN_BATCH_SIZE
 
     async def _dispatch_one(
         self,
