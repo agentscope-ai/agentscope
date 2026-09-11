@@ -345,11 +345,26 @@ def _flatten_json_schema(schema: dict) -> dict:
     if not defs:
         return schema
 
-    def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
+    schema_map_keywords = {
+        "properties",
+        "patternProperties",
+        "dependentSchemas",
+        "dependencies",
+    }
+
+    def _resolve_ref(
+        obj: Any,
+        visited: frozenset = frozenset(),
+        is_schema_map: bool = False,
+    ) -> Any:
         if isinstance(obj, list):
             return [_resolve_ref(item, visited) for item in obj]
         if not isinstance(obj, dict):
             return obj
+        if is_schema_map:
+            return {
+                key: _resolve_ref(value, visited) for key, value in obj.items()
+            }
         if "$ref" in obj:
             ref_path = obj["$ref"]
             if isinstance(ref_path, str) and (
@@ -377,6 +392,7 @@ def _flatten_json_schema(schema: dict) -> dict:
                             resolved[key] = _resolve_ref(
                                 value,
                                 visited | {def_name},
+                                key in schema_map_keywords,
                             )
                     return resolved
             return obj
@@ -384,7 +400,11 @@ def _flatten_json_schema(schema: dict) -> dict:
         for key, value in obj.items():
             if key in ("$defs", "definitions"):
                 continue
-            result[key] = _resolve_ref(value, visited)
+            result[key] = _resolve_ref(
+                value,
+                visited,
+                key in schema_map_keywords,
+            )
         return result
 
     return _resolve_ref(schema)
