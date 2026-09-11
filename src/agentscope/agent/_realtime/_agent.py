@@ -989,6 +989,7 @@ class RealtimeAgent:
                 self.state.tool_context.activated_groups,
             )
             tool_input = _json_loads_with_repair(call.input, tool.input_schema)
+            tool.validate_input(tool_input)
         except Exception as exc:  # noqa: BLE001
             await self._report_tool(reply_id, call, str(exc))
             return
