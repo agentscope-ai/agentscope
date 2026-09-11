@@ -132,6 +132,27 @@ READ_ONLY_COMMANDS = {
     "pip show",
 }
 
+# AST node types that only group other statements. The split traverses
+# into them and collects the statements they contain.
+COMPOUND_NODE_TYPES = {
+    "program",
+    "list",
+    "pipeline",
+    "command_list",
+    "redirected_statement",
+    "negated_command",
+}
+
+# AST node types that carry no statement of their own, so nothing is
+# collected from them (a redirect target is not a command, and the read-only
+# check rejects output redirections separately).
+NON_STATEMENT_NODE_TYPES = {
+    "comment",
+    "file_redirect",
+    "heredoc_redirect",
+    "herestring_redirect",
+}
+
 FIND_MUTATING_PREDICATES = {
     "-delete",
     "-exec",
@@ -155,8 +176,11 @@ class BashCommandParser:
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
-        For compound commands (&&, ||, ;, |), ALL subcommands must be
-        read-only for the entire command to be considered read-only.
+        For compound commands, ALL subcommands must be read-only for the
+        entire command to be considered read-only. Subcommands come from
+        :meth:`split_compound_command`, which splits on the parsed AST, so
+        the separator used does not matter and a statement it cannot
+        classify makes the whole command non-read-only.
 
         Commands with output redirections (>, >>) are NOT considered read-only.
 
@@ -176,37 +200,39 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command
-        if any(op in cmd for op in ["&&", "||", ";", "|"]):
-            # Split into subcommands and check each one
-            try:
-                tree = self.parser.parse(bytes(cmd, "utf8"))
-                root = tree.root_node
-                subcommands = self.split_compound_command(root, cmd)
+        # Always split on the AST: a textual scan for the separators misses
+        # "&" and newlines.
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+            subcommands = self.split_compound_command(tree.root_node, cmd)
+        except Exception:
+            # If parsing fails, be conservative
+            return False
 
-                # All subcommands must be read-only
-                for subcmd in subcommands:
-                    if not self._is_single_command_read_only(subcmd.strip()):
-                        return False
-                return True
-            except Exception:
-                # If parsing fails, be conservative
-                return False
-
-        # Single command - check directly
-        return self._is_single_command_read_only(cmd)
+        return all(
+            self._is_single_command_read_only(subcmd.strip())
+            for subcmd in subcommands
+        )
 
     def _is_single_command_read_only(self, cmd: str) -> bool:
         """Check if a single (non-compound) command is read-only.
 
+        A leading variable assignment makes the command non-read-only,
+        whatever follows it: ``PATH=/tmp/evil ls`` runs ``ls`` from a
+        directory the caller chose.
+
         Args:
             cmd (`str`):
-                A single command string (no &&, ||, ;, |)
+                A single statement from :meth:`split_compound_command`,
+                which is not always a plain command
 
         Returns:
             `bool`:
                 True if the command is read-only, False otherwise
         """
+        if self._has_leading_assignment(cmd):
+            return False
+
         # Check exact match in read-only commands
         if cmd in READ_ONLY_COMMANDS:
             return True
@@ -221,20 +247,26 @@ class BashCommandParser:
 
         # Check base command for simple read-only operations
         tokens = cmd.split()
-        if tokens:
-            base_cmd = tokens[0]
-            # Skip environment variables
-            i = 0
-            while i < len(tokens) and "=" in tokens[i]:
-                i += 1
-            if i < len(tokens):
-                base_cmd = tokens[i]
-
-            # Check if base command is in safe commands
-            if base_cmd in SAFE_COMMANDS:
-                return True
+        if tokens and tokens[0] in SAFE_COMMANDS:
+            return True
 
         return False
+
+    def _has_leading_assignment(self, cmd: str) -> bool:
+        """Check if a command is prefixed with a variable assignment."""
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+        except Exception:
+            # Cannot tell, so report the assignment and fail closed
+            return True
+
+        node = self._find_first_simple_command(tree.root_node)
+        if node is None:
+            return False
+
+        return any(
+            child.type == "variable_assignment" for child in node.children
+        )
 
     def _is_mutating_find_command(self, cmd: str) -> bool:
         """Check if a find command contains mutating predicates via AST."""
@@ -526,7 +558,12 @@ class BashCommandParser:
     def split_compound_command(self, root: Node, command: str) -> List[str]:
         """Split compound commands using tree-sitter for precise parsing.
 
-        Recognizes: &&, ||, ;, |
+        Every statement the shell would run is returned, whatever separator
+        joins them: ``&&``, ``||``, ``;``, ``|``, ``&`` and newlines alike.
+        Statements that are not plain commands (``export``/``declare``,
+        bare assignments, ``unset``, ...) are returned as-is rather than
+        dropped, so callers judging the split cannot mistake them for
+        nothing having happened.
 
         Args:
             root (`Node`):
@@ -541,20 +578,15 @@ class BashCommandParser:
         subcommands = []
 
         def extract_commands(node: Node) -> None:
-            """Recursively extract commands from AST."""
-            if node.type == "command":
-                # Extract command text
-                cmd_text = command[node.start_byte : node.end_byte]
-                subcommands.append(cmd_text)
-            elif node.type in ["list", "pipeline", "command_list"]:
-                # Recursively process compound structures
+            """Recursively extract statements from AST."""
+            if node.type in COMPOUND_NODE_TYPES:
+                # Grouping only, the separators between are anonymous
                 for child in node.children:
-                    if child.type not in ["&&", "||", ";", "|", "|&"]:
+                    if child.is_named:
                         extract_commands(child)
-            else:
-                # Continue traversing
-                for child in node.children:
-                    extract_commands(child)
+            elif node.is_named and node.type not in NON_STATEMENT_NODE_TYPES:
+                # Statements we cannot classify are returned, not dropped
+                subcommands.append(command[node.start_byte : node.end_byte])
 
         extract_commands(root)
         return subcommands if subcommands else [command]
