@@ -1733,6 +1733,7 @@ class Agent:
             "data": [],
         }
         completed_response: ChatResponse | None = None
+        has_streamed_content = False
 
         # Check if res is an async generator (streaming response)
         if inspect.isasyncgen(res):
@@ -1740,8 +1741,31 @@ class Agent:
                 # Save the last chunk with completed response
                 if chunk.is_last:
                     completed_response = chunk
+                    if not has_streamed_content:
+                        # Surface final-only user-visible content without
+                        # replaying an aggregate response after streamed
+                        # chunks. Tool calls keep their existing acting-path
+                        # event contract.
+                        event_blocks = [
+                            block
+                            for block in chunk.content
+                            if not isinstance(block, ToolCallBlock)
+                        ]
+                        if event_blocks:
+                            event_stream = (
+                                self._convert_chat_response_to_event(
+                                    block_ids,
+                                    ChatResponse(
+                                        content=event_blocks,
+                                        is_last=False,
+                                    ),
+                                )
+                            )
+                            async for evt in event_stream:
+                                yield evt
 
                 else:
+                    has_streamed_content = True
                     # Convert the chunk into events
                     async for evt in self._convert_chat_response_to_event(
                         block_ids,
