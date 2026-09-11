@@ -9,6 +9,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 import json
+from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,10 @@ from textual.message import Message as TextualMessage
 from textual.widgets import Collapsible, Input, OptionList, Static
 
 from agentscope.event import (
+    ConfirmResult,
+    DataBlockDeltaEvent,
+    DataBlockEndEvent,
+    DataBlockStartEvent,
     ExternalExecutionResultEvent,
     ReplyEndEvent,
     ReplyStartEvent,
@@ -52,7 +57,7 @@ from agentscope.tool import AskUser
 from agentscope.tui import ChatUI, MessagesUI
 from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
-from agentscope.tui._launcher import _AgentScopeTUI
+from agentscope.tui._launcher import _AgentScopeTUI, _RealtimeTUI
 from agentscope.tui._messages import (
     MessageUI,
     TextBlockUI,
@@ -1409,6 +1414,181 @@ class LauncherTest(unittest.IsolatedAsyncioTestCase):
         exit_app.assert_called_once_with()
         self.assertEqual(target.inputs, [])
         self.assertEqual(app.BINDINGS, [])
+
+
+class _FakeRealtimeAgent:
+    def __init__(
+        self,
+        events: list[Any] | None = None,
+        supports_text_input: bool = True,
+    ) -> None:
+        self.model = SimpleNamespace(supports_text_input=supports_text_input)
+        self.events = events or []
+        self.sent: list[Any] = []
+        self.streamed = asyncio.Event()
+        self.ended = asyncio.Event()
+
+    async def reply_stream(self, _: Any) -> AsyncGenerator[Any, None]:
+        for event in self.events:
+            yield event
+        self.streamed.set()
+        # A voice session outlives its replies: it ends with the transport.
+        await self.ended.wait()
+
+    async def send(self, inputs: Any) -> None:
+        self.sent.append(inputs)
+
+
+class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
+    async def test_voice_turns_render_without_the_audio(self) -> None:
+        agent = _FakeRealtimeAgent(
+            [
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id="turn",
+                    name="user",
+                    role="user",
+                ),
+                TextBlockStartEvent(reply_id="turn", block_id="heard"),
+                TextBlockDeltaEvent(
+                    reply_id="turn",
+                    block_id="heard",
+                    delta="hello",
+                ),
+                TextBlockEndEvent(reply_id="turn", block_id="heard"),
+                ReplyEndEvent(session_id="s", reply_id="turn"),
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id="reply",
+                    name="Friday",
+                ),
+                DataBlockStartEvent(
+                    reply_id="reply",
+                    block_id="audio",
+                    media_type="audio/pcm;rate=24000",
+                ),
+                DataBlockDeltaEvent(
+                    reply_id="reply",
+                    block_id="audio",
+                    media_type="audio/pcm;rate=24000",
+                    data="AAAA",
+                ),
+                TextBlockStartEvent(reply_id="reply", block_id="spoken"),
+                TextBlockDeltaEvent(
+                    reply_id="reply",
+                    block_id="spoken",
+                    delta="hi there",
+                ),
+                TextBlockEndEvent(reply_id="reply", block_id="spoken"),
+                DataBlockEndEvent(reply_id="reply", block_id="audio"),
+                ReplyEndEvent(session_id="s", reply_id="reply"),
+            ],
+        )
+        app = _RealtimeTUI(agent, object(), [], "user")
+        async with app.run_test(size=(80, 24)) as pilot:
+            await asyncio.wait_for(agent.streamed.wait(), timeout=1)
+            await pilot.pause()
+
+            messages = app.query_one(ChatUI).messages
+            self.assertListEqual(
+                [
+                    (msg.role, msg.name, msg.get_text_content())
+                    for msg in messages
+                ],
+                [
+                    ("user", "user", "hello"),
+                    ("assistant", "Friday", "hi there"),
+                ],
+            )
+            # The transport plays the audio, so it never reaches the view.
+            self.assertListEqual(
+                [block.type for block in messages[1].content],
+                ["text"],
+            )
+            self.assertDictEqual(app._replies, {})
+
+    async def test_typed_turn_is_shown_and_sent(self) -> None:
+        agent = _FakeRealtimeAgent()
+        app = _RealtimeTUI(agent, object(), [], "user")
+        async with app.run_test(size=(80, 24)) as pilot:
+            with patch.object(app, "_spawn") as spawn:
+                editor = app.query_one(_ComposerTextArea)
+                editor.focus()
+                await pilot.press("h", "i", "enter")
+            await spawn.call_args.args[0]
+
+            self.assertListEqual(
+                [
+                    msg.get_text_content()
+                    for msg in app.query_one(ChatUI).messages
+                ],
+                ["hi"],
+            )
+            self.assertListEqual(
+                [inputs.get_text_content() for inputs in agent.sent],
+                ["hi"],
+            )
+
+    async def test_confirmation_and_interrupt_reach_the_agent(self) -> None:
+        agent = _FakeRealtimeAgent()
+        app = _RealtimeTUI(
+            agent,
+            object(),
+            [
+                AssistantMsg(
+                    name="Friday",
+                    id="reply",
+                    content=[
+                        ToolCallBlock(
+                            id="call",
+                            name="Bash",
+                            input='{"command": "ls"}',
+                            state=ToolCallState.ASKING,
+                        ),
+                    ],
+                ),
+            ],
+            "user",
+        )
+        confirmed = UserConfirmResultEvent(
+            reply_id="reply",
+            confirm_results=[
+                ConfirmResult(
+                    tool_call=ToolCallBlock(
+                        id="call",
+                        name="Bash",
+                        input='{"command": "ls"}',
+                    ),
+                    confirmed=True,
+                ),
+            ],
+        )
+        async with app.run_test(size=(80, 24)) as pilot:
+            with patch.object(app, "_spawn") as spawn:
+                app._on_confirmed(ChatUI.Confirmed(confirmed))
+                app._on_interrupt(ChatUI.InterruptRequested("reply"))
+            for call in spawn.call_args_list:
+                await call.args[0]
+            await pilot.pause()
+
+            # The agent does not echo a confirmation, so the view applies it.
+            self.assertListEqual(
+                [
+                    block.state
+                    for block in app.query_one(ChatUI).messages[0].content
+                ],
+                [ToolCallState.ALLOWED],
+            )
+            self.assertIs(agent.sent[0], confirmed)
+            self.assertIsInstance(agent.sent[1], UserInterruptEvent)
+            self.assertEqual(len(agent.sent), 2)
+
+    async def test_composer_is_disabled_without_text_input(self) -> None:
+        agent = _FakeRealtimeAgent(supports_text_input=False)
+        app = _RealtimeTUI(agent, object(), [], "user")
+        async with app.run_test(size=(80, 24)):
+            self.assertFalse(app.query_one(ChatUI).input_enabled)
+            self.assertTrue(app.query_one(_ComposerTextArea).disabled)
 
 
 if __name__ == "__main__":

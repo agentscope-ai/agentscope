@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Talk to a DashScope realtime model through the local microphone, with
-tools the model may call and a terminal prompt for the ones that need
-your permission.
+tools the model may call and a terminal UI that shows the conversation
+and asks for permission where it is needed.
 
     export DASHSCOPE_API_KEY=sk-...
     python examples/realtime/local_mic.py
@@ -16,29 +16,20 @@ are wrong, e.g. a Bluetooth headset used for both directions:
 
     REALTIME_INPUT_DEVICE=3 REALTIME_OUTPUT_DEVICE=2 python ...
 
-Speak, hear the reply, and speak over it to interrupt. Ctrl-C to quit.
+Speak, hear the reply, and speak over it to interrupt. Ctrl-Q to quit.
 """
 import asyncio
 import os
 
 from agentscope.agent import RealtimeAgent
 from agentscope.credential import DashScopeCredential
-from agentscope.event import (
-    ConfirmResult,
-    ReplyEndEvent,
-    ReplyStartEvent,
-    RequireUserConfirmEvent,
-    TextBlockDeltaEvent,
-    ToolResultEndEvent,
-    ToolResultStartEvent,
-    UserConfirmResultEvent,
-)
 from agentscope.realtime import LocalAudioTransport
 from agentscope.tool import Bash, Edit, Read, Toolkit, Write
+from agentscope.tui import launch_realtime_ui
 
 
 async def main() -> None:
-    """Run one voice session until interrupted."""
+    """Run one voice session until the UI is closed."""
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise SystemExit("Set DASHSCOPE_API_KEY first.")
@@ -68,71 +59,11 @@ async def main() -> None:
         output_device=_device("REALTIME_OUTPUT_DEVICE"),
     )
 
-    print(f"[{name}] listening... (Ctrl-C to quit)")
-    # The agent owns the model session, we own the transport, and one
-    # reply_stream() borrows both until the transport ends.
-    # The user's speech is reported as a reply too, with role "user":
-    # its transcript arrives as text block events once it has settled.
-    user_turns: set[str] = set()
+    # The agent owns the model session, we own the transport, and the UI
+    # borrows both: it renders the events of one reply_stream() call and
+    # hands what you type or confirm back through agent.send().
     async with agent, transport:
-        async for event in agent.reply_stream(transport):
-            match event:
-                case ReplyStartEvent(role="user"):
-                    user_turns.add(event.reply_id)
-                    print("\n[you] ...", end="", flush=True)
-                case ReplyStartEvent():
-                    print(f"\n[{agent.name}] ", end="", flush=True)
-                case TextBlockDeltaEvent() if event.reply_id in user_turns:
-                    print(f"\r[you] {event.delta}")
-                case TextBlockDeltaEvent():
-                    print(event.delta, end="", flush=True)
-                case RequireUserConfirmEvent():
-                    await confirm(agent, event)
-                case ToolResultStartEvent():
-                    print(f"\n  [tool] {event.tool_call_name} running...")
-                case ToolResultEndEvent():
-                    print(f"  [tool] {event.state}")
-                case ReplyEndEvent() if event.reply_id not in user_turns:
-                    m = agent.last_turn_metrics
-                    print(
-                        f"\n  ({event.finished_reason}"
-                        f" | ttfb={_ms(m.backend_ttfb)}"
-                        f" | e2e={_ms(m.e2e_latency)})",
-                    )
-                    if agent.state.context:
-                        tail = agent.state.context[-1]
-                        print(
-                            f"  context[-1] = {tail.role}: "
-                            f"{tail.get_text_content()!r}",
-                        )
-
-
-async def confirm(
-    agent: RealtimeAgent,
-    event: RequireUserConfirmEvent,
-) -> None:
-    """Ask on the terminal whether each pending tool call may run.
-
-    The prompt runs in a thread so the audio pumps keep going while we
-    wait; the agent itself gives up after five minutes.
-    """
-    loop = asyncio.get_running_loop()
-    results = []
-    for call in event.tool_calls:
-        print(f"\n  [permission] {call.name}({call.input})")
-        answer = await loop.run_in_executor(None, input, "  allow? [y/N] ")
-        results.append(
-            ConfirmResult(
-                tool_call=call,
-                confirmed=answer.strip().lower() in ("y", "yes"),
-            ),
-        )
-    await agent.send(
-        UserConfirmResultEvent(
-            reply_id=event.reply_id,
-            confirm_results=results,
-        ),
-    )
+        await launch_realtime_ui(agent, transport)
 
 
 def _device(env: str) -> int | str | None:
@@ -141,11 +72,6 @@ def _device(env: str) -> int | str | None:
     if value is None:
         return None
     return int(value) if value.isdigit() else value
-
-
-def _ms(seconds: float | None) -> str:
-    """Format a latency for the console."""
-    return "n/a" if seconds is None else f"{seconds * 1000:.0f}ms"
 
 
 if __name__ == "__main__":

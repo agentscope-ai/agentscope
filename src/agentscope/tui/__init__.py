@@ -3,7 +3,7 @@
 
 try:
     from ._chat import ChatUI
-    from ._launcher import launch_tui
+    from ._launcher import launch_realtime_ui, launch_tui
     from ._messages import MessagesUI
 except ImportError as error:
     if error.name == "textual":
@@ -15,5 +15,6 @@ except ImportError as error:
 __all__ = [
     "ChatUI",
     "MessagesUI",
+    "launch_realtime_ui",
     "launch_tui",
 ]
