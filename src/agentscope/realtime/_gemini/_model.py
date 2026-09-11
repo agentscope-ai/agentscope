@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The Gemini Live API realtime model."""
-
 import asyncio
 import base64
 import json
@@ -134,8 +133,13 @@ class GeminiRealtimeModel(RealtimeModelBase):
         )
         self._ready.clear()
         # A previous session leaves its terminal SessionEndedEvent and the
-        # None sentinel in the queue; a new events() iterator would stop
-        # on them before seeing anything from this session.
+        # None sentinel in the queue, and a reader that is still running
+        # would add them after the drain. Stop that reader first (its
+        # finally block enqueues the terminal events), then empty the queue
+        # so a new events() iterator only sees this session.
+        if self._reader is not None:
+            self._reader.cancel()
+            await asyncio.gather(self._reader, return_exceptions=True)
         while not self._queue.empty():
             self._queue.get_nowait()
         self._reader = asyncio.create_task(self._read(), name="gemini-rt")
