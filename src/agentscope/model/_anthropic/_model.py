@@ -412,8 +412,8 @@ class AnthropicChatModel(ChatModelBase):
 
         usage = None
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
-        thinking_id: str = _generate_id()
+        # Keep text and thinking blocks distinct, including their signatures.
+        block_id_mapping: dict[int, str] = {}
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
 
@@ -453,7 +453,10 @@ class AnthropicChatModel(ChatModelBase):
                         )
 
                 elif event.type == "content_block_start":
-                    if event.content_block.type == "tool_use":
+                    if event.content_block.type in ("text", "thinking"):
+                        block_id_mapping[event.index] = _generate_id()
+
+                    elif event.content_block.type == "tool_use":
                         tool_block = event.content_block
                         # Record the id and name
                         tool_call_mapping[event.index] = (
@@ -484,13 +487,16 @@ class AnthropicChatModel(ChatModelBase):
 
                     # Text block
                     if delta.type == "text_delta":
-                        delta_res.append_text(delta.text, block_id=text_id)
+                        delta_res.append_text(
+                            delta.text,
+                            block_id=block_id_mapping[block_index],
+                        )
 
                     # Thinking block
                     elif delta.type == "thinking_delta":
                         delta_res.append_thinking(
                             delta.thinking,
-                            block_id=thinking_id,
+                            block_id=block_id_mapping[block_index],
                         )
 
                     # Special handling for Anthropic API that requires
@@ -498,7 +504,7 @@ class AnthropicChatModel(ChatModelBase):
                     elif delta.type == "signature_delta":
                         delta_res.append_thinking(
                             "",
-                            block_id=thinking_id,
+                            block_id=block_id_mapping[block_index],
                             signature=delta.signature,
                         )
 
