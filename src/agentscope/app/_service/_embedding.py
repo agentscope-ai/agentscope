@@ -14,6 +14,8 @@ Two entry points are provided:
   already holds the KB owner's :class:`CredentialRecord`) and by
   :func:`get_embedding_model` under the hood.
 """
+import inspect
+
 from fastapi import HTTPException, status
 
 from ._access import ResourceAccessService
@@ -69,9 +71,11 @@ def build_embedding_model(
         )
 
     context_size: int | None = None
+    supported_dimensions: list[int] | None = None
     for card in embedding_cls.list_models():
         if card.name == config.model:
             context_size = card.context_size
+            supported_dimensions = card.supported_dimensions
             break
 
     parameters = (
@@ -88,6 +92,19 @@ def build_embedding_model(
     }
     if context_size is not None:
         kwargs["context_size"] = context_size
+
+    # Only pass `pass_dimensions` if the embedding class supports it.
+    # Currently only OpenAI's embedding model exposes this flag
+    # (controls whether `dimensions` is forwarded to the provider API).
+    # Other providers (DashScope / Gemini / Ollama) don't have this
+    # param, so passing it would raise `TypeError`.  This defensive
+    # check future-proofs the service against new providers that may
+    # add the same flag.
+    if (
+        "pass_dimensions"
+        in inspect.signature(embedding_cls.__init__).parameters
+    ):
+        kwargs["pass_dimensions"] = bool(supported_dimensions)
 
     return embedding_cls(**kwargs)
 
