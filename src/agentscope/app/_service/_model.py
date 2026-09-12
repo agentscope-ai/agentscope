@@ -51,23 +51,33 @@ async def get_model(
         if config.parameters
         else None
     )
+    # Look up the built-in model card so both the context size and the
+    # formatter's input types can be taken from it. Custom models have no
+    # card, so keep the constructor and formatter defaults.
+    card = None
+    try:
+        for candidate in model_cls.list_models():
+            if candidate.name == config.model:
+                card = candidate
+                break
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "Failed to look up model card for %s, using defaults.",
+            config.model,
+        )
+
+    model_kwargs: dict = {}
+    if card is not None:
+        model_kwargs["context_size"] = card.context_size
+
     model = model_cls(
         credential=credential,
         model=config.model,
         parameters=parameters,
+        **model_kwargs,
     )
 
-    # Override the formatter's input types with the built-in model card's
-    # when one matches; custom models have no card, so keep the default.
-    try:
-        for card in model_cls.list_models():
-            if card.name == config.model:
-                model.formatter.input_types = card.input_types
-                break
-    except Exception:  # pylint: disable=broad-except
-        logger.debug(
-            "Failed to look up model card for %s, using formatter defaults.",
-            config.model,
-        )
+    if card is not None:
+        model.formatter.input_types = card.input_types
 
     return model
