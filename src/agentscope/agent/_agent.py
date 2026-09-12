@@ -64,7 +64,7 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import AgentOrientedException, StructuredOutputError
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -107,6 +107,12 @@ from ..workspace import Offloader, WorkspaceBase
 
 # The name of the tool that the agent uses to compress its own context
 _COMPRESSION_TOOL_NAME = "CompressContext"
+
+# Extra attempts to regenerate the compression summary when the model
+# returns a structurally invalid summary (a recoverable schema-validation
+# failure) rather than aborting the agent on the first try. Each retry
+# appends concise validation feedback so the model can correct the format.
+_COMPRESSION_VALIDATION_RETRIES = 2
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -630,10 +636,50 @@ class Agent:
         # Compress the messages
         res = None
         try:
-            res = await self.model.generate_structured_output(
-                messages=messages,
-                structured_model=cfg.summary_schema,
-            )
+            try:
+                res = await self.model.generate_structured_output(
+                    messages=messages,
+                    structured_model=cfg.summary_schema,
+                )
+            except StructuredOutputError as validation_error:
+                # A schema-validation failure (e.g. a misspelled field) is
+                # recoverable: retry a small number of times with concise
+                # validation feedback so a long-running agent is not aborted
+                # by a one-off format deviation. On exhausted retries, fall
+                # through to the existing truncation/raise handling below.
+                retry_messages = list(messages)
+                required_fields = ", ".join(
+                    cfg.summary_schema.get("required", []),
+                )
+                fields_hint = (
+                    f"the required fields: {required_fields}"
+                    if required_fields
+                    else "the schema"
+                )
+                last_error: Exception = validation_error
+                for _ in range(_COMPRESSION_VALIDATION_RETRIES):
+                    retry_messages.append(
+                        UserMsg(
+                            name="user",
+                            content=(
+                                "The previous compression summary failed "
+                                "schema validation:\n"
+                                f"{last_error}\nPlease regenerate the "
+                                f"summary with exactly {fields_hint}."
+                            ),
+                        ),
+                    )
+                    try:
+                        res = await self.model.generate_structured_output(
+                            messages=retry_messages,
+                            structured_model=cfg.summary_schema,
+                        )
+                        break
+                    except StructuredOutputError as retry_error:
+                        last_error = retry_error
+                        continue
+                if res is None:
+                    raise last_error
 
         except Exception as error:
             if context_overflow:
