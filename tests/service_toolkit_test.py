@@ -19,20 +19,20 @@ Verifies the assembly rules:
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
+from utils import FakeWorkspaceManager
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import (
     BackgroundTaskManager,
     SchedulerManager,
 )
-from agentscope.app._service import get_toolkit
+from agentscope.app._service import ResourceAccessService, get_toolkit
+from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
     ChatModelConfig,
     SessionConfig,
     SessionRecord,
-    TeamData,
-    TeamRecord,
 )
 from agentscope.tool import ToolBase
 
@@ -55,11 +55,18 @@ class _FakeWorkspace:
         """Return the configured workspace tools."""
         return list(self._tools)
 
-    async def list_skills(self) -> list:
+    async def list_skills(
+        self,
+        agent_id: str,  # pylint: disable=unused-argument
+    ) -> list:
         """Return the configured workspace skills."""
         return list(self._skills)
 
-    async def list_mcps(self) -> list:
+    async def list_mcps(
+        self,
+        agent_id: str,  # pylint: disable=unused-argument
+        session_id: str,  # pylint: disable=unused-argument
+    ) -> list:
         """Return the configured workspace MCP descriptors."""
         return list(self._mcps)
 
@@ -118,34 +125,31 @@ class _NoOpStorage:
     storage method — the team tools bind a reference for later use.
 
     Exceptions: since :class:`AgentInvite` landed, ``get_toolkit`` calls
-    ``list_agents(user_id)`` at assembly time to build the invitable
-    pool. Return an empty list — the toolkit tests care about which
-    team tools are attached, not about the pool contents; the non-empty
-    case is covered by the ``AgentInvite`` tests in
-    ``service_team_tools_test.py``. Additionally, when the session has
-    a ``team_id`` set, ``get_toolkit`` calls ``get_team`` to decide
-    leader-vs-worker; the ``team_id_map`` constructor arg lets a test
-    inject a lookup so the worker branch can be exercised.
+    ``ResourceAccessService.list_resource`` at assembly time to build
+    the invitable pool, which fans out to
+    :meth:`StorageBase.list_agents` under the hood. Return an empty
+    list — the toolkit tests care about which team tools are attached,
+    not about the pool contents; the non-empty case is covered by the
+    ``AgentInvite`` tests in ``service_team_tools_test.py``.
     """
-
-    def __init__(
-        self,
-        team_id_map: dict[str, TeamRecord] | None = None,
-    ) -> None:
-        """Initialize the storage placeholder."""
-        self._teams = team_id_map or {}
 
     async def list_agents(self, _user_id: str) -> list:
         """List agents for a team."""
         return []
 
-    async def get_team(
-        self,
-        _user_id: str,
-        team_id: str,
-    ) -> TeamRecord | None:
-        """Return the team record for ``team_id``."""
-        return self._teams.get(team_id)
+
+def _make_access(storage: Any) -> ResourceAccessService:
+    """Build a :class:`ResourceAccessService` bound to ``storage`` with a
+    deny-all policy for ``get_toolkit`` tests.
+
+    ``list_resource(AGENT)`` therefore fans out to
+    ``storage.list_agents(user_id)`` alone — matching the pre-share
+    behaviour the toolkit tests were written against.
+    """
+    return ResourceAccessService(
+        storage=storage,
+        policy=DenyAllResourceAccessPolicy(),
+    )
 
 
 def _tool_names(toolkit: Any) -> list[str]:
@@ -204,9 +208,11 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=workspace,  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -217,6 +223,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=None,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
 
         names = set(_tool_names(toolkit))
@@ -245,12 +252,8 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
 
 
 class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
-    """A session whose team role is worker only gets ``TeamSay``.
-
-    The worker/leader distinction is now session-level: a session with
-    ``team_id`` set and ``team.session_id != session.id`` is a worker
-    regardless of the agent record's ``source`` (an ``AgentInvite``
-    borrowed session runs on ``source='user'`` but is still a worker)."""
+    """A session passed ``team_role="worker"`` only gets ``TeamSay``;
+    the role is resolved by the caller, not looked up here."""
 
     async def test_worker_only_gets_team_say(self) -> None:
         """A worker session receives only ``TeamSay`` from the team
@@ -262,20 +265,14 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
             with_model=True,
             team_id="t1",
         )
-        # Team exists and its leader session is NOT this one → worker.
-        team = TeamRecord(
-            user_id="u",
-            session_id="leader-sid",
-            data=TeamData(name="team", description="d"),
-        )
         toolkit = await get_toolkit(
-            storage=_NoOpStorage(
-                team_id_map={"t1": team},
-            ),  # type: ignore[arg-type]
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -286,6 +283,8 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=None,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
+            team_role="worker",
         )
         names = set(_tool_names(toolkit))
         # Only TeamSay from the team toolset.
@@ -315,9 +314,11 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -328,6 +329,7 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=None,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
         names = set(_tool_names(toolkit))
         for missing in (
@@ -371,9 +373,11 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -384,5 +388,6 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=factory,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
         self.assertIn("my-extra", _tool_names(toolkit))

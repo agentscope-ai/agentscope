@@ -226,7 +226,10 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "xai-resp-1")
 
@@ -257,8 +260,9 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="call-1",
+                        created_at=A,
                         name="get_weather",
                         input='{"city":"NY"}',
                     ),
@@ -291,11 +295,47 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Deep thinking...",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
+        )
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_usage_includes_reasoning_tokens(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Reasoning tokens are included in normalized output usage."""
+        response = _mock_completion(text="Answer")
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = 100
+        response.usage.completion_tokens = 20
+        response.usage.reasoning_tokens = 30
+        response.usage.cached_prompt_text_tokens = 10
+        mock_chat = _MockChatStream(sample_response=response)
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        result = await self.model([])
+
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 10,
+                "type": "chat",
+                "metadata": None,
+            },
         )
 
 
@@ -318,6 +358,7 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         final_response.usage = MagicMock()
         final_response.usage.prompt_tokens = 10
         final_response.usage.completion_tokens = 5
+        final_response.usage.reasoning_tokens = 0
         final_response.usage.cached_prompt_text_tokens = 0
 
         stream_items = [
@@ -334,9 +375,36 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
 
@@ -352,6 +420,7 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         final_response.usage = MagicMock()
         final_response.usage.prompt_tokens = 10
         final_response.usage.completion_tokens = 5
+        final_response.usage.reasoning_tokens = 7
         final_response.usage.cached_prompt_text_tokens = 0
 
         stream_items = [
@@ -370,17 +439,52 @@ class TestXAIStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
-                        ThinkingBlock.model_construct(id=A, thinking="Think"),
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                     ],
                 ),
             ],
+        )
+        self.assertEqual(
+            dict(responses[-1].usage),
+            {
+                "input_tokens": 10,
+                "output_tokens": 12,
+                "time": responses[-1].usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
         )
 
     @patch("xai_sdk.AsyncClient")
@@ -401,6 +505,7 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         final_response.usage = MagicMock()
         final_response.usage.prompt_tokens = 10
         final_response.usage.completion_tokens = 5
+        final_response.usage.reasoning_tokens = 0
         final_response.usage.cached_prompt_text_tokens = 0
 
         stream_items = [
@@ -416,13 +521,42 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="I'll search")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="I'll search",
+                        ),
+                    ],
+                ),
+                # ``xai_sdk`` does not stream tool calls — they only
+                # appear on the final accumulated response object, so
+                # the parser emits them as a dedicated trailing carrier
+                # delta that the base accumulator merges.
+                (
+                    False,
+                    [
+                        ToolCallBlock.model_construct(
+                            id="call-1",
+                            created_at=A,
+                            name="search",
+                            input='{"q":"test"}',
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
-                        TextBlock.model_construct(id=A, text="I'll search"),
-                        ToolCallBlock(
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="I'll search",
+                        ),
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":"test"}',
                         ),

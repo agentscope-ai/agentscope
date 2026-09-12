@@ -337,6 +337,45 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is formatted as an Anthropic document block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                        name="report.pdf",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize this."},
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock with a signature is passed back as a thinking
         content block."""
@@ -363,6 +402,50 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                             "type": "thinking",
                             "thinking": "inner thoughts",
                             "signature": "sig_abc",
+                        },
+                        {"type": "text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_redacted_thinking_preserved(
+        self,
+    ) -> None:
+        """ThinkingBlock with redacted_thinking_data is formatted
+        as a redacted_thinking block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(
+                        thinking="visible",
+                        signature="sig_1",
+                    ),
+                    ThinkingBlock(
+                        thinking="",
+                        redacted_thinking_data="encrypted_abc",
+                    ),
+                    TextBlock(text="reply"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "visible",
+                            "signature": "sig_1",
+                        },
+                        {
+                            "type": "redacted_thinking",
+                            "data": "encrypted_abc",
                         },
                         {"type": "text", "text": "reply"},
                     ],
@@ -949,6 +1032,215 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                             "tool_use_id": "call_03",
                             "content": [
                                 {"type": "text", "text": "Rainy, 22\u00b0C"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_tool_call_with_incomplete_input_does_not_crash(
+        self,
+    ) -> None:
+        """A truncated ``block.input`` must not crash the formatter.
+
+        Context compression or interrupted streaming can leave a
+        ``ToolCallBlock.input`` as an incomplete JSON fragment (e.g.
+        ``'{"key'``). The formatter must repair it into a dict (here
+        ``{}``) instead of raising ``JSONDecodeError``.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tok',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        tool_use = [
+            b for b in res[0]["content"] if b.get("type") == "tool_use"
+        ][0]
+        # Repaired to a dict rather than crashing.
+        self.assertIsInstance(tool_use["input"], dict)
+
+    async def test_empty_text_block_is_dropped(self) -> None:
+        """Empty ``TextBlock`` must be skipped, not forwarded.
+
+        Anthropic rejects ``{"type": "text", "text": ""}`` with a 400
+        ("text blocks must be non-empty"). Empty text blocks arise in
+        practice after a tool-call-only assistant turn whose streamed text
+        block is empty. The formatter must drop them rather than emit them.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text=""),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        # The empty TextBlock is dropped — the assistant message contains
+        # only the tool_use block, nothing else.
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "get_weather",
+                            "input": {"city": "Tokyo"},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_empty_tool_result_text_is_dropped(self) -> None:
+        """Empty text inside a tool result is skipped too.
+
+        A ``ToolResultBlock`` whose only output is an empty TextBlock must
+        not produce an empty text content entry, which Anthropic would
+        reject. The formatter falls back to a non-empty placeholder so the
+        tool_result content list stays valid.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="get_weather",
+                        output=[TextBlock(text="")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "get_weather",
+                            "input": {"city": "Tokyo"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "(empty tool output)",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_empty_string_tool_output_uses_placeholder(self) -> None:
+        """An empty-string tool output becomes a placeholder text block.
+
+        Anthropic rejects both empty text blocks and a tool_result whose
+        content list is empty, so a wholly-empty output must be replaced
+        with a non-empty placeholder.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="noop",
+                        input="{}",
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="noop",
+                        output="",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "noop",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "(empty tool output)",
+                                },
                             ],
                         },
                     ],

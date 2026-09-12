@@ -8,8 +8,7 @@ input_types:
   - image/png
   - image/gif
   - image/webp
-  - audio/mp3
-  - audio/wav
+  - application/pdf
 
 output_types:
   - text/plain

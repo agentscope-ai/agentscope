@@ -120,6 +120,17 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
+    async def try_lock(
+        self,
+        key: str,
+        *,
+        ttl_secs: int = 600,
+    ) -> bool:
+        return True
+
+    async def unlock(self, key: str) -> None:
+        pass
+
     # Mode F — registry (in-memory dict)
     async def registry_set(
         self,
@@ -131,6 +142,20 @@ class _FakeBus(MessageBus):
     ) -> None:
         self._registries.setdefault(namespace, {})[field] = value
 
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        raise NotImplementedError
+
     async def registry_del(self, namespace: str, field: str) -> None:
         if namespace in self._registries:
             self._registries[namespace].pop(field, None)
@@ -140,6 +165,13 @@ class _FakeBus(MessageBus):
 
     async def registry_getall(self, namespace: str) -> dict[str, str]:
         return dict(self._registries.get(namespace, {}))
+
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        return self._registries.get(namespace, {}).get(field)
 
     async def registry_drop(self, namespace: str) -> None:
         self._registries.pop(namespace, None)

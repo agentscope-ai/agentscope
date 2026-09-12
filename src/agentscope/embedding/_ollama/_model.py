@@ -78,6 +78,10 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         self.host: str | None = getattr(credential, "host", None)
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
+        import ollama
+
+        self.client: ollama.AsyncClient = ollama.AsyncClient(host=self.host)
+
     async def _call_api(
         self,
         inputs: list[str],
@@ -112,12 +116,8 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
                     source="cache",
                 )
 
-        import ollama
-
-        client = ollama.AsyncClient(host=self.host)
-
         start_time = datetime.now()
-        response = await client.embed(**api_kwargs)
+        response = await self.client.embed(**api_kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
         if self.embedding_cache:

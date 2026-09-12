@@ -1,28 +1,19 @@
 # -*- coding: utf-8 -*-
 """DockerWorkspace — sandboxed workspace backed by a Docker container.
 
-Architecture
-------------
-
 * Container lifecycle (build + run + stop) via **aiodocker**.
-* MCP servers run *inside* the container behind a FastAPI gateway
-  (see :mod:`agentscope.workspace._mcp_gateway`); the host talks to it
-  over HTTP via :class:`GatewayClient` / :class:`GatewayMCPClient`.
+* MCP servers run inside the container behind a FastAPI gateway
+  (see :mod:`agentscope.workspace._mcp_gateway`); the host reaches it
+  through :class:`GatewayClient` via ``backend.exec_shell``.
 * Optional bind-mounted host ``workdir`` makes the workspace
-  persistent — ``.mcp`` (registered MCPs), ``skills/``, ``sessions/``
-  and ``data/`` survive restarts. Without ``workdir`` the container
-  is ephemeral.
+  persistent — ``.mcp``, ``skills/``, ``sessions/``, ``data/`` survive
+  restarts. Without ``workdir`` the container is ephemeral.
 * Image is content-hashed by Dockerfile + COPY payloads
   (see :mod:`._make_dockerfile`); a cache hit skips the build.
 
-Persistence model mirrors :class:`agentscope.workspace.LocalWorkspace`:
-on each :meth:`initialize`, MCPs are restored from ``<workdir>/.mcp``
-if it exists (otherwise ``default_mcps`` are used and persisted).
-Every :meth:`add_mcp` / :meth:`remove_mcp` rewrites the file.
-
-The gateway bearer token is freshly generated on each ``initialize``
-and shipped into the container via the gateway config file — it is
-*not* persisted.
+On each :meth:`initialize`, MCPs are restored from ``<workdir>/.mcp``
+(or seeded from ``default_mcps``); ``add_mcp`` / ``remove_mcp`` rewrite
+the file. The gateway reads ``.mcp`` directly as its config.
 """
 
 import io
@@ -32,6 +23,7 @@ import sys
 import tarfile
 from typing import Any
 
+from .._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
@@ -40,31 +32,9 @@ from ._make_dockerfile import (
     CONTAINER_WORKDIR,
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
-    GATEWAY_CONFIG,
     GATEWAY_HOME,
-    GATEWAY_LOG,
-    GATEWAY_SCRIPT,
-    GATEWAY_VENV,
-    GLOB_HELPER_SCRIPT,
     prepare_build_context,
 )
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have a Docker-based workspace. All tool calls execute **inside the
-container** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-
-Use the MCP-provided tools to interact with the container's filesystem
-and processes.
-</workspace>"""
 
 
 # ── the workspace ──────────────────────────────────────────────────
@@ -77,12 +47,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
     not retained as instance state past :meth:`initialize`.
     """
 
-    _glob_helper_path = GLOB_HELPER_SCRIPT
     _gateway_home = GATEWAY_HOME
-    _gateway_config = GATEWAY_CONFIG
-    _gateway_log = GATEWAY_LOG
-    _gateway_script = GATEWAY_SCRIPT
-    _gateway_python = f"{GATEWAY_VENV}/bin/python"
 
     def __init__(
         self,
@@ -94,7 +59,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         **kwargs: Any,
@@ -124,7 +89,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
                 (no host port mapping).
             env (`dict[str, str] | None`, optional):
                 Environment variables to set inside the container.
-            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+            instructions (`str`, defaults to `DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template; supports ``{workdir}``.
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
@@ -155,7 +120,10 @@ class DockerWorkspace(SandboxedWorkspaceBase):
         self.extra_pip: list[str] = list(extra_pip or [])
         self.gateway_port = gateway_port
         self.env: dict[str, str] = dict(env or {})
-        self.instructions = instructions
+        self.instructions = instructions.format(
+            backend="Docker-based",
+            workdir=self.workdir,
+        )
 
         # ── runtime state (Docker-only) ─────────────────────────
         self._client: Any = None  # aiodocker.Docker
@@ -227,7 +195,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment, formatted with the
         container-side ``{workdir}``."""
-        return self.instructions.format(workdir=CONTAINER_WORKDIR)
+        return self.instructions
 
     # ── internals: image build ──────────────────────────────────
 
@@ -308,6 +276,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
                             f"{log}",
                         )
         finally:
+            logger.info("DockerWorkspace: finish building image %r", tag)
             shutil.rmtree(ctx_dir, ignore_errors=True)
 
     # ── internals: container lifecycle ──────────────────────────
@@ -350,15 +319,3 @@ class DockerWorkspace(SandboxedWorkspaceBase):
         # Create the backend now that the container is running. All
         # subsequent container I/O in this workspace goes through it.
         self._backend = DockerBackend(self._container, CONTAINER_WORKDIR)
-
-        # Pre-create the persistence directories (also shapes a newly
-        # bind-mounted host workdir on first use).
-        await self._backend.exec_shell(
-            [
-                "mkdir",
-                "-p",
-                self._data_dir,
-                self._skills_dir,
-                self._sessions_dir,
-            ],
-        )

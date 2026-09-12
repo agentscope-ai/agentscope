@@ -1,6 +1,6 @@
 name: grok-3-fast
 label: Grok 3 Fast
-status: active
+status: deprecated
 
 input_types:
   - text/plain

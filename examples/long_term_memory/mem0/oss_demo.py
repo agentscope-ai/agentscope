@@ -178,7 +178,18 @@ async def main() -> None:
     # The agent's own `reply_stream` still emits per-delta events
     # regardless of this setting, so streaming-mode does not change the
     # demo's printed output shape.
-    chat_model = DashScopeChatModel(
+    # Use separate chat-model instances for the Agent and mem0. The Agent
+    # calls its model on the application's event loop, while the mem0 adapter
+    # runs its model on a dedicated bridge event loop. Async HTTP clients and
+    # their pooled connections are event-loop-bound, so sharing one model
+    # instance across these paths can fail with "bound to a different event
+    # loop". Separate instances keep each model/client on exactly one loop.
+    agent_chat_model = DashScopeChatModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="qwen3.7-max",
+        stream=False,
+    )
+    mem0_chat_model = DashScopeChatModel(
         credential=DashScopeCredential(api_key=api_key),
         model="qwen3.7-max",
         stream=False,
@@ -235,7 +246,7 @@ async def main() -> None:
     mw = Mem0Middleware(
         user_id=user_id,
         agent_id="datascope_assistant",
-        chat_model=chat_model,
+        chat_model=mem0_chat_model,
         embedding_model=embedding_model,
         mem0_config=mem0_cfg,
         mode=MODE,
@@ -275,7 +286,7 @@ async def main() -> None:
             "If you learn a durable user preference, save it with "
             "the add_memory tool when one is available."
         ),
-        model=chat_model,
+        model=agent_chat_model,
         toolkit=Toolkit(tools=await mw.list_tools()),
         middlewares=[mw],
     )
@@ -307,7 +318,7 @@ async def main() -> None:
             "If you learn a durable user preference, save it with "
             "the add_memory tool when one is available."
         ),
-        model=chat_model,
+        model=agent_chat_model,
         toolkit=Toolkit(tools=await mw.list_tools()),
         middlewares=[mw],
     )

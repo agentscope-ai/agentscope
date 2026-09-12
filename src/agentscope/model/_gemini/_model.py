@@ -22,13 +22,29 @@ else:
     GenerateContentResponse = Any
 
 
+def _is_null_schema(schema: Any) -> bool:
+    """Return whether a schema represents only JSON null."""
+    return isinstance(schema, dict) and schema.get("type") in (
+        "null",
+        ["null"],
+    )
+
+
 def _sanitize_schema_for_gemini(schema: Any) -> Any:
     """Sanitize a JSON schema to be compatible with the Gemini API.
 
     Gemini API does not support certain JSON Schema constructs. This
     function removes or rewrites the following:
 
+    - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
+    - ``const``: converted to an equivalent single-value ``enum``,
+      since Gemini's ``Schema`` model does not support ``const``.
+    - ``type`` arrays containing ``"null"``: simplified to the single
+      non-null type or converted to ``anyOf`` for multiple non-null
+      types, matching nullable JSON Schema emitted by Pydantic and
+      OpenAPI 3.1. Multi-type arrays with an existing ``anyOf`` raise
+      ``ValueError`` rather than dropping conjunctive constraints.
     - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
       the single non-null type. If there is exactly one non-null
       alternative it is inlined directly; otherwise the ``anyOf`` is
@@ -53,13 +69,43 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     schema = dict(schema)
 
+    # Gemini's Schema model does not support the JSON Schema dialect marker.
+    schema.pop("$schema", None)
+
+    # Gemini (and many third-party proxies) reject `null` as a standalone
+    # functionDeclaration property type. Some MCP servers emit
+    # {"type": "null"} directly (not wrapped in anyOf) for parameters that
+    # accept None — rewrite it to "object" so it round-trips through the API.
+    if _is_null_schema(schema):
+        schema["type"] = "object"
+    elif isinstance(schema.get("type"), list):
+        non_null_types = [v for v in schema["type"] if v != "null"]
+        if len(non_null_types) == 1:
+            schema["type"] = non_null_types[0]
+        elif non_null_types:
+            if "anyOf" in schema:
+                raise ValueError(
+                    "Cannot safely sanitize Gemini schema with both a "
+                    "multi-type nullable type array and anyOf.",
+                )
+            schema.pop("type")
+            schema["anyOf"] = [{"type": type_} for type_ in non_null_types]
+        else:
+            schema["type"] = "object"
+
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
+
+    # Convert `const` into an equivalent single-value `enum` — Gemini's
+    # Schema model does not support the `const` keyword.
+    if "const" in schema:
+        const_value = schema.pop("const")
+        schema.setdefault("enum", [const_value])
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
         any_of = schema["anyOf"]
-        non_null = [v for v in any_of if v != {"type": "null"}]
+        non_null = [v for v in any_of if not _is_null_schema(v)]
         if len(non_null) < len(any_of):  # at least one null entry removed
             if len(non_null) == 1:
                 # Inline the single non-null type, preserving outer keys
@@ -191,6 +237,13 @@ class GeminiChatModel(ChatModelBase):
         self.formatter = formatter or GeminiChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        from google import genai
+
+        self.client: genai.Client = genai.Client(
+            api_key=self.credential.api_key.get_secret_value(),
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         from google.genai import errors
@@ -230,15 +283,6 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        from google import genai
-
-        client = genai.Client(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         config: dict[str, Any] = {**config_kwargs}
@@ -280,25 +324,21 @@ class GeminiChatModel(ChatModelBase):
         start_datetime = datetime.now()
 
         if self.stream:
-            response = await client.aio.models.generate_content_stream(
+            response = await self.client.aio.models.generate_content_stream(
                 **kwargs,
             )
-            # Pass client to the generator so the aiohttp session it owns
-            # stays alive until the stream is fully consumed.
             return self._parse_stream_response(
                 start_datetime,
                 response,
-                client,
             )
 
-        response = await client.aio.models.generate_content(**kwargs)
+        response = await self.client.aio.models.generate_content(**kwargs)
         return self._parse_completion_response(start_datetime, response)
 
     async def _parse_stream_response(
         self,
         start_datetime: datetime,
         response: Any,
-        _client: Any = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the Gemini streaming response.
 
@@ -308,34 +348,28 @@ class GeminiChatModel(ChatModelBase):
             response (`Any`):
                 The Gemini async stream object from
                 ``client.aio.models.generate_content_stream``.
-            _client (`Any`, optional):
-                The ``genai.Client`` that produced the stream. Held here so
-                its aiohttp session is not garbage-collected before the
-                stream is fully consumed.
 
         Yields:
             `ChatResponse`:
                 Incremental ``ChatResponse`` objects with ``is_last=False``
                 followed by a final one with ``is_last=True``.
         """
-        # All delta should have the same block identifier
-        # Use the API's response_id when available (it arrives at the first
-        # chunk); otherwise generate a UUID to ensure all chunks share a
-        # stable id.
-        response_id: str | None = None
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: dict = {}
-        usage = None
+
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
 
         async for chunk in response:
             # Capture response_id from the first chunk that carries it
-            if response_id is None:
-                response_id = (
-                    getattr(chunk, "response_id", None) or _generate_id()
-                )
+            delta_res = ChatResponse(
+                content=[],
+                is_last=False,
+                id=response_id,
+            )
 
-            delta_content: list = []
+            # Update the response ID if exists
+            response_id = getattr(chunk, "response_id", None) or response_id
+            delta_res.id = response_id
 
             if (
                 chunk.candidates
@@ -344,70 +378,43 @@ class GeminiChatModel(ChatModelBase):
             ):
                 for part in chunk.candidates[0].content.parts:
                     if part.text:
+                        # Thinking
                         if part.thought:
-                            acc_thinking.thinking += part.text
-                            delta_content.append(
-                                ThinkingBlock(
-                                    id=acc_thinking.id,
-                                    thinking=part.text,
-                                ),
-                            )
-                        else:
-                            acc_text.text += part.text
-                            delta_content.append(
-                                TextBlock(id=acc_text.id, text=part.text),
+                            delta_res.append_thinking(
+                                block_id=thinking_id,
+                                thinking=part.text,
                             )
 
+                        # Text
+                        else:
+                            delta_res.append_text(
+                                block_id=text_id,
+                                text=part.text,
+                            )
+
+                    # Tool call
                     if part.function_call:
-                        keyword_args = part.function_call.args or {}
                         if part.thought_signature:
                             call_id = base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
                             call_id = part.function_call.id or _generate_id()
-                        input_str = json.dumps(
-                            keyword_args,
-                            ensure_ascii=False,
-                        )
-                        acc_tool_calls[call_id] = {
-                            "name": part.function_call.name,
-                            "input": input_str,
-                        }
-                        delta_content.append(
-                            ToolCallBlock(
-                                id=call_id,
-                                name=part.function_call.name,
-                                input=input_str,
+
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=part.function_call.name,
+                            input=json.dumps(
+                                part.function_call.args or {},
+                                ensure_ascii=False,
                             ),
                         )
 
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
-            if delta_content:
-                yield ChatResponse(
-                    id=response_id,
-                    content=delta_content,
-                    is_last=False,
-                    usage=usage,
-                )
-
-        final_content: list = []
-        if acc_thinking.thinking:
-            final_content.append(acc_thinking)
-        if acc_text.text:
-            final_content.append(acc_text)
-        for call_id, tc in acc_tool_calls.items():
-            final_content.append(
-                ToolCallBlock(id=call_id, name=tc["name"], input=tc["input"]),
-            )
-
-        yield ChatResponse(
-            id=response_id or _generate_id(),
-            content=final_content,
-            is_last=True,
-            usage=usage,
-        )
+            if delta_res.content or usage:
+                delta_res.usage = usage
+                yield delta_res
 
     def _parse_completion_response(
         self,
@@ -490,9 +497,30 @@ class GeminiChatModel(ChatModelBase):
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
         if prompt_tokens is not None and total_tokens is not None:
+            tool_use_tokens = (
+                getattr(
+                    usage_metadata,
+                    "tool_use_prompt_token_count",
+                    0,
+                )
+                or 0
+            )
+            input_tokens = prompt_tokens + tool_use_tokens
+            candidates_tokens = getattr(
+                usage_metadata,
+                "candidates_token_count",
+                None,
+            )
+            if candidates_tokens is not None:
+                output_tokens = candidates_tokens + (
+                    getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                )
+            else:
+                # Fallback for SDK versions without the candidate count.
+                output_tokens = total_tokens - input_tokens
             return ChatUsage(
-                input_tokens=prompt_tokens,
-                output_tokens=total_tokens - prompt_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     usage_metadata,

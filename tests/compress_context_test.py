@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
-# pylint: disable=protected-access
+# pylint: disable=protected-access, too-many-public-methods
+import hashlib
 import json
 import os
 import tempfile
@@ -10,18 +11,99 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import MockModel, AnyString
 
-from agentscope.model import StructuredResponse
-from agentscope.agent import Agent, ContextConfig
+from agentscope.model import ChatResponse, ChatUsage, StructuredResponse
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.state import AgentState
 from agentscope.message import (
     UserMsg,
     AssistantMsg,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
     HintBlock,
     Msg,
+    DataBlock,
+    Base64Source,
+    URLSource,
+    Usage,
 )
 from agentscope.tool import Toolkit
+from agentscope.workspace import LocalWorkspace
+
+
+# A 1x1 transparent PNG image
+_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB"
+    "0C8AAAAASUVORK5CYII="
+)
+
+
+def _image_block(name: str) -> DataBlock:
+    """Create a base64 image data block."""
+    return DataBlock(
+        source=Base64Source(data=_PNG_BASE64, media_type="image/png"),
+        name=name,
+    )
+
+
+def _build_image_context() -> list[Msg]:
+    """Build a context with 6 images located at the message top level (user
+    and assistant), inside a tool result and inside a hint block, plus one
+    audio block."""
+    return [
+        UserMsg(
+            "User",
+            [_image_block("img1"), TextBlock(type="text", text="hello")],
+            id="1",
+        ),
+        AssistantMsg(
+            "Friday",
+            [
+                ToolCallBlock(
+                    type="tool_call",
+                    id="call_1",
+                    name="view",
+                    input="{}",
+                ),
+                ToolResultBlock(
+                    type="tool_result",
+                    id="call_1",
+                    name="view",
+                    output=[
+                        TextBlock(type="text", text="the image:"),
+                        _image_block("img2"),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+                HintBlock(
+                    hint=[
+                        TextBlock(type="text", text="a hint image:"),
+                        _image_block("img3"),
+                    ],
+                ),
+                _image_block("img4"),
+            ],
+            id="2",
+        ),
+        UserMsg(
+            "User",
+            [
+                DataBlock(
+                    source=Base64Source(data="AAAA", media_type="audio/wav"),
+                ),
+                DataBlock(
+                    source=URLSource(
+                        url="https://example.com/img5.png",
+                        media_type="image/png",
+                    ),
+                    name="img5",
+                ),
+                _image_block("img6"),
+            ],
+            id="3",
+        ),
+    ]
 
 
 class RecordingStructuredMockModel(MockModel):
@@ -77,6 +159,121 @@ class RecordingStructuredMockModel(MockModel):
             structured_model,
             **kwargs,
         )
+
+
+class FixedPathOffloader:
+    """Return one stable offload path for reminder tests."""
+
+    async def offload_context(
+        self,
+        session_id: str,
+        msgs: list[Msg],
+    ) -> str:
+        """Return the fixed path without persisting test messages."""
+        del session_id, msgs
+        return "sessions/123/context.jsonl"
+
+
+def _make_failing_compression_agent(
+    summary: str = "",
+    offloader: Any = None,
+) -> tuple[Agent, RecordingStructuredMockModel]:
+    """Build an agent whose summary generation fails once."""
+    model = RecordingStructuredMockModel(
+        context_size=100,
+        fail_structured_output_times=1,
+    )
+    agent = Agent(
+        name="Friday",
+        system_prompt="".join(["0" for _ in range(20 * 4)]),
+        model=model,
+        context_config=ContextConfig(
+            trigger_ratio=0.7,
+            reserve_ratio=0.4,
+        ),
+        state=AgentState(
+            session_id="123",
+            summary=summary,
+            context=[
+                UserMsg(
+                    "User",
+                    "".join(["1" for _ in range(30 * 4)]),
+                    id="1",
+                ),
+                AssistantMsg(
+                    "Friday",
+                    "".join(["2" for _ in range(10 * 4)]),
+                    id="2",
+                ),
+                UserMsg(
+                    "User",
+                    "".join(["3" for _ in range(10 * 4)]),
+                    id="3",
+                ),
+            ],
+        ),
+        offloader=offloader,
+        toolkit=Toolkit(),
+    )
+    return agent, model
+
+
+def _make_usage_recording_compression_agent(
+    last_msg_usage: Usage | None = None,
+) -> Agent:
+    """Build an agent whose compression model response includes usage."""
+    model = MockModel(context_size=100)
+    last_msg = UserMsg(
+        "User",
+        "".join(["3" for _ in range(10 * 4)]),
+        id="3",
+    )
+    last_msg.usage = last_msg_usage
+    agent = Agent(
+        name="Friday",
+        system_prompt="".join(["0" for _ in range(20 * 4)]),
+        model=model,
+        context_config=ContextConfig(
+            trigger_ratio=0.7,
+            reserve_ratio=0.4,
+        ),
+        state=AgentState(
+            session_id="123",
+            context=[
+                UserMsg(
+                    "User",
+                    "".join(["1" for _ in range(30 * 4)]),
+                    id="1",
+                ),
+                AssistantMsg(
+                    "Friday",
+                    "".join(["2" for _ in range(10 * 4)]),
+                    id="2",
+                ),
+                last_msg,
+            ],
+        ),
+        toolkit=Toolkit(),
+    )
+    model.set_structured_response(
+        StructuredResponse(
+            content={
+                "task_overview": "1",
+                "current_state": "2",
+                "important_discoveries": "3",
+                "next_steps": "4",
+                "context_to_preserve": "5",
+            },
+            usage=ChatUsage(
+                input_tokens=123,
+                output_tokens=45,
+                time=0.1,
+                cache_input_tokens=6,
+                cache_creation_input_tokens=7,
+            ),
+        ),
+    )
+    return agent
 
 
 def _has_instruction_hint(
@@ -224,12 +421,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -240,6 +442,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -247,6 +452,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -261,6 +468,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -268,6 +478,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "text": "c" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -277,12 +489,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -323,12 +540,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -339,6 +561,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -346,11 +571,15 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                         {
                             "id": "c",
                             "text": "c" * 60,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -365,12 +594,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -410,12 +644,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -426,6 +665,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -433,6 +675,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -447,6 +691,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -454,6 +701,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "c",
                             "text": "c" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -463,12 +712,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -508,12 +762,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "a" * 120,
                         },
                     ],
@@ -529,6 +788,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -536,11 +798,15 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                         {
                             "id": "c",
                             "text": "c" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -550,12 +816,17 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
                         },
                     ],
@@ -598,6 +869,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -605,11 +879,15 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": "b",
                             "text": "b" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                         {
                             "id": "c",
                             "text": "c" * 20,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -619,13 +897,225 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
                         {
                             "id": AnyString(),
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "text": "d" * 40,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
+        )
+
+    async def test_split_multi_tool_pairs_reaches_stable_boundary(
+        self,
+    ) -> None:
+        """The boundary is rechecked after moving an unmatched result."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="",
+            model=MockModel(context_size=1_000),
+            state=AgentState(
+                session_id="multi-tool-compression",
+                context=[
+                    UserMsg("User", "old" * 80, id="old-user"),
+                    AssistantMsg(
+                        "Friday",
+                        [
+                            ToolCallBlock(
+                                id="tc1",
+                                name="first_tool",
+                                input=json.dumps({"value": "a" * 80}),
+                            ),
+                            ToolCallBlock(
+                                id="tc2",
+                                name="second_tool",
+                                input=json.dumps({"value": "b" * 80}),
+                            ),
+                            ToolResultBlock(
+                                id="tc1",
+                                name="first_tool",
+                                output=[
+                                    TextBlock(text="first result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            ToolResultBlock(
+                                id="tc2",
+                                name="second_tool",
+                                output=[
+                                    TextBlock(text="second result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            TextBlock(
+                                text="Both tools completed.",
+                                id="final-text",
+                            ),
+                        ],
+                        id="multi-tool-msg",
+                    ),
+                    UserMsg(
+                        "User",
+                        "latest question",
+                        id="latest-user",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        to_compress, to_reserve = await agent._split_context_for_compression(
+            to_reserved_tokens=86,
+            tools=[],
+        )
+
+        self.assertListEqual(
+            [msg.model_dump() for msg in to_compress],
+            [
+                {
+                    "id": "old-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": "old" * 80,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "tc1",
+                            "type": "tool_call",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "first_tool",
+                            "input": json.dumps({"value": "a" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_call",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "second_tool",
+                            "input": json.dumps({"value": "b" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc1",
+                            "type": "tool_result",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "first_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "text": "first result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_result",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "name": "second_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "text": "second result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
+        )
+        self.assertListEqual(
+            [msg.model_dump() for msg in to_reserve],
+            [
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "final-text",
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": "Both tools completed.",
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "latest-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": "latest question",
                         },
                     ],
                     "metadata": {},
@@ -708,6 +1198,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -715,6 +1208,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "text": "2" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -724,6 +1219,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -731,6 +1229,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "text": "3" * 40,
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                     "metadata": {},
@@ -1078,6 +1578,1142 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 instructions,
             ),
         )
+
+    async def test_compression_tool_compresses_below_hard_threshold(
+        self,
+    ) -> None:
+        """The tool compresses at the ratio where it is recommended, which is
+        below the hard compression threshold."""
+        model = RecordingStructuredMockModel(context_size=500)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "task",
+                    "current_state": "complete",
+                    "important_discoveries": "none",
+                    "next_steps": "None",
+                    "context_to_preserve": "none",
+                },
+            ),
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            # The context is 316 tokens, above the 250 tokens the tool
+            # compresses from, and below the 450 tokens hard threshold
+            context_config=ContextConfig(
+                trigger_ratio=0.9,
+                reserve_ratio=0.3,
+                context_buffer_ratio=0.4,
+                compression_tool_enabled=True,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg("User", str(index) * 80, id=str(index))
+                    for index in range(8)
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        self.assertDictEqual(
+            (await agent._compress_context_tool()).model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Context compressed successfully.",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.SUCCESS,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+        self.assertIn("# Current State\ncomplete", agent.state.summary)
+
+    async def test_compression_tool_skips_small_context(self) -> None:
+        """The tool leaves a context below the recommended ratio untouched,
+        so that a spontaneous call doesn't lose details for nothing."""
+        model = RecordingStructuredMockModel(context_size=500)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            # The context is 176 tokens, below the 250 tokens the tool
+            # compresses from
+            context_config=ContextConfig(
+                trigger_ratio=0.9,
+                reserve_ratio=0.3,
+                context_buffer_ratio=0.4,
+                compression_tool_enabled=True,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "1" * 80, id="1")],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        self.assertDictEqual(
+            (await agent._compress_context_tool()).model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The context is not long enough to compress, "
+                        "so it remains unchanged.",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.SUCCESS,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+        self.assertEqual(agent.state.summary, "")
+        self.assertListEqual(
+            [msg.id for msg in agent.state.context],
+            ["1"],
+        )
+        self.assertListEqual(model.recorded_structured_messages, [])
+
+    async def test_compression_tool_keeps_its_call_result_pair(self) -> None:
+        """Compression invoked during acting preserves its own tool call."""
+        model = RecordingStructuredMockModel(context_size=500, stream=False)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "task",
+                    "current_state": "phase complete",
+                    "important_discoveries": "none",
+                    "next_steps": "continue",
+                    "context_to_preserve": "none",
+                },
+            ),
+        )
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="compress-1",
+                            name="CompressContext",
+                            input="{}",
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            toolkit=Toolkit(),
+            # The context is 316 tokens, above the 250 tokens the tool
+            # compresses from, and below the 450 tokens hard threshold
+            context_config=ContextConfig(
+                trigger_ratio=0.9,
+                reserve_ratio=0.3,
+                context_buffer_ratio=0.4,
+                compression_tool_enabled=True,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg("User", str(index) * 80, id=str(index))
+                    for index in range(8)
+                ],
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        result = await agent.reply(UserMsg("User", "continue"))
+
+        self.assertEqual(result.get_text_content(), "done")
+        self.assertIn("# Current State\nphase complete", agent.state.summary)
+        self.assertListEqual(
+            [
+                type(block)
+                for msg in agent.state.context
+                for block in msg.content
+                if isinstance(block, (ToolCallBlock, ToolResultBlock))
+                and block.id == "compress-1"
+            ],
+            [ToolCallBlock, ToolResultBlock],
+        )
+
+    async def test_split_keeps_unfinished_call_before_its_earlier_pair(
+        self,
+    ) -> None:
+        """A finished pair after an unfinished call must not drag the
+        unfinished call into the compressed part."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=MockModel(context_size=100),
+            toolkit=Toolkit(),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    AssistantMsg(
+                        "Friday",
+                        [
+                            ToolCallBlock(id="a", name="Read", input="{}"),
+                            ToolCallBlock(
+                                id="compress-1",
+                                name="CompressContext",
+                                input="{}",
+                            ),
+                            ToolResultBlock(
+                                id="a",
+                                name="Read",
+                                output=[TextBlock(text="content")],
+                            ),
+                        ],
+                        id="reply-1",
+                    ),
+                ],
+            ),
+        )
+        agent.state.reply_id = "reply-1"
+
+        (
+            msgs_to_compress,
+            msgs_to_reserve,
+        ) = await agent._split_context_for_compression(1, [])
+
+        self.assertListEqual(msgs_to_compress, [])
+        self.assertListEqual(
+            [
+                (type(block).__name__, block.id)
+                for msg in msgs_to_reserve
+                for block in msg.content
+            ],
+            [
+                ("ToolCallBlock", "a"),
+                ("ToolCallBlock", "compress-1"),
+                ("ToolResultBlock", "a"),
+            ],
+        )
+
+    async def test_compression_tool_registration_tracks_config(self) -> None:
+        """The compression tool is exposed only when it's enabled, and the
+        same instance is kept across replies for a stable schema."""
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                model = MockModel(stream=False)
+                model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[TextBlock(text="done")],
+                            is_last=True,
+                        ),
+                        ChatResponse(
+                            content=[TextBlock(text="done again")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                toolkit = Toolkit()
+                agent = Agent(
+                    name="Friday",
+                    system_prompt="You are helpful.",
+                    model=model,
+                    toolkit=toolkit,
+                    context_config=ContextConfig(
+                        compression_tool_enabled=enabled,
+                    ),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                )
+
+                await agent.reply(UserMsg("User", "hello"))
+                tool = await toolkit.get_tool("CompressContext")
+                self.assertEqual(tool is not None, enabled)
+
+                if enabled:
+                    await agent.reply(UserMsg("User", "hello again"))
+                    self.assertIs(
+                        await toolkit.get_tool("CompressContext"),
+                        tool,
+                    )
+
+    async def test_max_image_num_without_offloader(self) -> None:
+        """The oldest images exceeding the limit are dropped and replaced by
+        hints without path information when no offloader is provided."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You're a helpful assistant.",
+            model=MockModel(context_size=100000),
+            context_config=ContextConfig(max_image_num=2),
+            state=AgentState(session_id="123", context=_build_image_context()),
+            toolkit=Toolkit(),
+        )
+
+        # The token count is far below the trigger threshold, so only the
+        # image limitation takes effect
+        await agent.compress_context()
+
+        expected = [
+            {
+                "name": "User",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "<system-reminder>The image named 'img1' is "
+                            "removed to free up context "
+                            "space.</system-reminder>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": "1",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": "call_1",
+                        "name": "view",
+                        "input": "{}",
+                        "state": "pending",
+                        "suggested_rules": [],
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "tool_result",
+                        "id": "call_1",
+                        "name": "view",
+                        "output": [
+                            {
+                                "type": "text",
+                                "text": "the image:",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img2' "
+                                    "is removed to free up context "
+                                    "space.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "hint",
+                        "hint": [
+                            {
+                                "type": "text",
+                                "text": "a hint image:",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img3' "
+                                    "is removed to free up context "
+                                    "space.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "id": AnyString(),
+                        "source": None,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
+                    },
+                    {
+                        "type": "hint",
+                        "hint": (
+                            "<system-reminder>The image named 'img4' is "
+                            "removed to free up context "
+                            "space.</system-reminder>"
+                        ),
+                        "id": AnyString(),
+                        "source": None,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
+                    },
+                ],
+                "role": "assistant",
+                "id": "2",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "User",
+                "content": [
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": "AAAA",
+                            "media_type": "audio/wav",
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/img5.png",
+                            "media_type": "image/png",
+                        },
+                        "name": "img5",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_BASE64,
+                            "media_type": "image/png",
+                        },
+                        "name": "img6",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": "3",
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+        ]
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            expected,
+        )
+
+        # Calling again should be a no-op
+        await agent.compress_context()
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            expected,
+        )
+
+    async def test_max_image_num_with_offloader(self) -> None:
+        """The oldest images exceeding the limit are offloaded and replaced
+        by hints recording the offloaded path when an offloader is
+        provided; URL images keep their original URL."""
+        with tempfile.TemporaryDirectory() as workdir:
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're a helpful assistant.",
+                model=MockModel(context_size=100000),
+                context_config=ContextConfig(max_image_num=1),
+                state=AgentState(
+                    session_id="123",
+                    context=_build_image_context(),
+                ),
+                toolkit=Toolkit(),
+                offloader=LocalWorkspace(workdir=workdir),
+            )
+
+            await agent.compress_context()
+
+            # All the base64 images share the same content, thus the same
+            # offloaded path
+            rel = "data/" + hashlib.sha256(_PNG_BASE64.encode()).hexdigest()
+            url = f"workspace:///{rel}.png"
+            self.assertTrue(
+                os.path.exists(os.path.join(workdir, rel + ".png")),
+            )
+
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [
+                    {
+                        "name": "User",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img1' "
+                                    "is offloaded into "
+                                    + url
+                                    + ", you can refer to it when "
+                                    "needed.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": "hello",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "user",
+                        "id": "1",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "Friday",
+                        "content": [
+                            {
+                                "type": "tool_call",
+                                "id": "call_1",
+                                "name": "view",
+                                "input": "{}",
+                                "state": "pending",
+                                "suggested_rules": [],
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "tool_result",
+                                "id": "call_1",
+                                "name": "view",
+                                "output": [
+                                    {
+                                        "type": "text",
+                                        "text": "the image:",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "<system-reminder>The image named "
+                                            "'img2' is offloaded into "
+                                            + url
+                                            + ", you can refer to it when "
+                                            "needed.</system-reminder>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "state": "success",
+                                "metadata": {},
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "hint",
+                                "hint": [
+                                    {
+                                        "type": "text",
+                                        "text": "a hint image:",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "<system-reminder>The image named "
+                                            "'img3' is offloaded into "
+                                            + url
+                                            + ", you can refer to it when "
+                                            "needed.</system-reminder>"
+                                        ),
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                    },
+                                ],
+                                "id": AnyString(),
+                                "source": None,
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                            {
+                                "type": "hint",
+                                "hint": (
+                                    "<system-reminder>The image named 'img4' "
+                                    "is offloaded into "
+                                    + url
+                                    + ", you can refer to it when "
+                                    "needed.</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "source": None,
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                        ],
+                        "role": "assistant",
+                        "id": "2",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": None,
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "User",
+                        "content": [
+                            {
+                                "type": "data",
+                                "id": AnyString(),
+                                "source": {
+                                    "type": "base64",
+                                    "data": "AAAA",
+                                    "media_type": "audio/wav",
+                                },
+                                "name": None,
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "<system-reminder>The image named 'img5' "
+                                    "is offloaded into "
+                                    "https://example.com/img5.png, you can "
+                                    "refer to it when needed."
+                                    "</system-reminder>"
+                                ),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            {
+                                "type": "data",
+                                "id": AnyString(),
+                                "source": {
+                                    "type": "base64",
+                                    "data": _PNG_BASE64,
+                                    "media_type": "image/png",
+                                },
+                                "name": "img6",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "user",
+                        "id": "3",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": None,
+                        "structured_output": None,
+                        "error": None,
+                    },
+                ],
+            )
+
+    async def test_max_image_num_default(self) -> None:
+        """The default limit is 5, so only the oldest image is removed for a
+        context with 6 images."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You're a helpful assistant.",
+            model=MockModel(context_size=100000),
+            state=AgentState(session_id="123", context=_build_image_context()),
+            toolkit=Toolkit(),
+        )
+        self.assertEqual(agent.context_config.max_image_num, 5)
+
+        await agent.compress_context()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "name": "User",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<system-reminder>The image named 'img1' is "
+                                "removed to free up context "
+                                "space.</system-reminder>"
+                            ),
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "text",
+                            "text": "hello",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "user",
+                    "id": "1",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "Friday",
+                    "content": [
+                        {
+                            "type": "tool_call",
+                            "id": "call_1",
+                            "name": "view",
+                            "input": "{}",
+                            "state": "pending",
+                            "suggested_rules": [],
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "tool_result",
+                            "id": "call_1",
+                            "name": "view",
+                            "output": [
+                                {
+                                    "type": "text",
+                                    "text": "the image:",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                {
+                                    "type": "data",
+                                    "id": AnyString(),
+                                    "source": {
+                                        "type": "base64",
+                                        "data": _PNG_BASE64,
+                                        "media_type": "image/png",
+                                    },
+                                    "name": "img2",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "hint",
+                            "hint": [
+                                {
+                                    "type": "text",
+                                    "text": "a hint image:",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                {
+                                    "type": "data",
+                                    "id": AnyString(),
+                                    "source": {
+                                        "type": "base64",
+                                        "data": _PNG_BASE64,
+                                        "media_type": "image/png",
+                                    },
+                                    "name": "img3",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "id": AnyString(),
+                            "source": None,
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": _PNG_BASE64,
+                                "media_type": "image/png",
+                            },
+                            "name": "img4",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "assistant",
+                    "id": "2",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+                {
+                    "name": "User",
+                    "content": [
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": "AAAA",
+                                "media_type": "audio/wav",
+                            },
+                            "name": None,
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/img5.png",
+                                "media_type": "image/png",
+                            },
+                            "name": "img5",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        {
+                            "type": "data",
+                            "id": AnyString(),
+                            "source": {
+                                "type": "base64",
+                                "data": _PNG_BASE64,
+                                "media_type": "image/png",
+                            },
+                            "name": "img6",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "user",
+                    "id": "3",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+            ],
+        )
+
+    async def test_context_compression_records_usage(self) -> None:
+        """The compression usage is recorded on the last retained message."""
+        agent = _make_usage_recording_compression_agent()
+
+        await agent.compress_context()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": "2",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "text": "2" * 40,
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "3",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "text": "3" * 40,
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 123,
+                        "output_tokens": 45,
+                        "cache_input_tokens": 6,
+                        "cache_creation_input_tokens": 7,
+                    },
+                },
+            ],
+        )
+
+    async def test_context_compression_accumulates_usage(self) -> None:
+        """The compression usage is added to the existing message usage."""
+        agent = _make_usage_recording_compression_agent(
+            Usage(
+                input_tokens=10,
+                output_tokens=20,
+                cache_input_tokens=3,
+                cache_creation_input_tokens=4,
+            ),
+        )
+
+        await agent.compress_context()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": "2",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "text": "2" * 40,
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "3",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "text": "3" * 40,
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 133,
+                        "output_tokens": 65,
+                        "cache_input_tokens": 9,
+                        "cache_creation_input_tokens": 11,
+                    },
+                },
+            ],
+        )
+
+    async def test_context_compression_without_reserved_context(self) -> None:
+        """The compression usage is carried by an empty message when the
+        whole context is compressed."""
+        model = MockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(55 * 4)]),
+                        id="1",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+                usage=ChatUsage(
+                    input_tokens=123,
+                    output_tokens=45,
+                    time=0.1,
+                ),
+            ),
+        )
+
+        # A reserve ratio above the trigger ratio compresses the whole context
+        await agent.compress_context(
+            ContextConfig(trigger_ratio=0.7, reserve_ratio=0.89),
+        )
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": agent.state.reply_id,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 123,
+                        "output_tokens": 45,
+                        "cache_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                },
+            ],
+        )
+
+    async def test_summary_failure_truncates_context(self) -> None:
+        """Summary failures fall back to lossy context truncation."""
+        agent, _ = _make_failing_compression_agent()
+        expected_state = agent.state.model_copy(deep=True)
+        expected_state.context = expected_state.context[1:]
+        expected_state.summary = (
+            "<system-info>Some earlier messages were truncated for limited "
+            "context.</system-info>"
+        )
+
+        await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
+
+    async def test_summary_failure_raises_without_truncation_fallback(
+        self,
+    ) -> None:
+        """Without the truncation fallback, a failed summary raises and
+        leaves the context untouched."""
+        agent, _ = _make_failing_compression_agent()
+        agent.context_config.compression_fallback_to_truncation = False
+        expected_state = agent.state.model_copy(deep=True)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "simulated compression overflow",
+        ):
+            await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
+
+    async def test_offload_reminder_is_not_duplicated(self) -> None:
+        """Repeated fallback preserves one reminder for a stable path."""
+        reminder = (
+            "<system-reminder>The compressed context is offloaded to "
+            "'sessions/123/context.jsonl', you can refer to it when "
+            "needed.</system-reminder>"
+        )
+        agent, _ = _make_failing_compression_agent(
+            summary=reminder,
+            offloader=FixedPathOffloader(),
+        )
+        expected_state = agent.state.model_copy(deep=True)
+        expected_state.context = []
+
+        await agent.compress_context()
+
+        self.assertEqual(agent.state, expected_state)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

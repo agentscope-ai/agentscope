@@ -60,6 +60,7 @@ class CancelDispatcher:
         self._bg_manager = bg_manager
         self._session_task: asyncio.Task | None = None
         self._task_cancel_task: asyncio.Task | None = None
+        self._interrupt_task: asyncio.Task | None = None
 
     async def __aenter__(self) -> Self:
         """Start both dispatcher loops and wait until their bus
@@ -70,6 +71,7 @@ class CancelDispatcher:
         """
         session_ready = asyncio.Event()
         task_ready = asyncio.Event()
+        interrupt_ready = asyncio.Event()
 
         self._session_task = asyncio.create_task(
             self._session_cancel_loop(session_ready),
@@ -79,14 +81,23 @@ class CancelDispatcher:
             self._task_cancel_loop(task_ready),
             name="cancel-dispatcher:task",
         )
+        self._interrupt_task = asyncio.create_task(
+            self._interrupt_loop(interrupt_ready),
+            name="cancel-dispatcher:interrupt",
+        )
 
         await session_ready.wait()
         await task_ready.wait()
+        await interrupt_ready.wait()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Cancel both dispatcher loops on context exit."""
-        for task in (self._session_task, self._task_cancel_task):
+        """Cancel all dispatcher loops on context exit."""
+        for task in (
+            self._session_task,
+            self._task_cancel_task,
+            self._interrupt_task,
+        ):
             if task is None:
                 continue
             task.cancel()
@@ -96,6 +107,7 @@ class CancelDispatcher:
                 pass
         self._session_task = None
         self._task_cancel_task = None
+        self._interrupt_task = None
 
     # ------------------------------------------------------------------
     # Session-level cancel loop
@@ -116,7 +128,7 @@ class CancelDispatcher:
                 sid = payload.get("session_id")
                 if isinstance(sid, str):
                     self._cancel_session(sid)
-        except Exception:  # pylint: disable=broad-except
+        except Exception:
             logger.exception(
                 "CancelDispatcher session-cancel loop crashed.",
             )
@@ -184,3 +196,51 @@ class CancelDispatcher:
             # Unblock ``__aenter__`` even if subscribe failed before
             # ``on_ready`` ran, so startup cannot deadlock.
             ready.set()
+
+    # ------------------------------------------------------------------
+    # Session-level interrupt loop
+    # ------------------------------------------------------------------
+
+    async def _interrupt_loop(self, ready: asyncio.Event) -> None:
+        """Subscribe to the session interrupt channel and cancel matching
+        local tasks.
+
+        Args:
+            ready (`asyncio.Event`):
+                Signalled after the underlying SUBSCRIBE completes.
+        """
+        try:
+            async for payload in self._bus.subscribe(
+                MessageBusKeys.session_interrupt_channel(),
+                on_ready=ready.set,
+            ):
+                sid = payload.get("session_id")
+                if isinstance(sid, str):
+                    self._interrupt_session(sid)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "CancelDispatcher interrupt loop crashed.",
+            )
+        finally:
+            ready.set()
+
+    def _interrupt_session(self, session_id: str) -> None:
+        """Cancel the local chat-run task for a session.
+
+        Unlike ``_cancel_session``, this method only cancels the
+        chat-run asyncio task—it does **not** cancel background tasks.
+        The agent handles ``CancelledError`` gracefully at each
+        breakpoint, preserving partial context.
+
+        Args:
+            session_id (`str`):
+                The session whose chat run should be interrupted.
+        """
+        task = self._registry.get(session_id)
+        if task is not None and not task.done():
+            logger.info(
+                "CancelDispatcher: interrupting local chat run for "
+                "session %s",
+                session_id,
+            )
+            task.cancel()

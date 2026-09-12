@@ -3,7 +3,7 @@
 # pylint: disable=protected-access, unused-argument
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from utils import MockModel
+from utils import MockModel, AnyString
 
 from agentscope.agent import Agent, ContextConfig
 from agentscope.message import (
@@ -134,11 +134,29 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20, "id": "block1"},
-            {"type": "text", "text": "B" * 20 + "C" * 60, "id": "block2"},
+            {
+                "type": "text",
+                "text": "A" * 20,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            {
+                "type": "text",
+                "text": "B" * 20 + "C" * 60,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "C" * 40, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 40,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -196,8 +214,20 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20, "id": "block1"},
-            {"type": "text", "text": "B" * 20, "id": "block2"},
+            {
+                "type": "text",
+                "text": "A" * 20,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            {
+                "type": "text",
+                "text": "B" * 20,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
             {
@@ -209,6 +239,8 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                     "media_type": "image/png",
                 },
                 "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
             },
         ]
 
@@ -255,11 +287,29 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 100, "id": "block1"},
+            {
+                "type": "text",
+                "text": "A" * 100,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "B" * 20, "id": "block2"},
-            {"type": "text", "text": "C" * 20, "id": "block3"},
+            {
+                "type": "text",
+                "text": "B" * 20,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            {
+                "type": "text",
+                "text": "C" * 20,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -329,11 +379,25 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                     "media_type": "image/png",
                 },
                 "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
             },
-            {"type": "text", "text": "B" * 20 + "C" * 5, "id": "block2"},
+            {
+                "type": "text",
+                "text": "B" * 20 + "C" * 5,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "C" * 15, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 15,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -387,10 +451,22 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20 + "B" * 80, "id": "block1"},
+            {
+                "type": "text",
+                "text": "A" * 20 + "B" * 80,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "B" * 20 + "C" * 20, "id": "block3"},
+            {
+                "type": "text",
+                "text": "B" * 20 + "C" * 20,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -450,7 +526,13 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20, "id": "block1"},
+            {
+                "type": "text",
+                "text": "A" * 20,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
             {
                 "type": "data",
                 "id": "block2",
@@ -460,11 +542,25 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                     "media_type": "image/png",
                 },
                 "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
             },
-            {"type": "text", "text": "C" * 5, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 5,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "C" * 15, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 15,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(

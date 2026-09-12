@@ -135,9 +135,15 @@ class ToolResponse(BaseModel):
         # worse.
         if chunk.state == ToolResultState.ERROR:
             self.state = ToolResultState.ERROR
-        elif chunk.state == "interrupted":
+        elif (
+            self.state != ToolResultState.ERROR
+            and chunk.state == ToolResultState.INTERRUPTED
+        ):
             self.state = ToolResultState.INTERRUPTED
-        elif chunk.state == ToolResultState.DENIED:
+        elif (
+            self.state != ToolResultState.ERROR
+            and chunk.state == ToolResultState.DENIED
+        ):
             self.state = ToolResultState.DENIED
 
         self.metadata.update(chunk.metadata)

@@ -9,6 +9,7 @@ import frontmatter
 
 from ._base import SkillLoaderBase
 from .._logging import logger
+from .._utils._common import _normalize_local_path
 from ..skill import Skill
 
 
@@ -25,7 +26,7 @@ class LocalSkillLoader(SkillLoaderBase):
                 Whether to scan subdirectories. Defaults to False (only
                 scan current directory).
         """
-        self.directory = os.path.abspath(directory)
+        self.directory = _normalize_local_path(directory)
         self.scan_subdir = scan_subdir
         self._cache: dict[str, Skill] = {}
 

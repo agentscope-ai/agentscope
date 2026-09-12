@@ -16,11 +16,8 @@ from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
 
-def _default_id_factory() -> str:
-    return uuid.uuid4().hex
-
-
-_id_factory: Callable[[], str] = _default_id_factory
+_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
+_timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
 
 
 def set_id_factory(factory: Callable[[], str]) -> None:
@@ -52,16 +49,46 @@ def set_id_factory(factory: Callable[[], str]) -> None:
     _id_factory = factory
 
 
+def set_timestamp_factory(factory: Callable[[], str]) -> None:
+    """Override the global timestamp factory used by all AgentScope entities.
+
+    Args:
+        factory (`Callable[[], str]`):
+            A no-arg callable returning a string ID.
+
+    Raises:
+        TypeError: If ``factory`` is not callable.
+    """
+    if not callable(factory):
+        raise TypeError(
+            f"factory must be a callable, got {type(factory).__name__}",
+        )
+    global _timestamp_factory
+    _timestamp_factory = factory
+
+
 def _generate_id() -> str:
     """Generate an ID string using the current global ID factory."""
     return _id_factory()
+
+
+def _generate_timestamp() -> str:
+    """Generate a timestamp string using the current global
+    timestamp factory."""
+    return _timestamp_factory()
+
+
+def _normalize_local_path(path: str) -> str:
+    """Expand user-home shorthand and return an absolute local path."""
+    return os.path.abspath(os.path.expanduser(path))
 
 
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,
 ) -> dict:
-    """The given json_str maybe incomplete, e.g. '{"key', so we need to
+    """The given json_str maybe incomplete, e.g. '{"key', or carry arguments
+    whose types don't match the schema, e.g. '{"n": "42"}', so we need to
     repair and load it into a Python object.
 
     .. note::
@@ -73,23 +100,32 @@ def _json_loads_with_repair(
         json_str (`str`):
             The JSON string to parse, which may be incomplete or malformed.
         schema (`dict`, optional):
-            An optional JSON schema to guide the repair process.
+            An optional JSON schema to guide the repair process. The repair
+            is best-effort: arguments that it cannot fix are returned
+            unchanged, so that the caller's validation reports them.
 
     Returns:
         `dict`:
             A dictionary parsed from the JSON string after repair attempts.
-            Returns an empty dict if all repair attempts fail.
-    """
-    try:
-        # Loads directly
-        res = json.loads(json_str)
-        if isinstance(res, dict):
-            return res
 
-        error_message = (
-            f"Error: Your argument string is decoded into a {type(res)} "
-            f"object, but a dict object is expected!"
-        )
+    Raises:
+        `ToolJSONDecodeError`:
+            If the JSON string cannot be loaded into a dict.
+    """
+    parsed = None
+    error_message = "Error: Failed to parse your tool arguments."
+    try:
+        # Loads directly. A valid dict still goes through the repair below
+        # when a schema is given, because its argument types may be wrong.
+        parsed = json.loads(json_str)
+        if not isinstance(parsed, dict):
+            error_message = (
+                f"Error: Your argument string is decoded into a "
+                f"{type(parsed)} object, but a dict object is expected!"
+            )
+
+        elif schema is None:
+            return parsed
     except json.JSONDecodeError as e:
         error_message = (
             f"Error: When decoding your tool arguments from JSON format "
@@ -101,10 +137,35 @@ def _json_loads_with_repair(
         # Try to repair with json_repair
         from json_repair import repair_json
 
-        repaired = repair_json(json_str, stream_stable=True, schema=schema)
-        res = json.loads(repaired)
+        try:
+            res = repair_json(
+                json_str,
+                stream_stable=True,
+                schema=schema,
+                return_objects=True,
+            )
+        except ValueError:
+            # The repair is best-effort. Leave arguments that it cannot fix
+            # to the caller's schema validation, whose error message is more
+            # helpful for the agent.
+            res = parsed
+
         if isinstance(res, dict):
-            return res
+            if isinstance(parsed, dict) and parsed.keys() - res.keys():
+                # Dropping arguments, e.g. under `additionalProperties:
+                # false`, is a rewrite rather than a type repair.
+                res = parsed
+
+            try:
+                # NaN and Infinity are accepted as numbers by jsonschema, but
+                # silently bypass the minimum/maximum constraints.
+                json.dumps(res, allow_nan=False)
+            except ValueError:
+                error_message = (
+                    "Error: NaN and Infinity are not valid JSON numbers."
+                )
+            else:
+                return res
 
     except Exception:
         # Whatever the error is, we throw the original error message to the
@@ -284,11 +345,26 @@ def _flatten_json_schema(schema: dict) -> dict:
     if not defs:
         return schema
 
-    def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
+    schema_map_keywords = {
+        "properties",
+        "patternProperties",
+        "dependentSchemas",
+        "dependencies",
+    }
+
+    def _resolve_ref(
+        obj: Any,
+        visited: frozenset = frozenset(),
+        is_schema_map: bool = False,
+    ) -> Any:
         if isinstance(obj, list):
             return [_resolve_ref(item, visited) for item in obj]
         if not isinstance(obj, dict):
             return obj
+        if is_schema_map:
+            return {
+                key: _resolve_ref(value, visited) for key, value in obj.items()
+            }
         if "$ref" in obj:
             ref_path = obj["$ref"]
             if isinstance(ref_path, str) and (
@@ -316,6 +392,7 @@ def _flatten_json_schema(schema: dict) -> dict:
                             resolved[key] = _resolve_ref(
                                 value,
                                 visited | {def_name},
+                                key in schema_map_keywords,
                             )
                     return resolved
             return obj
@@ -323,7 +400,11 @@ def _flatten_json_schema(schema: dict) -> dict:
         for key, value in obj.items():
             if key in ("$defs", "definitions"):
                 continue
-            result[key] = _resolve_ref(value, visited)
+            result[key] = _resolve_ref(
+                value,
+                visited,
+                key in schema_map_keywords,
+            )
         return result
 
     return _resolve_ref(schema)
@@ -339,3 +420,25 @@ def _estimate_bytes(tokens: int) -> int:
     """Estimate the number of bytes with given tokens."""
 
     return int(tokens * 4)
+
+
+def _describe_exception(error: BaseException) -> str:
+    """Render an exception as something a person can act on.
+
+    Async transports run inside task groups, so what surfaces is often
+    an ``ExceptionGroup`` whose own message is ``"unhandled errors in a
+    TaskGroup (1 sub-exception)"`` — true, and of no use to anyone. The
+    real cause is a leaf, so leaves are what get reported.
+
+    Args:
+        error (`BaseException`):
+            The exception to describe.
+
+    Returns:
+        `str`:
+            The leaf causes, joined; the exception type when a leaf
+            carries no message of its own.
+    """
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(_describe_exception(sub) for sub in error.exceptions)
+    return str(error) or type(error).__name__

@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
  * Identifier for a dockable panel. Used both as the React key and to
  * look its descriptor up in {@link PanelDockProps.panels}.
  */
-export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission' | 'knowledge';
+export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission' | 'knowledge' | 'team';
 
 /**
  * The presentation of a single panel: header chrome plus its already
@@ -98,7 +98,7 @@ interface PanelProps {
  */
 export const Panel = ({ title, icon, actions, onClose, children }: PanelProps) => {
 	return (
-		<div className="flex flex-1 flex-col border rounded-sm h-full py-1 min-h-0">
+		<div className="flex flex-1 flex-col h-full p-2 min-h-0">
 			<div className="flex items-center justify-between px-2">
 				<span className="flex items-center gap-x-1.5 text-sm">
 					{icon}
@@ -147,8 +147,10 @@ export const PanelDock = ({ layout, panels, onClosePanel }: PanelDockProps) => {
 		<>
 			{layout.map((column, colIndex) => (
 				<Fragment key={`col-${column.join('-')}`}>
-					{colIndex > 0 && <ResizableHandle withHandle className="bg-transparent" />}
-					<ResizablePanel className="p-1" minSize={COLUMN_MIN_WIDTH} defaultSize="22rem">
+					{colIndex > 0 && (
+						<ResizableHandle withHandle className="bg-transparent w-1.5" />
+					)}
+					<ResizablePanel minSize={COLUMN_MIN_WIDTH} defaultSize="22rem">
 						<ResizablePanelGroup orientation="vertical">
 							{column.map((key, rowIndex) => {
 								const descriptor = panels[key];
@@ -158,10 +160,14 @@ export const PanelDock = ({ layout, panels, onClosePanel }: PanelDockProps) => {
 										{rowIndex > 0 && (
 											<ResizableHandle
 												withHandle
-												className="bg-transparent"
+												className="bg-transparent !h-1"
 											/>
 										)}
-										<ResizablePanel className="py-1" minSize={PANEL_MIN_HEIGHT}>
+
+										<ResizablePanel
+											className="rounded-[22px] bg-card shadow-panel"
+											minSize={PANEL_MIN_HEIGHT}
+										>
 											<Panel
 												title={descriptor.title}
 												icon={descriptor.icon}

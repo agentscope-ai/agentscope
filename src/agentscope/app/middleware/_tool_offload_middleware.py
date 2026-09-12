@@ -34,8 +34,8 @@ from ...message import (
     ToolResultState,
 )
 from ...agent import Agent
-from ..message_bus import MessageBus, MessageBusKeys
-from .._bus_ops import enqueue_run_trigger
+from ..message_bus import MessageBus
+from .._bus_ops import deliver_to_inbox
 from ..._logging import logger
 
 
@@ -345,15 +345,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 tool_name,
                 session_id,
             )
-            await self._message_bus.queue_push(
-                MessageBusKeys.inbox(session_id),
-                hint.model_dump(mode="json"),
-            )
-            await enqueue_run_trigger(
+            await deliver_to_inbox(
                 self._message_bus,
                 user_id=self._user_id,
                 session_id=session_id,
                 agent_id=self._agent_id,
+                payload=hint.model_dump(mode="json"),
             )
 
         asyncio.create_task(_deliver_when_done())

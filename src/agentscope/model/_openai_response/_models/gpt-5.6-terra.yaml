@@ -1,0 +1,25 @@
+name: gpt-5.6-terra
+label: GPT-5.6 Terra
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+
+context_size: 1050000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000
+  # Reasoning happens internally and is never returned as content, so the
+  # thinking toggle has nothing to surface — reasoning_effort is the knob.
+  thinking_enable:
+    hidden: true

@@ -87,7 +87,7 @@ class SessionProjection:
         await self._bus.registry_set(
             MessageBusKeys.projection_namespace(target_sid),
             MessageBusKeys.projection_field(kind, entry_id),
-            json.dumps(payload),
+            json.dumps(payload, ensure_ascii=False),
         )
 
     async def delete(

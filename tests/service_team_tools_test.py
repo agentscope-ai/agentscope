@@ -19,7 +19,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, FakeWorkspaceManager
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._tool import (
@@ -31,13 +31,24 @@ from agentscope.app._tool import (
     TeamSay,
 )
 from agentscope.app._types import SubAgentTemplate
+from agentscope.app._router._session import _build_team_detail
+from agentscope.app._service import ResourceAccessService
+from agentscope.app.access import (
+    ResourceAccessPolicyBase,
+    ResourceKind,
+    ResourceRef,
+)
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    TeamOrigin,
+    UserOrigin,
     AgentData,
     AgentRecord,
     RedisStorage,
     SessionConfig,
+    StorageBase,
 )
+from agentscope.message import ToolResultState
 from agentscope.permission import (
     AdditionalWorkingDirectory,
     PermissionBehavior,
@@ -100,6 +111,31 @@ def _make_agent_record(
     )
 
 
+class _SharedAgentPolicy(ResourceAccessPolicyBase):
+    """Mutable sharing policy used to exercise grant revocation."""
+
+    def __init__(self, owner_id: str, agent_id: str) -> None:
+        self.owner_id = owner_id
+        self.agent_id = agent_id
+        self.allowed = True
+
+    async def list_accessible(
+        self,
+        viewer_id: str,
+        kind: ResourceKind,
+        storage: StorageBase,
+    ) -> list[ResourceRef]:
+        if not self.allowed or kind != ResourceKind.AGENT:
+            return []
+        return [
+            ResourceRef(
+                kind=ResourceKind.AGENT,
+                owner_id=self.owner_id,
+                resource_id=self.agent_id,
+            ),
+        ]
+
+
 class _TeamToolsTestBase(IsolatedAsyncioTestCase):
     """Shared fixture: a fakeredis-backed storage + bus, a leader
     agent record, and a leader session.
@@ -116,6 +152,7 @@ class _TeamToolsTestBase(IsolatedAsyncioTestCase):
             _make_storage(self.fr),
         )
         self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+        self.workspace_manager = FakeWorkspaceManager()
 
         # Leader agent + its session.
         self.leader_agent = _make_agent_record(self.user_id, "leader")
@@ -141,6 +178,7 @@ class TestTeamCreate(_TeamToolsTestBase):
         tool = TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -151,7 +189,13 @@ class TestTeamCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -186,6 +230,7 @@ class TestTeamCreate(_TeamToolsTestBase):
         tool = TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -196,7 +241,13 @@ class TestTeamCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -216,6 +267,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         await TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -229,6 +281,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -242,7 +295,13 @@ class TestAgentCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -278,6 +337,10 @@ class TestAgentCreate(_TeamToolsTestBase):
         )
         self.assertEqual(len(worker_sessions), 1)
         self.assertEqual(worker_sessions[0].team_id, sess.team_id)
+        # The team minted this session, and the record says so — the
+        # leader's own session stays user-sourced.
+        self.assertEqual(worker_sessions[0].origin, TeamOrigin())
+        self.assertEqual(sess.origin, UserOrigin())
 
         # The initial prompt is in the worker's inbox as a HintBlock
         # wrapped in a <team-message> tag.
@@ -292,6 +355,8 @@ class TestAgentCreate(_TeamToolsTestBase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "hint": AnyString(),
                 "source": '{"label": "team_message", "sublabel": "leader"}',
             },
@@ -324,6 +389,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -555,6 +621,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=loner_session.id,
             agent_id=self.leader_agent.id,
@@ -568,7 +635,13 @@ class TestAgentCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -582,6 +655,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -596,7 +670,13 @@ class TestAgentCreate(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -611,6 +691,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -645,6 +726,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -686,6 +768,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         await TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -699,6 +782,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -714,6 +798,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -731,6 +816,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -749,6 +835,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -785,6 +872,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -836,6 +924,7 @@ class TestTeamSay(_TeamToolsTestBase):
         await TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -844,6 +933,7 @@ class TestTeamSay(_TeamToolsTestBase):
         agent_create = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -882,6 +972,7 @@ class TestTeamSay(_TeamToolsTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -897,7 +988,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -919,6 +1016,8 @@ class TestTeamSay(_TeamToolsTestBase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "hint": AnyString(),
                 "source": AnyString(),
             },
@@ -946,6 +1045,7 @@ class TestTeamSay(_TeamToolsTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -956,7 +1056,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -992,6 +1098,7 @@ class TestTeamSay(_TeamToolsTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=loner_session.id,
             agent_id=self.leader_agent.id,
@@ -1002,7 +1109,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1017,6 +1130,7 @@ class TestTeamSay(_TeamToolsTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1027,7 +1141,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1042,6 +1162,7 @@ class TestTeamSay(_TeamToolsTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1052,7 +1173,13 @@ class TestTeamSay(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1072,6 +1199,7 @@ class TestTeamSay(_TeamToolsTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=worker_sid,
             agent_id=worker_aid,
@@ -1116,6 +1244,7 @@ class TestTeamDelete(_TeamToolsTestBase):
         await TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1127,6 +1256,7 @@ class TestTeamDelete(_TeamToolsTestBase):
         tool = TeamDelete(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1136,7 +1266,13 @@ class TestTeamDelete(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -1163,6 +1299,7 @@ class TestTeamDelete(_TeamToolsTestBase):
         tool = TeamDelete(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=loner_session.id,
             agent_id=self.leader_agent.id,
@@ -1172,7 +1309,13 @@ class TestTeamDelete(_TeamToolsTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "error",
                 "is_last": True,
@@ -1245,6 +1388,7 @@ class _AgentInviteTestBase(_TeamToolsTestBase):
         await TeamCreate(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1288,6 +1432,7 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         tool = AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1299,7 +1444,13 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
             chunk.model_dump(),
             {
                 "content": [
-                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
@@ -1338,6 +1489,7 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         )
         self.assertEqual(borrowed.config.workspace_id, "ws-monday")
         self.assertEqual(borrowed.team_id, team.id)
+        self.assertEqual(borrowed.origin, TeamOrigin())
 
         # Borrowed session starts with a fresh PermissionContext —
         # no leader / Monday state carried over.
@@ -1358,12 +1510,190 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         self.assertEqual(primary_inbox, [])
 
 
+class TestAgentInviteCrossOwner(_AgentInviteTestBase):
+    """A viewer can invite an agent exposed by the access policy."""
+
+    async def _make_shared_agent(
+        self,
+    ) -> tuple[AgentRecord, _SharedAgentPolicy, ResourceAccessService]:
+        """Store a shared agent and expose it through a mutable policy."""
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        shared_owner = "platform-owner"
+        shared_agent = AgentRecord(
+            user_id=shared_owner,
+            source="user",
+            data=AgentData(
+                name="Shared Specialist",
+                system_prompt="I am a shared specialist.",
+                context_config=ContextConfig(),
+                react_config=ReActConfig(),
+                invite_config=InviteConfig(
+                    invitable=True,
+                    invite_description="Shared expert.",
+                ),
+            ),
+        )
+        await self.storage.upsert_agent(shared_owner, shared_agent)
+        await self.storage.upsert_session(
+            user_id=shared_owner,
+            agent_id=shared_agent.id,
+            config=SessionConfig(workspace_id="owner-private-workspace"),
+        )
+        policy = _SharedAgentPolicy(shared_owner, shared_agent.id)
+        access = ResourceAccessService(self.storage, policy)
+        return shared_agent, policy, access
+
+    async def test_invites_shared_agent(self) -> None:
+        """The borrowed session belongs to the viewer, while the team
+        roster preserves the shared agent definition's real owner."""
+        shared_agent, _policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+
+        chunk = await tool(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+
+        self.assertNotEqual(
+            chunk.state,
+            ToolResultState.ERROR,
+            chunk.content[0].text,
+        )
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        member = team.data.members[0]
+        self.assertEqual(member.owner_id, shared_agent.user_id)
+
+        borrowed = await self.storage.get_session(
+            self.user_id,
+            shared_agent.id,
+            member.session_id,
+        )
+        self.assertIsNotNone(borrowed)
+        self.assertNotEqual(
+            borrowed.config.workspace_id,
+            "owner-private-workspace",
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                shared_agent.user_id,
+                shared_agent.id,
+                member.session_id,
+            ),
+        )
+
+        await TeamDelete(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )()
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                shared_agent.id,
+                member.session_id,
+            ),
+        )
+        self.assertIsNotNone(
+            await self.storage.get_agent(
+                shared_agent.user_id,
+                shared_agent.id,
+            ),
+        )
+
+    async def test_rejects_shared_agent_after_access_revoked(self) -> None:
+        """Invocation rechecks a share captured in the toolkit snapshot."""
+        shared_agent, policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+        policy.allowed = False
+
+        chunk = await tool(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertIn("no longer invitable", chunk.content[0].text)
+
+    async def test_revoked_agent_is_hidden_from_team_detail(self) -> None:
+        """A stale roster must not bypass a revoked cross-owner grant."""
+        shared_agent, policy, access = await self._make_shared_agent()
+        pool = await access.list_resource(self.user_id, ResourceKind.AGENT)
+        invite = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+            resource_access_service=access,
+        )
+        result = await invite(
+            target=f"Shared Specialist@{shared_agent.id[:8]}",
+            prompt="Please handle this.",
+        )
+        self.assertNotEqual(result.state, ToolResultState.ERROR)
+
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        policy.allowed = False
+
+        detail = await _build_team_detail(
+            self.storage,
+            access,
+            self.user_id,
+            team,
+        )
+        self.assertEqual(detail.members, [])
+
+
 class TestAgentInviteRejections(_AgentInviteTestBase):
     """``AgentInvite`` rejects the obvious bad inputs / states."""
 
     _EXPECTED_ERROR_CHUNK = {
         "content": [
-            {"type": "text", "text": AnyString(), "id": AnyString()},
+            {
+                "type": "text",
+                "text": AnyString(),
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ],
         "state": "error",
         "is_last": True,
@@ -1376,6 +1706,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
         return AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1420,6 +1751,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
         tool = AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=loner.id,
             agent_id=self.leader_agent.id,
@@ -1455,6 +1787,7 @@ class TestTeamSayInvitedRouting(_AgentInviteTestBase):
         await AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1482,6 +1815,7 @@ class TestTeamSayInvitedRouting(_AgentInviteTestBase):
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1513,6 +1847,7 @@ class TestTeamDeletePreservesInvited(_AgentInviteTestBase):
         await AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1532,6 +1867,7 @@ class TestTeamDeletePreservesInvited(_AgentInviteTestBase):
         await TeamDelete(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1573,6 +1909,7 @@ class TestDeleteInvitedAgentReverseCascade(_AgentInviteTestBase):
         await AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
             user_id=self.user_id,
             session_id=self.leader_session.id,
             agent_id=self.leader_agent.id,
@@ -1659,3 +1996,53 @@ class TestEnsureTeamMembersMigration(_TeamToolsTestBase):
         # path.
         stored = await self.storage.get_team(self.user_id, team.id)
         self.assertEqual(len(stored.data.members), 1)
+
+
+class TestResolveTeamLeader(_TeamToolsTestBase):
+    """``_resolve_team_leader`` resolves the leader without writing."""
+
+    async def test_legacy_team_resolves_via_leader_session(self) -> None:
+        """A record without ``leader_agent_id`` still resolves, via the
+        leader session, and is left untouched on disk."""
+        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = TeamRecord(
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            data=TeamData(name="legacy", description="d"),
+        )
+        await self.storage.upsert_team(self.user_id, team)
+
+        leader = await _resolve_team_leader(self.storage, self.user_id, team)
+        persisted = await self.storage.get_team(self.user_id, team.id)
+        self.assertDictEqual(
+            {
+                "session_id": leader.session_id,
+                "agent_id": leader.agent.id,
+                "name": leader.name,
+                "persisted_leader_agent_id": persisted.leader_agent_id,
+            },
+            {
+                "session_id": self.leader_session.id,
+                "agent_id": self.leader_agent.id,
+                "name": self.leader_agent.data.name,
+                "persisted_leader_agent_id": None,
+            },
+        )
+
+    async def test_missing_leader_agent_resolves_to_none(self) -> None:
+        """A team pointing at a deleted leader agent yields ``None``."""
+        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = TeamRecord(
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            leader_agent_id="agent-gone",
+            data=TeamData(name="broken", description="d"),
+        )
+        await self.storage.upsert_team(self.user_id, team)
+        self.assertIsNone(
+            await _resolve_team_leader(self.storage, self.user_id, team),
+        )

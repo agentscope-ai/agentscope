@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 import { workspaceApi } from '@/api';
 import type { MCPClient, MCPClientStatus, Skill } from '@/api';
+import type { UploadOptions } from '@/api/workspace';
 
 export function useWorkspace(agentId: string | null, sessionId: string | null) {
 	const [mcps, setMcps] = useState<MCPClientStatus[]>([]);
@@ -72,6 +73,21 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 		[agentId, sessionId, mcps, refetch],
 	);
 
+	const addMcpsFromLibrary = useCallback(
+		async (mcpIds: string[]) => {
+			if (!agentId || !sessionId) throw new Error('No agent/session selected');
+			const result = await workspaceApi.mcp.addFromLibrary(agentId, sessionId, mcpIds);
+			await refetch();
+			// Reported per MCP, so a partial success is still a success for
+			// what landed; surface only what did not.
+			const failures = Object.entries(result.failed);
+			if (failures.length > 0) {
+				throw new Error(failures.map(([name, why]) => `${name}: ${why}`).join('\n'));
+			}
+		},
+		[agentId, sessionId, refetch],
+	);
+
 	const removeMcp = useCallback(
 		async (mcpName: string) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
@@ -81,11 +97,26 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 		[agentId, sessionId, refetch],
 	);
 
-	const addSkill = useCallback(
-		async (skillPath: string) => {
+	const uploadSkill = useCallback(
+		async (files: File[], options: UploadOptions = {}) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
+			await workspaceApi.skill.upload(agentId, sessionId, files, options);
 			await refetchSkills();
+		},
+		[agentId, sessionId, refetchSkills],
+	);
+
+	const addSkillsFromLibrary = useCallback(
+		async (skillIds: string[]) => {
+			if (!agentId || !sessionId) throw new Error('No agent/session selected');
+			const result = await workspaceApi.skill.addFromLibrary(agentId, sessionId, skillIds);
+			await refetchSkills();
+			// Reported per skill, so a partial success is still a success
+			// for what landed; surface only what did not.
+			const failures = Object.entries(result.failed);
+			if (failures.length > 0) {
+				throw new Error(failures.map(([name, why]) => `${name}: ${why}`).join('\n'));
+			}
 		},
 		[agentId, sessionId, refetchSkills],
 	);
@@ -105,10 +136,12 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 		error,
 		refetch,
 		addMcps,
+		addMcpsFromLibrary,
 		removeMcp,
 		skills,
 		skillsLoading,
-		addSkill,
+		uploadSkill,
+		addSkillsFromLibrary,
 		removeSkill,
 	};
 }

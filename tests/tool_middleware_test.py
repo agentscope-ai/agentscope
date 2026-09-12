@@ -22,7 +22,15 @@ def _expected_chunk(text: str) -> dict:
     """Build the full expected ``ToolChunk.model_dump()`` dict for the given
     text, with random ``id`` fields matched by :class:`AnyString`."""
     return {
-        "content": [{"type": "text", "text": text, "id": AnyString()}],
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+        ],
         "state": ToolResultState.RUNNING,
         "is_last": True,
         "metadata": {},

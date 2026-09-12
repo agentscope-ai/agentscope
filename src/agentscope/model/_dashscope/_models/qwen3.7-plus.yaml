@@ -1,0 +1,28 @@
+name: qwen3.7-plus
+label: Qwen3.7-Plus
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/bmp
+  - image/jpeg
+  - image/png
+  - image/tiff
+  - image/webp
+  - image/heic
+  - video/mp4
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 65536
+
+parameter_overrides:
+  max_tokens: {"maximum": 65536}
+  # Voice only applies to omni-style models; hide the field for this
+  # non-omni model so the frontend popover doesn't render it.
+  voice:
+    hidden: true

@@ -1,0 +1,34 @@
+name: tts-1
+label: TTS-1
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+  - audio/opus
+  - audio/aac
+  - audio/flac
+  - audio/wav
+  - audio/pcm
+
+voices:
+  # Source: https://platform.openai.com/docs/guides/text-to-speech
+  - alloy
+  - ash
+  - ballad
+  - coral
+  - echo
+  - fable
+  - onyx
+  - nova
+  - sage
+  - shimmer
+  - verse
+
+parameter_overrides:
+  # The instructions parameter is not supported by tts-1, hide it from
+  # the frontend to avoid confusing users.
+  instructions:
+    hidden: true
