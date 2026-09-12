@@ -12,6 +12,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import AnyString
 
@@ -311,6 +312,21 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(content), 3)  # two buffered images + text
         self.assertIsInstance(content[0], DataBlock)
         self.assertIsInstance(content[-1], TextBlock)
+
+
+class GatewayResultTest(IsolatedAsyncioTestCase):
+    """Keep the callback contract while exposing internal success state."""
+
+    async def test_process_still_returns_none(self) -> None:
+        gw = ChannelGateway(
+            storage=None,
+            message_bus=InMemoryMessageBus(),
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        gw._handle_message = AsyncMock()
+
+        self.assertIsNone(await gw.process(_event()))
+        self.assertTrue(await gw.process_with_result(_event()))
 
 
 class _RecordingStorage:
