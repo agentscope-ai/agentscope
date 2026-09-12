@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
+import asyncio
 import os
 import shutil
 import tempfile
+from types import SimpleNamespace
 from typing import Any, Type
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -774,3 +776,126 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 "structured_call_count": 0,
             },
         )
+
+    async def test_concurrent_replies_isolate_retrieval_tasks(self) -> None:
+        """A shared middleware must not cancel another session's retrieval."""
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        started = {
+            "sess-a": asyncio.Event(),
+            "sess-b": asyncio.Event(),
+        }
+        release_b_handler = asyncio.Event()
+        cancelled: list[str] = []
+
+        async def fake_retrieve(agent: Any, query: str) -> None:
+            del query
+            session_id = agent.state.session_id
+            started[session_id].set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.append(session_id)
+                raise
+
+        async def handler_a(**kwargs: Any) -> Any:
+            del kwargs
+            await started["sess-b"].wait()
+            yield "done-a"
+
+        async def handler_b(**kwargs: Any) -> Any:
+            del kwargs
+            await release_b_handler.wait()
+            yield "done-b"
+
+        async def drive(agent: Any, handler: Any) -> None:
+            async for _ in middleware.on_reply(
+                agent,
+                {"inputs": UserMsg("user", "remember this")},
+                handler,
+            ):
+                pass
+
+        setattr(middleware, "_retrieve_relevant_files", fake_retrieve)
+        agent_a = SimpleNamespace(
+            state=SimpleNamespace(session_id="sess-a"),
+        )
+        agent_b = SimpleNamespace(
+            state=SimpleNamespace(session_id="sess-b"),
+        )
+
+        task_a = asyncio.create_task(drive(agent_a, handler_a))
+        await started["sess-a"].wait()
+        task_b = asyncio.create_task(drive(agent_b, handler_b))
+        await started["sess-b"].wait()
+
+        await task_a
+        cancelled_after_a = list(cancelled)
+        release_b_handler.set()
+        await task_b
+
+        self.assertNotIn("sess-b", cancelled_after_a)
+        self.assertEqual(set(cancelled), {"sess-a", "sess-b"})
+        self.assertEqual(getattr(middleware, "_retrieval_tasks"), {})
+
+    async def test_concurrent_replies_isolate_same_session_agents(
+        self,
+    ) -> None:
+        """A shared middleware must isolate agents in the same session."""
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        started = {
+            "agent-a": asyncio.Event(),
+            "agent-b": asyncio.Event(),
+        }
+        release_b_handler = asyncio.Event()
+        cancelled: list[str] = []
+
+        async def fake_retrieve(agent: Any, query: str) -> None:
+            del query
+            started[agent.name].set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.append(agent.name)
+                raise
+
+        async def handler_a(**kwargs: Any) -> Any:
+            del kwargs
+            await started["agent-b"].wait()
+            yield "done-a"
+
+        async def handler_b(**kwargs: Any) -> Any:
+            del kwargs
+            await release_b_handler.wait()
+            yield "done-b"
+
+        async def drive(agent: Any, handler: Any) -> None:
+            async for _ in middleware.on_reply(
+                agent,
+                {"inputs": UserMsg("user", "remember this")},
+                handler,
+            ):
+                pass
+
+        setattr(middleware, "_retrieve_relevant_files", fake_retrieve)
+        agent_a = SimpleNamespace(
+            name="agent-a",
+            state=SimpleNamespace(session_id="same-session"),
+        )
+        agent_b = SimpleNamespace(
+            name="agent-b",
+            state=SimpleNamespace(session_id="same-session"),
+        )
+
+        task_a = asyncio.create_task(drive(agent_a, handler_a))
+        await started["agent-a"].wait()
+        task_b = asyncio.create_task(drive(agent_b, handler_b))
+        await started["agent-b"].wait()
+
+        await task_a
+        cancelled_after_a = list(cancelled)
+        release_b_handler.set()
+        await task_b
+
+        self.assertNotIn("agent-b", cancelled_after_a)
+        self.assertEqual(set(cancelled), {"agent-a", "agent-b"})
+        self.assertEqual(getattr(middleware, "_retrieval_tasks"), {})
