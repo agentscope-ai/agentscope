@@ -5,33 +5,39 @@ import warnings
 from pydantic import BaseModel, Field
 
 from ....agent import ContextConfig, ReActConfig
-from ...storage import InviteConfig
+from ...storage import ChatConfig, InviteConfig
 from ..._service import AgentView
 
 
 class CreateAgentRequest(BaseModel):
-    """Request body for creating a new agent."""
+    """Request body for creating a new agent.
+
+    Mirrors :class:`AgentData`, so the shape a client reads back is the
+    shape it writes. The three pre-``chat_config`` fields below are
+    still accepted and are folded into it by
+    :class:`AgentData`; sending both puts the flat one on top.
+    """
 
     name: str = Field(description="Display name of the agent.")
     system_prompt: str = Field(
         default="You're a helpful assistant.",
         description="Base system prompt fed to the agent.",
     )
-    context_config: ContextConfig = Field(
-        default_factory=ContextConfig,
-        description="Context-window management configuration.",
+    chat_config: ChatConfig = Field(
+        default_factory=ChatConfig,
+        description="Settings for the agent's text conversations.",
     )
-    react_config: ReActConfig = Field(
-        default_factory=ReActConfig,
-        description="ReAct loop configuration.",
+    context_config: ContextConfig | None = Field(
+        default=None,
+        description="**Deprecated.** Use ``chat_config.context_config``.",
     )
-    invite_config: InviteConfig = Field(
-        default_factory=InviteConfig,
-        description=(
-            "Invite-pool settings for this agent. See "
-            ":class:`InviteConfig` — enforces the "
-            "``invitable ⇒ non-empty description`` invariant."
-        ),
+    react_config: ReActConfig | None = Field(
+        default=None,
+        description="**Deprecated.** Use ``chat_config.react_config``.",
+    )
+    invite_config: InviteConfig | None = Field(
+        default=None,
+        description="**Deprecated.** Use ``chat_config.invite_config``.",
     )
 
 
@@ -52,21 +58,27 @@ class UpdateAgentRequest(BaseModel):
         default=None,
         description="New system prompt.",
     )
+    chat_config: ChatConfig | None = Field(
+        default=None,
+        description=(
+            "New text-conversation settings. Replaces the block as a "
+            "whole, so pass every sub-config that should survive."
+        ),
+    )
     context_config: ContextConfig | None = Field(
         default=None,
-        description="New context configuration.",
+        description=(
+            "**Deprecated.** Use ``chat_config``. Still honoured, and "
+            "narrower: it replaces only this sub-config."
+        ),
     )
     react_config: ReActConfig | None = Field(
         default=None,
-        description="New ReAct loop configuration.",
+        description="**Deprecated.** Use ``chat_config``.",
     )
     invite_config: InviteConfig | None = Field(
         default=None,
-        description=(
-            "New invite-pool settings. Pass the full :class:`InviteConfig` "
-            "object to update; omit to leave both invitable-related "
-            "fields unchanged."
-        ),
+        description="**Deprecated.** Use ``chat_config``.",
     )
 
 

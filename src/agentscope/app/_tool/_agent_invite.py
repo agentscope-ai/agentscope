@@ -217,7 +217,7 @@ class AgentInvite(_TeamToolBase):
         ]
         target_lines = [
             f"- ``{_display_name(a.data.name, a.id)!r}`` — "
-            f"{a.data.invite_config.invite_description}"
+            f"{a.data.chat_config.invite_config.invite_description}"
             for a in invitable_pool
         ]
         self.description = (
@@ -295,9 +295,10 @@ class AgentInvite(_TeamToolBase):
                     fresh = None
             if (
                 fresh is None
-                or not fresh.data.invite_config.invitable
+                or not fresh.data.chat_config.invite_config.invitable
                 or not (
-                    fresh.data.invite_config.invite_description or ""
+                    fresh.data.chat_config.invite_config.invite_description
+                    or ""
                 ).strip()
             ):
                 return _error(
