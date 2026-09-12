@@ -599,6 +599,56 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
                     or "dangerous pattern" in decision.message,
                 )
 
+    async def test_indirect_rm_spellings_are_not_bypassed(self) -> None:
+        """Test that non-literal spellings of rm still reach the check.
+
+        Splitting the flags (``-r -f``) keeps the command clear of the
+        ``rm -rf`` dangerous-pattern substring, so the dangerous-removal
+        check is the only thing standing between these commands and a
+        permission rule.
+        """
+
+        test_cases = [
+            "/bin/rm -r -f /",
+            "/usr/bin/rm -r -f /etc",
+            "\\rm -r -f /",
+            "env rm -r -f /",
+            "env -i rm -r -f /",
+            "command rm -r -f /",
+            "FOO=1 rm -r -f /",
+            "sudo /bin/rm -r -f /",
+            "/bin/rm -r -f ~",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+                self.assertTrue(decision.bypass_immune)
+                self.assertIn("Dangerous removal operation", decision.message)
+
+    async def test_rm_lookalikes_are_not_removal_commands(self) -> None:
+        """Test that commands merely mentioning rm are left alone."""
+
+        test_cases = [
+            "echo rm",
+            "ls /bin/rm",
+            "grep -r rm /tmp/project",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                if decision.behavior == PermissionBehavior.ASK:
+                    self.assertNotIn(
+                        "Dangerous removal operation",
+                        decision.message,
+                    )
+
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.bash_tool = None

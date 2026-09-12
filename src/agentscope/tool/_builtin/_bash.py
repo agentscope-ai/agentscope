@@ -22,6 +22,15 @@ from .._response import ToolChunk
 from ._backend import BackendBase
 
 
+# Commands that remove files. Compared against the *resolved* command
+# name, so ``/bin/rm`` and ``\rm`` are recognized too.
+_REMOVAL_COMMANDS = frozenset({"rm", "rmdir"})
+
+# Commands that execute the command passed to them as an argument, so the
+# removal command can appear after one of these instead of first.
+_COMMAND_WRAPPERS = frozenset({"sudo", "env", "command"})
+
+
 class Bash(ToolBase):
     """The bash tool."""
 
@@ -604,25 +613,72 @@ easier to review tool calls and give permission.
 
         # Check each subcommand for rm/rmdir
         for subcmd in subcommands:
-            subcmd_tokens = subcmd.strip().split()
-            if not subcmd_tokens:
-                continue
-            base = subcmd_tokens[0]
-            if base not in ("rm", "rmdir"):
+            argument_tokens = self._removal_argument_tokens(
+                subcmd.strip().split(),
+            )
+            if argument_tokens is None:
                 continue
 
             # Collect non-flag arguments as potential paths
-            i = 1
-            while i < len(subcmd_tokens):
-                tok = subcmd_tokens[i]
+            for tok in argument_tokens:
                 # Skip flags
                 if tok.startswith("-"):
-                    i += 1
                     continue
                 path = tok.strip("'\"")
                 if await self._is_dangerous_removal_path(path):
                     return path
-                i += 1
+
+        return None
+
+    @staticmethod
+    def _removal_argument_tokens(
+        subcmd_tokens: list[str],
+    ) -> list[str] | None:
+        """Return a removal command's argument tokens, or ``None``.
+
+        Comparing ``subcmd_tokens[0]`` against ``rm`` misses spellings
+        that bash runs as the very same command: an absolute or relative
+        path (``/bin/rm``), a backslash suppressing alias expansion
+        (``\\rm``), leading environment assignments (``FOO=1 rm``), and
+        wrappers that exec their argument (``sudo rm``, ``env rm``).
+
+        Args:
+            subcmd_tokens (`list[str]`):
+                Whitespace-split tokens of a single subcommand.
+
+        Returns:
+            `list[str] | None`:
+                The tokens following the removal command, or ``None`` when
+                this subcommand does not invoke one.
+        """
+        index = 0
+        after_wrapper = False
+        while index < len(subcmd_tokens):
+            token = subcmd_tokens[index]
+
+            # A leading ``NAME=value`` pair is part of the environment
+            # prefix, not the command itself.
+            name, separator, _ = token.partition("=")
+            if separator and name.isidentifier():
+                index += 1
+                continue
+
+            # Flags belonging to a wrapper (``env -i rm ...``) precede the
+            # wrapped command.
+            if after_wrapper and token.startswith("-"):
+                index += 1
+                continue
+
+            command_name = os.path.basename(
+                token.strip("'\"").lstrip("\\"),
+            )
+            if command_name in _COMMAND_WRAPPERS:
+                after_wrapper = True
+                index += 1
+                continue
+            if command_name in _REMOVAL_COMMANDS:
+                return subcmd_tokens[index + 1 :]
+            return None
 
         return None
 
