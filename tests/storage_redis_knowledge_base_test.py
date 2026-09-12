@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for the knowledge base persistence layer of RedisStorage."""
+from datetime import timedelta
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
@@ -9,6 +10,8 @@ from agentscope.app.storage import (
     EmbeddingModelConfig,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
+    KnowledgeDocumentData,
+    KnowledgeDocumentRecord,
     RedisStorage,
 )
 
@@ -98,6 +101,52 @@ class KnowledgeBaseStorageTest(IsolatedAsyncioTestCase):
         rec = make_record("user-1")
         with self.assertRaises(ValueError):
             await storage.upsert_knowledge_base("user-2", rec)
+
+    async def test_deleting_status_fences_stale_worker_updates(self) -> None:
+        """Deletion markers survive worker updates and lease retries."""
+        storage = make_storage()
+        kb = make_record("user-1")
+        await storage.upsert_knowledge_base("user-1", kb)
+        document = KnowledgeDocumentRecord(
+            user_id="user-1",
+            knowledge_base_id=kb.id,
+            data=KnowledgeDocumentData(
+                filename="document.txt",
+                size=1,
+                blob_uri="local://document",
+            ),
+        )
+        await storage.upsert_knowledge_document("user-1", document)
+
+        await storage.update_knowledge_document_status(
+            "user-1",
+            kb.id,
+            document.id,
+            "deleting",
+        )
+        await storage.update_knowledge_document_status(
+            "user-1",
+            kb.id,
+            document.id,
+            "ready",
+            chunk_count=3,
+        )
+        fetched = await storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            document.id,
+        )
+        self.assertEqual(fetched.status, "deleting")
+        self.assertEqual(fetched.data.chunk_count, 0)
+        self.assertFalse(
+            await storage.acquire_knowledge_document_lease(
+                "user-1",
+                kb.id,
+                document.id,
+                "worker-A",
+                timedelta(minutes=5),
+            ),
+        )
 
     async def test_upsert_overwrites_and_preserves_created_at(self) -> None:
         """Re-upsert with same id keeps created_at, refreshes updated_at."""

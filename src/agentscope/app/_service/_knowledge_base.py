@@ -460,8 +460,8 @@ class KnowledgeBaseService:
 
         Service-mode source of truth: reads from storage, NOT the
         vector store.  Documents in ``pending`` / ``parsing`` /
-        ``chunking`` / ``indexing`` / ``error`` show up here even
-        though they have no chunks in the vector store yet.
+        ``chunking`` / ``indexing`` / ``deleting`` / ``error`` show up
+        here even though they have no chunks in the vector store yet.
 
         Args:
             user_id (`str`):
@@ -475,7 +475,8 @@ class KnowledgeBaseService:
                 Case-insensitive substring filter on the filename.
             doc_status (`str | None`, optional):
                 Filter by indexing status (``pending`` / ``parsing`` /
-                ``chunking`` / ``indexing`` / ``ready`` / ``error``).
+                ``chunking`` / ``indexing`` / ``deleting`` / ``ready`` /
+                ``error``).
             page (`int`, defaults to ``1``):
                 1-based page number.
             page_size (`int`, defaults to ``30``):
@@ -756,16 +757,18 @@ class KnowledgeBaseService:
         Order is chosen so that a crash mid-way always leaves a
         recoverable state:
 
-        1. Vector store delete (idempotent — re-deleting an already
+        1. Mark the storage record ``deleting``.  This fences any
+           already-running indexing worker from publishing new vectors.
+        2. Vector store delete (idempotent — re-deleting an already
            empty document_id is harmless).
-        2. Storage record delete.
-        3. Blob delete (idempotent).
+        3. Storage record delete.
+        4. Blob delete (idempotent).
 
-        A failure at step 1 surfaces as an exception to the caller and
-        the record + blob are left untouched, so a retry sees the same
-        state.  Failures at steps 2/3 leave a small amount of orphan
-        data but the user-visible deletion has already succeeded from
-        the vector store's point of view.
+        A failure at step 2 surfaces as an exception to the caller and
+        the ``deleting`` record + blob are left untouched, so a retry
+        can finish the cleanup.  Failures at steps 3/4 leave a small
+        amount of orphan data but the user-visible deletion has already
+        succeeded from the vector store's point of view.
 
         Args:
             user_id (`str`):
@@ -791,6 +794,12 @@ class KnowledgeBaseService:
             # document is already gone.
             return
 
+        await self._storage.update_knowledge_document_status(
+            owner_id,
+            knowledge_base_id,
+            document_id,
+            "deleting",
+        )
         knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
         await knowledge.delete_document(document_id)
         await self._storage.delete_knowledge_document(

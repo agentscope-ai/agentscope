@@ -478,7 +478,7 @@ async def list_knowledge_documents(
     | None = Query(
         default=None,
         alias="status",
-        pattern="^(pending|parsing|chunking|indexing|ready|error)$",
+        pattern="^(pending|parsing|chunking|indexing|deleting|ready|error)$",
         description="Filter by indexing status.",
     ),
     page: int = Query(default=1, ge=1, description="1-based page number."),
@@ -495,7 +495,8 @@ async def list_knowledge_documents(
 
     Reads from the storage backend (service-mode source of truth), so
     documents in any lifecycle state — including ``pending`` /
-    ``parsing`` / ``error`` — are returned alongside ``ready`` ones.
+    ``parsing`` / ``deleting`` / ``error`` — are returned alongside
+    ``ready`` ones.
 
     Args:
         knowledge_base_id (`str`):

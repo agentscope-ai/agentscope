@@ -748,6 +748,38 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         self.assertIsNone(fetched.processing_node)
         self.assertIsNone(fetched.lease_expires_at)
 
+        # Deletion is a terminal fence: stale worker transitions must not
+        # resurrect the record, and no new worker may acquire its lease.
+        await self.storage.update_knowledge_document_status(
+            "user-1",
+            kb.id,
+            doc.id,
+            "deleting",
+        )
+        await self.storage.update_knowledge_document_status(
+            "user-1",
+            kb.id,
+            doc.id,
+            "ready",
+            chunk_count=3,
+        )
+        fetched = await self.storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            doc.id,
+        )
+        self.assertEqual(fetched.status, "deleting")
+        self.assertEqual(fetched.data.chunk_count, 0)
+        self.assertFalse(
+            await self.storage.acquire_knowledge_document_lease(
+                "user-1",
+                kb.id,
+                doc.id,
+                "worker-C",
+                timedelta(minutes=5),
+            ),
+        )
+
     async def test_expired_lease_and_pending_sweep(self) -> None:
         """``list_..._with_expired_lease`` + ``..._pending_since`` filters."""
         kb = _kb_record("user-1")

@@ -378,6 +378,7 @@
 				"parsing": "Parsing",
 				"chunking": "Chunking",
 				"indexing": "Indexing",
+				"deleting": "Deleting",
 				"ready": "Ready",
 				"error": "Error",
 				"cancelled": "Cancelled"
