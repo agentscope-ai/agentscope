@@ -89,7 +89,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 SDK HTTP request timeout. ``None`` leaves the SDK
                 default in effect.
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
-                Sandbox keep-alive and create/connect/resume timeout.
+                Sandbox expiration lease and create/connect/resume timeout.
+                Defaults to 1800 seconds. The manager renews the lease on
+                cache access, not in the background; configure a longer
+                lease for turns that can exceed this duration.
             gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
                 TCP port the in-sandbox gateway listens on.
             env (`dict[str, str] | None`, optional):
@@ -159,11 +162,26 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         existing = await self._find_existing_sandbox()
         if existing is not None:
             self._sandbox = await self._attach_existing_sandbox(existing)
+            # SDK connect/resume timeouts only bound readiness checks;
+            # reusing an existing sandbox also needs a fresh lease.
+            if not await self._renew_once():
+                raise RuntimeError(
+                    "OpenSandbox sandbox disappeared during initialization "
+                    f"(workspace_id={self.workspace_id!r})",
+                )
         else:
             self._sandbox = await self._create_sandbox()
         await self._wait_until_running()
 
         self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)
+
+    async def initialize(self) -> None:
+        """Initialize the workspace and clean up partial failures."""
+        try:
+            await super().initialize()
+        except (Exception, asyncio.CancelledError):
+            await self.close()
+            raise
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
@@ -185,6 +203,35 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                     exc,
                 )
             self._sandbox = None
+
+    async def _renew_once(self) -> bool:
+        """Try to renew the lease without making availability depend on it.
+
+        Returns:
+            `bool`:
+                ``False`` only when the local sandbox handle is absent or
+                renewal returns 404. Other renewal failures are logged and
+                return ``True`` so callers can still try the existing
+                connection; this is not a guarantee of sandbox health.
+        """
+        from opensandbox.exceptions import SandboxApiException
+
+        if self._sandbox is None:
+            return False
+        try:
+            await self._sandbox.renew(
+                timedelta(seconds=self.timeout_seconds),
+            )
+        except Exception as exc:
+            if isinstance(exc, SandboxApiException) and exc.status_code == 404:
+                return False
+            logger.warning(
+                "OpenSandboxWorkspace: lease renewal failed for "
+                "workspace_id=%r; keeping the existing connection: %s",
+                self.workspace_id,
+                exc,
+            )
+        return True
 
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace.
