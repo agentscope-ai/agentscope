@@ -69,10 +69,10 @@ agent gives up on a prompt after five minutes.
 local_mic.py defaults to DashScope, but the realtime package also ships a
 Gemini Live adapter. The model class is looked up from the card the same way:
 
-`ash
+```bash
 export GEMINI_API_KEY=...
 REALTIME_MODEL=gemini-3.1-flash-live-preview python examples/realtime/local_mic.py
-`
+```
 
 Shipped cards under src/agentscope/realtime/_gemini/_models/:
 
