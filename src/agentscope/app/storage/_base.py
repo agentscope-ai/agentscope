@@ -727,6 +727,62 @@ class StorageBase(ABC):
             "This storage backend has no channel support.",
         )
 
+    async def get_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+    ) -> dict[str, Any] | None:
+        """Fetch credentials held for one user of a channel.
+
+        This optional capability lets a channel persist user-scoped OAuth
+        tokens without exposing them through channel management records.
+
+        Args:
+            channel_id (`str`): The channel instance id.
+            channel_user_id (`str`): The platform-side user id.
+
+        Returns:
+            `dict[str, Any] | None`: Stored credentials, or ``None``.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel-user credential support.",
+        )
+
+    async def upsert_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+        credentials: dict[str, Any],
+    ) -> None:
+        """Insert or replace credentials for one channel user.
+
+        Args:
+            channel_id (`str`): The channel instance id.
+            channel_user_id (`str`): The platform-side user id.
+            credentials (`dict[str, Any]`): Secret credential payload.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel-user credential support.",
+        )
+
+    async def delete_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+    ) -> bool:
+        """Delete credentials held for one user of a channel.
+
+        Args:
+            channel_id (`str`): The channel instance id.
+            channel_user_id (`str`): The platform-side user id.
+
+        Returns:
+            `bool`: Whether a credential record was deleted.
+        """
+        raise NotImplementedError(
+            "This storage backend has no channel-user credential support.",
+        )
+
     # ------------------------------------------------------------------
     # Message persistence
     # ------------------------------------------------------------------

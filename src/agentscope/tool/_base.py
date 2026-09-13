@@ -118,6 +118,8 @@ class ToolBase(ABC):
     the state will be injected by an argument named `_agent_state`. Note your
     tool should be able to accept such argument.
     """
+    can_offload: bool = True
+    """Whether a long-running call may continue as a background task."""
     metadata_schema: dict[str, Any] | None = None
     """What an external executor must put in
     :attr:`~..message.ToolResultBlock.metadata`, as a JSON schema.

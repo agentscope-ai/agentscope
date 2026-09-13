@@ -12,6 +12,9 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionRecord,
     ChatModelConfig,
+    ChannelBinding,
+    ChannelRecord,
+    RoutingConfig,
     ScheduleRecord,
     ScheduleData,
     ChannelOrigin,
@@ -19,6 +22,7 @@ from agentscope.app.storage import (
     TeamData,
     TeamMember,
     TeamRecord,
+    SessionSettings,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
 from agentscope.credential import OllamaCredential
@@ -64,6 +68,84 @@ def make_session_config(workspace_id: str = "ws-1") -> SessionConfig:
             parameters={},
         ),
     )
+
+
+def make_channel_record(channel_id: str) -> ChannelRecord:
+    """Create a minimal channel record for Redis tests."""
+    return ChannelRecord(
+        id=channel_id,
+        channel_type="feishu",
+        user_id="user-1",
+        credentials={"app_id": channel_id},
+        routing=RoutingConfig(
+            bindings=[ChannelBinding(match_value="*", agent_id="agent-x")],
+        ),
+        session=SessionSettings(
+            chat_model_config={
+                "type": "openai",
+                "credential_id": "cred-1",
+                "model": "gpt-4o",
+                "parameters": {},
+            },
+        ),
+    )
+
+
+class TestChannelUserCredentials(IsolatedAsyncioTestCase):
+    """Tests for Redis-backed channel-user OAuth credentials."""
+
+    async def asyncSetUp(self) -> None:
+        """Create an isolated fake Redis backend."""
+        self.storage = make_storage()
+        await self.storage.upsert_channel(
+            make_channel_record("chan-1"),
+            "cli-1",
+        )
+
+    async def test_crud_overwrite_and_channel_cleanup(self) -> None:
+        """Credentials overwrite, isolate users, and cascade on delete."""
+        await self.storage.upsert_channel_user_credentials(
+            "chan-1",
+            "ou-1",
+            {"access_token": "old"},
+        )
+        await self.storage.upsert_channel_user_credentials(
+            "chan-1",
+            "ou-1",
+            {"access_token": "new"},
+        )
+        await self.storage.upsert_channel_user_credentials(
+            "chan-1",
+            "ou-2",
+            {"access_token": "second"},
+        )
+        self.assertEqual(
+            await self.storage.get_channel_user_credentials(
+                "chan-1",
+                "ou-1",
+            ),
+            {"access_token": "new"},
+        )
+        self.assertTrue(
+            await self.storage.delete_channel_user_credentials(
+                "chan-1",
+                "ou-2",
+            ),
+        )
+        self.assertFalse(
+            await self.storage.delete_channel_user_credentials(
+                "chan-1",
+                "missing",
+            ),
+        )
+
+        await self.storage.delete_channel("chan-1", "cli-1")
+        self.assertIsNone(
+            await self.storage.get_channel_user_credentials(
+                "chan-1",
+                "ou-1",
+            ),
+        )
 
 
 class TestCredential(IsolatedAsyncioTestCase):
