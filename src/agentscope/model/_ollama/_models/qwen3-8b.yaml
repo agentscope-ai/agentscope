@@ -1,5 +1,5 @@
-name: qwen3:7b
-label: Qwen3 7B
+name: qwen3:8b
+label: Qwen3 8B
 status: active
 
 input_types:
@@ -9,7 +9,7 @@ output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 131072
+context_size: 40960
 output_size: 8192
 
 parameter_overrides:
