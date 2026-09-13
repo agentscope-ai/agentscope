@@ -269,7 +269,16 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
             content_blocks = []
             tool_calls = []
 
+            # Media promoted from tool results waits until the run of tool
+            # messages ends: a user message between them would leave the
+            # remaining tool_call ids unanswered, which the API rejects.
+            pending_media: list[dict] = []
+
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    messages.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
@@ -373,7 +382,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
                         if promo_content:
-                            messages.append(
+                            pending_media.append(
                                 {
                                     "role": "user",
                                     "name": "system-reminder",
@@ -391,6 +400,8 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            messages.extend(pending_media)
 
             msg_openai = {
                 "role": msg.role,

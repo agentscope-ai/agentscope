@@ -121,7 +121,16 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
             reasoning_content_blocks: list = []
             tool_calls = []
 
+            # Media promoted from tool results waits until the run of tool
+            # messages ends: a user message between them would leave the
+            # remaining tool_call ids unanswered, which the API rejects.
+            pending_media: list[dict] = []
+
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    messages.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
@@ -247,7 +256,7 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                                 if formatted_item is not None:
                                     promoted_content.append(formatted_item)
                         if promoted_content:
-                            messages.append(
+                            pending_media.append(
                                 {
                                     "role": "user",
                                     "name": "system-reminder",
@@ -260,6 +269,8 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            messages.extend(pending_media)
 
             msg_volcengine: dict[str, Any] = {
                 "role": msg.role,

@@ -251,7 +251,16 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             tool_calls = []
             thinking_parts: list[str] = []
 
+            # Media promoted from tool results waits until the run of tool
+            # messages ends: a user message between them would leave the
+            # remaining tool_call ids unanswered, which the API rejects.
+            pending_media: list[dict] = []
+
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    formatted_msgs.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
@@ -369,7 +378,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
                         if promo_content:
-                            formatted_msgs.append(
+                            pending_media.append(
                                 {
                                     "role": "user",
                                     "content": promo_content,
@@ -381,6 +390,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            formatted_msgs.extend(pending_media)
 
             msg_dashscope: dict[str, Any] = {
                 "role": msg.role,
