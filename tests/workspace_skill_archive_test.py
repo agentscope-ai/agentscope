@@ -2,8 +2,10 @@
 """Test cases for installing a skill from an archive stream."""
 import io
 import os
+import shutil
 import tarfile
 import tempfile
+import unittest
 import zipfile
 from typing import AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -17,6 +19,13 @@ from agentscope.app._service._workspace import (
 )
 from agentscope.workspace import LocalWorkspace
 from agentscope.workspace._base import WorkspaceBase
+
+# The base `WorkspaceBase.add_skill_archive` implementation targets
+# POSIX sandboxes and shells out to `mv` / `mkdir`.  Exercised over
+# a LocalBackend (which spawns programs directly, without a shell),
+# that only works on Windows when Git's `usr/bin` happens to be on
+# `PATH` -- as it is on CI runners but not on every dev machine.
+_HAS_POSIX_MV = os.name != "nt" or shutil.which("mv") is not None
 
 
 async def _chunks(data: bytes, size: int = 11) -> AsyncIterator[bytes]:
@@ -143,6 +152,10 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
         await self.workspace.initialize()
         self.skills_dir = os.path.join(self.tmp, "skills", "default")
 
+    @unittest.skipIf(
+        not _HAS_POSIX_MV,
+        "requires POSIX shell tools (mv/mkdir) on the host",
+    )
     async def test_directory_name_is_suffixed_when_taken(self) -> None:
         """A repeated name gets a numeric suffix rather than an error."""
         for index in range(3):
@@ -157,6 +170,10 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
             ["pack", "pack-1", "pack-2"],
         )
 
+    @unittest.skipIf(
+        not _HAS_POSIX_MV,
+        "requires POSIX shell tools (mv/mkdir) on the host",
+    )
     async def test_flat_archive_is_accepted(self) -> None:
         """SKILL.md at the archive root needs no wrapping folder."""
         await WorkspaceBase.add_skill_archive(
