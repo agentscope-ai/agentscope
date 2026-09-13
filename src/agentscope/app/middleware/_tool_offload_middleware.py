@@ -125,8 +125,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
           the agent of the background task id is yielded instead.
 
         .. note::
-            Tools with ``is_state_injected=True`` or ``is_external_tool=True``
-            bypass this logic and are always executed synchronously.
+            Tools with ``is_state_injected=True``, ``is_external_tool=True``,
+            or ``can_offload=False`` bypass this logic and are always
+            executed synchronously.
 
         Args:
             agent (`Agent`):
@@ -144,7 +145,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         tool_call = input_kwargs["tool_call"]
 
         # ----------------------------------------------------------------
-        # Guard: state-injected tools and external tools are never offloaded.
+        # Guard tools whose execution must remain attached to the current run.
         # - is_state_injected: the tool receives the live agent.state object;
         #   running it concurrently in a background task could cause race
         #   conditions on agent.state. For now, we fall back to synchronous
@@ -155,7 +156,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         #   agent would lose track of the pending confirmation.
         tool = await agent.toolkit.get_tool(tool_call.name)
         if tool is not None and (
-            tool.is_state_injected or tool.is_external_tool
+            tool.is_state_injected
+            or tool.is_external_tool
+            or not tool.can_offload
         ):
             async for item in next_handler(**input_kwargs):
                 yield item

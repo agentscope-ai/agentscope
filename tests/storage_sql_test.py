@@ -1051,6 +1051,80 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             "chan-1",
         )
 
+    async def test_channel_user_credentials_are_isolated_and_cascade(
+        self,
+    ) -> None:
+        """User OAuth secrets upsert independently and follow the channel."""
+        await self.storage.upsert_channel(
+            _channel_record("chan-1"),
+            "cli-1",
+        )
+        await self.storage.upsert_channel(
+            _channel_record("chan-2"),
+            "cli-2",
+        )
+        await self.storage.upsert_channel_user_credentials(
+            "chan-1",
+            "ou-1",
+            {"access_token": "old"},
+        )
+        await self.storage.upsert_channel_user_credentials(
+            "chan-1",
+            "ou-1",
+            {"access_token": "new"},
+        )
+        await self.storage.upsert_channel_user_credentials(
+            "chan-2",
+            "ou-1",
+            {"access_token": "other"},
+        )
+
+        self.assertEqual(
+            await self.storage.get_channel_user_credentials(
+                "chan-1",
+                "ou-1",
+            ),
+            {"access_token": "new"},
+        )
+        self.assertIsNone(
+            await self.storage.get_channel_user_credentials(
+                "chan-1",
+                "ou-2",
+            ),
+        )
+        self.assertTrue(
+            await self.storage.delete_channel_user_credentials(
+                "chan-1",
+                "ou-1",
+            ),
+        )
+        self.assertFalse(
+            await self.storage.delete_channel_user_credentials(
+                "chan-1",
+                "ou-1",
+            ),
+        )
+
+        await self.storage.upsert_channel_user_credentials(
+            "chan-1",
+            "ou-1",
+            {"access_token": "again"},
+        )
+        await self.storage.delete_channel("chan-1", "cli-1")
+        self.assertIsNone(
+            await self.storage.get_channel_user_credentials(
+                "chan-1",
+                "ou-1",
+            ),
+        )
+        self.assertEqual(
+            await self.storage.get_channel_user_credentials(
+                "chan-2",
+                "ou-1",
+            ),
+            {"access_token": "other"},
+        )
+
 
 class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
     """Boot via ``auto_migrate=True`` and confirm the schema is live.
@@ -1103,6 +1177,18 @@ class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     await storage.get_channel_id_by_platform_bot_id("cli-1"),
                     "chan-1",
+                )
+                await storage.upsert_channel_user_credentials(
+                    "chan-1",
+                    "ou-1",
+                    {"access_token": "token"},
+                )
+                self.assertEqual(
+                    await storage.get_channel_user_credentials(
+                        "chan-1",
+                        "ou-1",
+                    ),
+                    {"access_token": "token"},
                 )
 
 

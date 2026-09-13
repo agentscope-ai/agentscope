@@ -2,6 +2,7 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
+import json
 import warnings
 from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
@@ -112,6 +113,13 @@ class RedisStorage(StorageBase):
         channel_botid_index: str = "agentscope:channel_botid:{platform_bot_id}"
         channel_session_index: str = (
             "agentscope:user:{user_id}:channel:{channel_id}:sessions"
+        )
+        channel_user_credential: str = (
+            "agentscope:channel:{channel_id}:user_credential:"
+            "{channel_user_id}"
+        )
+        channel_user_credential_index: str = (
+            "agentscope:channel:{channel_id}:user_credentials"
         )
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
@@ -1386,6 +1394,23 @@ class RedisStorage(StorageBase):
         """Delete a channel record and clean up all indexes."""
         key = self._key(self.key_config.channel, channel_id=channel_id)
         raw = await self._client.get(key)
+        credential_index = self._key(
+            self.key_config.channel_user_credential_index,
+            channel_id=channel_id,
+        )
+        channel_users = await self._client.smembers(credential_index)
+        credential_keys = [
+            self._key(
+                self.key_config.channel_user_credential,
+                channel_id=channel_id,
+                channel_user_id=channel_user_id,
+            )
+            for channel_user_id in channel_users
+        ]
+        if credential_keys:
+            await self._client.delete(*credential_keys)
+        await self._client.delete(credential_index)
+
         if not raw:
             return False
         record = ChannelRecord.model_validate_json(raw)
@@ -1406,6 +1431,63 @@ class RedisStorage(StorageBase):
             ),
         )
         return True
+
+    async def get_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+    ) -> dict[str, Any] | None:
+        """Fetch credentials for one channel user."""
+        raw = await self._client.get(
+            self._key(
+                self.key_config.channel_user_credential,
+                channel_id=channel_id,
+                channel_user_id=channel_user_id,
+            ),
+        )
+        if not raw:
+            return None
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else None
+
+    async def upsert_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+        credentials: dict[str, Any],
+    ) -> None:
+        """Insert or replace credentials for one channel user."""
+        key = self._key(
+            self.key_config.channel_user_credential,
+            channel_id=channel_id,
+            channel_user_id=channel_user_id,
+        )
+        index = self._key(
+            self.key_config.channel_user_credential_index,
+            channel_id=channel_id,
+        )
+        await self._set_with_ttl(key, json.dumps(credentials))
+        await self._client.sadd(index, channel_user_id)
+        await self._refresh_key_ttl(index)
+
+    async def delete_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+    ) -> bool:
+        """Delete credentials for one channel user."""
+        key = self._key(
+            self.key_config.channel_user_credential,
+            channel_id=channel_id,
+            channel_user_id=channel_user_id,
+        )
+        index = self._key(
+            self.key_config.channel_user_credential_index,
+            channel_id=channel_id,
+        )
+        deleted = await self._client.delete(key)
+        await self._client.srem(index, channel_user_id)
+        return bool(deleted)
 
     async def get_channel_id_by_platform_bot_id(
         self,

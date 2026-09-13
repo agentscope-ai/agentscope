@@ -14,6 +14,42 @@ _APPROVE = "approve"
 _DENY = "deny"
 
 
+def _build_user_auth_card(
+    verification_uri: str,
+    user_code: str,
+    expires_in: int,
+) -> str:
+    """Build a card that starts Feishu's user device authorization.
+
+    Args:
+        verification_uri (`str`): Browser URL for authorization.
+        user_code (`str`): One-time code the user may need to enter.
+        expires_in (`int`): Number of seconds before the request expires.
+
+    Returns:
+        `str`: The card as a JSON string.
+    """
+    body = (
+        "AgentScope needs your authorization to read Feishu Wiki with "
+        "your own permissions.\n\n"
+        f"[Open authorization page]({verification_uri})\n\n"
+        f"**User code:** `{user_code}`\n\n"
+        f"This request expires in {expires_in} seconds."
+    )
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "blue",
+            "title": {
+                "tag": "plain_text",
+                "content": "🔐 Feishu Wiki authorization required",
+            },
+        },
+        "elements": [{"tag": "markdown", "content": body}],
+    }
+    return json.dumps(card, ensure_ascii=False)
+
+
 def _build_approval_card(
     tool_call_id: str,
     chat_id: str,
