@@ -155,10 +155,13 @@ package-lock.json
 .angular/
 uv.lock
 
-# JS/Node frontend (examples/web_ui)
+# JS/Node projects
 *.local
 .eslintcache
 .vite/
+apps/desktop/electron-dist/
+apps/desktop/electron-test-dist/
+apps/desktop/dist-electron/
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

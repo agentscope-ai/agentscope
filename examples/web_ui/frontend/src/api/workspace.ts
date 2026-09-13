@@ -1,4 +1,4 @@
-import { ApiError, client, getBaseUrl, getUserId } from './client';
+import { ApiError, client, getAuthToken, getBaseUrl, getUserId } from './client';
 import type { UploadProgress } from './knowledgeBase';
 import type {
 	AddFromLibraryResponse,
@@ -56,6 +56,8 @@ function uploadSkillXhr(
 		url.searchParams.set('session_id', sessionId);
 		xhr.open('POST', url.toString(), true);
 		xhr.setRequestHeader('X-User-ID', getUserId());
+		const authToken = getAuthToken();
+		if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
 
 		const onAbort = () => xhr.abort();
 		signal?.addEventListener('abort', onAbort, { once: true });

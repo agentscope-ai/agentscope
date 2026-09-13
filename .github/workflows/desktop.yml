@@ -1,0 +1,89 @@
+name: Desktop
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/desktop.yml"
+      - "apps/desktop/**"
+      - "examples/web_ui/**"
+      - "src/agentscope/**"
+      - "tests/desktop_app_test.py"
+      - "pyproject.toml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/desktop.yml"
+      - "apps/desktop/**"
+      - "examples/web_ui/**"
+      - "src/agentscope/**"
+      - "tests/desktop_app_test.py"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+jobs:
+  package-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: |
+            apps/desktop/pnpm-lock.yaml
+            examples/web_ui/pnpm-lock.yaml
+
+      - name: Install Python dependencies
+        run: python -m pip install -e ".[desktop-build]" pytest
+
+      - name: Install Web UI dependencies
+        working-directory: examples/web_ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Test desktop backend
+        run: python -m pytest tests/desktop_app_test.py
+
+      - name: Build and probe packaged backend
+        run: |
+          python apps/desktop/build_backend.py
+          python apps/desktop/smoke_backend.py
+
+      - name: Check Electron sources
+        working-directory: apps/desktop
+        run: |
+          pnpm electron:typecheck
+          pnpm electron:test
+
+      - name: Build unpacked desktop application
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm electron:pack
