@@ -40,6 +40,17 @@ from ._schedule import (
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
+from ._sop import (
+    CreateSOPRequest,
+    CreateSOPResponse,
+    ListSOPRunsResponse,
+    ListSOPsResponse,
+    SOPRunResponse,
+    SOPSchemaResponse,
+    StartSOPRunRequest,
+    SubmitVerdictRequest,
+    UpdateSOPRequest,
+)
 from ._agent import (
     AgentSchemaResponse,
     AgentSchemaV2Response,
@@ -110,6 +121,15 @@ __all__ = [
     "MCPClientStatus",
     "ToolInfo",
     # Agent
+    "CreateSOPRequest",
+    "CreateSOPResponse",
+    "ListSOPRunsResponse",
+    "ListSOPsResponse",
+    "SOPRunResponse",
+    "SOPSchemaResponse",
+    "StartSOPRunRequest",
+    "SubmitVerdictRequest",
+    "UpdateSOPRequest",
     "AgentSchemaResponse",
     "AgentSchemaV2Response",
     "ListAgentsResponse",

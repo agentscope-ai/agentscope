@@ -22,6 +22,7 @@ from ..storage import (
     SOPWorkspaceGrain,
     StorageBase,
 )
+from ..message_bus import MessageBus, MessageBusKeys
 from ..workspace_manager import WorkspaceManagerBase
 from ._session import SessionService, SessionStatus
 from ...event import (
@@ -246,6 +247,7 @@ class SOPService:
         self,
         storage: StorageBase,
         workspace_manager: WorkspaceManagerBase,
+        message_bus: MessageBus,
         chat: Any,
     ) -> None:
         """Initialize the service.
@@ -255,11 +257,14 @@ class SOPService:
                 Application storage.
             workspace_manager (`WorkspaceManagerBase`):
                 Assigns the workspace a run's conversations share.
+            message_bus (`MessageBus`):
+                Serialises advances of one run against each other.
             chat (`ChatService`):
                 Where each step's turn is taken.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
+        self._message_bus = message_bus
         self._chat = chat
 
     async def create_run(
@@ -386,6 +391,22 @@ class SOPService:
             `KeyError`:
                 If the user has no such run.
         """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.sop_run_lock(sop_run_id),
+            ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
+        ):
+            return await self._advance(user_id, sop_run_id, inputs)
+
+    async def _advance(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        inputs: UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+    ) -> SOPRunState:
+        """Drive the run, with its lock already held."""
         record = await self._storage.get_sop_run(user_id, sop_run_id)
         if record is None:
             raise KeyError(f"SOP run {sop_run_id!r} not found.")

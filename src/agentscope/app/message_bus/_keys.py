@@ -146,6 +146,29 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._SESSION_LOCK.format(sid=session_id)
 
     # ------------------------------------------------------------------
+    # SOP run lock
+    # ------------------------------------------------------------------
+
+    _SOP_RUN_LOCK = "agentscope:sop_run:lock:{rid}"
+
+    SOP_RUN_TTL_SECS = 3600
+    """Default lock lease for a SOP run (an hour).
+
+    Longer than a chat run's because one SOP turn can be several of
+    them — a step is worked on and then judged without the lock being
+    let go in between."""
+
+    @classmethod
+    def sop_run_lock(cls, sop_run_id: str) -> str:
+        """Per-run distributed-lock key.
+
+        Taken before a run's own session locks and never the other way
+        round, so two advances of one run queue instead of deadlocking
+        against each other's steps.
+        """
+        return cls._SOP_RUN_LOCK.format(rid=sop_run_id)
+
+    # ------------------------------------------------------------------
     # Session inbox
     # ------------------------------------------------------------------
 

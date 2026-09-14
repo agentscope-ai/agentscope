@@ -14,6 +14,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
 from agentscope.app._service import SOPService
+from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app._tool import SubmitHandover, SubmitVerdict
 from agentscope.app.storage import (
     AgentData,
@@ -128,6 +129,9 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Open storage and register the agents a procedure refers to."""
         self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(
+            InMemoryMessageBus(),
+        )
         self.storage = await self._stack.enter_async_context(
             AsyncSQLAlchemyStorage(
                 "sqlite+aiosqlite:///:memory:",
@@ -155,7 +159,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
     async def _drive(self, chat: _ScriptedChat, run_id: str) -> None:
         """Run the service with the scripted chat bound to this run."""
         chat.sop_run_id = run_id
-        await SOPService(self.storage, _Workspaces(), chat).run(
+        await SOPService(self.storage, _Workspaces(), self.bus, chat).run(
             "user-1",
             run_id,
         )
@@ -170,7 +174,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             ("modeller", "reviewer"),
         )
         await self.storage.upsert_sop("user-1", sop)
-        service = SOPService(self.storage, _Workspaces(), None)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run(
             "user-1",
             sop,
@@ -253,7 +257,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             ("modeller", "reviewer"),
         )
         await self.storage.upsert_sop("user-1", sop)
-        service = SOPService(self.storage, _Workspaces(), None)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run("user-1", sop)
 
         chat = _ScriptedChat(
@@ -283,7 +287,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         sop.data.steps[0].max_attempts = 2
         await self.storage.upsert_sop("user-1", sop)
-        service = SOPService(self.storage, _Workspaces(), None)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run("user-1", sop)
 
         chat = _ScriptedChat(
@@ -304,7 +308,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop = _sop("user-1", None, ("modeller", "modeller"))
         sop.data.steps[0].max_attempts = 1
         await self.storage.upsert_sop("user-1", sop)
-        service = SOPService(self.storage, _Workspaces(), None)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run("user-1", sop)
 
         await self._drive(_ScriptedChat(self.storage, [None]), run.id)
@@ -339,7 +343,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             ("modeller", "modeller"),
         )
         await self.storage.upsert_sop("user-1", sop)
-        service = SOPService(self.storage, _Workspaces(), None)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run("user-1", sop)
 
         chat = _ScriptedChat(
@@ -381,7 +385,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         await self.storage.upsert_sop("user-1", sop)
 
-        service = SOPService(self.storage, _Workspaces(), None)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run("user-1", sop)
 
         self.assertEqual(list(run.sessions), ["modeller"])
