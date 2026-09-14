@@ -21,7 +21,14 @@ from tree_sitter import Language, Parser, Node
 from .._constants import DANGEROUS_NODE_TYPES, DANGEROUS_COMMANDS
 
 
-# Commands that are considered safe and don't require permission rules
+# Commands that are considered safe and don't require permission rules.
+#
+# This set gates two decisions, and both treat membership as "no permission
+# needed": the read-only verdict in ``_is_single_command_read_only`` and the
+# prefix extraction in ``extract_command_prefixes``. ``tee`` therefore does not
+# belong here -- it writes the file it is given, so "no permission needed" is
+# wrong for it in either role. Redirections are already refused the read-only
+# label for exactly that reason (see ``is_read_only_command``).
 SAFE_COMMANDS: Set[str] = {
     "echo",
     "cat",
@@ -32,7 +39,6 @@ SAFE_COMMANDS: Set[str] = {
     "false",
     "printf",
     "grep",
-    "tee",
 }
 
 # Safe environment variables that can be skipped when extracting command prefix
