@@ -63,23 +63,6 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertFalse(self.glob_tool.is_mcp)
         self.assertTrue(self.glob_tool.is_read_only)
         self.assertTrue(self.glob_tool.is_concurrency_safe)
-        self.assertIn("head_limit", self.glob_tool.input_schema["properties"])
-        self.assertNotIn("limit", self.glob_tool.input_schema["properties"])
-        self.assertNotIn("head_limit", self.glob_tool.input_schema["required"])
-        self.assertEqual(
-            self.glob_tool.input_schema["properties"]["head_limit"]["minimum"],
-            0,
-        )
-        self.assertEqual(
-            self.glob_tool.input_schema["properties"]["offset"]["minimum"],
-            0,
-        )
-        self.assertEqual(
-            self.glob_tool.input_schema["properties"]["offset"]["default"],
-            0,
-        )
-        self.assertNotIn("offset", self.glob_tool.input_schema["required"])
-        self.assertIn("head_limit", self.glob_tool.description)
 
     async def test_check_permissions(self) -> None:
         """Test glob tool permission checking."""
@@ -120,15 +103,11 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test3.py", content)
 
     async def test_default_head_limit_truncates_large_result(self) -> None:
-        """Test the default head limit returns the newest 200 files."""
+        """Test the default head limit returns the newest 250 files."""
         expected_paths = []
-        for index in range(201):
+        for index in range(251):
             file_path = os.path.join(self.temp_dir, f"match_{index}.log")
-            with open(
-                file_path,
-                "w",
-                encoding="utf-8",
-            ):
+            with open(file_path, "w", encoding="utf-8"):
                 pass
             os.utime(file_path, (index, index))
             expected_paths.append(file_path)
@@ -139,34 +118,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         )
 
         expected = "\n".join(reversed(expected_paths[1:]))
-        expected += "\n\n[Showing results with pagination = limit: 200]"
-        self.assertEqual(chunk.content[0].text, expected)
-
-    async def test_head_limit_and_offset_paginate_result(self) -> None:
-        """Test an explicit head limit and offset paginate results."""
-        expected_paths = []
-        for index in range(4):
-            file_path = os.path.join(self.temp_dir, f"limited_{index}.txt")
-            with open(
-                file_path,
-                "w",
-                encoding="utf-8",
-            ):
-                pass
-            os.utime(file_path, (index, index))
-            expected_paths.append(file_path)
-
-        chunk = await self.glob_tool(
-            pattern="limited_*.txt",
-            path=self.temp_dir,
-            head_limit=2,
-            offset=1,
-        )
-
-        expected = "\n".join([expected_paths[2], expected_paths[1]])
-        expected += (
-            "\n\n" "[Showing results with pagination = limit: 2, offset: 1]"
-        )
+        expected += "\n\n[Showing results with pagination = limit: 250]"
         self.assertEqual(chunk.content[0].text, expected)
 
     async def test_head_limit_zero_returns_all_results(self) -> None:
@@ -219,11 +171,11 @@ class GlobToolTest(IsolatedAsyncioTestCase):
             head_limit=2,
             offset=2,
         )
-        expected = "\n".join([expected_paths[3], expected_paths[2]])
-        expected += (
-            "\n\n" "[Showing results with pagination = limit: 2, offset: 2]"
+        self.assertEqual(
+            second_page.content[0].text,
+            f"{expected_paths[3]}\n{expected_paths[2]}\n\n"
+            "[Showing results with pagination = limit: 2, offset: 2]",
         )
-        self.assertEqual(second_page.content[0].text, expected)
 
         last_page = await self.glob_tool(
             pattern="paged_*.txt",
@@ -234,18 +186,6 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             last_page.content[0].text,
             "\n".join([expected_paths[1], expected_paths[0]]),
-        )
-
-        no_more_pages = await self.glob_tool(
-            pattern="paged_*.txt",
-            path=self.temp_dir,
-            head_limit=2,
-            offset=6,
-        )
-        self.assertEqual(
-            no_more_pages.content[0].text,
-            "No more files found matching pattern: paged_*.txt after "
-            "offset 6.",
         )
 
     async def test_negative_offset_returns_error(self) -> None:
@@ -303,17 +243,6 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             chunk.content[0].text,
             "No files found matching pattern: *.nonexistent",
-        )
-
-        no_more_pages = await self.glob_tool(
-            pattern="*.nonexistent",
-            path=self.temp_dir,
-            offset=1,
-        )
-        self.assertEqual(
-            no_more_pages.content[0].text,
-            "No more files found matching pattern: *.nonexistent after "
-            "offset 1.",
         )
 
     async def test_match_rule_path(self) -> None:

@@ -21,7 +21,8 @@ from .._response import ToolChunk
 if TYPE_CHECKING:
     from ._backend import BackendBase
 
-DEFAULT_HEAD_LIMIT = 200
+# Default cap on glob results when head_limit is unspecified
+DEFAULT_HEAD_LIMIT = 250
 
 
 def _default_glob_helper_path() -> str:
@@ -54,8 +55,9 @@ Supports glob patterns like "**/*.js" or "src/**/*.ts" and returns
 matching file paths sorted by modification time (newest first).
 
 Use this tool when you need to find files by pattern across the
-codebase. Use head_limit to cap the number of results
-returned."""  # ignore: E501
+codebase.
+
+Use head_limit to cap the number of results returned."""  # ignore: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -75,7 +77,7 @@ returned."""  # ignore: E501
                 "type": "integer",
                 "minimum": 0,
                 "description": "Limit output to first N paths. Defaults to "
-                "200 when unspecified. Pass 0 for unlimited.",
+                "250 when unspecified. Pass 0 for unlimited.",
             },
             "offset": {
                 "type": "integer",
@@ -244,7 +246,7 @@ returned."""  # ignore: E501
                 working directory when ``None``.
             head_limit (`int | None`, optional):
                 Maximum number of matching paths to return. Defaults to
-                ``200``. Pass ``0`` for unlimited.
+                ``250``. Pass ``0`` for unlimited.
             offset (`int`, optional):
                 Number of matching paths to skip before returning results.
                 Defaults to ``0``.
@@ -329,18 +331,12 @@ returned."""  # ignore: E501
         except (json.JSONDecodeError, ValueError):
             matches = []
 
-        if offset >= len(matches):
-            no_match_text = (
-                f"No files found matching pattern: {pattern}"
-                if not matches and offset == 0
-                else (
-                    f"No more files found matching pattern: {pattern} "
-                    f"after offset {offset}."
-                )
-            )
+        if len(matches) == 0:
             return ToolChunk(
                 content=[
-                    TextBlock(text=no_match_text),
+                    TextBlock(
+                        text=f"No files found matching pattern: {pattern}",
+                    ),
                 ],
                 state=ToolResultState.RUNNING,
                 is_last=True,
@@ -350,9 +346,9 @@ returned."""  # ignore: E501
             head_limit if head_limit is not None else DEFAULT_HEAD_LIMIT
         )
         limited = (
-            matches[offset:]
-            if effective_limit == 0
-            else matches[offset : offset + effective_limit]
+            matches[offset : offset + effective_limit]
+            if effective_limit
+            else matches[offset:]
         )
         output = "\n".join(limited)
         if effective_limit and len(matches) - offset > effective_limit:
