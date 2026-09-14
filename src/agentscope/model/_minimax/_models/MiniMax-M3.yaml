@@ -1,0 +1,20 @@
+name: MiniMax-M3
+label: MiniMax M3
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+
+context_size: 512000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000
