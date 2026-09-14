@@ -108,7 +108,11 @@ class RoutingConfig(BaseModel):
 
 
 class SessionSettings(BaseModel):
-    """Settings applied when a channel creates an agent session."""
+    """Settings for a session something opens on a user's behalf.
+
+    Only what has to be decided by whoever opens it and has no
+    sensible default — a channel and a SOP run both face that same
+    short list."""
 
     chat_model_config: dict[str, Any]
     """Model configuration for channel-created sessions. Required — there

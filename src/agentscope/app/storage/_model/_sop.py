@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field
 
 from ._base import _RecordBase
+from ._channel import SessionSettings
 from ....sop import SOPRunState
 
 
@@ -129,6 +130,17 @@ class SOPData(BaseModel):
     workspace_grain: SOPWorkspaceGrain = Field(
         default=SOPWorkspaceGrain.RUN,
         description="How many workspaces a run of this gets.",
+    )
+
+    session_settings: dict[str, SessionSettings] = Field(
+        default_factory=dict,
+        description=(
+            "What each conversation is opened with, keyed by the same "
+            "session key the steps use. Keyed by conversation rather "
+            "than by reference because the model and permission mode "
+            "belong to the session: two references sharing a key could "
+            "otherwise ask for different ones."
+        ),
     )
 
 

@@ -1703,6 +1703,7 @@ class TestSOP(IsolatedAsyncioTestCase):
                     },
                 ],
                 "workspace_grain": "run",
+                "session_settings": {},
             },
         )
         self.assertEqual(

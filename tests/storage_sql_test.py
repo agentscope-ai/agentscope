@@ -587,6 +587,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "workspace_grain": "run",
+                    "session_settings": {},
                 },
             },
         )
@@ -652,6 +653,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "workspace_grain": "run",
+                    "session_settings": {},
                 },
                 "sessions": {"modeller": "session-1"},
                 "state": {
