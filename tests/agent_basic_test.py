@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
-from agentscope.model import ChatResponse, ChatUsage
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -18,10 +18,12 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
     UserMsg,
+    Usage,
 )
 from agentscope.types import ReplyFinishedReason
 
@@ -869,6 +871,30 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_reply_usage_returns_a_copy(
+        self,
+    ) -> None:
+        """Reply usage is copied instead of exposing context state."""
+        usage = Usage(
+            input_tokens=10,
+            output_tokens=5,
+            cache_input_tokens=2,
+            cache_creation_input_tokens=1,
+        )
+        self.agent.state.context = [
+            AssistantMsg(
+                name=self.agent.name,
+                content=[TextBlock(text="response")],
+                id=self.agent.state.reply_id,
+                usage=usage,
+            ),
+        ]
+
+        # pylint: disable=protected-access
+        reply_usage = self.agent._get_reply_usage()
+        self.assertEqual(reply_usage, usage)
+        self.assertIsNot(reply_usage, usage)
+
     async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:
         """A tool round consumes one iteration before final reasoning."""
         self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
@@ -1093,10 +1119,24 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ChatResponse(
                     content=[ThinkingBlock(thinking="First thought")],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
                 ),
                 ChatResponse(
                     content=[ThinkingBlock(thinking="Second thought")],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=50,
+                        time=0.2,
+                        cache_input_tokens=7,
+                        cache_creation_input_tokens=3,
+                    ),
                 ),
             ],
         )
@@ -1110,6 +1150,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 **self._get_msg_base(),
                 "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "usage": {
+                    "input_tokens": 180,
+                    "output_tokens": 90,
+                    "cache_input_tokens": 12,
+                    "cache_creation_input_tokens": 5,
+                },
                 "content": [
                     {
                         "type": "text",
@@ -1122,6 +1168,81 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
             },
         )
+
+    async def test_interrupted_reply_preserves_usage(self) -> None:
+        """An interrupted final message carries the model usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Partial response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                    finished_reason=FinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(
+            UserMsg(name="user", content="Continue"),
+        )
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.INTERRUPTED,
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 40,
+                    "cache_input_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                },
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": (
+                            "I notice the interruption. How can I help you?"
+                        ),
+                    },
+                ],
+            },
+        )
+
+    async def test_reply_does_not_reuse_previous_usage(self) -> None:
+        """A reply with no new context does not reuse prior usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="First response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                ),
+                ChatResponse(content=[], is_last=True),
+            ],
+        )
+
+        first_msg = await self.agent.reply(
+            UserMsg(name="user", content="Start"),
+        )
+        second_msg = await self.agent.reply()
+
+        self.assertIsNotNone(first_msg.usage)
+        self.assertIsNone(second_msg.usage)
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.

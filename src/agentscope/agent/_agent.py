@@ -735,9 +735,22 @@ class Agent:
             # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
+            # Context replacement may remove the latest assistant message,
+            # which is also where usage for the current reply is accumulated.
+            # Keep that usage so compression cannot erase earlier model-call
+            # accounting from the same reply.
+            current_reply_usage = self._get_reply_usage()
+
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
+
+            if (
+                current_reply_usage is not None
+                and self._get_reply_usage() is None
+            ):
+                self.state.append_context(self.name, [])
+                self.state.context[-1].usage = current_reply_usage
 
             # The compression call is not covered by the model call events,
             # so record its cost on the context tail to keep it in the token
@@ -1293,6 +1306,7 @@ class Agent:
                         id=self.state.reply_id,
                         name=self.name,
                         content=self.react_config.interruption_message,
+                        usage=self._get_reply_usage(),
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
@@ -3475,14 +3489,7 @@ class Agent:
             or last_msg.usage is None
         ):
             return None
-        return Usage(
-            input_tokens=last_msg.usage.input_tokens,
-            output_tokens=last_msg.usage.output_tokens,
-            cache_input_tokens=last_msg.usage.cache_input_tokens or 0,
-            cache_creation_input_tokens=(
-                last_msg.usage.cache_creation_input_tokens or 0
-            ),
-        )
+        return last_msg.usage.model_copy()
 
     def _next_action(
         self,
@@ -3603,6 +3610,7 @@ class Agent:
                         name=self.name,
                         content="The maximum reasoning-acting iterations "
                         "are exceeded.",
+                        usage=self._get_reply_usage(),
                         finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
                     ),
                 )
@@ -3737,6 +3745,7 @@ class Agent:
                     name=self.name,
                     content="The maximum reasoning-acting iterations are "
                     "exceeded.",
+                    usage=self._get_reply_usage(),
                     finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
                 ),
             )
