@@ -11,6 +11,8 @@ from typing import Any, Literal
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
 from .._tool import (
+    SubmitHandover,
+    SubmitVerdict,
     AgentCreate,
     AgentInvite,
     TeamCreate,
@@ -18,7 +20,13 @@ from .._tool import (
     TeamSay,
 )
 from .._types import AgentToolFactory, SubAgentTemplate
-from ..storage import AgentRecord, SessionRecord, StorageBase
+from ..storage import (
+    AgentRecord,
+    SessionRecord,
+    SOPOrigin,
+    StorageBase,
+)
+from ...sop import SOPPhase
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
@@ -217,6 +225,44 @@ time or interval"
                     **team_tool_kwargs,
                     invitable_pool=invitable_pool,
                     resource_access_service=resource_access_service,
+                ),
+            )
+
+    # SOP submission tool — a step's agent reports through storage
+    # rather than through its reply, so it carries exactly one of the
+    # two. Which one is the half of the step it is playing: a step is
+    # being worked on until it has handed something over, and judged
+    # afterwards, the same rule the SDK's own step uses.
+    if isinstance(session_record.origin, SOPOrigin):
+        run = await storage.get_sop_run(
+            user_id,
+            session_record.origin.sop_run_id,
+        )
+        index = (
+            next(
+                (
+                    i
+                    for i, step in enumerate(run.state.steps)
+                    if step.phase is SOPPhase.RUNNING
+                ),
+                None,
+            )
+            if run is not None
+            else None
+        )
+        if index is not None:
+            submit_kwargs: dict[str, Any] = {
+                "storage": storage,
+                "user_id": user_id,
+                "sop_run_id": session_record.origin.sop_run_id,
+                "step_index": index,
+            }
+            tools.append(
+                SubmitHandover(**submit_kwargs)
+                if run.state.steps[index].submission is None
+                else SubmitVerdict(
+                    **submit_kwargs,
+                    verifier=agent_record.data.name,
                 ),
             )
 

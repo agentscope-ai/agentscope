@@ -37,12 +37,14 @@ from ..storage import (
     SessionNaming,
     SessionRecord,
     ChannelOrigin,
+    SOPOrigin,
 )
 from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
+    SOPStepSubmitMiddleware,
     StateChangeMiddleware,
     ToolOffloadMiddleware,
     TeamMemberLoopMiddleware,
@@ -956,6 +958,12 @@ class ChatService:
                             leader_name=team_ctx.leader_name,
                         ),
                     )
+
+                # A step of a procedure answers through its submit tool,
+                # so a reply that ends without one has produced nothing
+                # the run can act on.
+                if isinstance(session_record.origin, SOPOrigin):
+                    middlewares.append(SOPStepSubmitMiddleware())
 
                 if self._extra_agent_middlewares is not None:
                     factory_args: tuple = (user_id, agent_id, session_id)
