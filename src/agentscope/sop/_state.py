@@ -8,7 +8,13 @@ ever lives on a step object.
 """
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    computed_field,
+)
 
 from ..message import DataBlock, Msg, TextBlock
 from .._utils._common import _generate_id, _generate_timestamp
@@ -109,15 +115,30 @@ class SOPRunState(BaseModel):
     inputs: list[Msg] = Field(default_factory=list)
     """What the run was started with, and what its first step reads."""
 
-    steps: list[SOPStepRunState] = Field(default_factory=list)
-    """How each step is going, in the order the SOP declares them."""
+    steps: list[SerializeAsAny[SOPStepRunState]] = Field(
+        default_factory=list,
+    )
+    """How each step is going, in the order the SOP declares them.
+
+    Serialized as whatever each step actually kept, so the extra a
+    :attr:`~._schema.SOPStepBase.state_type` subclass adds is written
+    out rather than trimmed back to this base."""
 
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the run was created."""
 
+    @computed_field  # type: ignore[misc]
     @property
     def phase(self) -> SOPPhase:
-        """Where the run stands, worked out from its steps."""
+        """Where the run stands, worked out from its steps.
+
+        Dumped alongside the stored fields so a reader can sort runs
+        by it without replaying every step.
+
+        Returns:
+            `SOPPhase`:
+                How far along the run as a whole is.
+        """
         phases = [_.phase for _ in self.steps]
         if not phases or all(_ is SOPPhase.PENDING for _ in phases):
             return SOPPhase.PENDING
