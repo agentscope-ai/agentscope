@@ -393,9 +393,10 @@ class ChannelBase(ABC):
     def bind_message_bus(self, message_bus: "MessageBus") -> None:
         """Provide the process-shared bus to channels that need it.
 
-        Most channels only use REST for outbound work and do not need this
-        hook. Telegram uses it to keep approval callback state available to
-        both the connection worker and the process that sent the card.
+        Most channels do not need this hook. Channels that require
+        cross-process correlation or coordination may retain the bus and use
+        its shared registry, locks, streams, or queues. The default remains a
+        no-op.
 
         Args:
             message_bus (`MessageBus`): Shared application message bus.

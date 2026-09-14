@@ -11,12 +11,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 import io
 import json
-import re
 import secrets
 import time
 from typing import (
@@ -53,27 +53,32 @@ from .._base import (
 )
 
 if TYPE_CHECKING:
-    from telegram import Message, Update
+    from telegram import Update
     from telegram.ext import Application, CallbackContext
 
     from ...message_bus import MessageBus
     from ....tool import ToolBase
     from ....workspace import WorkspaceBase
     from ._markdown import _TelegramTextChunk
+    from ._inbound import TelegramInboundNormalizer
 
 
 _POLL_TIMEOUT_SECS = 30
 _POLL_READ_TIMEOUT_SECS = 40
-_ALBUM_SETTLE_SECS = 0.8
-_STREAM_MIN_INTERVAL_SECS = 1.0
-_MAX_CONNECT_ATTEMPTS = 2
+_PRIVATE_STREAM_MIN_INTERVAL_SECS = 1.0
+_GROUP_STREAM_MIN_INTERVAL_SECS = 3.1
+_CONNECT_BACKOFF_RESET_SECS = 60.0
 _MAX_API_ATTEMPTS = 3
-_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+_API_RETRY_BUDGET_SECS = 300.0
 _MAX_PHOTO_BYTES = 10 * 1024 * 1024
 _MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 _MAX_TEXT_LENGTH = 4096
-_APPROVAL_CALLBACK_PREFIX = "as:approval:"
+_APPROVAL_CALLBACK_PREFIX = "as:"
 _APPROVAL_CALLBACK_TTL_SECS = 24 * 60 * 60
+_LISTENER_LOCK_TTL_SECS = 60
+_LISTENER_LOCK_PREFIX = "agentscope:telegram:listener:lock:"
+_APPROVAL_LOCK_TTL_SECS = 60
+_APPROVAL_LOCK_PREFIX = "agentscope:telegram:approval:lock:"
 
 _T = TypeVar("_T")
 
@@ -90,7 +95,8 @@ class _ApprovalCallback:
     chat_id: str
     agent_id: str
     session_id: str
-    approved: bool
+    submitted: bool = False
+    approved: bool | None = None
 
     def to_json(self) -> str:
         """Serialize the callback payload for the shared message bus."""
@@ -100,6 +106,7 @@ class _ApprovalCallback:
                 "chat_id": self.chat_id,
                 "agent_id": self.agent_id,
                 "session_id": self.session_id,
+                "submitted": self.submitted,
                 "approved": self.approved,
             },
             separators=(",", ":"),
@@ -112,22 +119,28 @@ class _ApprovalCallback:
             raw = json.loads(value)
         except (TypeError, ValueError):
             return None
-        if not isinstance(raw, dict) or not isinstance(
-            raw.get("approved"),
-            bool,
-        ):
+        if not isinstance(raw, dict):
             return None
         fields = ("tool_call_id", "chat_id", "agent_id", "session_id")
         if any(not isinstance(raw.get(field), str) for field in fields):
             return None
         if not raw["tool_call_id"] or not raw["chat_id"]:
             return None
+        submitted = raw.get("submitted", False)
+        approved = raw.get("approved")
+        if not isinstance(submitted, bool):
+            return None
+        if approved is not None and not isinstance(approved, bool):
+            return None
+        if submitted and approved is None:
+            return None
         return cls(
             tool_call_id=raw["tool_call_id"],
             chat_id=raw["chat_id"],
             agent_id=raw["agent_id"],
             session_id=raw["session_id"],
-            approved=raw["approved"],
+            submitted=submitted,
+            approved=approved,
         )
 
 
@@ -137,6 +150,28 @@ class _TelegramResult:
 
     ok: bool
     error: str = ""
+    failure: str = ""
+
+
+@dataclass
+class _RetryBudget:
+    """Deadline and retry state shared by one logical API delivery."""
+
+    deadline: float
+    network_failures: int = 0
+
+    @classmethod
+    def start(cls) -> "_RetryBudget":
+        """Start a fresh logical-operation budget."""
+        return cls(time.monotonic() + _API_RETRY_BUDGET_SECS)
+
+
+class _TelegramRetryBudgetExceeded(TimeoutError):
+    """A Telegram operation cannot retry within its delivery budget."""
+
+
+class _TelegramDeliveryUnknown(RuntimeError):
+    """A network failure left the operation's delivery outcome unknown."""
 
 
 @dataclass
@@ -147,6 +182,7 @@ class _StreamPreview:
     draft_id: int
     message_id: int | None = None
     last_update: float | None = None
+    retry_not_before: float = 0.0
     last_html: str = ""
     disabled: bool = False
 
@@ -224,62 +260,6 @@ class TelegramChannel(ChannelBase):
             title="Show thinking",
             description="Show model reasoning inline in the reply",
         )
-        allow_public_private_chats: bool = Field(
-            default=False,
-            title="Allow public private chats",
-            description=(
-                "Allow any Telegram user to start a private chat with this "
-                "bot"
-            ),
-        )
-        allowed_private_user_ids: str = Field(
-            default="",
-            title="Allowed private user IDs",
-            description=(
-                "Comma-, whitespace-, or newline-separated Telegram user "
-                "IDs allowed to use private chats"
-            ),
-        )
-        allow_public_group_chats: bool = Field(
-            default=False,
-            title="Allow public group chats",
-            description=(
-                "Allow any Telegram group or supergroup to use this bot"
-            ),
-        )
-        allowed_group_chat_ids: str = Field(
-            default="",
-            title="Allowed group chat IDs",
-            description=(
-                "Comma-, whitespace-, or newline-separated Telegram group "
-                "or supergroup chat IDs allowed to use this bot"
-            ),
-        )
-
-        @field_validator("allowed_private_user_ids", "allowed_group_chat_ids")
-        @classmethod
-        def _validate_allowed_chat_ids(
-            cls,
-            value: str,
-            info: Any,
-        ) -> str:
-            tokens = [
-                token for token in re.split(r"[,\s]+", value.strip()) if token
-            ]
-            ids: set[int] = set()
-            for token in tokens:
-                allow_negative = info.field_name == "allowed_group_chat_ids"
-                pattern = r"-?[0-9]+" if allow_negative else r"[0-9]+"
-                if re.fullmatch(pattern, token) is None or int(token) == 0:
-                    id_kind = (
-                        "non-zero signed" if allow_negative else "positive"
-                    )
-                    raise ValueError(
-                        f"{info.field_name} must contain only "
-                        f"{id_kind} numeric Telegram IDs",
-                    )
-                ids.add(int(token))
-            return ",".join(str(user_id) for user_id in sorted(ids))
 
     capabilities = ChannelCapability(
         text=True,
@@ -301,16 +281,6 @@ class TelegramChannel(ChannelBase):
         self._bot_id = credentials.bot_id.strip()
         self._bot_token = credentials.bot_token
         self._config = config
-        self._allowed_private_user_ids = frozenset(
-            int(user_id)
-            for user_id in config.allowed_private_user_ids.split(",")
-            if user_id
-        )
-        self._allowed_group_chat_ids = frozenset(
-            int(chat_id)
-            for chat_id in config.allowed_group_chat_ids.split(",")
-            if chat_id
-        )
         self.status = ChannelStatus()
         self._application: "Application | None" = None
         self._rest_bot: Any = None
@@ -320,11 +290,10 @@ class TelegramChannel(ChannelBase):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._fatal_event: asyncio.Event | None = None
         self._fatal_error: BaseException | None = None
-        self._user_name_cache: dict[str, str] = {}
         self._chat_name_cache: dict[str, str] = {}
         self._chat_kind_cache: dict[str, ChatKind] = {}
-        self._album_messages: dict[tuple[str, str, str], list["Message"]] = {}
-        self._album_tasks: dict[tuple[str, str, str], asyncio.Task] = {}
+        self._inbound: "TelegramInboundNormalizer | None" = None
+        self._connected_since: float | None = None
 
     @property
     def channel_id(self) -> str:
@@ -332,7 +301,7 @@ class TelegramChannel(ChannelBase):
         return self._channel_id
 
     def bind_message_bus(self, message_bus: "MessageBus") -> None:
-        """Bind shared state used by approval callbacks across processes."""
+        """Bind shared state for listener coordination and callbacks."""
         self._message_bus = message_bus
 
     async def aclose(self) -> None:
@@ -355,18 +324,17 @@ class TelegramChannel(ChannelBase):
         self._emit = emit
         self._loop = asyncio.get_running_loop()
         self.status.state = "connecting"
-        attempts = 0
         backoff = 1.0
         try:
             while True:
                 self._fatal_event = asyncio.Event()
                 self._fatal_error = None
                 try:
-                    await self._run_application()
+                    async with self._listener_lease():
+                        self.status.state = "connecting"
+                        await self._run_application()
                     if self._fatal_error is not None:
-                        raise _PermanentTelegramError(
-                            self._safe_error(self._fatal_error),
-                        )
+                        raise self._fatal_error
                     raise RuntimeError("Telegram polling stopped unexpectedly")
                 except (ImportError, _PermanentTelegramError) as error:
                     self.status.state = "failed"
@@ -379,25 +347,39 @@ class TelegramChannel(ChannelBase):
                     while True:
                         await asyncio.sleep(30.0)
                 except Exception as error:  # pylint: disable=broad-except
-                    attempts += 1
+                    if (
+                        self._connected_since is not None
+                        and time.monotonic() - self._connected_since
+                        >= _CONNECT_BACKOFF_RESET_SECS
+                    ):
+                        backoff = 1.0
+                    self._connected_since = None
                     self.status.state = "retrying"
                     self.status.last_error = self._safe_error(error)
                     logger.warning(
-                        "Telegram channel '%s' failed to connect (%d/%d): %s",
+                        "Telegram channel '%s' will reconnect in %.1fs: %s",
                         self._channel_id,
-                        attempts,
-                        _MAX_CONNECT_ATTEMPTS,
+                        backoff,
                         self.status.last_error,
                     )
-                    if attempts >= _MAX_CONNECT_ATTEMPTS:
-                        self.status.state = "failed"
-                        while True:
-                            await asyncio.sleep(30.0)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30.0)
         finally:
             await self._cancel_albums()
             self.status.state = "stopped"
+
+    @asynccontextmanager
+    async def _listener_lease(self) -> AsyncIterator[None]:
+        """Hold the Telegram-private per-channel polling lease."""
+        if self._message_bus is None:
+            yield
+            return
+        key = f"{_LISTENER_LOCK_PREFIX}{self._channel_id}"
+        async with self._message_bus.acquire_lock(
+            key,
+            ttl_secs=_LISTENER_LOCK_TTL_SECS,
+        ):
+            yield
 
     async def _run_application(self) -> None:
         """Build, initialise, poll, and always shut down one PTB app."""
@@ -422,6 +404,9 @@ class TelegramChannel(ChannelBase):
                     f"Telegram bot ID {actual_id!r}.",
                 )
             self._bot_user = me
+            from ._inbound import TelegramInboundNormalizer
+
+            self._inbound = TelegramInboundNormalizer(self)
 
             webhook = await self._retry_api(application.bot.get_webhook_info)
             if getattr(webhook, "url", ""):
@@ -450,6 +435,7 @@ class TelegramChannel(ChannelBase):
             await application.start()
             self.status.state = "connected"
             self.status.last_error = ""
+            self._connected_since = time.monotonic()
             assert self._fatal_event is not None
             await self._fatal_event.wait()
         except InvalidToken as error:
@@ -457,13 +443,12 @@ class TelegramChannel(ChannelBase):
                 "Telegram rejected the configured bot token.",
             ) from error
         except Conflict as error:
-            raise _PermanentTelegramError(
+            raise Conflict(
                 "Another instance is already polling updates for this bot.",
             ) from error
         except (BadRequest, Forbidden) as error:
             raise _PermanentTelegramError(self._safe_error(error)) from error
         finally:
-            await self._cancel_albums()
             updater = application.updater
             try:
                 if updater is not None and updater.running:
@@ -474,16 +459,17 @@ class TelegramChannel(ChannelBase):
                         await application.stop()
                 finally:
                     try:
-                        if initialized:
-                            await application.shutdown()
-                        else:
-                            # Bot.initialize opens both HTTPXRequest instances
-                            # before getMe validates the token. Application
-                            # shutdown is a no-op when initialization fails,
-                            # so close the Bot explicitly.
-                            await application.bot.shutdown()
+                        await self._cancel_albums()
                     finally:
-                        self._application = None
+                        try:
+                            if initialized:
+                                await application.shutdown()
+                            else:
+                                # Application shutdown is a no-op when bot
+                                # initialisation fails; close its requests.
+                                await application.bot.shutdown()
+                        finally:
+                            self._application = None
 
     def _build_application(self) -> "Application":
         """Create the PTB application without importing PTB at module load."""
@@ -498,7 +484,7 @@ class TelegramChannel(ChannelBase):
         except ImportError as error:
             raise ImportError(
                 "TelegramChannel requires 'agentscope[channel]' or both "
-                "'python-telegram-bot[callback-data]>=22.8,<23.0' and "
+                "'python-telegram-bot>=22.8' and "
                 "'markdown-it-py>=4,<5'.",
             ) from error
         del markdown_it
@@ -592,14 +578,14 @@ class TelegramChannel(ChannelBase):
             return bot
 
     def _on_polling_error(self, error: BaseException) -> None:
-        """Mark competing pollers as fatal; PTB retries transient errors."""
+        """Reconnect after competing pollers; PTB retries other failures."""
         try:
             from telegram.error import Conflict
         except ImportError:
             return
         self.status.last_error = self._safe_error(error)
         if isinstance(error, Conflict):
-            self.status.state = "failed"
+            self.status.state = "retrying"
             self._fatal_error = error
             if self._fatal_event is not None:
                 self._fatal_event.set()
@@ -620,428 +606,26 @@ class TelegramChannel(ChannelBase):
 
     # -- Inbound messages ---------------------------------------------
 
+    def _ensure_inbound(self) -> "TelegramInboundNormalizer":
+        """Return the normalizer for the listener or direct tests."""
+        if self._inbound is None:
+            from ._inbound import TelegramInboundNormalizer
+
+            self._inbound = TelegramInboundNormalizer(self)
+        return self._inbound
+
     async def _on_update(
         self,
         update: "Update",
         _context: "CallbackContext",
     ) -> None:
-        """Normalise a supported Telegram message and emit it."""
-        message = update.effective_message
-        user = update.effective_user
-        if message is None or user is None or user.is_bot:
-            return
-        try:
-            if not self._is_message_allowed(message, user):
-                if str(message.chat.type) == "private":
-                    await self._notify_unapproved_private_user(message, user)
-                return
-            self._remember_chat(message.chat)
-            if message.media_group_id and self._downloadable(message):
-                self._buffer_album(message)
-                return
-            if self._gated_out(message):
-                return
-            event = await self._normalise_messages([message])
-            if event is not None and self._emit is not None:
-                await self._emit(event)
-                self.status.state = "connected"
-                self.status.last_error = ""
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "Telegram channel '%s' failed to process a message",
-                self._channel_id,
-            )
-
-    def _is_message_allowed(self, message: "Message", user: Any) -> bool:
-        """Return whether a message may enter this channel's agent session."""
-        return self._is_chat_allowed(
-            chat_type=str(message.chat.type),
-            chat_id=message.chat.id,
-            user_id=user.id if user is not None else None,
-        )
-
-    def _is_chat_allowed(
-        self,
-        *,
-        chat_type: str,
-        chat_id: Any,
-        user_id: Any,
-    ) -> bool:
-        """Apply the configured access policy to one Telegram chat."""
-        if chat_type == "private":
-            return user_id is not None and (
-                self._config.allow_public_private_chats
-                or int(user_id) in self._allowed_private_user_ids
-            )
-        if chat_type in ("group", "supergroup"):
-            return (
-                self._config.allow_public_group_chats
-                or int(chat_id) in self._allowed_group_chat_ids
-            )
-        return False
-
-    def _is_callback_allowed(
-        self,
-        query: Any,
-        data: _ApprovalCallback,
-    ) -> bool:
-        """Validate a callback against its stored target and access policy."""
-        message = getattr(query, "message", None)
-        chat = getattr(message, "chat", None)
-        if chat is None or str(chat.id) != data.chat_id:
-            return False
-        user = getattr(query, "from_user", None)
-        return self._is_chat_allowed(
-            chat_type=str(chat.type),
-            chat_id=chat.id,
-            user_id=user.id if user is not None else None,
-        )
-
-    @staticmethod
-    def _is_start_command(message: "Message") -> bool:
-        """Whether a private message is a plain Telegram ``/start`` command."""
-        parts = (message.text or "").split(maxsplit=1)
-        return bool(parts) and parts[0].casefold() == "/start"
-
-    async def _notify_unapproved_private_user(
-        self,
-        message: "Message",
-        user: Any,
-    ) -> None:
-        """Give only ``/start`` senders their id without invoking an agent."""
-        if not self._is_start_command(message):
-            return
-        try:
-            bot = await self._bot()
-            await self._retry_api(
-                lambda: bot.send_message(
-                    chat_id=self._target_chat_id(str(message.chat.id)),
-                    text=(
-                        f"Your Telegram user ID is {user.id}. Ask the "
-                        "channel owner to add it to the allowed private "
-                        "user IDs."
-                    ),
-                ),
-            )
-        except Exception as error:  # pylint: disable=broad-except
-            logger.debug(
-                "Telegram channel '%s' could not notify an unapproved "
-                "private user: %s",
-                self._channel_id,
-                self._safe_error(error),
-            )
-
-    def _buffer_album(self, message: "Message") -> None:
-        user_id = str(message.from_user.id) if message.from_user else ""
-        key = (str(message.chat_id), user_id, str(message.media_group_id))
-        self._album_messages.setdefault(key, []).append(message)
-        previous = self._album_tasks.get(key)
-        if previous is not None:
-            previous.cancel()
-        self._album_tasks[key] = asyncio.create_task(
-            self._flush_album(key),
-            name=f"telegram-album:{message.media_group_id}",
-        )
-
-    async def _flush_album(self, key: tuple[str, str, str]) -> None:
-        task = asyncio.current_task()
-        try:
-            await asyncio.sleep(_ALBUM_SETTLE_SECS)
-            messages = self._album_messages.pop(key, [])
-            first = messages[0] if messages else None
-            if (
-                first is None
-                or not self._is_message_allowed(first, first.from_user)
-                or all(self._gated_out(msg) for msg in messages)
-            ):
-                return
-            event = await self._normalise_messages(messages)
-            if event is not None and self._emit is not None:
-                await self._emit(event)
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "Telegram channel '%s' failed to process an album",
-                self._channel_id,
-            )
-        finally:
-            if self._album_tasks.get(key) is task:
-                self._album_tasks.pop(key, None)
+        """Delegate one update to the run-scoped inbound normalizer."""
+        await self._ensure_inbound().handle(update)
 
     async def _cancel_albums(self) -> None:
-        tasks = list(self._album_tasks.values())
-        self._album_tasks.clear()
-        self._album_messages.clear()
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _normalise_messages(
-        self,
-        messages: list["Message"],
-    ) -> ChannelEvent | None:
-        first = messages[0]
-        content: list[TextBlock | DataBlock] = []
-        for message in messages:
-            block = await self._download_media(message)
-            if block is not None:
-                content.append(block)
-
-        if len(messages) == 1:
-            structured = self._structured_text(first)
-            if structured:
-                content.append(TextBlock(text=structured))
-
-        text = ""
-        for message in messages:
-            raw = message.text or message.caption or ""
-            if raw:
-                text = self._strip_bot_mention(message, raw).strip()
-                if text:
-                    break
-        if text:
-            content.append(TextBlock(text=text))
-        if not content:
-            return None
-
-        user = first.from_user
-        chat = first.chat
-        user_id = str(user.id) if user else ""
-        user_name = ""
-        if user is not None:
-            user_name = self._user_name_cache.get(user_id, "")
-            if not user_name:
-                user_name = user.full_name or user.username or user_id
-                self._user_name_cache[user_id] = user_name
-        chat_id = str(chat.id)
-        return ChannelEvent(
-            channel_id=self._channel_id,
-            channel_user_id=user_id,
-            channel_user_name=user_name,
-            chat_id=chat_id,
-            chat_name=self._chat_display_name(chat),
-            channel_message_id=str(first.message_id),
-            content=content,
-            metadata={"chat_type": str(chat.type)},
-        )
-
-    def _gated_out(self, message: "Message") -> bool:
-        chat_type = str(message.chat.type)
-        if chat_type not in ("group", "supergroup"):
-            return False
-        if not self._config.only_at_reply:
-            return False
-        reply = message.reply_to_message
-        if (
-            reply is not None
-            and reply.from_user is not None
-            and str(reply.from_user.id) == self._bot_id
-        ):
-            return False
-        return not self._mentions_bot(message)
-
-    def _mentions_bot(self, message: "Message") -> bool:
-        username = str(getattr(self._bot_user, "username", "") or "")
-        for entity, value in self._parsed_entities(message).items():
-            entity_type = str(entity.type)
-            if (
-                entity_type == "mention"
-                and username
-                and value.casefold() == f"@{username}".casefold()
-            ):
-                return True
-            if (
-                entity_type == "bot_command"
-                and username
-                and value.casefold().endswith(f"@{username}".casefold())
-            ):
-                return True
-            mentioned_user = getattr(entity, "user", None)
-            if (
-                entity_type == "text_mention"
-                and mentioned_user is not None
-                and str(mentioned_user.id) == self._bot_id
-            ):
-                return True
-        return False
-
-    def _strip_bot_mention(self, message: "Message", text: str) -> str:
-        username = str(getattr(self._bot_user, "username", "") or "")
-        for entity, value in self._parsed_entities(message).items():
-            entity_type = str(entity.type)
-            mentioned_user = getattr(entity, "user", None)
-            is_bot = (
-                entity_type == "mention"
-                and username
-                and value.casefold() == f"@{username}".casefold()
-            ) or (
-                entity_type == "text_mention"
-                and mentioned_user is not None
-                and str(mentioned_user.id) == self._bot_id
-            )
-            if is_bot:
-                text = text.replace(value, "")
-            elif (
-                entity_type == "bot_command"
-                and username
-                and value.casefold().endswith(f"@{username}".casefold())
-            ):
-                suffix_length = len(username) + 1
-                text = text.replace(value, value[:-suffix_length], 1)
-        return text
-
-    @staticmethod
-    def _parsed_entities(message: "Message") -> dict[Any, str]:
-        if message.text:
-            return message.parse_entities()
-        if message.caption:
-            return message.parse_caption_entities()
-        return {}
-
-    @staticmethod
-    def _downloadable(message: "Message") -> bool:
-        return bool(message.photo) or any(
-            getattr(message, attr, None) is not None
-            for attr in (
-                "document",
-                "audio",
-                "voice",
-                "video",
-                "animation",
-                "video_note",
-                "sticker",
-            )
-        )
-
-    async def _download_media(
-        self,
-        message: "Message",
-    ) -> TextBlock | DataBlock | None:
-        selected = self._select_media(message)
-        if selected is None:
-            return None
-        media, media_type, name = selected
-        size = getattr(media, "file_size", None)
-        if size is not None and size > _MAX_DOWNLOAD_BYTES:
-            return TextBlock(
-                text=(
-                    f"[Telegram attachment omitted: {name} exceeds the "
-                    "20 MiB Bot API download limit.]"
-                ),
-            )
-        try:
-            telegram_file = await self._retry_api(media.get_file)
-            raw = bytes(
-                await self._retry_api(telegram_file.download_as_bytearray),
-            )
-        except Exception as error:  # pylint: disable=broad-except
-            logger.warning(
-                "Telegram channel '%s' could not download %s: %s",
-                self._channel_id,
-                name,
-                self._safe_error(error),
-            )
-            return TextBlock(
-                text=f"[Telegram attachment unavailable: {name}.]",
-            )
-        return DataBlock(
-            source=Base64Source(
-                data=base64.b64encode(raw).decode("ascii"),
-                media_type=media_type,
-            ),
-            name=name,
-        )
-
-    @staticmethod
-    def _select_media(message: "Message") -> tuple[Any, str, str] | None:
-        if message.photo:
-            return message.photo[-1], "image/jpeg", "photo.jpg"
-        if message.document:
-            item = message.document
-            return (
-                item,
-                item.mime_type or "application/octet-stream",
-                item.file_name or "document",
-            )
-        if message.audio:
-            item = message.audio
-            return (
-                item,
-                item.mime_type or "audio/mpeg",
-                item.file_name or "audio.mp3",
-            )
-        if message.voice:
-            item = message.voice
-            return item, item.mime_type or "audio/ogg", "voice.ogg"
-        if message.video:
-            item = message.video
-            return (
-                item,
-                item.mime_type or "video/mp4",
-                item.file_name or "video.mp4",
-            )
-        if message.animation:
-            item = message.animation
-            return (
-                item,
-                item.mime_type or "video/mp4",
-                item.file_name or "animation.mp4",
-            )
-        if message.video_note:
-            return message.video_note, "video/mp4", "video-note.mp4"
-        if message.sticker:
-            return TelegramChannel._select_sticker(message.sticker)
-        return None
-
-    @staticmethod
-    def _select_sticker(sticker: Any) -> tuple[Any, str, str]:
-        """Choose a MIME type and filename for a Telegram sticker."""
-        if sticker.is_animated:
-            return sticker, "application/x-tgsticker", "sticker.tgs"
-        if sticker.is_video:
-            return sticker, "video/webm", "sticker.webm"
-        return sticker, "image/webp", "sticker.webp"
-
-    @staticmethod
-    def _structured_text(message: "Message") -> str:
-        if message.venue:
-            venue = message.venue
-            return "\n".join(
-                [
-                    "[Telegram venue]",
-                    f"title: {venue.title}",
-                    f"address: {venue.address}",
-                    f"latitude: {venue.location.latitude}",
-                    f"longitude: {venue.location.longitude}",
-                ],
-            )
-        if message.location:
-            location = message.location
-            lines = [
-                "[Telegram location]",
-                f"latitude: {location.latitude}",
-                f"longitude: {location.longitude}",
-            ]
-            if location.horizontal_accuracy is not None:
-                lines.append(
-                    f"horizontal_accuracy: {location.horizontal_accuracy}",
-                )
-            if location.live_period is not None:
-                lines.append(f"live_period: {location.live_period}")
-            return "\n".join(lines)
-        if message.contact:
-            contact = message.contact
-            name_parts = (contact.first_name, contact.last_name or "")
-            name = " ".join(part for part in name_parts if part)
-            lines = [
-                "[Telegram contact]",
-                f"name: {name}",
-                f"phone_number: {contact.phone_number}",
-            ]
-            if contact.user_id is not None:
-                lines.append(f"user_id: {contact.user_id}")
-            return "\n".join(lines)
-        return ""
+        inbound, self._inbound = self._inbound, None
+        if inbound is not None:
+            await inbound.aclose()
 
     # -- Outbound replies and approvals -------------------------------
 
@@ -1050,14 +634,9 @@ class TelegramChannel(ChannelBase):
         event: ChannelEvent,
     ) -> _StreamPreview:
         """Choose native private-chat drafts or editable messages."""
-        chat_type = str(event.metadata.get("chat_type", ""))
-        if not chat_type:
-            kind = self._chat_kind_cache.get(event.chat_id)
-            if kind is None:
-                kind = await self.chat_kind(event.chat_id)
-            chat_type = "private" if kind == ChatKind.PRIVATE else ""
+        kind = await self.chat_kind(event.chat_id)
         return _StreamPreview(
-            mode="draft" if chat_type == "private" else "edit",
+            mode="draft" if kind == ChatKind.PRIVATE else "edit",
             draft_id=secrets.randbelow(2**31 - 1) + 1,
         )
 
@@ -1109,6 +688,19 @@ class TelegramChannel(ChannelBase):
         """Best-effort preview update that can never block final delivery."""
         if preview.disabled or not text:
             return
+        from telegram.error import RetryAfter
+
+        now = time.monotonic()
+        interval = (
+            _PRIVATE_STREAM_MIN_INTERVAL_SECS
+            if preview.mode == "draft"
+            else _GROUP_STREAM_MIN_INTERVAL_SECS
+        )
+        if now < preview.retry_not_before or (
+            preview.last_update is not None
+            and now - preview.last_update < interval
+        ):
+            return
         try:
             chunks = self._formatted_chunks(text)
             if not chunks:
@@ -1118,11 +710,7 @@ class TelegramChannel(ChannelBase):
             # chunk would make a nearly full preview suddenly shrink to the
             # short tail; final delivery sends the remaining chunks.
             chunk = chunks[0]
-            now = time.monotonic()
-            if chunk.html == preview.last_html or (
-                preview.last_update is not None
-                and now - preview.last_update < _STREAM_MIN_INTERVAL_SECS
-            ):
+            if chunk.html == preview.last_html:
                 return
 
             bot = await self._bot()
@@ -1136,7 +724,9 @@ class TelegramChannel(ChannelBase):
                         text=chunk.html,
                         parse_mode="HTML",
                     )
-                except BadRequest:
+                except BadRequest as error:
+                    if not self._is_format_error(error):
+                        raise
                     await bot.send_message_draft(
                         chat_id=self._target_chat_id(chat_id),
                         draft_id=preview.draft_id,
@@ -1149,7 +739,9 @@ class TelegramChannel(ChannelBase):
                         text=chunk.html,
                         parse_mode="HTML",
                     )
-                except BadRequest:
+                except BadRequest as error:
+                    if not self._is_format_error(error):
+                        raise
                     message = await bot.send_message(
                         chat_id=self._target_chat_id(chat_id),
                         text=chunk.plain,
@@ -1164,14 +756,27 @@ class TelegramChannel(ChannelBase):
                         parse_mode="HTML",
                     )
                 except BadRequest as error:
-                    if "message is not modified" not in str(error).casefold():
+                    if "message is not modified" in str(error).casefold():
+                        pass
+                    elif self._is_format_error(error):
                         await bot.edit_message_text(
                             chat_id=self._target_chat_id(chat_id),
                             message_id=preview.message_id,
                             text=chunk.plain,
                         )
+                    else:
+                        raise
             preview.last_html = chunk.html
             preview.last_update = now
+        except RetryAfter as error:
+            preview.retry_not_before = max(
+                preview.retry_not_before,
+                time.monotonic() + self._retry_after_seconds(error),
+            )
+            logger.debug(
+                "Telegram channel '%s' cooled down one streaming preview",
+                self._channel_id,
+            )
         except Exception as error:  # pylint: disable=broad-except
             preview.disabled = True
             logger.debug(
@@ -1196,12 +801,18 @@ class TelegramChannel(ChannelBase):
                 self._channel_id,
                 self._safe_error(error),
             )
-            result = await self.send_message_to(chat_id, text)
+            result = await self.send_message_to(
+                chat_id,
+                text,
+                budget=_RetryBudget.start(),
+                pace=preview,
+            )
             if not result.ok:
                 logger.warning(
                     "Telegram channel '%s' failed to send its plain-text "
-                    "fallback: %s",
+                    "fallback (%s): %s",
                     self._channel_id,
+                    result.failure or "api_error",
                     result.error,
                 )
             return
@@ -1212,26 +823,52 @@ class TelegramChannel(ChannelBase):
             if len(chunks) == 1 and preview.last_html == chunks[0].html:
                 first_unsent = 1
             else:
+                budget = _RetryBudget.start()
                 result = await self._edit_formatted_chunk(
                     chat_id,
                     preview.message_id,
                     chunks[0],
+                    budget,
+                    preview,
                 )
                 if result.ok:
                     first_unsent = 1
+                elif result.failure != "edit_target_missing":
+                    logger.warning(
+                        "Telegram channel '%s' could not finalise its "
+                        "preview (%s): %s",
+                        self._channel_id,
+                        result.failure or "api_error",
+                        result.error,
+                    )
+                    return
                 else:
                     logger.warning(
                         "Telegram channel '%s' could not finalise its "
-                        "preview: %s",
+                        "preview (%s): %s",
                         self._channel_id,
+                        result.failure or "api_error",
                         result.error,
                     )
         for chunk in chunks[first_unsent:]:
-            result = await self._send_formatted_chunk(chat_id, chunk)
+            budget = (
+                budget
+                if first_unsent == 0
+                and preview.mode == "edit"
+                and preview.message_id is not None
+                else _RetryBudget.start()
+            )
+            result = await self._send_formatted_chunk(
+                chat_id,
+                chunk,
+                budget,
+                preview,
+            )
             if not result.ok:
                 logger.warning(
-                    "Telegram channel '%s' failed to send text: %s",
+                    "Telegram channel '%s' failed to send text (%s): %s",
                     self._channel_id,
+                    result.failure or "api_error",
                     result.error,
                 )
                 break
@@ -1240,12 +877,17 @@ class TelegramChannel(ChannelBase):
         self,
         chat_id: str,
         chunk: "_TelegramTextChunk",
+        budget: _RetryBudget | None = None,
+        preview: _StreamPreview | None = None,
     ) -> _TelegramResult:
         """Send HTML and retry once as plain text on formatting errors."""
         from telegram.error import BadRequest
 
+        budget = budget or _RetryBudget.start()
+        preview = preview or _StreamPreview(mode="draft", draft_id=1)
         try:
             bot = await self._bot()
+            await self._wait_for_delivery_window(preview, budget)
             try:
                 await self._retry_api(
                     lambda: bot.send_message(
@@ -1253,29 +895,43 @@ class TelegramChannel(ChannelBase):
                         text=chunk.html,
                         parse_mode="HTML",
                     ),
+                    budget=budget,
+                    pace=preview,
+                    side_effecting=True,
                 )
-            except BadRequest:
+            except BadRequest as error:
+                if not self._is_format_error(error):
+                    raise
+                await self._wait_for_delivery_window(preview, budget)
                 await self._retry_api(
                     lambda: bot.send_message(
                         chat_id=self._target_chat_id(chat_id),
                         text=chunk.plain,
                     ),
+                    budget=budget,
+                    pace=preview,
+                    side_effecting=True,
                 )
             return _TelegramResult(True)
         except Exception as error:  # pylint: disable=broad-except
-            return _TelegramResult(False, self._safe_error(error))
+            return self._delivery_failure(error)
 
     async def _edit_formatted_chunk(
         self,
         chat_id: str,
         message_id: int,
         chunk: "_TelegramTextChunk",
+        budget: _RetryBudget | None = None,
+        preview: _StreamPreview | None = None,
     ) -> _TelegramResult:
         """Finalise an editable preview with formatted/plain fallback."""
         from telegram.error import BadRequest
 
+        budget = budget or _RetryBudget.start()
+        preview = preview or _StreamPreview(mode="edit", draft_id=1)
         try:
             bot = await self._bot()
+            await self._wait_for_delivery_window(preview, budget)
             try:
                 await self._retry_api(
                     lambda: bot.edit_message_text(
@@ -1284,20 +940,79 @@ class TelegramChannel(ChannelBase):
                         text=chunk.html,
                         parse_mode="HTML",
                     ),
+                    budget=budget,
+                    pace=preview,
+                    side_effecting=True,
                 )
             except BadRequest as error:
-                if "message is not modified" in str(error).casefold():
+                lowered = str(error).casefold()
+                if "message is not modified" in lowered:
                     return _TelegramResult(True)
+                if "message to edit not found" in lowered:
+                    return _TelegramResult(
+                        False,
+                        self._safe_error(error),
+                        "edit_target_missing",
+                    )
+                if not self._is_format_error(error):
+                    raise
+                await self._wait_for_delivery_window(preview, budget)
                 await self._retry_api(
                     lambda: bot.edit_message_text(
                         chat_id=self._target_chat_id(chat_id),
                         message_id=message_id,
                         text=chunk.plain,
                     ),
+                    budget=budget,
+                    pace=preview,
+                    side_effecting=True,
                 )
             return _TelegramResult(True)
         except Exception as error:  # pylint: disable=broad-except
-            return _TelegramResult(False, self._safe_error(error))
+            return self._delivery_failure(error)
+
+    async def _wait_for_delivery_window(
+        self,
+        preview: _StreamPreview,
+        budget: _RetryBudget,
+    ) -> None:
+        """Respect known flood limits and the group edit cadence."""
+        target = preview.retry_not_before
+        if preview.mode == "edit" and preview.last_update is not None:
+            target = max(
+                target,
+                preview.last_update + _GROUP_STREAM_MIN_INTERVAL_SECS,
+            )
+        delay = max(0.0, target - time.monotonic())
+        remaining = budget.deadline - time.monotonic()
+        if delay >= remaining:
+            raise _TelegramRetryBudgetExceeded(
+                "Telegram retry delay exceeds the delivery budget",
+            )
+        if delay:
+            await asyncio.sleep(delay)
+        preview.last_update = time.monotonic()
+
+    @staticmethod
+    def _is_format_error(error: BaseException) -> bool:
+        text = str(error).casefold()
+        return any(
+            marker in text
+            for marker in (
+                "can't parse entities",
+                "unsupported start tag",
+                "can't find end tag",
+            )
+        )
+
+    def _delivery_failure(self, error: BaseException) -> _TelegramResult:
+        if isinstance(error, _TelegramRetryBudgetExceeded):
+            failure = "budget_exhausted"
+        elif isinstance(error, _TelegramDeliveryUnknown):
+            failure = "delivery_unknown"
+        else:
+            failure = "api_error"
+        return _TelegramResult(False, self._safe_error(error), failure)
 
     async def send_response(
         self,
@@ -1370,12 +1085,16 @@ class TelegramChannel(ChannelBase):
                     event.chat_id,
                     attachment_bytes,
                     name,
+                    budget=_RetryBudget.start(),
+                    pace=preview,
                 )
             elif len(attachment_bytes) <= _MAX_DOCUMENT_BYTES:
                 result = await self.send_file_to(
                     event.chat_id,
                     attachment_bytes,
                     name,
+                    budget=_RetryBudget.start(),
+                    pace=preview,
                 )
             else:
                 result = _TelegramResult(
@@ -1383,19 +1102,29 @@ class TelegramChannel(ChannelBase):
                     f"attachment {name!r} exceeds Telegram's 50 MiB limit",
                 )
             if not result.ok:
+                logger.warning(
+                    "Telegram channel '%s' failed to send attachment (%s): %s",
+                    self._channel_id,
+                    result.failure or "api_error",
+                    result.error,
+                )
                 await self.send_message_to(
                     event.chat_id,
                     f"Could not send attachment: {result.error}",
+                    budget=_RetryBudget.start(),
+                    pace=preview,
                 )
 
         if confirm is not None:
-            await self._present_confirm(event, confirm)
+            await self._present_confirm(event, confirm, preview)
 
     async def _present_confirm(
         self,
         event: ChannelEvent,
         request: RequireUserConfirmEvent,
+        pace: _StreamPreview | None = None,
     ) -> None:
+        """Send one approval card backed by one shared callback payload."""
         try:
             bot = await self._bot()
         except Exception as error:  # pylint: disable=broad-except
@@ -1409,18 +1138,14 @@ class TelegramChannel(ChannelBase):
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         for tool in request.tool_calls:
-            base = {
-                "tool_call_id": tool.id,
-                "chat_id": event.chat_id,
-                "agent_id": str(event.metadata.get("agent_id", "")),
-                "session_id": str(event.metadata.get("session_id", "")),
-            }
             try:
-                allow_callback = await self._store_approval_callback(
-                    _ApprovalCallback(**base, approved=True),
-                )
-                deny_callback = await self._store_approval_callback(
-                    _ApprovalCallback(**base, approved=False),
+                token = await self._store_approval_callback(
+                    _ApprovalCallback(
+                        tool_call_id=tool.id,
+                        chat_id=event.chat_id,
+                        agent_id=str(event.metadata.get("agent_id", "")),
+                        session_id=str(event.metadata.get("session_id", "")),
+                    ),
                 )
             except Exception as error:  # pylint: disable=broad-except
                 logger.warning(
@@ -1434,30 +1159,43 @@ class TelegramChannel(ChannelBase):
                     [
                         InlineKeyboardButton(
                             "✅ Allow",
-                            callback_data=allow_callback,
+                            callback_data=(
+                                f"{_APPROVAL_CALLBACK_PREFIX}a:{token}"
+                            ),
                         ),
                         InlineKeyboardButton(
                             "❌ Deny",
-                            callback_data=deny_callback,
+                            callback_data=(
+                                f"{_APPROVAL_CALLBACK_PREFIX}d:{token}"
+                            ),
                         ),
                     ],
                 ],
             )
-            text = (
-                "🛡️ Tool execution requires approval\n"
-                f"Tool: {tool.name}\n"
-                f"Arguments: {str(tool.input)[:800]}"
-            )
             try:
+                budget = _RetryBudget.start()
+                if pace is not None:
+                    await self._wait_for_delivery_window(pace, budget)
                 await self._retry_api(
                     partial(
                         bot.send_message,
                         chat_id=self._target_chat_id(event.chat_id),
-                        text=text,
+                        text=(
+                            "🛡️ Tool execution requires approval\n"
+                            f"Tool: {tool.name}\n"
+                            f"Arguments: {str(tool.input)[:800]}"
+                        ),
                         reply_markup=keyboard,
                     ),
+                    budget=budget,
+                    pace=pace,
+                    side_effecting=True,
                 )
             except Exception as error:  # pylint: disable=broad-except
+                try:
+                    await self._delete_approval_callback(token)
+                except Exception:  # pylint: disable=broad-except
+                    logger.debug("Could not retire an unsent approval token")
                 logger.warning(
                     "Telegram channel '%s' could not send approval: %s",
                     self._channel_id,
@@ -1480,20 +1218,16 @@ class TelegramChannel(ChannelBase):
             data.to_json(),
             ttl_secs=_APPROVAL_CALLBACK_TTL_SECS,
         )
-        return f"{_APPROVAL_CALLBACK_PREFIX}{token}"
+        return token
 
     async def _load_approval_callback(
         self,
         raw_data: Any,
-    ) -> tuple[_ApprovalCallback | None, str | None]:
-        """Load a callback payload sent by a connection-free client."""
-        if not isinstance(raw_data, str) or not raw_data.startswith(
-            _APPROVAL_CALLBACK_PREFIX,
-        ):
-            return None, None
-        token = raw_data.removeprefix(_APPROVAL_CALLBACK_PREFIX)
+    ) -> tuple[_ApprovalCallback | None, str | None, bool | None]:
+        """Parse a decision and load its shared callback payload."""
+        token, decision = self._parse_approval_callback(raw_data)
         if not token or self._message_bus is None:
-            return None, token or None
+            return None, token or None, None
         payload = await self._message_bus.registry_get(
             MessageBusKeys.channel_approval_callback(self._channel_id, token),
             "payload",
@@ -1503,27 +1237,93 @@ class TelegramChannel(ChannelBase):
             if payload is not None
             else None
         )
-        return data, token
+        return data, token, decision
+
+    @staticmethod
+    def _parse_approval_callback(
+        raw_data: Any,
+    ) -> tuple[str | None, bool | None]:
+        """Parse a compact callback without reading shared state."""
+        if not isinstance(raw_data, str):
+            return None, None
+        parts = raw_data.split(":", maxsplit=2)
+        if len(parts) != 3 or parts[0] != "as" or parts[1] not in ("a", "d"):
+            return None, None
+        token = parts[2]
+        if not token:
+            return None, None
+        return token, parts[1] == "a"
+
+    async def _mark_approval_submitted(
+        self,
+        token: str,
+        data: _ApprovalCallback,
+        approved: bool,
+    ) -> None:
+        """Persist a terminal receipt before best-effort deletion."""
+        assert self._message_bus is not None
+        submitted = _ApprovalCallback(
+            tool_call_id=data.tool_call_id,
+            chat_id=data.chat_id,
+            agent_id=data.agent_id,
+            session_id=data.session_id,
+            submitted=True,
+            approved=approved,
+        )
+        await self._message_bus.registry_set(
+            MessageBusKeys.channel_approval_callback(self._channel_id, token),
+            "payload",
+            submitted.to_json(),
+            ttl_secs=_APPROVAL_CALLBACK_TTL_SECS,
+        )
 
     async def _delete_approval_callback(self, token: str) -> None:
         """Retire callback state after its decision reached the gateway."""
-        if self._message_bus is None:
-            return
-        await self._message_bus.registry_del(
-            MessageBusKeys.channel_approval_callback(self._channel_id, token),
-            "payload",
+        if self._message_bus is not None:
+            await self._message_bus.registry_del(
+                MessageBusKeys.channel_approval_callback(
+                    self._channel_id,
+                    token,
+                ),
+                "payload",
+            )
+
+    @staticmethod
+    def _is_callback_allowed(query: Any, data: _ApprovalCallback) -> bool:
+        message = getattr(query, "message", None)
+        chat = getattr(message, "chat", None)
+        user = getattr(query, "from_user", None)
+        return bool(
+            chat is not None
+            and str(chat.id) == data.chat_id
+            and str(chat.type) in ("private", "group", "supergroup")
+            and user is not None
+            and not getattr(user, "is_bot", False),
         )
 
     async def _expire_callback(self, query: Any) -> None:
         """Best-effort UI cleanup for an expired or unknown callback."""
         try:
-            await query.answer("This approval has expired.", show_alert=True)
+            await query.answer(
+                "This approval is no longer pending.",
+                show_alert=True,
+            )
         except Exception:  # pylint: disable=broad-except
             logger.debug("Could not answer an expired Telegram approval")
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:  # pylint: disable=broad-except
             logger.debug("Could not freeze an expired Telegram approval")
+
+    async def _answer_callback_failure(self, query: Any) -> None:
+        """Keep a callback retryable when shared state or delivery fails."""
+        try:
+            await query.answer(
+                "Could not confirm submission. Please retry.",
+                show_alert=True,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Could not report a Telegram approval failure")
 
     async def _on_callback(
         self,
@@ -1533,55 +1333,84 @@ class TelegramChannel(ChannelBase):
         query = update.callback_query
         if query is None:
             return
+        token, _decision = self._parse_approval_callback(query.data)
+        if token is None or self._message_bus is None:
+            await self._expire_callback(query)
+            return
+
+        submitted: bool | None = None
         try:
-            data, token = await self._load_approval_callback(query.data)
+            lock_key = f"{_APPROVAL_LOCK_PREFIX}{self._channel_id}:{token}"
+            async with self._message_bus.acquire_lock(
+                lock_key,
+                ttl_secs=_APPROVAL_LOCK_TTL_SECS,
+            ):
+                data, _token, decision = await self._load_approval_callback(
+                    query.data,
+                )
+                if data is None or decision is None:
+                    submitted = None
+                elif not self._is_callback_allowed(query, data):
+                    try:
+                        await query.answer(
+                            "This approval belongs to another chat.",
+                            show_alert=True,
+                        )
+                    except Exception:  # pylint: disable=broad-except
+                        logger.debug("Could not reject a foreign callback")
+                    return
+                elif data.submitted:
+                    submitted = data.approved
+                elif self._emit is None:
+                    raise RuntimeError(
+                        "Telegram approval delivery is unavailable",
+                    )
+                else:
+                    actor_id = str(query.from_user.id)
+                    await self._emit(
+                        ChannelConfirmationResultEvent(
+                            channel_id=self._channel_id,
+                            chat_id=data.chat_id,
+                            channel_user_id=actor_id,
+                            agent_id=data.agent_id,
+                            session_id=data.session_id,
+                            tool_call_id=data.tool_call_id,
+                            approved=decision,
+                            actor=actor_id,
+                        ),
+                    )
+                    await self._mark_approval_submitted(
+                        token,
+                        data,
+                        decision,
+                    )
+                    submitted = decision
+                if submitted is not None:
+                    try:
+                        await self._delete_approval_callback(token)
+                    except Exception:  # pylint: disable=broad-except
+                        logger.debug(
+                            "Could not retire a submitted Telegram approval",
+                        )
         except Exception as error:  # pylint: disable=broad-except
             logger.warning(
-                "Telegram channel '%s' could not load approval state: %s",
+                "Telegram channel '%s' could not deliver approval: %s",
                 self._channel_id,
                 self._safe_error(error),
             )
-            data, token = None, None
-        if data is None:
-            await self._expire_callback(query)
+            await self._answer_callback_failure(query)
             return
 
-        if not self._is_callback_allowed(query, data):
-            try:
-                if token is not None:
-                    await self._delete_approval_callback(token)
-            except Exception:  # pylint: disable=broad-except
-                logger.debug("Could not retire a rejected Telegram callback")
+        if submitted is None:
             await self._expire_callback(query)
             return
-
-        actor_id = str(query.from_user.id) if query.from_user else ""
-        if self._emit is not None:
-            await self._emit(
-                ChannelConfirmationResultEvent(
-                    channel_id=self._channel_id,
-                    chat_id=data.chat_id,
-                    channel_user_id=actor_id,
-                    agent_id=data.agent_id,
-                    session_id=data.session_id,
-                    tool_call_id=data.tool_call_id,
-                    approved=data.approved,
-                    actor=actor_id,
-                ),
-            )
-            try:
-                if token is not None:
-                    await self._delete_approval_callback(token)
-            except Exception:  # pylint: disable=broad-except
-                logger.debug("Could not retire a Telegram approval callback")
-
         try:
-            await query.answer("Decision received.")
+            await query.answer("Decision submitted.")
         except Exception:  # pylint: disable=broad-except
             logger.debug("Could not answer a Telegram approval callback")
         try:
             await query.edit_message_text(
-                "✅ Approved" if data.approved else "🚫 Denied",
+                "✅ Approval submitted" if submitted else "🚫 Denial submitted",
             )
         except Exception:  # pylint: disable=broad-except
             logger.debug("Could not freeze a Telegram approval message")
@@ -1591,7 +1420,10 @@ class TelegramChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
+        """Return Telegram delivery tools for the session workspace."""
+        del channel_user_id
         from ._tools import SendFile, SendImage, SendMessage
 
         backend = workspace.get_backend()
@@ -1605,6 +1437,9 @@ class TelegramChannel(ChannelBase):
         self,
         chat_id: str,
         text: str,
+        *,
+        budget: _RetryBudget | None = None,
+        pace: _StreamPreview | None = None,
     ) -> _TelegramResult:
         """Send plain text, splitting it at Telegram's hard limit."""
         if not text:
@@ -1612,22 +1447,31 @@ class TelegramChannel(ChannelBase):
         try:
             bot = await self._bot()
             for part in self._split_long_message(text):
+                part_budget = budget or _RetryBudget.start()
+                if pace is not None:
+                    await self._wait_for_delivery_window(pace, part_budget)
                 await self._retry_api(
                     partial(
                         bot.send_message,
                         chat_id=self._target_chat_id(chat_id),
                         text=part,
                     ),
+                    budget=part_budget,
+                    pace=pace,
+                    side_effecting=True,
                 )
             return _TelegramResult(True)
         except Exception as error:  # pylint: disable=broad-except
-            return _TelegramResult(False, self._safe_error(error))
+            return self._delivery_failure(error)
 
     async def send_file_to(
         self,
         chat_id: str,
         data: bytes,
         file_name: str,
+        *,
+        budget: _RetryBudget | None = None,
+        pace: _StreamPreview | None = None,
     ) -> _TelegramResult:
         """Send bytes as a Telegram document."""
         if len(data) > _MAX_DOCUMENT_BYTES:
@@ -1637,22 +1481,31 @@ class TelegramChannel(ChannelBase):
             )
         try:
             bot = await self._bot()
+            budget = budget or _RetryBudget.start()
+            if pace is not None:
+                await self._wait_for_delivery_window(pace, budget)
             await self._retry_api(
                 lambda: bot.send_document(
                     chat_id=self._target_chat_id(chat_id),
                     document=io.BytesIO(data),
                     filename=file_name or "file",
                 ),
+                budget=budget,
+                pace=pace,
+                side_effecting=True,
             )
             return _TelegramResult(True)
         except Exception as error:  # pylint: disable=broad-except
-            return _TelegramResult(False, self._safe_error(error))
+            return self._delivery_failure(error)
 
     async def send_image_to(
         self,
         chat_id: str,
         data: bytes,
         file_name: str = "image",
+        *,
+        budget: _RetryBudget | None = None,
+        pace: _StreamPreview | None = None,
     ) -> _TelegramResult:
         """Send bytes as an inline Telegram photo."""
         if len(data) > _MAX_PHOTO_BYTES:
@@ -1662,16 +1515,22 @@ class TelegramChannel(ChannelBase):
             )
         try:
             bot = await self._bot()
+            budget = budget or _RetryBudget.start()
+            if pace is not None:
+                await self._wait_for_delivery_window(pace, budget)
             await self._retry_api(
                 lambda: bot.send_photo(
                     chat_id=self._target_chat_id(chat_id),
                     photo=io.BytesIO(data),
                     filename=file_name or "image",
                 ),
+                budget=budget,
+                pace=pace,
+                side_effecting=True,
             )
             return _TelegramResult(True)
         except Exception as error:  # pylint: disable=broad-except
-            return _TelegramResult(False, self._safe_error(error))
+            return self._delivery_failure(error)
 
     # -- Platform metadata and helpers --------------------------------
 
@@ -1744,35 +1603,76 @@ class TelegramChannel(ChannelBase):
     async def _retry_api(
         self,
         operation: Callable[[], Awaitable[_T]],
+        *,
+        budget: _RetryBudget | None = None,
+        pace: _StreamPreview | None = None,
+        side_effecting: bool = False,
     ) -> _T:
-        from telegram.error import BadRequest, NetworkError, RetryAfter
+        from telegram.error import (
+            BadRequest,
+            NetworkError,
+            RetryAfter,
+            TimedOut,
+        )
 
-        network_failures = 0
+        budget = budget or _RetryBudget.start()
         while True:
-            try:
-                return await operation()
-            except RetryAfter as error:
-                delay = error.retry_after
-                seconds = (
-                    delay.total_seconds()
-                    if isinstance(delay, timedelta)
-                    else float(delay)
+            remaining = budget.deadline - time.monotonic()
+            if remaining <= 0:
+                raise _TelegramRetryBudgetExceeded(
+                    "Telegram API retry budget was exhausted",
                 )
-                # Telegram explicitly tells us when this operation may be
-                # retried. Honouring every flood-limit wait keeps the
-                # outbound message alive without imposing a shared deadline
-                # on the complete reply stream.
-                network_failures = 0
+            try:
+                try:
+                    async with asyncio.timeout(remaining):
+                        return await operation()
+                except TimeoutError as error:
+                    raise _TelegramDeliveryUnknown(
+                        "Telegram API request timed out; delivery is unknown",
+                    ) from error
+            except RetryAfter as error:
+                seconds = self._retry_after_seconds(error)
+                if pace is not None:
+                    pace.retry_not_before = max(
+                        pace.retry_not_before,
+                        time.monotonic() + seconds,
+                    )
+                if seconds >= budget.deadline - time.monotonic():
+                    raise _TelegramRetryBudgetExceeded(
+                        "Telegram flood-limit wait exceeds the delivery "
+                        "budget",
+                    ) from error
                 await asyncio.sleep(max(0.0, seconds))
             except NetworkError as error:
                 # PTB models BadRequest as a NetworkError subclass even
                 # though retrying a malformed Bot API request cannot help.
                 if isinstance(error, BadRequest):
                     raise
-                network_failures += 1
-                if network_failures >= _MAX_API_ATTEMPTS:
-                    raise
-                await asyncio.sleep(2 ** (network_failures - 1))
+                if side_effecting and isinstance(error, TimedOut):
+                    raise _TelegramDeliveryUnknown(
+                        "Telegram API request timed out; delivery is unknown",
+                    ) from error
+                budget.network_failures += 1
+                if budget.network_failures >= _MAX_API_ATTEMPTS:
+                    raise _TelegramDeliveryUnknown(
+                        "Telegram API request failed; delivery is unknown",
+                    ) from error
+                delay = 2 ** (budget.network_failures - 1)
+                if delay >= budget.deadline - time.monotonic():
+                    raise _TelegramRetryBudgetExceeded(
+                        "Telegram network retry exceeds the delivery budget",
+                    ) from error
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _retry_after_seconds(error: BaseException) -> float:
+        delay = getattr(error, "retry_after", 0.0)
+        return max(
+            0.0,
+            delay.total_seconds()
+            if isinstance(delay, timedelta)
+            else float(delay),
+        )
 
     def _safe_error(self, error: BaseException) -> str:
         text = str(error) or type(error).__name__
