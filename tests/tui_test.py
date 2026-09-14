@@ -19,6 +19,8 @@ from textual.app import App, ComposeResult
 from textual.message import Message as TextualMessage
 from textual.widgets import Collapsible, Input, OptionList, Static
 
+from utils import AnyString
+
 from agentscope.event import (
     ConfirmResult,
     DataBlockDeltaEvent,
@@ -1449,6 +1451,9 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                     name="user",
                     role="user",
                 ),
+                # The user's turn ends with the speech; its transcript
+                # settles afterwards.
+                ReplyEndEvent(session_id="s", reply_id="turn"),
                 TextBlockStartEvent(reply_id="turn", block_id="heard"),
                 TextBlockDeltaEvent(
                     reply_id="turn",
@@ -1456,7 +1461,6 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                     delta="hello",
                 ),
                 TextBlockEndEvent(reply_id="turn", block_id="heard"),
-                ReplyEndEvent(session_id="s", reply_id="turn"),
                 ReplyStartEvent(
                     session_id="s",
                     reply_id="reply",
@@ -1489,21 +1493,52 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(agent.streamed.wait(), timeout=1)
             await pilot.pause()
 
-            messages = app.query_one(ChatUI).messages
             self.assertListEqual(
+                [msg.model_dump() for msg in app.query_one(ChatUI).messages],
                 [
-                    (msg.role, msg.name, msg.get_text_content())
-                    for msg in messages
+                    {
+                        "name": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "hello",
+                                "id": "heard",
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                        ],
+                        "role": "user",
+                        "id": "turn",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": "completed",
+                        "structured_output": None,
+                        "error": None,
+                    },
+                    {
+                        "name": "Friday",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "hi there",
+                                "id": "spoken",
+                                "created_at": AnyString(),
+                                "finished_at": AnyString(),
+                            },
+                        ],
+                        "role": "assistant",
+                        "id": "reply",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": "completed",
+                        "structured_output": None,
+                        "error": None,
+                    },
                 ],
-                [
-                    ("user", "user", "hello"),
-                    ("assistant", "Friday", "hi there"),
-                ],
-            )
-            # The transport plays the audio, so it never reaches the view.
-            self.assertListEqual(
-                [block.type for block in messages[1].content],
-                ["text"],
             )
             self.assertDictEqual(app._replies, {})
 
@@ -1517,16 +1552,36 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("h", "i", "enter")
             await spawn.call_args.args[0]
 
+            expected = [
+                {
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "hi",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "role": "user",
+                    "id": AnyString(),
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "usage": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+            ]
             self.assertListEqual(
-                [
-                    msg.get_text_content()
-                    for msg in app.query_one(ChatUI).messages
-                ],
-                ["hi"],
+                [msg.model_dump() for msg in app.query_one(ChatUI).messages],
+                expected,
             )
             self.assertListEqual(
-                [inputs.get_text_content() for inputs in agent.sent],
-                ["hi"],
+                [inputs.model_dump() for inputs in agent.sent],
+                expected,
             )
 
     async def test_confirmation_and_interrupt_reach_the_agent(self) -> None:
@@ -1574,14 +1629,137 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
             # The agent does not echo a confirmation, so the view applies it.
             self.assertListEqual(
                 [
-                    block.state
+                    block.model_dump()
                     for block in app.query_one(ChatUI).messages[0].content
                 ],
-                [ToolCallState.ALLOWED],
+                [
+                    {
+                        "type": "tool_call",
+                        "id": "call",
+                        "name": "Bash",
+                        "input": '{"command": "ls"}',
+                        "state": "allowed",
+                        "suggested_rules": [],
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
             )
-            self.assertIs(agent.sent[0], confirmed)
-            self.assertIsInstance(agent.sent[1], UserInterruptEvent)
-            self.assertEqual(len(agent.sent), 2)
+            self.assertListEqual(
+                [inputs.model_dump() for inputs in agent.sent],
+                [
+                    {
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "metadata": {},
+                        "type": "USER_CONFIRM_RESULT",
+                        "reply_id": "reply",
+                        "confirm_results": [
+                            {
+                                "confirmed": True,
+                                "tool_call": {
+                                    "type": "tool_call",
+                                    "id": "call",
+                                    "name": "Bash",
+                                    "input": '{"command": "ls"}',
+                                    "state": "pending",
+                                    "suggested_rules": [],
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                "rules": None,
+                            },
+                        ],
+                    },
+                    {
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "metadata": {},
+                        "type": "USER_INTERRUPT",
+                        "reply_id": "reply",
+                    },
+                ],
+            )
+
+    async def test_confirmation_after_the_reply_ended(self) -> None:
+        # A barge-in ends the reply while its tool still waits for an answer.
+        agent = _FakeRealtimeAgent(
+            [
+                ReplyEndEvent(
+                    session_id="s",
+                    reply_id="reply",
+                    finished_reason="interrupted",
+                ),
+            ],
+        )
+        app = _RealtimeTUI(
+            agent,
+            object(),
+            [
+                AssistantMsg(
+                    name="Friday",
+                    id="reply",
+                    content=[
+                        ToolCallBlock(
+                            id="call",
+                            name="Bash",
+                            input='{"command": "ls"}',
+                            state=ToolCallState.ASKING,
+                        ),
+                    ],
+                ),
+            ],
+            "user",
+        )
+        async with app.run_test(size=(80, 24)) as pilot:
+            await asyncio.wait_for(agent.streamed.wait(), timeout=1)
+            await app._send(
+                UserConfirmResultEvent(
+                    reply_id="reply",
+                    confirm_results=[
+                        ConfirmResult(
+                            tool_call=ToolCallBlock(
+                                id="call",
+                                name="Bash",
+                                input='{"command": "ls"}',
+                            ),
+                            confirmed=True,
+                        ),
+                    ],
+                ),
+            )
+            await pilot.pause()
+
+            self.assertListEqual(
+                [msg.model_dump() for msg in app.query_one(ChatUI).messages],
+                [
+                    {
+                        "name": "Friday",
+                        "content": [
+                            {
+                                "type": "tool_call",
+                                "id": "call",
+                                "name": "Bash",
+                                "input": '{"command": "ls"}',
+                                "state": "allowed",
+                                "suggested_rules": [],
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "role": "assistant",
+                        "id": "reply",
+                        "metadata": {},
+                        "created_at": AnyString(),
+                        "usage": None,
+                        "finished_at": AnyString(),
+                        "finished_reason": "interrupted",
+                        "structured_output": None,
+                        "error": None,
+                    },
+                ],
+            )
+            self.assertDictEqual(app._replies, {})
 
     async def test_composer_is_disabled_without_text_input(self) -> None:
         agent = _FakeRealtimeAgent(supports_text_input=False)

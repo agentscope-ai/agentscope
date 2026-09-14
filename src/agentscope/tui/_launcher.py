@@ -29,6 +29,7 @@ from ..message import AssistantMsg, Msg, UserMsg
 from ..pipeline import PipelineProtocol
 from ..realtime import TransportBase
 from ._chat import ChatUI
+from ._messages import MessagesUI
 
 _TUIInput: TypeAlias = (
     Msg
@@ -99,27 +100,31 @@ class _ChatAppBase(App[None]):
             reply_id = getattr(item, "reply_id", None)
             if reply_id is None:
                 return
-            message = self._replies.get(reply_id)
+            # An ended reply can still receive events, e.g. a spoken turn's
+            # transcript trails its end, so continue from its shown copy.
+            message = self._replies.get(reply_id) or next(
+                (
+                    msg.model_copy(deep=True)
+                    for msg in reversed(
+                        self.query_one(MessagesUI).current_messages(),
+                    )
+                    if msg.id == reply_id
+                ),
+                None,
+            )
             if message is None:
                 # A reply resumed after a confirmation gets no
                 # ReplyStartEvent, so open one here as well.
                 start = item if isinstance(item, ReplyStartEvent) else None
                 if start is not None and start.role == "user":
-                    message = UserMsg(
-                        name=start.name,
-                        content=[],
-                        id=reply_id,
-                    )
+                    message = UserMsg(name=start.name, content=[], id=reply_id)
                 else:
                     message = AssistantMsg(
                         name=start.name if start else "agent",
                         content=[],
                         id=reply_id,
                     )
-                # Every reply stays open until it ends, including a spoken
-                # user turn, which UserMsg would stamp as finished.
-                message.finished_at = None
-                self._replies[reply_id] = message
+            self._replies[reply_id] = message
             if isinstance(item, ReplyStartEvent):
                 message.name = item.name
             else:
