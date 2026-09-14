@@ -87,6 +87,16 @@ class AskUserTest(IsolatedAsyncioTestCase):
         ).model_dump()
         await self.tool.check_external_result(result)
 
+    async def test_a_failed_result_owes_no_metadata(self) -> None:
+        """The schema describes a successful run, not an error."""
+        result = ToolResultBlock(
+            id="call-1",
+            name="AskUser",
+            output="Invalid AskUser input",
+            state=ToolResultState.ERROR,
+        )
+        await self.tool.check_external_result(result)
+
     async def test_the_schema_reaches_the_model_whole(self) -> None:
         """Nested models mean $defs, which the model layers inline."""
         schema = self.tool.input_schema

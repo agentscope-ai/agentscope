@@ -11,6 +11,7 @@ import jsonschema
 
 from pydantic import BaseModel
 
+from ..message import ToolResultState
 from ._constants import DEFAULT_DANGEROUS_FILES, DEFAULT_DANGEROUS_DIRECTORIES
 from ..permission import (
     PermissionContext,
@@ -279,7 +280,8 @@ class ToolBase(ABC):
         its own result has nothing to check. Shape only, against
         :attr:`metadata_schema`; whether the content is any good is the
         caller's judgement, not this tool's, since a user who answers
-        "no idea" has produced a perfectly valid result.
+        "no idea" has produced a perfectly valid result. Only successful
+        results are checked, since the schema describes a successful run.
 
         Raises:
             `jsonschema.ValidationError`:
@@ -287,7 +289,10 @@ class ToolBase(ABC):
                 caller. The reply stays parked, so the executor can fix
                 what it sent and try again.
         """
-        if self.metadata_schema is not None:
+        if (
+            self.metadata_schema is not None
+            and result.state == ToolResultState.SUCCESS
+        ):
             jsonschema.validate(result.metadata, self.metadata_schema)
 
     async def check_read_only(
