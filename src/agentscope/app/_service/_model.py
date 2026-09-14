@@ -46,28 +46,38 @@ async def get_model(
 
     credential = CredentialFactory.from_dict(credential_record.data)
     model_cls = credential.get_chat_model_class()
+    # Resolve the built-in card once. Besides its frontend-facing input
+    # types, the card is the authoritative source for the model's context
+    # window used by Agent context compression. Custom models have no card,
+    # so retain their constructor defaults.
+    card = None
+    try:
+        for card in model_cls.list_models():
+            if card.name == config.model:
+                break
+        else:
+            card = None
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "Failed to look up model card for %s, using model defaults.",
+            config.model,
+        )
+
     parameters = (
         model_cls.Parameters(**config.parameters)
         if config.parameters
         else None
     )
-    model = model_cls(
-        credential=credential,
-        model=config.model,
-        parameters=parameters,
-    )
+    kwargs: dict = {
+        "credential": credential,
+        "model": config.model,
+        "parameters": parameters,
+    }
+    if card is not None:
+        kwargs["context_size"] = card.context_size
+    model = model_cls(**kwargs)
 
-    # Override the formatter's input types with the built-in model card's
-    # when one matches; custom models have no card, so keep the default.
-    try:
-        for card in model_cls.list_models():
-            if card.name == config.model:
-                model.formatter.input_types = card.input_types
-                break
-    except Exception:  # pylint: disable=broad-except
-        logger.debug(
-            "Failed to look up model card for %s, using formatter defaults.",
-            config.model,
-        )
+    if card is not None:
+        model.formatter.input_types = card.input_types
 
     return model
