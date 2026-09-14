@@ -293,6 +293,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+                "text": None,
             },
             {
                 "type": "MODEL_CALL_END",
@@ -507,6 +508,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+                "text": None,
             },
             {
                 "type": "MODEL_CALL_END",
@@ -1232,7 +1234,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "tool_call_id": tool_call_id_1,
                 "delta": '{"input": ',
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "TOOL_CALL_DELTA",
                 "tool_call_id": tool_call_id_1,
@@ -1295,7 +1297,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
                 "delta": "ended",
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
@@ -1553,7 +1555,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
                 "delta": "All done",
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
@@ -1850,7 +1852,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
                 "delta": "All done",
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,

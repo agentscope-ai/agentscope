@@ -23,7 +23,7 @@ from ...storage import (
     ScheduleRecord,
     ChatModelConfig,
     SessionConfig,
-    SessionSource,
+    ScheduleOrigin,
 )
 
 if TYPE_CHECKING:
@@ -236,8 +236,7 @@ class SchedulerManager:
                             config=session_config,
                             state=state,
                             session_id=stateful_session_id,
-                            source=SessionSource.SCHEDULE,
-                            source_schedule_id=record.id,
+                            origin=ScheduleOrigin(schedule_id=record.id),
                         )
                     else:
                         logger.info(
@@ -272,8 +271,7 @@ class SchedulerManager:
                             chat_model_config=record.data.chat_model_config,
                         ),
                         state=state,
-                        source=SessionSource.SCHEDULE,
-                        source_schedule_id=record.id,
+                        origin=ScheduleOrigin(schedule_id=record.id),
                     )
 
                 logger.info(
