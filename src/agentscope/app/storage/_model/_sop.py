@@ -45,6 +45,18 @@ class AgentVerifier(BaseModel):
 
     agent: SOPAgentRef = Field(description="Who judges the work.")
 
+    criteria: str = Field(
+        default="",
+        description=(
+            "What to hold the work to, beyond the step's own "
+            "description — which the verifier is shown regardless. "
+            "Lives here rather than in the agent's system prompt "
+            "because one reviewer can serve several steps at "
+            "different bars."
+        ),
+        json_schema_extra={"format": "textarea"},
+    )
+
 
 class HumanVerifier(BaseModel):
     """A verifier that asks a person and waits for the answer."""
@@ -54,6 +66,7 @@ class HumanVerifier(BaseModel):
     question: str = Field(
         default="Does this meet what the step had to prove?",
         description="What the person is asked.",
+        json_schema_extra={"format": "textarea"},
     )
 
 

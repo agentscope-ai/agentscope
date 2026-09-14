@@ -49,6 +49,7 @@ from agentscope.app.storage import (
     SOPRecord,
     SOPRunRecord,
     SOPStepDataV1,
+    AgentVerifier,
     HumanVerifier,
     AsyncSQLAlchemyStorage,
     TeamData,
@@ -514,6 +515,21 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                             agent_id="agent-1",
                             session_key="modeller",
                         ),
+                        verifier=AgentVerifier(
+                            agent=SOPAgentRef(
+                                agent_id="agent-2",
+                                session_key="reviewer",
+                            ),
+                            criteria="Every panel has to be watertight.",
+                        ),
+                    ),
+                    SOPStepDataV1(
+                        subject="paint",
+                        description="give it a livery",
+                        executor=SOPAgentRef(
+                            agent_id="agent-1",
+                            session_key="modeller",
+                        ),
                         verifier=HumanVerifier(question="Good enough?"),
                     ),
                 ],
@@ -539,6 +555,26 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                             "version": "v1",
                             "subject": "model",
                             "description": "make the hull",
+                            "executor": {
+                                "agent_id": "agent-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": {
+                                "type": "agent",
+                                "agent": {
+                                    "agent_id": "agent-2",
+                                    "session_key": "reviewer",
+                                },
+                                "criteria": (
+                                    "Every panel has to be watertight."
+                                ),
+                            },
+                            "max_attempts": 3,
+                        },
+                        {
+                            "version": "v1",
+                            "subject": "paint",
+                            "description": "give it a livery",
                             "executor": {
                                 "agent_id": "agent-1",
                                 "session_key": "modeller",
