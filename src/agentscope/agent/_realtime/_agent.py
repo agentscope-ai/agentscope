@@ -34,6 +34,7 @@ from ...event import (
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
+    ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
     ToolResultEndEvent,
@@ -519,6 +520,9 @@ class RealtimeAgent:
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
             self._metrics.turn_committed_at = time.monotonic()
+            # With turn detection off nothing answers a committed turn
+            # by itself; providers that reply on commit make this a no-op.
+            await self.model.request_response()
 
         if not pushed:
             await self.model.push_audio(pcm)
@@ -979,6 +983,15 @@ class RealtimeAgent:
                 reply_id=reply_id,
                 tool_call_id=call.id,
                 tool_call_name=call.name,
+            ),
+        )
+        # The provider delivers the arguments in one piece, so a single
+        # delta carries them; without it consumers rebuild an empty input.
+        self._emit(
+            ToolCallDeltaEvent(
+                reply_id=reply_id,
+                tool_call_id=call.id,
+                delta=call.input,
             ),
         )
         self._emit(ToolCallEndEvent(reply_id=reply_id, tool_call_id=call.id))
