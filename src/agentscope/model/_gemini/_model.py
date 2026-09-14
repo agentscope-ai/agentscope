@@ -22,6 +22,14 @@ else:
     GenerateContentResponse = Any
 
 
+def _is_null_schema(schema: Any) -> bool:
+    """Return whether a schema represents only JSON null."""
+    return isinstance(schema, dict) and schema.get("type") in (
+        "null",
+        ["null"],
+    )
+
+
 def _sanitize_schema_for_gemini(schema: Any) -> Any:
     """Sanitize a JSON schema to be compatible with the Gemini API.
 
@@ -32,6 +40,11 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``type`` arrays containing ``"null"``: simplified to the single
+      non-null type or converted to ``anyOf`` for multiple non-null
+      types, matching nullable JSON Schema emitted by Pydantic and
+      OpenAPI 3.1. Multi-type arrays with an existing ``anyOf`` raise
+      ``ValueError`` rather than dropping conjunctive constraints.
     - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
       the single non-null type. If there is exactly one non-null
       alternative it is inlined directly; otherwise the ``anyOf`` is
@@ -63,8 +76,22 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # functionDeclaration property type. Some MCP servers emit
     # {"type": "null"} directly (not wrapped in anyOf) for parameters that
     # accept None — rewrite it to "object" so it round-trips through the API.
-    if schema.get("type") == "null":
+    if _is_null_schema(schema):
         schema["type"] = "object"
+    elif isinstance(schema.get("type"), list):
+        non_null_types = [v for v in schema["type"] if v != "null"]
+        if len(non_null_types) == 1:
+            schema["type"] = non_null_types[0]
+        elif non_null_types:
+            if "anyOf" in schema:
+                raise ValueError(
+                    "Cannot safely sanitize Gemini schema with both a "
+                    "multi-type nullable type array and anyOf.",
+                )
+            schema.pop("type")
+            schema["anyOf"] = [{"type": type_} for type_ in non_null_types]
+        else:
+            schema["type"] = "object"
 
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
@@ -78,7 +105,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
         any_of = schema["anyOf"]
-        non_null = [v for v in any_of if v != {"type": "null"}]
+        non_null = [v for v in any_of if not _is_null_schema(v)]
         if len(non_null) < len(any_of):  # at least one null entry removed
             if len(non_null) == 1:
                 # Inline the single non-null type, preserving outer keys
@@ -470,9 +497,30 @@ class GeminiChatModel(ChatModelBase):
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
         if prompt_tokens is not None and total_tokens is not None:
+            tool_use_tokens = (
+                getattr(
+                    usage_metadata,
+                    "tool_use_prompt_token_count",
+                    0,
+                )
+                or 0
+            )
+            input_tokens = prompt_tokens + tool_use_tokens
+            candidates_tokens = getattr(
+                usage_metadata,
+                "candidates_token_count",
+                None,
+            )
+            if candidates_tokens is not None:
+                output_tokens = candidates_tokens + (
+                    getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                )
+            else:
+                # Fallback for SDK versions without the candidate count.
+                output_tokens = total_tokens - input_tokens
             return ChatUsage(
-                input_tokens=prompt_tokens,
-                output_tokens=total_tokens - prompt_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     usage_metadata,

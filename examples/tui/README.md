@@ -1,0 +1,161 @@
+# Terminal UI
+
+This example runs an AgentScope agent in the optional Textual terminal UI.
+The UI renders `Msg` snapshots, Markdown, tools, and tool-call confirmation.
+The standalone launcher consumes Agent events and maintains the messages;
+the display widgets do not consume events or modify conversation history.
+
+## Quickstart
+
+```bash
+pip install "agentscope[tui]"
+export DASHSCOPE_API_KEY=sk-...
+python main.py
+```
+
+Controls:
+
+- `Enter` sends the current message and `Shift+Enter` inserts a newline.
+- While a reply is running, `Ctrl+C` interrupts that reply.
+- HITL uses `↑`/`↓` to choose an action and `Enter` to confirm it; there are
+  no clickable action buttons.
+- Tool and thinking rows expand with a click or with `Enter` when focused.
+- A pending HITL request replaces the composer until it is resolved.
+- `AskUser` renders a keyboard-driven form with single-select, multi-select,
+  previews, and an `Other` text answer. It returns schema-valid structured
+  metadata to the Agent automatically.
+- Type `/exit` and press `Enter` to exit the standalone TUI.
+
+The example defaults to `qwen3.8-max`. `LocalWorkspace` instructions are
+attached automatically when the workspace is passed as the Agent offloader.
+
+## Embedding the UI
+
+Widget sizes are controlled with Textual CSS rather than constructor
+arguments. `MessagesUI` is the read-only building block:
+
+```python
+from textual.app import App, ComposeResult
+
+from agentscope.tui import MessagesUI
+
+
+class HistoryApp(App):
+    CSS = """
+    #history {
+        width: 96%;
+        max-width: 110;
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield MessagesUI(messages=history, id="history")
+
+
+HistoryApp().run()
+```
+
+An authoritative history refresh reconciles widgets by message and block ID:
+
+```python
+history_ui = app.query_one("#history", MessagesUI)
+await history_ui.set_messages(await load_messages())
+```
+
+For streaming, publish only the changed message. Its ID selects an existing
+widget, or appends a new one, without comparing the rest of the history:
+
+```python
+await history_ui.update_message(message)
+```
+
+`ChatUI` adds the composer and HITL controls while leaving execution and
+concurrency policy to the containing application:
+
+```python
+from textual import on
+from textual.app import App, ComposeResult
+
+from agentscope.tui import ChatUI
+
+
+class RuntimeApp(App):
+    def compose(self) -> ComposeResult:
+        yield ChatUI(messages=history, id="chat")
+
+    def on_mount(self) -> None:
+        self.run_worker(self.consume_messages())
+
+    async def consume_messages(self) -> None:
+        chat = self.query_one("#chat", ChatUI)
+        async for message in runtime.changed_messages:
+            await chat.update_message(message)
+
+    @on(ChatUI.Submitted)
+    async def submit(self, event: ChatUI.Submitted) -> None:
+        await runtime.submit(event.msg)
+
+    @on(ChatUI.Confirmed)
+    async def confirm(self, event: ChatUI.Confirmed) -> None:
+        await runtime.submit(event.value)
+
+    @on(ChatUI.ExternalExecutionSubmitted)
+    async def external_result(
+        self,
+        event: ChatUI.ExternalExecutionSubmitted,
+    ) -> None:
+        await runtime.submit(event.value)
+
+    @on(ChatUI.InterruptRequested)
+    async def interrupt(self, event: ChatUI.InterruptRequested) -> None:
+        await runtime.interrupt(event.reply_id)
+```
+
+Here `runtime` is your application's backend. It applies events with
+`Msg.append_event()` and publishes the changed Msg. Use `set_messages()` for
+initial history or session replacement, and `update_message()` for live
+updates, including newly submitted user messages. Mutating the original
+messages alone does not refresh the UI.
+Unchanged messages reuse their display copies and widgets; changed Markdown
+blocks stream appended text without rebuilding the conversation.
+
+HITL and AskUser are derived from message blocks. Answered cards are dismissed
+locally while the backend processes their results; this does not modify Msg
+objects or append tool results in the UI.
+
+The ordinary composer can be toggled independently. Pending HITL always
+replaces it until confirmation or external execution completes:
+
+```python
+chat = app.query_one("#chat", ChatUI)
+chat.input_enabled = False
+chat.input_enabled = True
+```
+
+For an Agent or `PipelineProtocol`, the standalone launcher wires the same
+events automatically. It keeps the composer available while a reply is
+running and queues submissions, calling ``reply_stream`` serially so a shared
+agent context is never mutated by concurrent replies:
+
+```python
+from agentscope.tui import launch_tui
+
+await launch_tui(agent, messages=history, user_name="user")
+```
+
+The launcher displays submitted messages immediately, before waiting for the
+reply queue. It retains only unfinished replies in a dictionary keyed by
+reply ID, including replies waiting for HITL. After displaying `ReplyEndEvent`,
+it releases that reply; the UI keeps its own historical display copy.
+
+## Live CSS editing
+
+Textual can reload external CSS while an app is running. Install its
+development tools, put application overrides in a `.tcss` file referenced by
+the App's `CSS_PATH`, then launch the app with `textual run --dev`.
+
+The AgentScope widgets keep their base theme in `DEFAULT_CSS`, so that they
+work without an application stylesheet. Python-embedded `DEFAULT_CSS` is not
+file-watched; external application CSS can override it and is the recommended
+place for live design iteration.

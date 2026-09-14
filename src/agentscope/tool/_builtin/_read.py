@@ -500,7 +500,13 @@ Usage:
             # Read file content via backend
             lines = None
             if _agent_state is not None:
-                cache = await _agent_state.tool_context.get_cache(file_path)
+                # Take the mtime from the backend that reads the file, so
+                # the cache also works for sandbox-only paths.
+                mtime = await self._backend.stat_mtime(file_path)
+                cache = await _agent_state.tool_context.get_cache(
+                    file_path,
+                    mtime=mtime,
+                )
                 if cache is not None:
                     lines = cache.lines
 
@@ -518,6 +524,7 @@ Usage:
                     await _agent_state.tool_context.cache_file(
                         file_path=file_path,
                         lines=lines,
+                        mtime=mtime,
                     )
 
             # Apply offset and limit (offset is 1-based)

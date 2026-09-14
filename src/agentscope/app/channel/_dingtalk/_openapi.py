@@ -6,15 +6,26 @@ import ipaddress
 import json
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import uuid1, uuid4
 
 from ...._logging import logger
 
-_API = "https://api.dingtalk.com/v1.0"
+_API_ROOT = "https://api.dingtalk.com"
+_API = f"{_API_ROOT}/v1.0"
 _OAPI = "https://oapi.dingtalk.com"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
+_UNION_ID_CACHE_SIZE = 2048
+# Enough of a refusal to name the offending field, not so much that a
+# rejected payload is echoed back into the log.
+_ERROR_BODY_CHARS = 500
 _SUPPORTED_FILE_TYPES = frozenset({"doc", "docx", "pdf", "rar", "xlsx", "zip"})
+# An AI card's creation call carries no content: it opens the card in
+# a running state, and the update that follows tells it what to render.
+# "Done rendering" is about the card's own progress, not about whether
+# an approval has been decided. Both go over the wire as strings.
+_AI_CARD_RENDERING = "1"
+_AI_CARD_RENDERED = "3"
 
 
 class _DingTalkOpenAPI:
@@ -39,6 +50,161 @@ class _DingTalkOpenAPI:
         self._token: str | None = None
         self._token_expires_at = 0.0
         self._token_lock = asyncio.Lock()
+        self._union_ids: dict[str, str] = {}
+
+    async def _operator_id(self, user_id: str) -> str:
+        """Resolve a staff id to the union id the wiki APIs act as.
+
+        Args:
+            user_id (`str`): Enterprise staff id from the robot callback.
+
+        Returns:
+            `str`: The user's union id.
+
+        Raises:
+            `RuntimeError`: If the application cannot read the profile.
+        """
+        cached = self._union_ids.get(user_id)
+        if cached:
+            return cached
+        token = await self._access_token()
+        detail = await self._user_detail(token, user_id) if token else None
+        union_id = str((detail or {}).get("union_id") or "")
+        if not union_id:
+            raise RuntimeError(
+                "DingTalk could not resolve the current user's unionId. "
+                "Check the application's contact permission.",
+            )
+        if len(self._union_ids) >= _UNION_ID_CACHE_SIZE:
+            self._union_ids.pop(next(iter(self._union_ids)))
+        self._union_ids[user_id] = union_id
+        return union_id
+
+    async def list_wiki_workspaces(
+        self,
+        user_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        """List the wiki workspaces visible to one DingTalk user.
+
+        Args:
+            user_id (`str`): The staff id to act as.
+            limit (`int`): Maximum results requested from DingTalk.
+            next_token (`str | None`): Optional pagination token.
+
+        Returns:
+            `dict[str, Any]`: DingTalk's ``workspaces`` and ``nextToken``.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        return await self._wiki_get(
+            "/v2.0/wiki/workspaces",
+            user_id,
+            {
+                "maxResults": limit,
+                "nextToken": next_token,
+                "withPermissionRole": True,
+            },
+            "wiki-workspace listing",
+        )
+
+    async def list_wiki_nodes(
+        self,
+        user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        """List the direct children of one DingTalk wiki node.
+
+        Args:
+            user_id (`str`): The staff id to act as.
+            parent_node_id (`str`): Workspace root or folder node id.
+            limit (`int`): Maximum results requested from DingTalk.
+            next_token (`str | None`): Optional pagination token.
+
+        Returns:
+            `dict[str, Any]`: DingTalk's ``nodes`` and ``nextToken``.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        return await self._wiki_get(
+            "/v2.0/wiki/nodes",
+            user_id,
+            {
+                "parentNodeId": parent_node_id,
+                "maxResults": limit,
+                "nextToken": next_token,
+                "withPermissionRole": True,
+            },
+            "wiki-node listing",
+        )
+
+    async def get_wiki_node(
+        self,
+        user_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        """Get the metadata of one DingTalk wiki node.
+
+        Args:
+            user_id (`str`): The staff id to act as.
+            node_id (`str`): Wiki node identifier.
+
+        Returns:
+            `dict[str, Any]`: Node metadata, or an empty mapping if DingTalk
+            returns no node.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._wiki_get(
+            f"/v2.0/wiki/nodes/{quote(node_id, safe='')}",
+            user_id,
+            {
+                "withPermissionRole": True,
+                "withStatisticalInfo": True,
+            },
+            "wiki-node lookup",
+        )
+        node = payload.get("node")
+        return node if isinstance(node, dict) else {}
+
+    async def read_document_blocks(
+        self,
+        user_id: str,
+        doc_key: str,
+        start_index: int,
+        end_index: int,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded range of DingTalk document blocks.
+
+        Args:
+            user_id (`str`): The staff id to act as.
+            doc_key (`str`): Document key (Wiki node ids normally work).
+            start_index (`int`): First block index, inclusive.
+            end_index (`int`): Last block index, inclusive.
+
+        Returns:
+            `list[dict[str, Any]]`: Raw block objects in document order.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._wiki_get(
+            f"/v1.0/doc/suites/documents/{quote(doc_key, safe='')}/blocks",
+            user_id,
+            {"startIndex": start_index, "endIndex": end_index},
+            "document-block reading",
+        )
+        result = payload.get("result")
+        data = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(data, list):
+            return []
+        return [item for item in data if isinstance(item, dict)]
 
     async def download_media(
         self,
@@ -150,6 +316,7 @@ class _DingTalkOpenAPI:
         approver_id: str,
         template_id: str,
         card_data: dict[str, str],
+        out_track_id: str = "",
     ) -> str | None:
         """Create and deliver one Stream-callback approval card.
 
@@ -159,17 +326,27 @@ class _DingTalkOpenAPI:
                 the card. Empty means normal audience visibility.
             template_id (`str`): Card Platform template identifier.
             card_data (`dict[str, str]`): Template parameter map.
+            out_track_id (`str`): Tracking id to pin on the card; a random
+                one when empty.
 
         Returns:
             `str | None`: The card's outbound tracking id, or ``None`` when
             creation or delivery fails.
         """
-        return await self._create_and_deliver_card(
+        track = await self._create_and_deliver_card(
             chat_id,
             template_id,
-            card_data,
+            {"flowStatus": _AI_CARD_RENDERING},
             approver_id,
+            out_track_id,
         )
+        if track is None:
+            return None
+        settled = await self.update_approval_card(
+            track,
+            {**card_data, "flowStatus": _AI_CARD_RENDERED},
+        )
+        return track if settled else None
 
     async def create_streaming_card(
         self,
@@ -257,6 +434,10 @@ class _DingTalkOpenAPI:
             {
                 "outTrackId": out_track_id,
                 "cardData": {"cardParamMap": card_data},
+                # Without this the map replaces the card's whole data, so
+                # every variable this update does not name comes back
+                # empty — the tool and its arguments included.
+                "cardUpdateOptions": {"updateCardDataByKey": True},
             },
             "card update",
         )
@@ -267,6 +448,7 @@ class _DingTalkOpenAPI:
         template_id: str,
         card_data: dict[str, str],
         recipient_id: str = "",
+        out_track_id: str = "",
     ) -> str | None:
         """Create a Card Platform instance and deliver it to a target."""
         if chat_id.startswith("group:"):
@@ -293,7 +475,7 @@ class _DingTalkOpenAPI:
         token = await self._access_token()
         if token is None:
             return None
-        out_track_id = uuid4().hex
+        out_track_id = out_track_id or uuid4().hex
         created = await self._request(
             "POST",
             f"{_API}/card/instances",
@@ -507,6 +689,7 @@ class _DingTalkOpenAPI:
             result = payload.get("result") or {}
             return {
                 "user_id": str(result.get("userid") or user_id),
+                "union_id": str(result.get("unionid") or ""),
                 "name": str(result.get("name") or ""),
                 "title": str(result.get("title") or ""),
                 "department_ids": result.get("dept_id_list") or [],
@@ -547,7 +730,16 @@ class _DingTalkOpenAPI:
                 headers=self._headers(token),
                 json=body,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # The status alone never says which field was wrong;
+                # DingTalk puts that in the body.
+                logger.warning(
+                    "DingTalk rejected %s with HTTP %s: %s",
+                    msg_key,
+                    response.status_code,
+                    response.text[:_ERROR_BODY_CHARS],
+                )
+                return False
             result = response.json()
             code = result.get("code")
             if code not in (None, "", 0, "0"):
@@ -560,6 +752,79 @@ class _DingTalkOpenAPI:
         except Exception:  # pylint: disable=broad-except
             logger.exception("DingTalk message send failed")
             return False
+
+    async def _wiki_get(
+        self,
+        path: str,
+        user_id: str,
+        params: dict[str, Any],
+        operation: str,
+    ) -> dict[str, Any]:
+        """Issue an authenticated GET that acts as one DingTalk user.
+
+        Args:
+            path (`str`): Absolute path below ``api.dingtalk.com``.
+            user_id (`str`): The staff id to act as.
+            params (`dict[str, Any]`): Additional query parameters.
+            operation (`str`): Human-readable operation for errors.
+
+        Returns:
+            `dict[str, Any]`: JSON response object.
+
+        Raises:
+            `RuntimeError`: If authentication, permissions, transport,
+            or response validation fails.
+        """
+        token = await self._access_token()
+        if token is None:
+            raise RuntimeError(
+                f"DingTalk {operation} failed: no application access token.",
+            )
+        query = {
+            "operatorId": await self._operator_id(user_id),
+            **{k: v for k, v in params.items() if v is not None and v != ""},
+        }
+        try:
+            response = await self._http.get(
+                f"{_API_ROOT}{path}",
+                headers=self._headers(token),
+                params=query,
+            )
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"DingTalk {operation} returned invalid JSON.",
+                ) from exc
+            if not isinstance(payload, dict):
+                raise RuntimeError(
+                    f"DingTalk {operation} returned an invalid response.",
+                )
+            code = payload.get("code") or payload.get("errcode")
+            message = str(
+                payload.get("message")
+                or payload.get("errmsg")
+                or payload.get("errorMessage")
+                or "request rejected",
+            )
+            if (
+                response.status_code >= 400
+                or code not in (None, "", 0, "0")
+                or payload.get("success") is False
+            ):
+                raise RuntimeError(
+                    f"DingTalk {operation} failed (HTTP "
+                    f"{response.status_code}, code={code or 'unknown'}): "
+                    f"{message[:_ERROR_BODY_CHARS]}",
+                )
+            return payload
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.exception("DingTalk %s failed", operation)
+            raise RuntimeError(
+                f"DingTalk {operation} failed: {type(exc).__name__}.",
+            ) from exc
 
     async def _request(
         self,
@@ -577,7 +842,14 @@ class _DingTalkOpenAPI:
                 headers=self._headers(token),
                 json=body,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                logger.warning(
+                    "DingTalk rejected %s with HTTP %s: %s",
+                    operation,
+                    response.status_code,
+                    response.text[:_ERROR_BODY_CHARS],
+                )
+                return False
             result = response.json()
             code = result.get("code")
             if code not in (None, "", 0, "0"):

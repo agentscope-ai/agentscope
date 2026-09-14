@@ -14,6 +14,7 @@ from ._manager import (
 )
 from ._service import (
     ChannelService,
+    CredentialBindingService,
     ChatService,
     KnowledgeBaseService,
     ResourceAccessService,
@@ -417,6 +418,23 @@ async def get_channel_service(request: Request) -> ChannelService:
         `ChannelService`: The service stored in ``app.state``.
     """
     return request.app.state.channel_service
+
+
+async def get_credential_binding_service(
+    request: Request,
+) -> CredentialBindingService:
+    """Return the application-wide credential-binding service.
+
+    Present in every process: a binding session lives in the bus, so any
+    replica can serve any step of it.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `CredentialBindingService`: The service stored in ``app.state``.
+    """
+    return request.app.state.credential_binding_service
 
 
 async def get_channel_clients(

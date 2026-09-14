@@ -5,7 +5,6 @@
 import asyncio
 import base64
 import json
-import time
 from typing import Any, AsyncIterator, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -16,6 +15,11 @@ from agentscope.app.channel._base import (
     ChannelConfirmationResultEvent,
     ChannelEvent,
     ChatKind,
+)
+from agentscope.app.channel._dingtalk._card import (
+    _PENDING_LAYOUT,
+    _tool_call_id,
+    _tracking_id,
 )
 from agentscope.app.channel._dingtalk._openapi import _DingTalkOpenAPI
 from agentscope.app.channel._registry import ChannelTypeRegistry
@@ -35,19 +39,28 @@ from agentscope.message import (
     DataBlock,
     TextBlock,
     ToolCallBlock,
+    ToolResultState,
 )
 from agentscope.permission import PermissionBehavior, PermissionContext
 from agentscope.workspace import WorkspaceBase
 
 _REPLY_ID = "reply-1"
-_WEBHOOK = "https://oapi.dingtalk.com/robot/sendBySession?session=secret"
 
 
 class _FakeResponse:
     """Minimal successful HTTP response."""
 
-    def __init__(self, result: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        result: dict[str, Any] | None = None,
+        status_code: int = 200,
+    ) -> None:
         self._result = result if result is not None else {"errcode": 0}
+        self.status_code = status_code
+
+    @property
+    def text(self) -> str:
+        return json.dumps(self._result, ensure_ascii=False)
 
     def raise_for_status(self) -> None:
         pass
@@ -57,7 +70,7 @@ class _FakeResponse:
 
 
 class _FakeHTTP:
-    """Record outbound webhook calls."""
+    """Record outbound HTTP calls."""
 
     def __init__(self) -> None:
         self.posts: list[tuple[str, dict[str, Any]]] = []
@@ -101,12 +114,20 @@ class _FakeMediaOpenAPI:
         self.send_calls: list[tuple[str, bytes, str, str]] = []
         self.text_calls: list[tuple[str, str]] = []
         self.search_result: list[dict[str, Any]] = []
-        self.approval_calls: list[tuple[str, str, str, dict[str, str]]] = []
+        self.approval_calls: list[
+            tuple[str, str, str, dict[str, str], str]
+        ] = []
         self.card_updates: list[tuple[str, dict[str, str]]] = []
         self.streaming_card_id: str | None = "stream-track-1"
         self.streaming_card_calls: list[tuple[str, str, str]] = []
         self.streaming_updates: list[tuple[str, str, str, bool, bool]] = []
         self.streaming_update_success = True
+        self.wiki_workspaces: dict[str, Any] = {"workspaces": []}
+        self.wiki_nodes: dict[str, Any] = {"nodes": []}
+        self.wiki_node: dict[str, Any] = {}
+        self.document_blocks: list[dict[str, Any]] = []
+        self.wiki_calls: list[tuple[Any, ...]] = []
+        self.wiki_error: Exception | None = None
 
     async def download_media(
         self,
@@ -138,17 +159,72 @@ class _FakeMediaOpenAPI:
         del query
         return self.search_result[:limit]
 
+    def _wiki_call(self, *call: Any) -> None:
+        self.wiki_calls.append(call)
+        if self.wiki_error is not None:
+            raise self.wiki_error
+
+    async def list_wiki_workspaces(
+        self,
+        user_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        self._wiki_call("list_wiki_workspaces", user_id, limit, next_token)
+        return self.wiki_workspaces
+
+    async def list_wiki_nodes(
+        self,
+        user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        self._wiki_call(
+            "list_wiki_nodes",
+            user_id,
+            parent_node_id,
+            limit,
+            next_token,
+        )
+        return self.wiki_nodes
+
+    async def get_wiki_node(
+        self,
+        user_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        self._wiki_call("get_wiki_node", user_id, node_id)
+        return self.wiki_node
+
+    async def read_document_blocks(
+        self,
+        user_id: str,
+        doc_key: str,
+        start_index: int,
+        end_index: int,
+    ) -> list[dict[str, Any]]:
+        self._wiki_call(
+            "read_document_blocks",
+            user_id,
+            doc_key,
+            start_index,
+            end_index,
+        )
+        return self.document_blocks
+
     async def create_approval_card(
         self,
         chat_id: str,
         approver_id: str,
         template_id: str,
         card_data: dict[str, str],
+        out_track_id: str = "",
     ) -> str:
         self.approval_calls.append(
-            (chat_id, approver_id, template_id, card_data),
+            (chat_id, approver_id, template_id, card_data, out_track_id),
         )
-        return "track-1"
+        return out_track_id or "track-1"
 
     async def update_approval_card(
         self,
@@ -247,6 +323,7 @@ class _OpenAPIHTTP(_FakeHTTP):
         self._stream_response = stream_response
         self.streams: list[tuple[str, str, dict[str, Any]]] = []
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
+        self.gets: list[tuple[str, dict[str, Any]]] = []
 
     async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
         self.posts.append((url, kwargs))
@@ -259,6 +336,10 @@ class _OpenAPIHTTP(_FakeHTTP):
         **kwargs: Any,
     ) -> _FakeResponse:
         self.requests.append((method, url, kwargs))
+        return self._responses.pop(0)
+
+    async def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+        self.gets.append((url, kwargs))
         return self._responses.pop(0)
 
     def stream(
@@ -330,8 +411,6 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "msgtype": "text",
         "text": {"content": " hello "},
         "isInAtList": True,
-        "sessionWebhook": _WEBHOOK,
-        "sessionWebhookExpiredTime": int(time.time() * 1000) + 60_000,
     }
     payload.update(overrides)
     return payload
@@ -705,40 +784,41 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
         self.assertIn("Unable to download", received[0].message)
 
-    async def test_unsafe_session_webhook_is_not_cached(self) -> None:
-        channel = _channel()
-        received = await _message_callbacks(
-            channel,
-            _payload(sessionWebhook="https://example.com/steal"),
-        )
-
-        self.assertEqual(len(received), 1)
-        self.assertNotIn(received[0].chat_id, channel._session_webhooks)
-
-    async def test_send_response_uses_cached_session_webhook(self) -> None:
-        channel = _channel()
-        received = await _message_callbacks(channel, _payload())
-        http = _FakeHTTP()
-        channel._http = http
-
-        await channel.send_response(received[0], _event_stream())
-
-        self.assertEqual(len(http.posts), 1)
-        url, request = http.posts[0]
-        self.assertEqual(url, _WEBHOOK)
-        self.assertEqual(request["json"]["msgtype"], "markdown")
-        self.assertEqual(
-            request["json"]["markdown"]["text"],
-            "hello from agent",
-        )
-        self.assertEqual(request["json"]["markdown"]["title"], "AgentScope")
-
     async def test_streaming_is_disabled_without_ai_card_template(
         self,
     ) -> None:
         channel = _channel(streaming_card_template_id="")
 
         self.assertFalse(channel.capabilities.streaming)
+
+    async def test_default_config_needs_no_card_platform_work(self) -> None:
+        """Both cards default to published templates, so neither is set up."""
+        channel = DingTalkChannel(
+            "ding-1",
+            DingTalkChannel.Credentials(
+                client_id="client-id",
+                client_secret="client-secret",
+            ),
+            DingTalkChannel.Config(),
+        )
+
+        self.assertDictEqual(
+            channel._config.model_dump(),
+            {
+                "only_at_reply": True,
+                "show_tool_process": False,
+                "show_thinking": False,
+                "max_media_bytes": 10 * 1024 * 1024,
+                "approval_card_template_id": (
+                    "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+                ),
+                "streaming_card_template_id": (
+                    "8aebdfb9-28f4-4a98-98f5-396c3dde41a0.schema"
+                ),
+                "streaming_card_key": "content",
+            },
+        )
+        self.assertTrue(channel.capabilities.streaming)
 
     async def test_send_response_streams_when_ai_card_is_configured(
         self,
@@ -807,17 +887,20 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertTrue(media_api.streaming_updates[-1][3])
         self.assertTrue(media_api.streaming_updates[-1][4])
 
-    async def test_oversized_streaming_reply_uses_markdown_only(self) -> None:
+    async def test_long_streaming_reply_is_not_capped(self) -> None:
+        """Only DingTalk decides a reply is too long, not a local guess."""
         channel, media_api = _channel_with_openapi(
             streaming_card_template_id="ai-card.schema",
         )
         event = _message_event()
-        text = "中" * 342
 
-        await channel.send_response(event, _event_stream(text))
+        await channel.send_response(event, _event_stream("中" * 342))
 
-        self.assertEqual(media_api.streaming_card_calls, [])
-        self.assertEqual(media_api.text_calls, [(event.chat_id, text)])
+        self.assertListEqual(
+            media_api.streaming_card_calls,
+            [("group:cid-group-1", "ai-card.schema", "content")],
+        )
+        self.assertListEqual(media_api.text_calls, [])
 
     async def test_send_response_uploads_image_data_block(self) -> None:
         channel, media_api = _channel_with_openapi()
@@ -837,6 +920,42 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             ],
         )
 
+    async def test_rejected_send_reports_what_dingtalk_said(self) -> None:
+        """A refusal names the field; the status code alone never does."""
+        api, http = _openapi()
+        http._responses.append(
+            _FakeResponse(
+                {"code": "InvalidParameter", "message": "photoURL invalid"},
+                status_code=400,
+            ),
+        )
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            sent = await api.send_text("user:user-1", "hello")
+
+        self.assertFalse(sent)
+        self.assertIn("photoURL invalid", "\n".join(captured.output))
+
+    async def test_approval_card_value_fits_the_platform_cap(self) -> None:
+        """A Chinese argument must not push a card value past 1KB."""
+        from agentscope.app.channel._dingtalk._card import (
+            _approval_card_data,
+        )
+
+        card_data = _approval_card_data(
+            ToolCallBlock(
+                type="tool_call",
+                id="tool-1",
+                name="Bash",
+                input="中" * 800,
+            ),
+            "Friday",
+        )
+
+        for key in ("input", "staticMsgContent", "sys_full_json_obj"):
+            self.assertLessEqual(len(card_data[key].encode("utf-8")), 1024)
+        self.assertTrue(card_data["input"].endswith("…"))
+
     async def test_send_response_presents_tool_approval_card(self) -> None:
         channel, media_api = _channel_with_openapi()
         event = _message_event(
@@ -846,12 +965,99 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         await channel.send_response(event, _confirmation_event_stream())
 
         self.assertEqual(len(media_api.approval_calls), 1)
-        chat_id, approver, template, card_data = media_api.approval_calls[0]
+        (
+            chat_id,
+            approver,
+            template,
+            card_data,
+            track,
+        ) = media_api.approval_calls[0]
         self.assertEqual(chat_id, "group:cid-group-1")
         self.assertEqual(approver, "")
         self.assertEqual(template, "approval.schema")
-        self.assertEqual(card_data["toolCallId"], "tool-1")
-        self.assertEqual(card_data["agentId"], "agent-1")
+        # Unique per card, and the tool call reads off the end of it.
+        self.assertNotEqual(track, "tool-1")
+        self.assertEqual(_tool_call_id(track), "tool-1")
+        self.assertRegex(
+            card_data["created_at"],
+            r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$",
+        )
+        self.assertDictEqual(
+            card_data,
+            {
+                # What the built-in AI card renders.
+                "msgTitle": "工具审批",
+                "staticMsgContent": (
+                    "工具：SendMessage\n\n"
+                    '参数：{"target":"user:user-2","text":"hello"}'
+                ),
+                "sys_full_json_obj": _PENDING_LAYOUT,
+                # What a template of the operator's own binds.
+                "title": "assistant 提交的工具执行",
+                "name": "SendMessage",
+                "input": '{"target":"user:user-2","text":"hello"}',
+                "created_at": card_data["created_at"],
+                "status": "pending",
+            },
+        )
+
+    async def test_built_in_button_callback_routes_on_id_and_space(
+        self,
+    ) -> None:
+        """The shape a real click sends: button id, and a plain "im" space."""
+        channel, _ = _channel_with_openapi()
+        received = await _confirmation_callbacks(
+            channel,
+            {
+                "type": "actionCallback",
+                "outTrackId": _tracking_id("call_c45eafeaa1ab"),
+                "userId": "staff-1",
+                "spaceType": "im",
+                "spaceId": "cidAAABBBCCCDDDEEE000111222333444==",
+                "content": json.dumps(
+                    {
+                        "cardPrivateData": {
+                            "actionIds": ["single_button_node_ocljy2j7wg2"],
+                            "params": {"id": "agree", "text": "Approve"},
+                        },
+                    },
+                ),
+            },
+        )
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].tool_call_id, "call_c45eafeaa1ab")
+        self.assertEqual(
+            received[0].chat_id,
+            "group:cidAAABBBCCCDDDEEE000111222333444==",
+        )
+        self.assertEqual(received[0].channel_user_id, "staff-1")
+        self.assertEqual(received[0].agent_id, "")
+        self.assertTrue(received[0].approved)
+
+    async def test_built_in_button_callback_routes_a_private_chat(
+        self,
+    ) -> None:
+        """A one-to-one card sits in the space of whoever clicked."""
+        channel, _ = _channel_with_openapi()
+        received = await _confirmation_callbacks(
+            channel,
+            {
+                "type": "actionCallback",
+                "outTrackId": _tracking_id("call_deny"),
+                "userId": "user-7",
+                "spaceType": "im",
+                "spaceId": "user-7",
+                "content": json.dumps(
+                    {"cardPrivateData": {"params": {"id": "reject"}}},
+                ),
+            },
+        )
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].tool_call_id, "call_deny")
+        self.assertEqual(received[0].chat_id, "user:user-7")
+        self.assertFalse(received[0].approved)
 
     async def test_approval_callback_emits_resume_event_and_updates_card(
         self,
@@ -873,7 +1079,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(media_api.card_updates[0][1]["status"], "denied")
 
     async def test_approval_callback_accepts_approval_aliases(self) -> None:
-        for action in ("approve", "agree"):
+        for action in ("approve", "agree", "approved"):
             with self.subTest(action=action):
                 channel, media_api = _channel_with_openapi()
                 received = await _confirmation_callbacks(
@@ -886,19 +1092,6 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                     media_api.card_updates[0][1]["status"],
                     "approved",
                 )
-
-    async def test_approval_callback_rejects_another_user(self) -> None:
-        channel, media_api = _channel_with_openapi()
-        received = await _confirmation_callbacks(
-            channel,
-            _card_callback(
-                user_id="unexpected-user",
-                approver_id="user-1",
-            ),
-        )
-
-        self.assertEqual(received, [])
-        self.assertEqual(media_api.card_updates, [])
 
     async def test_send_file_strips_path_and_keeps_extension(self) -> None:
         channel, media_api = _channel_with_openapi()
@@ -917,7 +1110,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
 
 class DingTalkToolTest(IsolatedAsyncioTestCase):
-    """DingTalk discovery and target-send tool tests."""
+    """DingTalk discovery, knowledge, and target-send tool tests."""
 
     async def test_channel_target_operations_reuse_openapi(self) -> None:
         media_api = _FakeMediaOpenAPI()
@@ -1034,49 +1227,304 @@ class DingTalkToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(read_decision.behavior, PermissionBehavior.ALLOW)
         self.assertEqual(send_decision.behavior, PermissionBehavior.ASK)
 
-    async def test_send_tools_require_approval_card_configuration(
+    async def test_wiki_tools_are_bound_to_current_sender(self) -> None:
+        from agentscope.app.channel._tools import (
+            ListWikiNodes,
+            ListWikiSpaces,
+            ReadWikiDocument,
+        )
+
+        media_api = _FakeMediaOpenAPI()
+        media_api.wiki_workspaces = {
+            "workspaces": [
+                {
+                    "workspaceId": "space-1",
+                    "name": "Engineering",
+                    "rootNodeId": "root-1",
+                    "url": "https://example.invalid/space-1",
+                },
+            ],
+            "nextToken": "spaces-next",
+        }
+        media_api.wiki_nodes = {
+            "nodes": [
+                {
+                    "nodeId": "doc-1",
+                    "name": "Runbook",
+                    "type": "FILE",
+                    "category": "ALIDOC",
+                    "hasChildren": False,
+                },
+            ],
+        }
+        media_api.wiki_node = {
+            "nodeId": "doc-1",
+            "name": "Runbook",
+            "type": "FILE",
+            "category": "ALIDOC",
+        }
+        media_api.document_blocks = [
+            {
+                "blockType": "heading",
+                "heading": {"level": "heading-2", "text": "Deploy"},
+                "index": 0,
+            },
+            {
+                "blockType": "paragraph",
+                "paragraph": {"text": "Run the release command."},
+                "index": 1,
+            },
+            {
+                "blockType": "table",
+                "table": {
+                    "rowSize": 2,
+                    "colSize": 2,
+                    "cells": [["Step", "Owner"], ["Deploy", "Alice"]],
+                },
+                "index": 2,
+            },
+        ]
+        channel, _ = _channel_with_openapi(media_api)
+        workspace = cast(WorkspaceBase, _FakeWorkspace(_FakeBackend()))
+
+        tools = await channel.list_tools(workspace, "staff-1")
+
+        self.assertListEqual(
+            [tool.name for tool in tools],
+            [
+                "ListConversations",
+                "ListUsers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+                "ListWikiSpaces",
+                "ListWikiNodes",
+                "ReadWikiDocument",
+            ],
+        )
+        for tool in tools[5:]:
+            self.assertNotIn(
+                "channel_user_id",
+                tool.input_schema["properties"],
+            )
+            decision = await tool.check_permissions({}, PermissionContext())
+            self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+        spaces = await cast(ListWikiSpaces, tools[5])(10, "")
+        nodes = await cast(ListWikiNodes, tools[6])("root-1", 25, "")
+        document = await cast(ReadWikiDocument, tools[7])("doc-1", 0, 3)
+
+        self.assertDictEqual(
+            json.loads(spaces.content[0].text),
+            {
+                "spaces": [
+                    {
+                        "space_id": "space-1",
+                        "name": "Engineering",
+                        "root_node_id": "root-1",
+                        "description": None,
+                        "url": "https://example.invalid/space-1",
+                    },
+                ],
+                "next_token": "spaces-next",
+            },
+        )
+        self.assertDictEqual(
+            json.loads(nodes.content[0].text),
+            {
+                "nodes": [
+                    {
+                        "node_id": "doc-1",
+                        "name": "Runbook",
+                        "has_children": False,
+                        "is_document": True,
+                        "url": None,
+                        "updated_at": None,
+                    },
+                ],
+                "next_token": "",
+            },
+        )
+        # A full page may have more behind it, so a resume point is given.
+        self.assertDictEqual(
+            json.loads(document.content[0].text),
+            {
+                "node_id": "doc-1",
+                "name": "Runbook",
+                "start_index": 0,
+                "next_start_index": 3,
+            },
+        )
+        self.assertEqual(
+            document.content[1].text,
+            "## Deploy\n\nRun the release command.\n\n"
+            "| Step | Owner |\n| --- | --- |\n| Deploy | Alice |",
+        )
+        self.assertListEqual(
+            media_api.wiki_calls,
+            [
+                ("list_wiki_workspaces", "staff-1", 10, None),
+                ("list_wiki_nodes", "staff-1", "root-1", 25, None),
+                ("get_wiki_node", "staff-1", "doc-1"),
+                ("read_document_blocks", "staff-1", "doc-1", 0, 2),
+            ],
+        )
+
+    async def test_an_oversized_block_is_returned_whole(self) -> None:
+        """A block is never split: its tail could never be requested."""
+        from agentscope.app.channel._tools import ReadWikiDocument
+
+        media_api = _FakeMediaOpenAPI()
+        media_api.wiki_node = {
+            "nodeId": "doc-1",
+            "name": "Runbook",
+            "type": "FILE",
+            "category": "ALIDOC",
+        }
+        media_api.document_blocks = [
+            {
+                "blockType": "paragraph",
+                "paragraph": {"text": "x" * 30_000},
+                "index": 0,
+            },
+        ]
+        channel, _ = _channel_with_openapi(media_api)
+        tools = await channel.list_tools(
+            cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            "staff-1",
+        )
+
+        document = await cast(ReadWikiDocument, tools[7])("doc-1", 0, 1)
+
+        self.assertDictEqual(
+            json.loads(document.content[0].text),
+            {
+                "node_id": "doc-1",
+                "name": "Runbook",
+                "start_index": 0,
+                "next_start_index": 1,
+            },
+        )
+        self.assertEqual(document.content[1].text, "x" * 30_000)
+
+    async def test_a_folder_node_is_not_a_readable_document(self) -> None:
+        from agentscope.app.channel._tools import ReadWikiDocument
+
+        media_api = _FakeMediaOpenAPI()
+        media_api.wiki_node = {
+            "nodeId": "folder-1",
+            "name": "Runbooks",
+            "type": "FOLDER",
+            "hasChildren": True,
+        }
+        channel, _ = _channel_with_openapi(media_api)
+        tools = await channel.list_tools(
+            cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            "staff-1",
+        )
+
+        document = await cast(ReadWikiDocument, tools[7])("folder-1", 0, 10)
+
+        self.assertEqual(document.state, ToolResultState.ERROR)
+        self.assertIn("not a readable", document.content[0].text)
+
+    async def test_wiki_tools_hidden_without_channel_sender(self) -> None:
+        channel = _channel()
+        workspace = cast(WorkspaceBase, _FakeWorkspace(_FakeBackend()))
+
+        tools = await channel.list_tools(workspace)
+
+        self.assertListEqual(
+            [tool.name for tool in tools],
+            [
+                "ListConversations",
+                "ListUsers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+            ],
+        )
+
+    async def test_wiki_identity_failure_is_visible(self) -> None:
+        media_api = _FakeMediaOpenAPI()
+        media_api.wiki_error = RuntimeError(
+            "DingTalk could not resolve the current user's unionId. "
+            "Check the application's contact permission.",
+        )
+        channel, _ = _channel_with_openapi(media_api)
+        tools = await channel.list_tools(
+            cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
+            "staff-without-contact-access",
+        )
+
+        result = await tools[5](limit=20, next_token="")
+
+        self.assertEqual(result.state, ToolResultState.ERROR)
+        self.assertIn("contact permission", result.content[0].text)
+
+    async def test_send_tools_do_not_depend_on_card_configuration(
         self,
     ) -> None:
+        """Approval gates the call, not whether the tool is equipped."""
         channel = _channel(approval_card_template_id="")
         tools = await channel.list_tools(
             cast(WorkspaceBase, _FakeWorkspace(_FakeBackend())),
         )
 
-        self.assertEqual(
+        self.assertListEqual(
             [tool.name for tool in tools],
-            ["ListConversations", "ListUsers"],
+            [
+                "ListConversations",
+                "ListUsers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+            ],
         )
 
 
 class DingTalkChannelLifecycleTest(IsolatedAsyncioTestCase):
-    """DingTalk reply-webhook and connection lifecycle tests."""
+    """DingTalk delivery-without-connection and lifecycle tests."""
 
-    async def test_expired_session_webhook_is_not_used(self) -> None:
+    async def test_reply_works_without_start_listening(self) -> None:
+        """The node that delivers a reply never runs the connection loop."""
         channel = _channel()
-        received = await _message_callbacks(
-            channel,
-            _payload(
-                sessionWebhookExpiredTime=int(time.time() * 1000) - 1,
-            ),
+        http = _OpenAPIHTTP(
+            [
+                _FakeResponse({"accessToken": "token", "expireIn": 7200}),
+                _FakeResponse({}),
+            ],
         )
-        http = _FakeHTTP()
-        channel._http = http
 
-        sent = await channel._send_text(received[0].chat_id, "late reply")
+        with patch.object(channel, "_new_http_client", return_value=http):
+            await channel.send_response(_message_event(), _event_stream())
+            await channel.aclose()
 
-        self.assertFalse(sent)
-        self.assertEqual(http.posts, [])
-
-    async def test_missing_webhook_falls_back_to_openapi(self) -> None:
-        channel, media_api = _channel_with_openapi()
-
-        sent = await channel._send_text("group:cid-2", "fallback")
-
-        self.assertTrue(sent)
-        self.assertEqual(
-            media_api.text_calls,
-            [("group:cid-2", "fallback")],
+        self.assertListEqual(
+            [(url, request["json"]) for url, request in http.posts],
+            [
+                (
+                    "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                    {"appKey": "client-id", "appSecret": "client-secret"},
+                ),
+                (
+                    "https://api.dingtalk.com/v1.0/robot/groupMessages/send",
+                    {
+                        "robotCode": "client-id",
+                        "msgKey": "sampleMarkdown",
+                        "msgParam": json.dumps(
+                            {
+                                "title": "AgentScope",
+                                "text": "hello from agent",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "openConversationId": "cid-group-1",
+                    },
+                ),
+            ],
         )
+        self.assertTrue(http.closed)
 
     async def test_lifecycle_stops_stream_and_http_clients(self) -> None:
         channel = _channel()
@@ -1317,8 +1765,139 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         self.assertEqual(users[1]["user_id"], "user-2")
         self.assertEqual(users[1]["name"], "")
 
+    async def test_wiki_gets_resolve_and_cache_the_operator(self) -> None:
+        """Every wiki call acts as the sender's resolved unionId."""
+        api, http = _openapi(
+            {
+                "errcode": 0,
+                "result": {"userid": "staff-1", "unionid": "union-1"},
+            },
+            {
+                "workspaces": [{"workspaceId": "space/1"}],
+                "nextToken": "space-next",
+            },
+            {"nodes": [{"nodeId": "doc/1"}]},
+            {"node": {"nodeId": "doc/1"}},
+            {
+                "success": True,
+                "result": {
+                    "data": [
+                        {
+                            "blockType": "paragraph",
+                            "paragraph": {"text": "hello"},
+                            "index": 0,
+                        },
+                    ],
+                },
+            },
+        )
+
+        spaces = await api.list_wiki_workspaces("staff-1", 20)
+        nodes = await api.list_wiki_nodes("staff-1", "root-1", 50, "node-next")
+        node = await api.get_wiki_node("staff-1", "doc/1")
+        blocks = await api.read_document_blocks("staff-1", "doc/1", 0, 49)
+
+        self.assertDictEqual(
+            spaces,
+            {
+                "workspaces": [{"workspaceId": "space/1"}],
+                "nextToken": "space-next",
+            },
+        )
+        self.assertDictEqual(nodes, {"nodes": [{"nodeId": "doc/1"}]})
+        self.assertDictEqual(node, {"nodeId": "doc/1"})
+        self.assertListEqual(
+            blocks,
+            [
+                {
+                    "blockType": "paragraph",
+                    "paragraph": {"text": "hello"},
+                    "index": 0,
+                },
+            ],
+        )
+        # One profile lookup for four calls: the unionId is cached.
+        self.assertEqual(len(http.posts), 2)
+        headers = {
+            "x-acs-dingtalk-access-token": "token",
+            "Content-Type": "application/json",
+        }
+        self.assertListEqual(
+            http.gets,
+            [
+                (
+                    "https://api.dingtalk.com/v2.0/wiki/workspaces",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "maxResults": 20,
+                            "withPermissionRole": True,
+                        },
+                    },
+                ),
+                (
+                    "https://api.dingtalk.com/v2.0/wiki/nodes",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "parentNodeId": "root-1",
+                            "maxResults": 50,
+                            "nextToken": "node-next",
+                            "withPermissionRole": True,
+                        },
+                    },
+                ),
+                (
+                    "https://api.dingtalk.com/v2.0/wiki/nodes/doc%2F1",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "withPermissionRole": True,
+                            "withStatisticalInfo": True,
+                        },
+                    },
+                ),
+                (
+                    "https://api.dingtalk.com/v1.0/doc/suites/documents/"
+                    "doc%2F1/blocks",
+                    {
+                        "headers": headers,
+                        "params": {
+                            "operatorId": "union-1",
+                            "startIndex": 0,
+                            "endIndex": 49,
+                        },
+                    },
+                ),
+            ],
+        )
+
+    async def test_wiki_get_surfaces_a_permission_error(self) -> None:
+        api, _ = _openapi(
+            {
+                "errcode": 0,
+                "result": {"userid": "staff-1", "unionid": "union-1"},
+            },
+            {
+                "code": "Forbidden.AccessDenied",
+                "message": "missing Wiki permission",
+            },
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "missing Wiki permission"):
+            await api.list_wiki_workspaces("staff-1", 20)
+
+    async def test_an_unresolvable_sender_is_reported(self) -> None:
+        api, _ = _openapi({"errcode": 0, "result": {"userid": "staff-1"}})
+
+        with self.assertRaisesRegex(RuntimeError, "contact permission"):
+            await api.list_wiki_workspaces("staff-1", 20)
+
     async def test_create_deliver_and_update_group_approval_card(self) -> None:
-        api, http = _openapi({}, {}, {})
+        api, http = _openapi({}, {}, {}, {})
 
         out_track_id = await api.create_approval_card(
             "group:cid-1",
@@ -1341,6 +1920,21 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             "approval.schema",
         )
         self.assertEqual(create_request["json"]["callbackType"], "STREAM")
+        # Creation opens the card; its content arrives in the update.
+        self.assertDictEqual(
+            create_request["json"]["cardData"]["cardParamMap"],
+            {"flowStatus": "1"},
+        )
+        settle = http.requests[2][2]["json"]
+        self.assertDictEqual(
+            settle["cardData"]["cardParamMap"],
+            {"toolCallId": "tool-1", "flowStatus": "3"},
+        )
+        # By key, or the variables this update omits are wiped.
+        self.assertDictEqual(
+            settle["cardUpdateOptions"],
+            {"updateCardDataByKey": True},
+        )
         deliver_method, deliver_url, deliver_request = http.requests[1]
         self.assertEqual(deliver_method, "POST")
         self.assertTrue(deliver_url.endswith("/card/instances/deliver"))
@@ -1359,7 +1953,7 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
         )
 
     async def test_deliver_private_approval_card_to_encoded_user(self) -> None:
-        api, http = _openapi({}, {})
+        api, http = _openapi({}, {}, {})
 
         out_track_id = await api.create_approval_card(
             "user:user-1",

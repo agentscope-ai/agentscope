@@ -436,7 +436,8 @@ class SessionService:
           are fully removed.
         - ``role == "invited"``: the member is a pre-existing user-owned
           agent borrowed via ``AgentInvite``. Only the borrowed
-          team-scoped session is removed; the underlying
+          team-scoped session in the team owner's namespace is removed;
+          the underlying
           :class:`AgentRecord` and its other sessions survive.
 
         The leader's own session is **not** deleted — teams dissolve,
@@ -463,7 +464,7 @@ class SessionService:
                 await self.delete_agent(member.owner_id, member.agent_id)
             else:  # invited
                 await self.delete_session(
-                    member.owner_id,
+                    user_id,
                     member.agent_id,
                     member.session_id,
                 )
@@ -656,6 +657,9 @@ class SessionService:
         )
         await self._bus.queue_delete(
             MessageBusKeys.inbox(session_id),
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.inbox_consumer(session_id),
         )
         await self._bus.registry_drop(
             MessageBusKeys.bg_tasks(session_id),

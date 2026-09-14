@@ -216,7 +216,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                     "name": "GenerateStructuredOutput",
                     "output": "Input validation failed for tool "
                     "'GenerateStructuredOutput': 'hot' is not of type "
-                    "'number'",
+                    "'number' (at $.temperature)",
                     "state": "error",
                     "metadata": {},
                 },
