@@ -19,6 +19,11 @@ from agentscope.app.storage import (
     TeamData,
     TeamMember,
     TeamRecord,
+    SOPAgentRef,
+    SOPData,
+    SOPRecord,
+    SOPRunRecord,
+    SOPStepDataV1,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
 from agentscope.credential import OllamaCredential
@@ -26,6 +31,7 @@ from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.app.storage import AgentData
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
+from agentscope.sop import SOPPhase, SOPRunState, SOPStepRunState
 from agentscope.state import AgentState
 
 
@@ -1638,4 +1644,207 @@ class TestChannelSessionIndex(IsolatedAsyncioTestCase):
                 "chan-1",
             ),
             [],
+        )
+
+
+def make_sop_record(user_id: str) -> SOPRecord:
+    """A one-step procedure."""
+    return SOPRecord(
+        user_id=user_id,
+        data=SOPData(
+            name="ship",
+            description="build one",
+            steps=[
+                SOPStepDataV1(
+                    subject="model",
+                    description="make the hull",
+                    executor=SOPAgentRef(
+                        agent_id="agent-1",
+                        session_key="modeller",
+                    ),
+                ),
+            ],
+        ),
+    )
+
+
+class TestSOP(IsolatedAsyncioTestCase):
+    """Tests for SOP and SOP run CRUD."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-1"
+
+    async def test_round_trip(self) -> None:
+        """A stored procedure comes back whole."""
+        record = make_sop_record(self.user_id)
+        await self.storage.upsert_sop(self.user_id, record)
+
+        fetched = await self.storage.get_sop(self.user_id, record.id)
+
+        self.maxDiff = None
+        self.assertDictEqual(
+            fetched.data.model_dump(mode="json"),
+            {
+                "name": "ship",
+                "description": "build one",
+                "steps": [
+                    {
+                        "version": "v1",
+                        "subject": "model",
+                        "description": "make the hull",
+                        "executor": {
+                            "agent_id": "agent-1",
+                            "session_key": "modeller",
+                        },
+                        "verifier": None,
+                        "max_attempts": 3,
+                    },
+                ],
+                "workspace_grain": "run",
+            },
+        )
+        self.assertEqual(
+            [_.id for _ in await self.storage.list_sops(self.user_id)],
+            [record.id],
+        )
+
+    async def test_user_isolation(self) -> None:
+        """One user's procedures are invisible to another."""
+        record = make_sop_record("user-A")
+        await self.storage.upsert_sop("user-A", record)
+
+        self.assertEqual(await self.storage.list_sops("user-B"), [])
+        self.assertIsNone(await self.storage.get_sop("user-B", record.id))
+
+    async def test_delete(self) -> None:
+        """Deleting twice reports the second as a miss."""
+        record = make_sop_record(self.user_id)
+        await self.storage.upsert_sop(self.user_id, record)
+
+        self.assertTrue(await self.storage.delete_sop(self.user_id, record.id))
+        self.assertFalse(
+            await self.storage.delete_sop(self.user_id, record.id),
+        )
+        self.assertEqual(await self.storage.list_sops(self.user_id), [])
+
+    async def test_runs_are_listed_by_procedure_and_phase(self) -> None:
+        """The per-procedure index narrows the read; phase filters after."""
+        waiting = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id="sop-1",
+            definition=SOPData(name="a", steps=[]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
+            ),
+        )
+        done = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id="sop-1",
+            definition=SOPData(name="a", steps=[]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.COMPLETED)],
+            ),
+        )
+        other = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id="sop-2",
+            definition=SOPData(name="b", steps=[]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
+            ),
+        )
+        for record in (waiting, done, other):
+            await self.storage.upsert_sop_run(self.user_id, record)
+
+        self.assertEqual(
+            {
+                _.id
+                for _ in await self.storage.list_sop_runs(
+                    self.user_id,
+                    sop_id="sop-1",
+                )
+            },
+            {waiting.id, done.id},
+        )
+        self.assertEqual(
+            {
+                _.id
+                for _ in await self.storage.list_sop_runs(
+                    self.user_id,
+                    phase=SOPPhase.AWAITING,
+                )
+            },
+            {waiting.id, other.id},
+        )
+
+    async def test_update_run_writes_state_and_sessions(self) -> None:
+        """The hot path rewrites what moves and keeps the snapshot."""
+        run = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id="sop-1",
+            definition=SOPData(name="ship", steps=[]),
+            state=SOPRunState(steps=[SOPStepRunState()]),
+        )
+        await self.storage.upsert_sop_run(self.user_id, run)
+
+        await self.storage.update_sop_run(
+            self.user_id,
+            run.id,
+            SOPRunState(steps=[SOPStepRunState(phase=SOPPhase.AWAITING)]),
+            sessions={"modeller": "session-1"},
+        )
+
+        updated = await self.storage.get_sop_run(self.user_id, run.id)
+        self.assertEqual(updated.state.phase, SOPPhase.AWAITING)
+        self.assertEqual(updated.sessions, {"modeller": "session-1"})
+        self.assertEqual(updated.definition.name, "ship")
+
+        with self.assertRaises(KeyError):
+            await self.storage.update_sop_run(
+                self.user_id,
+                "no-such-id",
+                SOPRunState(),
+            )
+
+    async def test_deleting_a_sop_takes_its_runs_with_it(self) -> None:
+        """A run is only readable through the definition it snapshotted."""
+        sop = make_sop_record(self.user_id)
+        await self.storage.upsert_sop(self.user_id, sop)
+        run = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id=sop.id,
+            definition=sop.data,
+        )
+        await self.storage.upsert_sop_run(self.user_id, run)
+
+        await self.storage.delete_sop(self.user_id, sop.id)
+
+        self.assertIsNone(await self.storage.get_sop_run(self.user_id, run.id))
+        self.assertEqual(await self.storage.list_sop_runs(self.user_id), [])
+
+    async def test_a_step_state_subclass_survives_redis(self) -> None:
+        """What a step kept beyond the base record is stored, not trimmed."""
+        run = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id="sop-1",
+            definition=SOPData(name="ship", steps=[]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING, call_id="c1")],
+            ),
+        )
+        await self.storage.upsert_sop_run(self.user_id, run)
+
+        fetched = await self.storage.get_sop_run(self.user_id, run.id)
+
+        self.assertDictEqual(
+            fetched.state.steps[0].model_dump(mode="json"),
+            {
+                "phase": "awaiting",
+                "given": [],
+                "submission": None,
+                "verifications": [],
+                "call_id": "c1",
+            },
         )

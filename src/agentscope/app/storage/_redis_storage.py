@@ -25,11 +25,14 @@ from ._model import (
     ScheduleOrigin,
     SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
 from ...message import Msg
+from ...sop import SOPPhase, SOPRunState
 from ...state import AgentState
 
 if TYPE_CHECKING:
@@ -113,6 +116,14 @@ class RedisStorage(StorageBase):
         channel_session_index: str = (
             "agentscope:user:{user_id}:channel:{channel_id}:sessions"
         )
+
+        sop: str = "agentscope:user:{user_id}:sop:{sop_id}"
+        sop_index: str = "agentscope:user:{user_id}:sops"
+        sop_run: str = "agentscope:user:{user_id}:sop_run:{sop_run_id}"
+        sop_run_index: str = "agentscope:user:{user_id}:sop_runs"
+        # Per-procedure run index, so listing one SOP's runs does
+        # not read every run the user has.
+        sop_run_sop_index: str = "agentscope:user:{user_id}:sop:{sop_id}:runs"
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
         team_index: str = "agentscope:user:{user_id}:teams"
@@ -1555,6 +1566,176 @@ class RedisStorage(StorageBase):
         raw_list = await self._client.lrange(key, start, end)
         has_more = start > 0
         return [Msg.model_validate_json(raw) for raw in raw_list], has_more
+
+    # ------------------------------------------------------------------
+    # SOP persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Persist a procedure and index it under the user."""
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(
+            self._key(self.key_config.sop, user_id=user_id, sop_id=record.id),
+            record.model_dump_json(),
+        )
+        await self._client.sadd(
+            self._key(self.key_config.sop_index, user_id=user_id),
+            record.id,
+        )
+        return record
+
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure by id."""
+        raw = await self._client.get(
+            self._key(self.key_config.sop, user_id=user_id, sop_id=sop_id),
+        )
+        return SOPRecord.model_validate_json(raw) if raw else None
+
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """Return every procedure in the user's index that still exists."""
+        ids = await self._client.smembers(
+            self._key(self.key_config.sop_index, user_id=user_id),
+        )
+        records = []
+        for sop_id in ids:
+            record = await self.get_sop(user_id, sop_id)
+            if record is not None:
+                records.append(record)
+        return records
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure and every run of it."""
+        for run in await self.list_sop_runs(user_id, sop_id=sop_id):
+            await self.delete_sop_run(user_id, run.id)
+        await self._client.delete(
+            self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=sop_id,
+            ),
+        )
+        await self._client.srem(
+            self._key(self.key_config.sop_index, user_id=user_id),
+            sop_id,
+        )
+        deleted = await self._client.delete(
+            self._key(self.key_config.sop, user_id=user_id, sop_id=sop_id),
+        )
+        return bool(deleted)
+
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Persist a run and index it under the user and its procedure."""
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(
+            self._key(
+                self.key_config.sop_run,
+                user_id=user_id,
+                sop_run_id=record.id,
+            ),
+            record.model_dump_json(),
+        )
+        await self._client.sadd(
+            self._key(self.key_config.sop_run_index, user_id=user_id),
+            record.id,
+        )
+        await self._client.sadd(
+            self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=record.sop_id,
+            ),
+            record.id,
+        )
+        return record
+
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run by id."""
+        raw = await self._client.get(
+            self._key(
+                self.key_config.sop_run,
+                user_id=user_id,
+                sop_run_id=sop_run_id,
+            ),
+        )
+        return SOPRunRecord.model_validate_json(raw) if raw else None
+
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """Return the user's runs, newest first.
+
+        ``sop_id`` narrows which index is read; ``phase`` is applied
+        after reading, since a run's phase is derived from its steps and
+        Redis has nothing to index it by.
+        """
+        index_key = (
+            self._key(self.key_config.sop_run_index, user_id=user_id)
+            if sop_id is None
+            else self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=sop_id,
+            )
+        )
+        records = []
+        for run_id in await self._client.smembers(index_key):
+            record = await self.get_sop_run(user_id, run_id)
+            if record is not None and phase in (None, record.state.phase):
+                records.append(record)
+        return sorted(records, key=lambda _: _.created_at, reverse=True)
+
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Read-modify-write the run record; raises if absent."""
+        record = await self.get_sop_run(user_id, sop_run_id)
+        if record is None:
+            raise KeyError(f"SOP run {sop_run_id!r} not found.")
+        record.state = state
+        if sessions is not None:
+            record.sessions = sessions
+        await self.upsert_sop_run(user_id, record)
+
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run and drop it from both indexes."""
+        record = await self.get_sop_run(user_id, sop_run_id)
+        if record is None:
+            return False
+        await self._client.srem(
+            self._key(self.key_config.sop_run_index, user_id=user_id),
+            sop_run_id,
+        )
+        await self._client.srem(
+            self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=record.sop_id,
+            ),
+            sop_run_id,
+        )
+        await self._client.delete(
+            self._key(
+                self.key_config.sop_run,
+                user_id=user_id,
+                sop_run_id=sop_run_id,
+            ),
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Team persistence
