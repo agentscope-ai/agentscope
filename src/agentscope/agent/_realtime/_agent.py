@@ -157,7 +157,7 @@ class RealtimeAgent:
                 The realtime model. Its session is opened by
                 :meth:`connect` and lives as long as this agent — not as
                 long as any one transport — and is re-established on the
-                next user audio if the provider closes it.
+                next user input if the provider closes it.
             toolkit (`Toolkit | None`, optional):
                 Tools the model may call. Executed here, with permission
                 checks against ``state.permission_context``.
@@ -332,6 +332,21 @@ class RealtimeAgent:
             return False
         return True
 
+    async def _ensure_connected(self) -> bool:
+        """Re-establish the session and hand it the audio kept while it
+        was down; ``False`` while the provider is still unreachable.
+
+        The one way back to a live session, whichever input asks for it.
+        """
+        if self._connected:
+            return True
+        if not await self._try_connect():
+            return False
+        for buffered in self._backlog:
+            await self.model.push_audio(buffered)
+        self._backlog.clear()
+        return True
+
     # ------------------------------------------------------------------
     # Lifecycle: one transport
     # ------------------------------------------------------------------
@@ -424,8 +439,8 @@ class RealtimeAgent:
         Raises:
             `NotImplementedError`: For a text turn when the provider takes
                 no text input.
-            `ModelDisconnectedError`: If the provider disconnects before it
-                accepts the text turn.
+            `ModelDisconnectedError`: For a text turn when the provider
+                cannot be reached, or disconnects before accepting it.
         """
         match inputs:
             case UserInterruptEvent():
@@ -449,8 +464,12 @@ class RealtimeAgent:
                 )
                 text = msg.get_text_content() or ""
                 await self._barge_in()
-                if not self._connected:
-                    await self.connect()
+                # A typed turn reconnects the session the way audio does,
+                # and takes the audio kept meanwhile along with it.
+                if not await self._ensure_connected():
+                    raise ModelDisconnectedError(
+                        "Provider unreachable; the text turn was not sent.",
+                    )
                 try:
                     await self.model.push_text(text)
                 except ModelDisconnectedError:
@@ -497,7 +516,7 @@ class RealtimeAgent:
             )
 
     def _mark_disconnected(self) -> None:
-        """Forget the model session so the next audio reconnects."""
+        """Forget the model session so the next input reconnects."""
         self._connected = False
         self._connected_event.clear()
 
@@ -511,11 +530,8 @@ class RealtimeAgent:
         if not self._connected:
             self._backlog.append(pcm)
             del self._backlog[:-_BACKLOG_FRAMES]
-            if not await self._try_connect():
+            if not await self._ensure_connected():
                 return
-            for buffered in self._backlog:
-                await self.model.push_audio(buffered)
-            self._backlog.clear()
             pushed = True
 
         if speech is SpeechTransition.STARTED:

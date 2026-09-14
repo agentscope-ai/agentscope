@@ -389,9 +389,16 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             self.assertFalse(agent._connected)  # pylint: disable=W0212
             await agent.send("hello")
 
-        self.assertEqual(model.sessions, 2)
         self.assertEqual(model.instructions, "be brief")
-        self.assertIn("push_text('hello')", model.calls)
+        self.assertListEqual(
+            model.calls,
+            [
+                "connect(session=1,td_off=False)",
+                "connect(session=2,td_off=False)",
+                "push_text('hello')",
+                "close",
+            ],
+        )
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
             [("user", "hello")],
@@ -431,7 +438,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         async with agent:
             await asyncio.sleep(0.1)
             model.connect_error = RuntimeError("reconnect failed")
-            with self.assertRaisesRegex(RuntimeError, "reconnect failed"):
+            with self.assertRaisesRegex(
+                ModelDisconnectedError,
+                "Provider unreachable",
+            ):
                 await agent.send("hello")
 
         self.assertListEqual(agent.state.context, [])
@@ -1210,4 +1220,28 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
         self.assertTrue(
             any("keep talking" in line for line in logs.output),
             logs.output,
+        )
+
+    async def test_text_reconnect_delivers_the_kept_audio(self) -> None:
+        """A typed turn reconnects, and the frame kept by the failed push
+        rides along with that reconnect instead of being stranded."""
+        model = DropsSocketModel()
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await agent._on_audio(  # pylint: disable=W0212
+                AudioFrame(pcm=b"\x00" * 3200),
+            )
+            await agent.send("hello")
+
+        self.assertListEqual(
+            model.calls,
+            [
+                "connect(session=1,td_off=False)",
+                "connect(session=2,td_off=False)",
+                "push_audio",
+                "push_text('hello')",
+                "close",
+            ],
         )
