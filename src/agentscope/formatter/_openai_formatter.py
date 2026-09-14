@@ -269,9 +269,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
             content_blocks = []
             tool_calls = []
 
-            # Media promoted from tool results waits until the run of tool
-            # messages ends: a user message between them would leave the
-            # remaining tool_call ids unanswered, which the API rejects.
+            # Hold the promoted media until this turn's tool messages are out.
             pending_media: list[dict] = []
 
             for block in msg.get_content_blocks():

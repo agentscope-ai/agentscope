@@ -847,6 +847,7 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Screenshot taken."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=URLSource(
                                     url="https://example.com/shot.png",
                                     media_type="image/png",
@@ -868,13 +869,82 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
 
         res = await fmt.format(msgs)
 
+        shot_output = (
+            "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
         self.assertListEqual(
-            [(m["role"], m.get("tool_call_id")) for m in res],
             [
-                ("assistant", None),
-                ("tool", "call_shot"),
-                ("tool", "call_title"),
-                ("user", None),
-                ("assistant", None),
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "reasoning_content": "",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_shot",
+                            "type": "function",
+                            "function": {
+                                "name": "screenshot",
+                                "arguments": "{}",
+                            },
+                        },
+                        {
+                            "id": "call_title",
+                            "type": "function",
+                            "function": {
+                                "name": "get_title",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_shot",
+                    "content": shot_output,
+                    "name": "screenshot",
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_title",
+                    "content": "Example Domain",
+                    "name": "get_title",
+                },
+                {
+                    "role": "user",
+                    "name": "system-reminder",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>The multimodal data "
+                            "and their identifiers are listed as follows:",
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": self.image_data_uri},
+                        },
+                        {"type": "text", "text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "reasoning_content": "",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "The page is Example Domain.",
+                        },
+                    ],
+                },
             ],
+            res,
         )
