@@ -147,11 +147,34 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
         self.assertEqual(refused.status_code, 422)
         self.assertIn("modeller", refused.json()["detail"])
 
-    def test_the_schema_is_flat_enough_to_render(self) -> None:
-        """An editor should not have to chase refs to draw a verifier."""
-        schema = self._client.get("/sop/schema", headers=HEADERS).json()
-        self.assertNotIn("$defs", schema["schema"])
-        self.assertIn("steps", schema["schema"]["properties"])
+    def test_the_schema_resolves_every_ref_it_names(self) -> None:
+        """A tagged union's mapping has to point at something."""
+        schema = self._client.get("/sop/schema", headers=HEADERS).json()[
+            "schema"
+        ]
+
+        self.assertIn("steps", schema["properties"])
+        defs = set(schema.get("$defs", {}))
+        named = set()
+
+        def _walk(node: Any) -> None:
+            """Collect every ``#/$defs/...`` pointer in the schema."""
+            if isinstance(node, dict):
+                ref = node.get("$ref")
+                if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                    named.add(ref.removeprefix("#/$defs/"))
+                mapping = node.get("discriminator", {}).get("mapping", {})
+                for target in mapping.values():
+                    named.add(target.removeprefix("#/$defs/"))
+                for value in node.values():
+                    _walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    _walk(value)
+
+        _walk(schema)
+        self.assertIn("AgentVerifier", named)
+        self.assertEqual(named - defs, set())
 
     def test_a_run_opens_its_conversations_and_is_listed(self) -> None:
         """Starting a run returns it before it has got anywhere."""

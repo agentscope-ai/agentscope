@@ -151,12 +151,13 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     _SOP_RUN_LOCK = "agentscope:sop_run:lock:{rid}"
 
-    SOP_RUN_TTL_SECS = 3600
-    """Default lock lease for a SOP run (an hour).
+    SOP_RUN_TTL_SECS = 600
+    """Default lock lease for a SOP run (10 minutes).
 
-    Longer than a chat run's because one SOP turn can be several of
-    them — a step is worked on and then judged without the lock being
-    let go in between."""
+    The same as a chat run's, and for the same reason: the lease is
+    renewed while the body runs, so it only matters once the holding
+    process is gone — and then it is how long a dead run blocks a live
+    one, which no amount of work in the body should lengthen."""
 
     @classmethod
     def sop_run_lock(cls, sop_run_id: str) -> str:

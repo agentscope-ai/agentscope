@@ -12,7 +12,6 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from ..._utils._common import _flatten_json_schema
 from ..deps import (
     get_chat_service,
     get_current_user_id,
@@ -97,19 +96,20 @@ async def _require_run(
     summary="The schema a procedure's editor is built from",
 )
 async def get_sop_schema() -> SOPSchemaResponse:
-    """Return :class:`SOPData`'s JSON Schema, refs resolved.
+    """Return :class:`SOPData`'s JSON Schema.
 
-    Flattened for the same reason the agent editor's is: a form
-    renderer should not have to chase ``$ref`` s to know that a
-    verifier is one of two shapes.
+    Left as pydantic emits it, ``$defs`` and all. The agent editor's
+    schema is flattened because some model providers choke on ``$ref``,
+    but nothing here is shown to a model — and a verifier is a tagged
+    union whose ``discriminator.mapping`` points into ``$defs``, so
+    inlining the variants would leave that mapping pointing at
+    definitions no longer there.
 
     Returns:
         `SOPSchemaResponse`:
             The schema.
     """
-    return SOPSchemaResponse(
-        schema=_flatten_json_schema(SOPData.model_json_schema()),
-    )
+    return SOPSchemaResponse(schema=SOPData.model_json_schema())
 
 
 @sop_router.get(
