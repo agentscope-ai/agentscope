@@ -301,6 +301,7 @@ class Toolkit:
                 tool_call.input,
                 tool_func.input_schema,
             )
+
             # State injection
             if (
                 tool_func.is_state_injected
