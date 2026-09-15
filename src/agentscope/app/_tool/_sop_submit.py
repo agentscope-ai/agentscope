@@ -29,9 +29,10 @@ class _SubmitHandoverParams(ParamsBase):
     handover: str = Field(
         description=(
             "What you are handing to the following steps. They cannot "
-            "see your files, your tools' output or this conversation — "
-            "only this. Write it for someone who has seen none of your "
-            "work."
+            "see this conversation or your tools' output, so anything "
+            "they need from it has to be in here. Files are the "
+            "exception when the procedure shares one workspace: name "
+            "those by path rather than describing them."
         ),
     )
 
@@ -160,9 +161,10 @@ class SubmitHandover(_SOPSubmitBase):
 last thing you do — your turn is not over until you have.
 
 ## Important
-- The steps after this one cannot see your files, your tool output or \
-this conversation. Whatever they need to know has to be in the handover \
-text itself.
+- The steps after this one cannot see your tool output or this \
+conversation, so whatever they need from it has to be in the handover \
+text itself. Files are the exception when the procedure shares one \
+workspace: leave them there and name them by path.
 - Calling this does not mean the work is accepted; it is judged after \
 you hand it over, and you may be asked again with a reason.
 """

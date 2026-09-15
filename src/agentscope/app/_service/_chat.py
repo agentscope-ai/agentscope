@@ -252,7 +252,13 @@ class ChatService:
                 pass
         self._extra_agent_tools = extra_agent_tools
         self._channel_clients = channel_clients
-        self._sop_service: SOPService | None = None
+        self.sop_service: SOPService | None = None
+        """The service that carries procedures on after a step's reply.
+
+        Set by the lifespan once both exist — a SOP service needs a chat
+        service, so one of the two has to be built second. Left unset,
+        one is built on first use, which is right for a chat service
+        standing on its own but leaves nobody to stop its advances."""
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -978,8 +984,8 @@ class ChatService:
                     session_record.origin,
                     SOPOrigin,
                 ) and await self._message_bus.registry_exists(
-                    MessageBusKeys.sop_dispatch(),
-                    session_id,
+                    MessageBusKeys.sop_dispatch(session_id),
+                    MessageBusKeys.SOP_DISPATCH_FIELD,
                 ):
                     middlewares.append(SOPStepSubmitMiddleware())
 
@@ -1537,18 +1543,14 @@ class ChatService:
             MessageBusKeys.sop_run_lock(sop_run_id),
         ):
             return
-        if self._sop_service is None:
-            # Built here rather than taken at construction: a SOP
-            # service needs a chat service, so one of the two has to
-            # come second. Kept because it holds the handles of the
-            # advances it has going.
-            self._sop_service = SOPService(
+        if self.sop_service is None:
+            self.sop_service = SOPService(
                 self._storage,
                 self._workspace_manager,
                 self._message_bus,
                 self,
             )
-        self._sop_service.advance_later(user_id, sop_run_id)
+        self.sop_service.advance_later(user_id, sop_run_id)
 
     async def _project_event(
         self,

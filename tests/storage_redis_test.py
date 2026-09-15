@@ -6,6 +6,8 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
+from utils import AnyString
+
 from agentscope.app.storage import (
     RedisStorage,
     AgentRecord,
@@ -1694,25 +1696,31 @@ class TestSOP(IsolatedAsyncioTestCase):
 
         self.maxDiff = None
         self.assertDictEqual(
-            fetched.data.model_dump(mode="json"),
+            fetched.model_dump(mode="json"),
             {
-                "name": "ship",
-                "description": "build one",
-                "steps": [
-                    {
-                        "version": "v1",
-                        "subject": "model",
-                        "description": "make the hull",
-                        "executor": {
-                            "agent_id": "agent-1",
-                            "session_key": "modeller",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "data": {
+                    "name": "ship",
+                    "description": "build one",
+                    "steps": [
+                        {
+                            "version": "v1",
+                            "subject": "model",
+                            "description": "make the hull",
+                            "executor": {
+                                "agent_id": "agent-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": None,
+                            "max_attempts": 3,
                         },
-                        "verifier": None,
-                        "max_attempts": 3,
-                    },
-                ],
-                "workspace_grain": "run",
-                "session_settings": {},
+                    ],
+                    "workspace_grain": "run",
+                    "session_settings": {},
+                },
             },
         )
         self.assertEqual(
@@ -1807,9 +1815,52 @@ class TestSOP(IsolatedAsyncioTestCase):
         )
 
         updated = await self.storage.get_sop_run(self.user_id, run.id)
-        self.assertEqual(updated.state.phase, SOPPhase.AWAITING)
-        self.assertEqual(updated.sessions, {"modeller": "session-1"})
-        self.assertEqual(updated.definition.name, "ship")
+
+        self.maxDiff = None
+        self.assertDictEqual(
+            updated.model_dump(mode="json"),
+            {
+                "id": run.id,
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "sop_id": "sop-1",
+                "definition": {
+                    "name": "ship",
+                    "description": "",
+                    "steps": [
+                        {
+                            "version": "v1",
+                            "subject": "model",
+                            "description": "make the hull",
+                            "executor": {
+                                "agent_id": "a-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": None,
+                            "max_attempts": 3,
+                        },
+                    ],
+                    "workspace_grain": "run",
+                    "session_settings": {},
+                },
+                "sessions": {"modeller": "session-1"},
+                "state": {
+                    "id": AnyString(),
+                    "inputs": [],
+                    "steps": [
+                        {
+                            "phase": "awaiting",
+                            "given": [],
+                            "submission": None,
+                            "verifications": [],
+                        },
+                    ],
+                    "created_at": AnyString(),
+                    "phase": "awaiting",
+                },
+            },
+        )
 
         with self.assertRaises(KeyError):
             await self.storage.update_sop_run(

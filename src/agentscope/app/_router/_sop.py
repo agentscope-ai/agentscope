@@ -231,10 +231,11 @@ async def delete_sop_run(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> None:
-    """Delete one run.
+    """Delete one run and the conversations it opened.
 
-    Its conversations are left alone: they are ordinary sessions and may
-    hold work someone still wants to read.
+    The conversations go too: the run minted every one of them, and left
+    behind they are sessions nobody opened, still wakeable by a
+    background tool finishing long after the run is gone.
 
     Args:
         sop_run_id (`str`):
@@ -387,22 +388,22 @@ async def update_sop(
 async def delete_sop(
     sop_id: str,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
+    service: SOPService = Depends(get_sop_service),
 ) -> None:
     """Delete a procedure and every run of it.
 
     The runs go too because a run is only readable through the
-    definition it copied.
+    definition it copied, and their sessions with them.
 
     Args:
         sop_id (`str`):
             The procedure to delete.
         user_id (`str`):
             Injected authenticated user id.
-        storage (`StorageBase`):
-            Injected storage backend.
+        service (`SOPService`):
+            Injected SOP service.
     """
-    if not await storage.delete_sop(user_id, sop_id):
+    if not await service.delete_sop(user_id, sop_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"SOP {sop_id!r} not found.",
@@ -419,7 +420,6 @@ async def start_sop_run(
     sop_id: str,
     body: StartSOPRunRequest,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
     service: SOPService = Depends(get_sop_service),
 ) -> SOPRunRecord:
     """Open a run of a procedure and set it going.
@@ -436,8 +436,6 @@ async def start_sop_run(
             What the run is started with.
         user_id (`str`):
             Injected authenticated user id.
-        storage (`StorageBase`):
-            Injected storage backend.
         service (`SOPService`):
             Injected SOP service.
 
@@ -445,8 +443,13 @@ async def start_sop_run(
         `SOPRunRecord`:
             The opened run, before it has got anywhere.
     """
-    record = await _require_sop(storage, user_id, sop_id)
-    run = await service.create_run(user_id, record, body.inputs)
+    try:
+        run = await service.create_run(user_id, sop_id, body.inputs)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"SOP {sop_id!r} not found.",
+        ) from exc
     service.advance_later(user_id, run.id)
     return run
 

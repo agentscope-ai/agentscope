@@ -9,7 +9,7 @@ out of the reply, because the step's agent wrote it there through its
 submit tool.
 """
 import asyncio
-from typing import Any, AsyncGenerator, Awaitable, Callable, ClassVar, Self
+from typing import Any, AsyncGenerator, Awaitable, Callable, Self
 
 from ..storage import (
     AgentVerifier,
@@ -17,7 +17,6 @@ from ..storage import (
     HumanVerifier,
     SessionConfig,
     SOPOrigin,
-    SOPRecord,
     SOPRunRecord,
     SOPStepDataV1,
     SOPWorkspaceGrain,
@@ -34,6 +33,7 @@ from ...event import (
     UserInterruptEvent,
 )
 from ...message import Msg, TextBlock, UserMsg
+from ..._utils._common import _generate_id
 from ...sop import (
     SOP,
     SOPEngine,
@@ -160,10 +160,9 @@ class SessionSOPStep(SOPStepBase):
         # person who opens the same session and types into it while the
         # step wants nothing of it must not be handed one.
         await self._message_bus.registry_set(
-            MessageBusKeys.sop_dispatch(),
-            session_id,
+            MessageBusKeys.sop_dispatch(session_id),
+            MessageBusKeys.SOP_DISPATCH_FIELD,
             f"{self._sop_run_id}:{self._index}",
-            ttl_secs=MessageBusKeys.SOP_DISPATCH_TTL_SECS,
         )
         try:
             await self._chat.run(
@@ -225,9 +224,8 @@ class SessionSOPStep(SOPStepBase):
             # able to submit. Every other ending is the step letting go
             # of the session.
             if state.phase is not SOPPhase.AWAITING:
-                await self._message_bus.registry_del(
-                    MessageBusKeys.sop_dispatch(),
-                    session_id,
+                await self._message_bus.registry_drop(
+                    MessageBusKeys.sop_dispatch(session_id),
                 )
 
     def _brief(self, state: SOPStepRunState) -> list[Msg]:
@@ -279,14 +277,6 @@ class SOPService:
     to are closed under it.
     """
 
-    #: Handles of every advance going in this process. asyncio keeps
-    #: only a weak reference to a running task, so a detached one has
-    #: to live somewhere. Per process rather than per instance because
-    #: that is what shutdown has to reach: a chat service builds a
-    #: second instance of its own to carry on the runs its replies set
-    #: going, and those advances are no less in flight for it.
-    _advancing: ClassVar[set[asyncio.Task]] = set()
-
     def __init__(
         self,
         storage: StorageBase,
@@ -310,11 +300,15 @@ class SOPService:
         self._workspace_manager = workspace_manager
         self._message_bus = message_bus
         self._chat = chat
+        # asyncio keeps only a weak reference to a running task, so a
+        # detached advance has to live somewhere. Keyed by run so that
+        # deleting one can stop what is carrying it on first.
+        self._advancing: dict[str, set[asyncio.Task]] = {}
 
     async def create_run(
         self,
         user_id: str,
-        sop_record: SOPRecord,
+        sop_id: str,
         inputs: list[Msg] | None = None,
     ) -> SOPRunRecord:
         """Open a run: its conversations, its workspace, its record.
@@ -325,9 +319,10 @@ class SOPService:
         Args:
             user_id (`str`):
                 The owner user id.
-            sop_record (`SOPRecord`):
-                The procedure to run. Copied into the run, so editing it
-                afterwards leaves this run alone.
+            sop_id (`str`):
+                The procedure to run. Read under its own lock and copied
+                into the run, so neither editing nor deleting it
+                afterwards can strand what this opens.
             inputs (`list[Msg] | None`, optional):
                 What the run is started with, read by its first step.
 
@@ -337,9 +332,25 @@ class SOPService:
 
         Raises:
             `KeyError`:
-                If a step names a conversation the procedure never
-                configured.
+                If the user has no such procedure, or a step of it names
+                a conversation it never configured.
         """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.sop_lock(sop_id),
+            ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
+        ):
+            return await self._open_run(user_id, sop_id, inputs)
+
+    async def _open_run(
+        self,
+        user_id: str,
+        sop_id: str,
+        inputs: list[Msg] | None,
+    ) -> SOPRunRecord:
+        """Open the run, with the procedure's lock already held."""
+        sop_record = await self._storage.get_sop(user_id, sop_id)
+        if sop_record is None:
+            raise KeyError(f"SOP {sop_id!r} not found.")
         data = sop_record.data
         run = SOPRunRecord(
             user_id=user_id,
@@ -362,23 +373,22 @@ class SOPService:
                     step.verifier.agent.session_key
                 ] = step.verifier.agent.agent_id
 
-        shared = await self._workspace_manager.assign_workspace_id(
-            user_id=user_id,
-            agent_id=data.steps[0].executor.agent_id if data.steps else "",
-            session_id=run.id,
-        )
+        # Minted here rather than asked of the workspace manager. Its
+        # ``assign_workspace_id`` answers under the deployment's
+        # isolation policy, which under the default grain hands back a
+        # workspace the agent already had — so two runs would share one,
+        # and two keys on one agent would too. The grain is the author
+        # saying how their procedure passes work along, and a field that
+        # says that has to mean it.
+        shared = _generate_id()
         for key, agent_id in agents.items():
             settings = data.session_settings[key]
             fallback = settings.fallback_chat_model_config
-            workspace_id = shared
-            if data.workspace_grain is not SOPWorkspaceGrain.RUN:
-                workspace_id = (
-                    await self._workspace_manager.assign_workspace_id(
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=f"{run.id}:{key}",
-                    )
-                )
+            workspace_id = (
+                shared
+                if data.workspace_grain is SOPWorkspaceGrain.RUN
+                else _generate_id()
+            )
             session = await self._storage.upsert_session(
                 user_id=user_id,
                 agent_id=agent_id,
@@ -409,7 +419,7 @@ class SOPService:
 
     async def __aexit__(self, *exc: object) -> None:
         """Stop every advance still going, before its storage closes."""
-        going = list(self._advancing)
+        going = [task for tasks in self._advancing.values() for task in tasks]
         for task in going:
             task.cancel()
         await asyncio.gather(*going, return_exceptions=True)
@@ -440,8 +450,54 @@ class SOPService:
                 )
 
         task = asyncio.create_task(_run(), name=f"sop-run:{sop_run_id}")
-        self._advancing.add(task)
-        task.add_done_callback(self._advancing.discard)
+        going = self._advancing.setdefault(sop_run_id, set())
+        going.add(task)
+        task.add_done_callback(going.discard)
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure, its runs, and the sessions they opened.
+
+        Under the procedure's lock, so a run being opened cannot slip in
+        behind the cascade, and under each run's, so a step in flight
+        finishes writing before its record goes. Whatever is carrying a
+        run on in this process is cancelled first — waiting for the lock
+        alone would mean waiting out the rest of the procedure.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure to delete.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.sop_lock(sop_id),
+            ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
+        ):
+            runs = await self._storage.list_sop_runs(user_id, sop_id=sop_id)
+            for run in runs:
+                for task in list(self._advancing.get(run.id, ())):
+                    task.cancel()
+            await asyncio.gather(
+                *(
+                    task
+                    for run in runs
+                    for task in self._advancing.get(run.id, ())
+                ),
+                return_exceptions=True,
+            )
+            # An advance on another node cannot be cancelled from here;
+            # its lock is what makes this wait for it instead.
+            for run in runs:
+                async with self._message_bus.acquire_lock(
+                    MessageBusKeys.sop_run_lock(run.id),
+                    ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
+                ):
+                    pass
+            return await self._storage.delete_sop(user_id, sop_id)
 
     async def record_verdict(
         self,
@@ -489,7 +545,7 @@ class SOPService:
             record = await self._storage.get_sop_run(user_id, sop_run_id)
             if record is None:
                 raise KeyError(f"SOP run {sop_run_id!r} not found.")
-            if step_index >= len(record.definition.steps):
+            if not 0 <= step_index < len(record.definition.steps):
                 raise KeyError(
                     f"Step {step_index} is not part of this run.",
                 )

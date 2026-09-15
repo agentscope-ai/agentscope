@@ -83,8 +83,8 @@ class _ScriptedChat:
         self.asked.append((session_id, input_msg))
         self.dispatched.append(
             await self._bus.registry_get(
-                MessageBusKeys.sop_dispatch(),
-                session_id,
+                MessageBusKeys.sop_dispatch(session_id),
+                MessageBusKeys.SOP_DISPATCH_FIELD,
             ),
         )
         action = self.script.pop(0)
@@ -220,7 +220,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run(
             "user-1",
-            sop,
+            sop.id,
             [UserMsg(name="user", content="go")],
         )
 
@@ -302,7 +302,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         chat = _ScriptedChat(
             self.storage,
@@ -333,7 +333,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop.data.steps[0].max_attempts = 2
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         chat = _ScriptedChat(
             self.storage,
@@ -355,7 +355,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop.data.steps[0].max_attempts = 1
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         await self._drive(
             _ScriptedChat(self.storage, self.bus, [None]),
@@ -393,7 +393,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         chat = _ScriptedChat(
             self.storage,
@@ -436,7 +436,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         chat = _ScriptedChat(
             self.storage,
@@ -454,8 +454,8 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         for session_id in run.sessions.values():
             self.assertIsNone(
                 await self.bus.registry_get(
-                    MessageBusKeys.sop_dispatch(),
-                    session_id,
+                    MessageBusKeys.sop_dispatch(session_id),
+                    MessageBusKeys.SOP_DISPATCH_FIELD,
                 ),
             )
 
@@ -469,7 +469,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop = _sop("user-1", None, ("modeller", "modeller"))
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         await self._drive(
             _ScriptedChat(self.storage, self.bus, ["park"]),
@@ -480,8 +480,8 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         self.assertEqual(stored.state.phase, SOPPhase.AWAITING)
         self.assertEqual(
             await self.bus.registry_get(
-                MessageBusKeys.sop_dispatch(),
-                run.sessions["modeller"],
+                MessageBusKeys.sop_dispatch(run.sessions["modeller"]),
+                MessageBusKeys.SOP_DISPATCH_FIELD,
             ),
             f"{run.id}:0",
         )
@@ -518,7 +518,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             self.bus,
             chat,
         ) as service:
-            run = await service.create_run("user-1", sop)
+            run = await service.create_run("user-1", sop.id)
             service.advance_later("user-1", run.id)
             # Let the advance get as far as the turn it hangs on.
             await asyncio.sleep(0.05)
@@ -530,7 +530,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop = _sop("user-1", None, ("modeller", "modeller"))
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         class _Failing:
             """A chat service whose turn blows up."""
@@ -545,8 +545,8 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
 
         self.assertIsNone(
             await self.bus.registry_get(
-                MessageBusKeys.sop_dispatch(),
-                run.sessions["modeller"],
+                MessageBusKeys.sop_dispatch(run.sessions["modeller"]),
+                MessageBusKeys.SOP_DISPATCH_FIELD,
             ),
         )
 
@@ -563,7 +563,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         with self.assertRaises(ValueError) as judged:
             await service.record_verdict("user-1", run.id, 0, True)
@@ -579,7 +579,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop = _sop("user-1", None, ("modeller", "modeller"))
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
         session_id = run.sessions["modeller"]
 
         self.assertTrue(await self.storage.delete_sop_run("user-1", run.id))
@@ -596,8 +596,8 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         sop = _sop("user-1", None, ("modeller", "modeller"))
         await self.storage.upsert_sop("user-1", sop)
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        first = await service.create_run("user-1", sop)
-        second = await service.create_run("user-1", sop)
+        first = await service.create_run("user-1", sop.id)
+        second = await service.create_run("user-1", sop.id)
 
         self.assertTrue(await self.storage.delete_sop("user-1", sop.id))
 
@@ -624,7 +624,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         await self.storage.upsert_sop("user-1", sop)
 
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
-        run = await service.create_run("user-1", sop)
+        run = await service.create_run("user-1", sop.id)
 
         self.assertEqual(list(run.sessions), ["modeller"])
         session = await self.storage.get_session(

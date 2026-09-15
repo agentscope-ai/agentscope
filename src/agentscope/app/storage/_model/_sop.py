@@ -16,7 +16,14 @@ from ....sop import SOPRunState
 
 
 class SOPWorkspaceGrain(StrEnum):
-    """How many workspaces a run gets."""
+    """How many workspaces a run gets.
+
+    A run's workspaces are its own either way — minted for it rather
+    than drawn under the deployment's isolation policy, which would
+    otherwise hand two runs the workspace their first agent already
+    had. The cost is that a pre-warming workspace manager has no say in
+    the id, so a run's first step waits for a cold one.
+    """
 
     RUN = "run"
     """One for the whole run, so steps can hand files to each other."""

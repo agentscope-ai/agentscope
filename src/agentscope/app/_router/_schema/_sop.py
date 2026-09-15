@@ -11,7 +11,11 @@ class SOPSchemaResponse(BaseModel):
 
     schema_: dict = Field(
         alias="schema",
-        description="Flattened JSON Schema of ``SOPData``.",
+        description=(
+            "JSON Schema of ``SOPData``, as pydantic emits it — "
+            "``$defs`` and all, since a verifier is a tagged union "
+            "whose discriminator points into them."
+        ),
     )
 
 

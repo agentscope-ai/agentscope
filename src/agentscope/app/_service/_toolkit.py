@@ -26,6 +26,7 @@ from ..storage import (
     SOPOrigin,
     StorageBase,
 )
+from ...sop import SOPPhase
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
@@ -239,8 +240,8 @@ time or interval"
     # only about those, and an ordinary chat turn costs nothing.
     dispatched = (
         await message_bus.registry_get(
-            MessageBusKeys.sop_dispatch(),
-            session_record.id,
+            MessageBusKeys.sop_dispatch(session_record.id),
+            MessageBusKeys.SOP_DISPATCH_FIELD,
         )
         if isinstance(session_record.origin, SOPOrigin)
         else None
@@ -249,7 +250,15 @@ time or interval"
         sop_run_id, _, step_index = dispatched.rpartition(":")
         run = await storage.get_sop_run(user_id, sop_run_id)
         index = int(step_index)
-        if run is not None and index < len(run.state.steps):
+        # A claim carries no lease, so it is checked rather than timed
+        # out: the step it names has to still be under way. Anything
+        # else is a claim left behind by a node that died holding it.
+        if (
+            run is not None
+            and index < len(run.state.steps)
+            and run.state.steps[index].phase
+            in (SOPPhase.RUNNING, SOPPhase.AWAITING)
+        ):
             submit_kwargs: dict[str, Any] = {
                 "storage": storage,
                 "user_id": user_id,

@@ -149,6 +149,21 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # SOP run lock
     # ------------------------------------------------------------------
 
+    _SOP_LOCK = "agentscope:sop:lock:{sid}"
+
+    @classmethod
+    def sop_lock(cls, sop_id: str) -> str:
+        """Per-procedure distributed-lock key.
+
+        Held while a run of it is being opened, and while it is being
+        deleted — otherwise a delete can sweep the runs of a procedure
+        a moment before a half-finished create adds one more, leaving a
+        run and its sessions behind with nothing left to reach them.
+
+        Outermost of the three: procedure, then run, then session.
+        """
+        return cls._SOP_LOCK.format(sid=sop_id)
+
     _SOP_RUN_LOCK = "agentscope:sop_run:lock:{rid}"
 
     SOP_RUN_TTL_SECS = 600
@@ -159,30 +174,40 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     process is gone — and then it is how long a dead run blocks a live
     one, which no amount of work in the body should lengthen."""
 
-    _SOP_DISPATCH_NS = "agentscope:sop:dispatch"
+    _SOP_DISPATCH_NS = "agentscope:sop:dispatch:{sid}"
 
-    SOP_DISPATCH_TTL_SECS = 3600
-    """How long a recorded dispatch outlives the node that made it."""
+    SOP_DISPATCH_FIELD = "step"
+    """The only field a dispatch namespace holds."""
 
     @classmethod
-    def sop_dispatch(cls) -> str:
-        """Registry namespace of the turns procedures are waiting on.
+    def sop_dispatch(cls, session_id: str) -> str:
+        """Registry namespace for the turn a run has this session on.
 
-        One field per session, holding ``"<run id>:<step index>"`` while
-        a run has that session working on that step. A step's agent
-        reports through a submit tool, and this is what says the agent
-        replying right now is the one a run asked — rather than a person
-        who opened the same session and typed into it.
+        Holds ``"<run id>:<step index>"`` while a run has the session
+        working on that step. A step's agent reports through a submit
+        tool, and this is what says the agent replying right now is the
+        one a run asked — rather than a person who opened the same
+        session and typed into it.
+
+        Keyed per session, and carrying no lease. A namespace's TTL
+        covers the whole hash and slides on every write, so one shared
+        namespace would drop every session's claim at once, on a clock
+        nobody sets deliberately — and a claim has to outlive a park,
+        which can wait on a person for as long as that person takes.
+        The claim is released when the step stops expecting anything of
+        the session; a reader tells a stale one by the step it names no
+        longer being under way.
         """
-        return cls._SOP_DISPATCH_NS
+        return cls._SOP_DISPATCH_NS.format(sid=session_id)
 
     @classmethod
     def sop_run_lock(cls, sop_run_id: str) -> str:
         """Per-run distributed-lock key.
 
-        Taken before a run's own session locks and never the other way
-        round, so two advances of one run queue instead of deadlocking
-        against each other's steps.
+        Taken after the procedure's lock and before the run's own
+        session locks, never the other way round, so two advances of
+        one run queue instead of deadlocking against each other's
+        steps.
         """
         return cls._SOP_RUN_LOCK.format(rid=sop_run_id)
 

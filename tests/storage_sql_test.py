@@ -764,9 +764,52 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         )
 
         updated = await self.storage.get_sop_run("user-1", run.id)
-        self.assertEqual(updated.state.phase, SOPPhase.AWAITING)
-        self.assertEqual(updated.sessions, {"modeller": "session-1"})
-        self.assertEqual(updated.definition.name, "ship")
+
+        self.maxDiff = None
+        self.assertDictEqual(
+            updated.model_dump(mode="json"),
+            {
+                "id": run.id,
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "sop_id": "sop-1",
+                "definition": {
+                    "name": "ship",
+                    "description": "",
+                    "steps": [
+                        {
+                            "version": "v1",
+                            "subject": "model",
+                            "description": "make the hull",
+                            "executor": {
+                                "agent_id": "a-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": None,
+                            "max_attempts": 3,
+                        },
+                    ],
+                    "workspace_grain": "run",
+                    "session_settings": {},
+                },
+                "sessions": {"modeller": "session-1"},
+                "state": {
+                    "id": AnyString(),
+                    "inputs": [],
+                    "steps": [
+                        {
+                            "phase": "awaiting",
+                            "given": [],
+                            "submission": None,
+                            "verifications": [],
+                        },
+                    ],
+                    "created_at": AnyString(),
+                    "phase": "awaiting",
+                },
+            },
+        )
         # The promoted column moved with it, so the filter still finds it.
         self.assertEqual(
             [

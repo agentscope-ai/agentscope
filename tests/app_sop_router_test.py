@@ -223,6 +223,55 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             run["id"],
         )
 
+    def test_deleting_a_run_takes_its_sessions_and_reports_a_miss(
+        self,
+    ) -> None:
+        """204 once, 404 after, and nothing left under the agent."""
+        sop_id = self._client.post(
+            "/sop/",
+            json={"data": self._data()},
+            headers=HEADERS,
+        ).json()["sop_id"]
+        run = self._client.post(
+            f"/sop/{sop_id}/runs",
+            json={"inputs": []},
+            headers=HEADERS,
+        ).json()
+        session_id = run["sessions"]["modeller"]
+
+        other = {"X-User-ID": "bob"}
+        self.assertEqual(
+            self._client.delete(
+                f"/sop/runs/{run['id']}",
+                headers=other,
+            ).status_code,
+            404,
+        )
+
+        self.assertEqual(
+            self._client.delete(
+                f"/sop/runs/{run['id']}",
+                headers=HEADERS,
+            ).status_code,
+            204,
+        )
+        self.assertEqual(
+            self._client.delete(
+                f"/sop/runs/{run['id']}",
+                headers=HEADERS,
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self._client.get(
+                "/sessions/",
+                params={"agent_id": self._agent_id},
+                headers=HEADERS,
+            ).json()["sessions"],
+            [],
+        )
+        self.assertEqual(session_id, run["sessions"]["modeller"])
+
     def test_a_verdict_is_refused_on_a_step_nobody_was_asked_about(
         self,
     ) -> None:
