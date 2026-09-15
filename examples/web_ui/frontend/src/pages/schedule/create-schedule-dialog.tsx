@@ -1,12 +1,20 @@
 import { format } from 'date-fns';
-import { ChevronDownIcon, CircleAlert, Loader2, PlusCircle } from 'lucide-react';
+import {
+	Cable,
+	ChevronDown,
+	ChevronDownIcon,
+	CircleAlert,
+	Loader2,
+	PlusCircle,
+} from 'lucide-react';
 import * as React from 'react';
 
-import type { ChatModelConfig, PermissionMode } from '@/api';
+import type { ChannelRecord, ChatModelConfig, PermissionMode } from '@/api';
 import { AgentSelect } from '@/components/select/AgentSelect';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect';
 import { TimezoneSelect } from '@/components/select/TimezoneSelect';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import {
@@ -17,6 +25,16 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog';
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -30,6 +48,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useAgents } from '@/hooks/useAgents';
+import { useChannels } from '@/hooks/useChannels';
 import { useSchedules } from '@/hooks/useSchedules';
 import { useTranslation } from '@/i18n/useI18n';
 
@@ -57,7 +76,94 @@ function getDefaultForm() {
 		permissionMode: 'dont_ask' as PermissionMode,
 		timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 		stateful: false,
+		channelId: null as string | null,
 	};
+}
+
+const NO_CHANNEL_VALUE = '__none__';
+
+function channelLabel(channel: ChannelRecord): string {
+	const name = channel.name?.trim();
+	return name || `${channel.channel_type} · ${channel.id.slice(0, 8)}`;
+}
+
+function ChannelSelect({
+	channels,
+	value,
+	loading,
+	error,
+	onChange,
+}: {
+	channels: ChannelRecord[];
+	value: string | null;
+	loading: boolean;
+	error: Error | null;
+	onChange: (channelId: string | null) => void;
+}) {
+	const { t } = useTranslation();
+	const selected = channels.find((channel) => channel.id === value) ?? null;
+	const displayLabel = selected ? channelLabel(selected) : t('schedule.channelSelector.none');
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button
+					variant="outline"
+					size="default"
+					className="w-48 justify-between gap-1 font-normal"
+					aria-label={t('schedule.channelSelector.triggerLabel')}
+				>
+					<span className="flex min-w-0 items-center gap-2">
+						<Cable className="size-3.5 shrink-0 text-muted-foreground" />
+						<span className="truncate">{displayLabel}</span>
+					</span>
+					<ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start" className="min-w-64 max-h-72 overflow-y-auto">
+				<DropdownMenuLabel>{t('schedule.channelSelector.label')}</DropdownMenuLabel>
+				<DropdownMenuRadioGroup
+					value={value ?? NO_CHANNEL_VALUE}
+					onValueChange={(next) => onChange(next === NO_CHANNEL_VALUE ? null : next)}
+				>
+					<DropdownMenuRadioItem value={NO_CHANNEL_VALUE}>
+						{t('schedule.channelSelector.none')}
+					</DropdownMenuRadioItem>
+
+					{channels.length > 0 && <DropdownMenuSeparator />}
+					{channels.map((channel) => (
+						<DropdownMenuRadioItem key={channel.id} value={channel.id}>
+							<span className="min-w-0 flex-1">
+								<span className="block truncate" title={channelLabel(channel)}>
+									{channelLabel(channel)}
+								</span>
+								{channel.name?.trim() && (
+									<span className="block truncate text-xs text-muted-foreground">
+										{channel.channel_type}
+									</span>
+								)}
+							</span>
+							{!channel.enabled && (
+								<Badge variant="secondary" className="mr-5 text-[10px]">
+									{t('common.disabled')}
+								</Badge>
+							)}
+						</DropdownMenuRadioItem>
+					))}
+				</DropdownMenuRadioGroup>
+
+				{channels.length === 0 && (
+					<DropdownMenuItem disabled>
+						{loading
+							? t('common.loading')
+							: error
+								? t('schedule.channelSelector.loadError')
+								: t('schedule.channelSelector.empty')}
+					</DropdownMenuItem>
+				)}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
 }
 
 function buildCronExpr(freq: FreqType, time: string, date: Date | undefined): string {
@@ -117,6 +223,11 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 	const { t } = useTranslation();
 	const { create } = useSchedules();
 	const { agents } = useAgents();
+	const { channels, loading: channelsLoading, error: channelsError } = useChannels();
+	const schedulableChannels = React.useMemo(
+		() => channels.filter((channel) => channel.supports_scheduled_tools),
+		[channels],
+	);
 	const [form, setForm] = React.useState(getDefaultForm);
 	const [loading, setLoading] = React.useState(false);
 	const [error, setError] = React.useState('');
@@ -169,6 +280,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				enabled: true,
 				stateful: form.stateful,
 				permission_mode: form.permissionMode,
+				...(form.channelId ? { channel_id: form.channelId } : {}),
 			});
 			onCreated?.();
 			onOpenChange(false);
@@ -301,6 +413,22 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 								size="default"
 								value={form.permissionMode}
 								onChange={(v) => set('permissionMode', v)}
+							/>
+						</Field>
+
+						<Field orientation="horizontal" className="items-start">
+							<div className="flex flex-1 flex-col gap-0.5">
+								<FieldLabel>{t('schedule.channelSelector.label')}</FieldLabel>
+								<span className="text-xs text-muted-foreground">
+									{t('schedule.channelSelector.description')}
+								</span>
+							</div>
+							<ChannelSelect
+								channels={schedulableChannels}
+								value={form.channelId}
+								loading={channelsLoading}
+								error={channelsError}
+								onChange={(channelId) => set('channelId', channelId)}
 							/>
 						</Field>
 
