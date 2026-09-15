@@ -512,6 +512,17 @@ class SOPService:
         a person to answer a step's question, or a tool call to be
         approved in one of its sessions.
 
+        .. note::
+            ``inputs`` accepts a :class:`UserInterruptEvent` because the
+            engine does, but :class:`SessionSOPStep` does not yet act on
+            one — the SDK's own step abandons the attempt and leaves it
+            at ``PENDING``, and this has no equivalent. Nothing passes
+            one today. Stopping a run is its own piece of work: it has
+            to reach a turn already in flight, which means going through
+            :class:`~agentscope.app._manager.ChatRunRegistry` rather
+            than calling :meth:`ChatService.run` directly, and the stop
+            cannot take the run lock it would be interrupting.
+
         Args:
             user_id (`str`):
                 The owner user id.
