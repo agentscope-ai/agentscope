@@ -735,10 +735,7 @@ class Agent:
             # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
-            # Context replacement may remove the latest assistant message,
-            # which is also where usage for the current reply is accumulated.
-            # Keep that usage so compression cannot erase earlier model-call
-            # accounting from the same reply.
+            # The current reply msg may be fully compressed, so keep its usage
             current_reply_usage = self._get_reply_usage()
 
             # Update the context and summary

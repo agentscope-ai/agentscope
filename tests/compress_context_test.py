@@ -2717,14 +2717,28 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         await agent.compress_context()
 
-        self.assertEqual(
-            agent._get_reply_usage(),
-            Usage(
-                input_tokens=90,
-                output_tokens=45,
-                cache_input_tokens=6,
-                cache_creation_input_tokens=3,
-            ),
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": "current-reply",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 90,
+                        "output_tokens": 45,
+                        "cache_input_tokens": 6,
+                        "cache_creation_input_tokens": 3,
+                    },
+                },
+            ],
         )
 
     async def test_summary_failure_truncates_context(self) -> None:

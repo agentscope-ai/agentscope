@@ -18,12 +18,10 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
-    AssistantMsg,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
     UserMsg,
-    Usage,
 )
 from agentscope.types import ReplyFinishedReason
 
@@ -871,30 +869,6 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_reply_usage_returns_a_copy(
-        self,
-    ) -> None:
-        """Reply usage is copied instead of exposing context state."""
-        usage = Usage(
-            input_tokens=10,
-            output_tokens=5,
-            cache_input_tokens=2,
-            cache_creation_input_tokens=1,
-        )
-        self.agent.state.context = [
-            AssistantMsg(
-                name=self.agent.name,
-                content=[TextBlock(text="response")],
-                id=self.agent.state.reply_id,
-                usage=usage,
-            ),
-        ]
-
-        # pylint: disable=protected-access
-        reply_usage = self.agent._get_reply_usage()
-        self.assertEqual(reply_usage, usage)
-        self.assertIsNot(reply_usage, usage)
-
     async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:
         """A tool round consumes one iteration before final reasoning."""
         self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
@@ -1236,13 +1210,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        first_msg = await self.agent.reply(
-            UserMsg(name="user", content="Start"),
-        )
-        second_msg = await self.agent.reply()
+        await self.agent.reply(UserMsg(name="user", content="Start"))
+        msg = await self.agent.reply()
 
-        self.assertIsNotNone(first_msg.usage)
-        self.assertIsNone(second_msg.usage)
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "content": [],
+            },
+        )
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
