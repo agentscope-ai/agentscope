@@ -7,6 +7,7 @@ submit tools a real agent would call. What is under test is the
 service's own reasoning — which session gets the turn, what it reads
 back, and where the run stops.
 """
+import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -486,6 +487,43 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         # Nothing was held against the step for parking.
         self.assertListEqual(stored.state.steps[0].verifications, [])
+
+    async def test_leaving_the_service_stops_the_advances_it_started(
+        self,
+    ) -> None:
+        """They outlive their request, so something has to end them."""
+        sop = _sop("user-1", None, ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+
+        class _Hanging:
+            """A chat service whose turn never comes back."""
+
+            def __init__(self) -> None:
+                """Start out uncancelled."""
+                self.cancelled = False
+
+            async def run(self, *args: Any, **kwargs: Any) -> None:
+                """Wait to be cancelled, and remember that it was."""
+                _ = args, kwargs
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.cancelled = True
+                    raise
+
+        chat = _Hanging()
+        async with SOPService(
+            self.storage,
+            _Workspaces(),
+            self.bus,
+            chat,
+        ) as service:
+            run = await service.create_run("user-1", sop)
+            service.advance_later("user-1", run.id)
+            # Let the advance get as far as the turn it hangs on.
+            await asyncio.sleep(0.05)
+
+        self.assertTrue(chat.cancelled)
 
     async def test_a_turn_that_raises_still_releases_its_claim(self) -> None:
         """Otherwise the next person to type there inherits the claim."""

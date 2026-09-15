@@ -184,11 +184,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             workspace_manager=workspace_manager,
         )
 
-        app.state.sop_service = SOPService(
-            storage=storage,
-            workspace_manager=workspace_manager,
-            message_bus=message_bus,
-            chat=chat_service,
+        # On the stack so its advances are stopped on the way out —
+        # they outlive the requests that set them going, and would
+        # otherwise keep writing to a closed storage.
+        app.state.sop_service = await stack.enter_async_context(
+            SOPService(
+                storage=storage,
+                workspace_manager=workspace_manager,
+                message_bus=message_bus,
+                chat=chat_service,
+            ),
         )
 
         app.state.workspace_service = WorkspaceService(

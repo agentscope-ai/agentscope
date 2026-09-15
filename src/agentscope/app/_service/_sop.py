@@ -9,7 +9,7 @@ out of the reply, because the step's agent wrote it there through its
 submit tool.
 """
 import asyncio
-from typing import Any, AsyncGenerator, Awaitable, Callable
+from typing import Any, AsyncGenerator, Awaitable, Callable, ClassVar, Self
 
 from ..storage import (
     AgentVerifier,
@@ -271,7 +271,21 @@ class SessionSOPStep(SOPStepBase):
 
 
 class SOPService:
-    """Start runs of a stored procedure, and carry them forward."""
+    """Start runs of a stored procedure, and carry them forward.
+
+    Enter it as a context manager for the life of the application:
+    an advance outlives the request that set it going, and on the way
+    out it has to be stopped before the storage and bus it is writing
+    to are closed under it.
+    """
+
+    #: Handles of every advance going in this process. asyncio keeps
+    #: only a weak reference to a running task, so a detached one has
+    #: to live somewhere. Per process rather than per instance because
+    #: that is what shutdown has to reach: a chat service builds a
+    #: second instance of its own to carry on the runs its replies set
+    #: going, and those advances are no less in flight for it.
+    _advancing: ClassVar[set[asyncio.Task]] = set()
 
     def __init__(
         self,
@@ -296,10 +310,6 @@ class SOPService:
         self._workspace_manager = workspace_manager
         self._message_bus = message_bus
         self._chat = chat
-        # asyncio holds only a weak reference to a running task, so a
-        # detached advance has to be kept alive here or it can be
-        # collected mid-step.
-        self._advancing: set[asyncio.Task] = set()
 
     async def create_run(
         self,
@@ -392,6 +402,18 @@ class SOPService:
             run.sessions[key] = session.id
 
         return await self._storage.upsert_sop_run(user_id, run)
+
+    async def __aenter__(self) -> Self:
+        """Enter the service's lifetime."""
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Stop every advance still going, before its storage closes."""
+        going = list(self._advancing)
+        for task in going:
+            task.cancel()
+        await asyncio.gather(*going, return_exceptions=True)
+        self._advancing.clear()
 
     def advance_later(self, user_id: str, sop_run_id: str) -> None:
         """Set a run going without waiting for it to stop again.
