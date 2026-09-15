@@ -113,6 +113,7 @@ class OllamaChatFormatter(_OllamaFormatterBase):
         ),
     )
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -237,12 +238,29 @@ class OllamaChatFormatter(_OllamaFormatterBase):
 
                     # If there's multimodal data, append an extra user message.
                     if multimodal_data:
-                        pending_media.append(
-                            self._format_tool_result_media(
-                                textual_output,
-                                multimodal_data,
-                            ),
-                        )
+                        user_images = []
+                        user_content_parts = []
+                        for data_block in multimodal_data:
+                            if isinstance(data_block, DataBlock):
+                                formatted_image = (
+                                    self._format_ollama_data_block(
+                                        data_block,
+                                    )
+                                )
+                                if formatted_image:
+                                    user_images.append(formatted_image)
+                            elif isinstance(data_block, TextBlock):
+                                user_content_parts.append(data_block.text)
+
+                        user_msg = {
+                            "role": "user",
+                            "content": "\n".join(user_content_parts)
+                            if user_content_parts
+                            else textual_output,
+                        }
+                        if user_images:
+                            user_msg["images"] = user_images
+                        pending_media.append(user_msg)
 
                 else:
                     logger.warning(
@@ -265,43 +283,6 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                 messages.append(msg_ollama)
 
         return messages
-
-    def _format_tool_result_media(
-        self,
-        textual_output: str,
-        multimodal_data: list[TextBlock | DataBlock],
-    ) -> dict[str, Any]:
-        """Build the user message that carries the media of a tool result.
-
-        Args:
-            textual_output (`str`):
-                The textual form of the tool result.
-            multimodal_data (`list[TextBlock | DataBlock]`):
-                The multimodal blocks extracted from the tool result.
-
-        Returns:
-            `dict[str, Any]`:
-                A user message with the images and their descriptions.
-        """
-        user_images = []
-        user_content_parts = []
-        for data_block in multimodal_data:
-            if isinstance(data_block, DataBlock):
-                formatted_image = self._format_ollama_data_block(data_block)
-                if formatted_image:
-                    user_images.append(formatted_image)
-            elif isinstance(data_block, TextBlock):
-                user_content_parts.append(data_block.text)
-
-        user_msg: dict[str, Any] = {
-            "role": "user",
-            "content": "\n".join(user_content_parts)
-            if user_content_parts
-            else textual_output,
-        }
-        if user_images:
-            user_msg["images"] = user_images
-        return user_msg
 
     def _format_tool_call_message(
         self,
