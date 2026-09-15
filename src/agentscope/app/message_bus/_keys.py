@@ -159,6 +159,23 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     process is gone — and then it is how long a dead run blocks a live
     one, which no amount of work in the body should lengthen."""
 
+    _SOP_DISPATCH_NS = "agentscope:sop:dispatch"
+
+    SOP_DISPATCH_TTL_SECS = 3600
+    """How long a recorded dispatch outlives the node that made it."""
+
+    @classmethod
+    def sop_dispatch(cls) -> str:
+        """Registry namespace of the turns procedures are waiting on.
+
+        One field per session, holding ``"<run id>:<step index>"`` while
+        a run has that session working on that step. A step's agent
+        reports through a submit tool, and this is what says the agent
+        replying right now is the one a run asked — rather than a person
+        who opened the same session and typed into it.
+        """
+        return cls._SOP_DISPATCH_NS
+
     @classmethod
     def sop_run_lock(cls, sop_run_id: str) -> str:
         """Per-run distributed-lock key.

@@ -20,16 +20,13 @@ from ._schema import (
     CreateSOPResponse,
     ListSOPRunsResponse,
     ListSOPsResponse,
-    SOPRunResponse,
     SOPSchemaResponse,
     StartSOPRunRequest,
     SubmitVerdictRequest,
     UpdateSOPRequest,
 )
 from .._service import SOPService
-from .._tool import SubmitVerdict
 from ..storage import (
-    HumanVerifier,
     SOPData,
     SOPRecord,
     SOPRunRecord,
@@ -199,14 +196,14 @@ async def list_sop_runs(
 
 @sop_router.get(
     "/runs/{sop_run_id}",
-    response_model=SOPRunResponse,
+    response_model=SOPRunRecord,
     summary="Read one run",
 )
 async def get_sop_run(
     sop_run_id: str,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> SOPRunResponse:
+) -> SOPRunRecord:
     """Return one run and where it stands.
 
     Args:
@@ -218,11 +215,10 @@ async def get_sop_run(
             Injected storage backend.
 
     Returns:
-        `SOPRunResponse`:
-            The run record and its derived phase.
+        `SOPRunRecord`:
+            The run. Where it stands is its state's ``phase``.
     """
-    record = await _require_run(storage, user_id, sop_run_id)
-    return SOPRunResponse(run=record, phase=record.state.phase)
+    return await _require_run(storage, user_id, sop_run_id)
 
 
 @sop_router.delete(
@@ -257,16 +253,15 @@ async def delete_sop_run(
 
 @sop_router.post(
     "/runs/{sop_run_id}/verdict",
-    response_model=SOPRunResponse,
+    response_model=SOPRunRecord,
     summary="File a person's verdict on a step",
 )
 async def submit_verdict(
     sop_run_id: str,
     body: SubmitVerdictRequest,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
     service: SOPService = Depends(get_sop_service),
-) -> SOPRunResponse:
+) -> SOPRunRecord:
     """Answer a step that was waiting on a person.
 
     Filed through the same tool an agent reviewer calls, so a verdict is
@@ -282,13 +277,11 @@ async def submit_verdict(
             Which step, and what was decided.
         user_id (`str`):
             Injected authenticated user id.
-        storage (`StorageBase`):
-            Injected storage backend.
         service (`SOPService`):
             Injected SOP service.
 
     Returns:
-        `SOPRunResponse`:
+        `SOPRunRecord`:
             The run with the verdict recorded on it.
 
     Raises:
@@ -296,35 +289,26 @@ async def submit_verdict(
             404 if there is no such run, and 409 if that step is not one
             a person was asked to judge, or is not waiting to be.
     """
-    record = await _require_run(storage, user_id, sop_run_id)
-    if body.step_index >= len(record.definition.steps):
+    try:
+        updated = await service.record_verdict(
+            user_id,
+            sop_run_id,
+            body.step_index,
+            body.passed,
+            body.message,
+        )
+    except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Step {body.step_index} is not part of this run.",
-        )
-    step = record.definition.steps[body.step_index]
-    if not isinstance(step.verifier, HumanVerifier):
+            detail=str(exc).strip("'"),
+        ) from exc
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Step {body.step_index} is not judged by a person.",
-        )
-    if record.state.steps[body.step_index].phase is not SOPPhase.AWAITING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Step {body.step_index} is not waiting to be judged.",
-        )
-
-    await SubmitVerdict(
-        storage=storage,
-        user_id=user_id,
-        sop_run_id=sop_run_id,
-        step_index=body.step_index,
-        verifier=user_id,
-    )(passed=body.passed, message=body.message)
-
-    updated = await _require_run(storage, user_id, sop_run_id)
+            detail=str(exc),
+        ) from exc
     service.advance_later(user_id, sop_run_id)
-    return SOPRunResponse(run=updated, phase=updated.state.phase)
+    return updated
 
 
 @sop_router.get(
@@ -427,7 +411,7 @@ async def delete_sop(
 
 @sop_router.post(
     "/{sop_id}/runs",
-    response_model=SOPRunResponse,
+    response_model=SOPRunRecord,
     status_code=status.HTTP_201_CREATED,
     summary="Start a run",
 )
@@ -437,7 +421,7 @@ async def start_sop_run(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     service: SOPService = Depends(get_sop_service),
-) -> SOPRunResponse:
+) -> SOPRunRecord:
     """Open a run of a procedure and set it going.
 
     Returns as soon as the run exists — its conversations are opened
@@ -458,13 +442,13 @@ async def start_sop_run(
             Injected SOP service.
 
     Returns:
-        `SOPRunResponse`:
+        `SOPRunRecord`:
             The opened run, before it has got anywhere.
     """
     record = await _require_sop(storage, user_id, sop_id)
     run = await service.create_run(user_id, record, body.inputs)
     service.advance_later(user_id, run.id)
-    return SOPRunResponse(run=run, phase=run.state.phase)
+    return run
 
 
 def _reject_unconfigured_sessions(data: SOPData) -> None:

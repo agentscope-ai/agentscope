@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 from ...storage import SOPData, SOPRecord, SOPRunRecord
 from ....message import Msg
-from ....sop import SOPPhase
 
 
 class SOPSchemaResponse(BaseModel):
@@ -55,13 +54,6 @@ class ListSOPRunsResponse(BaseModel):
 
     runs: list[SOPRunRecord] = Field(description="The runs, newest first.")
     total: int = Field(description="How many were returned.")
-
-
-class SOPRunResponse(BaseModel):
-    """Response body carrying one run and where it stands."""
-
-    run: SOPRunRecord = Field(description="The run.")
-    phase: SOPPhase = Field(description="Where it stands overall.")
 
 
 class SubmitVerdictRequest(BaseModel):

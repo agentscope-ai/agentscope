@@ -179,6 +179,15 @@ def _mcp_record(user_id: str, name: str = "deepwiki") -> MCPRecord:
     )
 
 
+# A procedure needs at least one milestone, so the fixtures that only
+# care about the record around it still carry one.
+_A_STEP = SOPStepDataV1(
+    subject="model",
+    description="make the hull",
+    executor=SOPAgentRef(agent_id="a-1", session_key="modeller"),
+)
+
+
 class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
     """End-to-end tests for :class:`AsyncSQLAlchemyStorage` over
     in-memory SQLite."""
@@ -682,7 +691,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         waiting = SOPRunRecord(
             user_id="user-1",
             sop_id="sop-1",
-            definition=SOPData(name="a", steps=[]),
+            definition=SOPData(name="a", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
             ),
@@ -690,7 +699,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         done = SOPRunRecord(
             user_id="user-1",
             sop_id="sop-1",
-            definition=SOPData(name="a", steps=[]),
+            definition=SOPData(name="a", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.COMPLETED)],
             ),
@@ -698,7 +707,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         other = SOPRunRecord(
             user_id="user-1",
             sop_id="sop-2",
-            definition=SOPData(name="b", steps=[]),
+            definition=SOPData(name="b", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
             ),
@@ -739,7 +748,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         run = SOPRunRecord(
             user_id="user-1",
             sop_id="sop-1",
-            definition=SOPData(name="ship", steps=[]),
+            definition=SOPData(name="ship", steps=[_A_STEP]),
             state=SOPRunState(steps=[SOPStepRunState()]),
         )
         await self.storage.upsert_sop_run("user-1", run)
@@ -787,7 +796,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         """A run is only readable through the definition it snapshotted."""
         sop = SOPRecord(
             user_id="user-1",
-            data=SOPData(name="ship", steps=[]),
+            data=SOPData(name="ship", steps=[_A_STEP]),
         )
         await self.storage.upsert_sop("user-1", sop)
         run = SOPRunRecord(
@@ -807,7 +816,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         run = SOPRunRecord(
             user_id="user-1",
             sop_id="sop-1",
-            definition=SOPData(name="ship", steps=[]),
+            definition=SOPData(name="ship", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.AWAITING, call_id="c1")],
             ),
@@ -1460,7 +1469,7 @@ class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
             ) as storage:
                 sop = SOPRecord(
                     user_id="user-1",
-                    data=SOPData(name="ship", steps=[]),
+                    data=SOPData(name="ship", steps=[_A_STEP]),
                 )
                 await storage.upsert_sop("user-1", sop)
                 await storage.upsert_sop_run(

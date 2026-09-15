@@ -23,6 +23,7 @@ from ..storage import (
     SOPWorkspaceGrain,
     StorageBase,
 )
+from .._tool import SubmitVerdict
 from ..message_bus import MessageBus, MessageBusKeys
 from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
@@ -69,6 +70,7 @@ class SessionSOPStep(SOPStepBase):
         sessions: dict[str, str],
         chat: Any,
         storage: StorageBase,
+        message_bus: MessageBus,
         persist: Callable[[], Awaitable[None]],
     ) -> None:
         """Bind the step to the run it belongs to.
@@ -89,6 +91,9 @@ class SessionSOPStep(SOPStepBase):
                 Where a turn is actually taken.
             storage (`StorageBase`):
                 Read back what the turn filed.
+            message_bus (`MessageBus`):
+                Records the turn as this run's while it is in flight,
+                which is what gives that turn its submit tool.
             persist (`Callable[[], Awaitable[None]]`):
                 Writes the whole run state. Called before a turn is
                 handed over, because the submit tool finds its step by
@@ -102,6 +107,7 @@ class SessionSOPStep(SOPStepBase):
         self._sessions = sessions
         self._chat = chat
         self._storage = storage
+        self._message_bus = message_bus
         self._persist = persist
 
     async def reply_stream(  # pylint: disable=invalid-overridden-method
@@ -149,12 +155,27 @@ class SessionSOPStep(SOPStepBase):
         # The engine hands over ``given`` for the former, which the
         # briefing already carries.
         resuming = inputs is not None and not isinstance(inputs, (Msg, list))
-        await self._chat.run(
-            self._user_id,
+        # Claimed for the length of the turn: the submit tool exists
+        # because a run asked for this turn, so a person who opens the
+        # same session and types into it must not be handed one.
+        await self._message_bus.registry_set(
+            MessageBusKeys.sop_dispatch(),
             session_id,
-            ref.agent_id,
-            inputs if resuming else opening,
+            f"{self._sop_run_id}:{self._index}",
+            ttl_secs=MessageBusKeys.SOP_DISPATCH_TTL_SECS,
         )
+        try:
+            await self._chat.run(
+                self._user_id,
+                session_id,
+                ref.agent_id,
+                inputs if resuming else opening,
+            )
+        finally:
+            await self._message_bus.registry_del(
+                MessageBusKeys.sop_dispatch(),
+                session_id,
+            )
 
         stored = await self._storage.get_sop_run(
             self._user_id,
@@ -393,6 +414,82 @@ class SOPService:
         self._advancing.add(task)
         task.add_done_callback(self._advancing.discard)
 
+    async def record_verdict(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        step_index: int,
+        passed: bool,
+        message: str = "",
+    ) -> SOPRunRecord:
+        """File a person's verdict on a step that was waiting for one.
+
+        Under the run's lock, because a run's own advance writes the
+        whole run state back when it stops — a verdict landing between
+        that advance's read and its write would be overwritten, and the
+        step would sit waiting for an answer that had already been
+        given.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run being judged.
+            step_index (`int`):
+                Which step, by its position.
+            passed (`bool`):
+                Whether the attempt is accepted.
+            message (`str`, defaults to `""`):
+                Why it was refused.
+
+        Returns:
+            `SOPRunRecord`:
+                The run with the verdict recorded on it.
+
+        Raises:
+            `KeyError`:
+                If the user has no such run, or it has no such step.
+            `ValueError`:
+                If that step is not one a person was asked to judge, or
+                is not waiting to be.
+        """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.sop_run_lock(sop_run_id),
+            ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
+        ):
+            record = await self._storage.get_sop_run(user_id, sop_run_id)
+            if record is None:
+                raise KeyError(f"SOP run {sop_run_id!r} not found.")
+            if step_index >= len(record.definition.steps):
+                raise KeyError(
+                    f"Step {step_index} is not part of this run.",
+                )
+            step = record.definition.steps[step_index]
+            if not isinstance(step.verifier, HumanVerifier):
+                raise ValueError(
+                    f"Step {step_index} is not judged by a person.",
+                )
+            if record.state.steps[step_index].phase is not SOPPhase.AWAITING:
+                raise ValueError(
+                    f"Step {step_index} is not waiting to be judged.",
+                )
+
+            # The same tool an agent reviewer calls, so a verdict is one
+            # thing however it was reached.
+            await SubmitVerdict(
+                storage=self._storage,
+                user_id=user_id,
+                sop_run_id=sop_run_id,
+                step_index=step_index,
+                verifier=user_id,
+            )(passed=passed, message=message)
+
+            updated = await self._storage.get_sop_run(user_id, sop_run_id)
+
+        if updated is None:
+            raise KeyError(f"SOP run {sop_run_id!r} not found.")
+        return updated
+
     async def run(
         self,
         user_id: str,
@@ -463,6 +560,7 @@ class SOPService:
                         sessions=record.sessions,
                         chat=self._chat,
                         storage=self._storage,
+                        message_bus=self._message_bus,
                         persist=_persist,
                     )
                     for index, step in enumerate(record.definition.steps)

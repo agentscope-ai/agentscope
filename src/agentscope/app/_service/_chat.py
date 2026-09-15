@@ -967,10 +967,16 @@ class ChatService:
                         ),
                     )
 
-                # A step of a procedure answers through its submit tool,
-                # so a reply that ends without one has produced nothing
-                # the run can act on.
-                if isinstance(session_record.origin, SOPOrigin):
+                # A step of a procedure answers through its submit
+                # tool, so a reply that ends without one has produced
+                # nothing the run can act on. Only the turn the run
+                # asked for: a person typing into the same session is
+                # having a conversation, and holding that to a
+                # submission would put their words in a deliverable.
+                if await self._message_bus.registry_exists(
+                    MessageBusKeys.sop_dispatch(),
+                    session_id,
+                ):
                     middlewares.append(SOPStepSubmitMiddleware())
 
                 if self._extra_agent_middlewares is not None:

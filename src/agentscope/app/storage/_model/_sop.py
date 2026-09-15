@@ -124,7 +124,13 @@ class SOPData(BaseModel):
     )
 
     steps: list[SOPStepDataV1] = Field(
-        description="Its milestones, in the order they must happen.",
+        min_length=1,
+        description=(
+            "Its milestones, in the order they must happen. At least "
+            "one: a run of a procedure with no steps could never reach "
+            "any phase but pending, so there would be no way for it to "
+            "end."
+        ),
     )
 
     workspace_grain: SOPWorkspaceGrain = Field(

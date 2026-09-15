@@ -9,7 +9,7 @@ tools, and caller-supplied extras — into one :class:`Toolkit`.
 from typing import Any, Literal
 
 from .._manager import BackgroundTaskManager, SchedulerManager
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from .._tool import (
     SubmitHandover,
     SubmitVerdict,
@@ -20,13 +20,7 @@ from .._tool import (
     TeamSay,
 )
 from .._types import AgentToolFactory, SubAgentTemplate
-from ..storage import (
-    AgentRecord,
-    SessionRecord,
-    SOPOrigin,
-    StorageBase,
-)
-from ...sop import SOPPhase
+from ..storage import AgentRecord, SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
@@ -230,31 +224,24 @@ time or interval"
 
     # SOP submission tool — a step's agent reports through storage
     # rather than through its reply, so it carries exactly one of the
-    # two. Which one is the half of the step it is playing: a step is
-    # being worked on until it has handed something over, and judged
-    # afterwards, the same rule the SDK's own step uses.
-    if isinstance(session_record.origin, SOPOrigin):
-        run = await storage.get_sop_run(
-            user_id,
-            session_record.origin.sop_run_id,
-        )
-        index = (
-            next(
-                (
-                    i
-                    for i, step in enumerate(run.state.steps)
-                    if step.phase is SOPPhase.RUNNING
-                ),
-                None,
-            )
-            if run is not None
-            else None
-        )
-        if index is not None:
+    # two. Only the turn a run asked for: a person who opens the same
+    # session and types into it is having a conversation, not filing a
+    # deliverable. Which of the two is the half of the step being
+    # played — a step is worked on until it has handed something over,
+    # and judged afterwards, the same rule the SDK's own step uses.
+    dispatched = await message_bus.registry_get(
+        MessageBusKeys.sop_dispatch(),
+        session_record.id,
+    )
+    if dispatched is not None:
+        sop_run_id, _, step_index = dispatched.rpartition(":")
+        run = await storage.get_sop_run(user_id, sop_run_id)
+        index = int(step_index)
+        if run is not None and index < len(run.state.steps):
             submit_kwargs: dict[str, Any] = {
                 "storage": storage,
                 "user_id": user_id,
-                "sop_run_id": session_record.origin.sop_run_id,
+                "sop_run_id": sop_run_id,
                 "step_index": index,
             }
             tools.append(

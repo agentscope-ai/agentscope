@@ -1647,6 +1647,15 @@ class TestChannelSessionIndex(IsolatedAsyncioTestCase):
         )
 
 
+# A procedure needs at least one milestone, so the fixtures that only
+# care about the record around it still carry one.
+_A_STEP = SOPStepDataV1(
+    subject="model",
+    description="make the hull",
+    executor=SOPAgentRef(agent_id="a-1", session_key="modeller"),
+)
+
+
 def make_sop_record(user_id: str) -> SOPRecord:
     """A one-step procedure."""
     return SOPRecord(
@@ -1735,7 +1744,7 @@ class TestSOP(IsolatedAsyncioTestCase):
         waiting = SOPRunRecord(
             user_id=self.user_id,
             sop_id="sop-1",
-            definition=SOPData(name="a", steps=[]),
+            definition=SOPData(name="a", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
             ),
@@ -1743,7 +1752,7 @@ class TestSOP(IsolatedAsyncioTestCase):
         done = SOPRunRecord(
             user_id=self.user_id,
             sop_id="sop-1",
-            definition=SOPData(name="a", steps=[]),
+            definition=SOPData(name="a", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.COMPLETED)],
             ),
@@ -1751,7 +1760,7 @@ class TestSOP(IsolatedAsyncioTestCase):
         other = SOPRunRecord(
             user_id=self.user_id,
             sop_id="sop-2",
-            definition=SOPData(name="b", steps=[]),
+            definition=SOPData(name="b", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
             ),
@@ -1785,7 +1794,7 @@ class TestSOP(IsolatedAsyncioTestCase):
         run = SOPRunRecord(
             user_id=self.user_id,
             sop_id="sop-1",
-            definition=SOPData(name="ship", steps=[]),
+            definition=SOPData(name="ship", steps=[_A_STEP]),
             state=SOPRunState(steps=[SOPStepRunState()]),
         )
         await self.storage.upsert_sop_run(self.user_id, run)
@@ -1840,7 +1849,7 @@ class TestSOP(IsolatedAsyncioTestCase):
         run = SOPRunRecord(
             user_id=self.user_id,
             sop_id="sop-1",
-            definition=SOPData(name="ship", steps=[]),
+            definition=SOPData(name="ship", steps=[_A_STEP]),
             sessions={"modeller": session.id},
         )
         await self.storage.upsert_sop_run(self.user_id, run)
@@ -1862,7 +1871,7 @@ class TestSOP(IsolatedAsyncioTestCase):
         run = SOPRunRecord(
             user_id=self.user_id,
             sop_id="sop-1",
-            definition=SOPData(name="ship", steps=[]),
+            definition=SOPData(name="ship", steps=[_A_STEP]),
             state=SOPRunState(
                 steps=[SOPStepRunState(phase=SOPPhase.AWAITING, call_id="c1")],
             ),

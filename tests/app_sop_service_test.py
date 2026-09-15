@@ -14,7 +14,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
 from agentscope.app._service import SOPService
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app._tool import SubmitHandover, SubmitVerdict
 from agentscope.app.storage import (
     AgentData,
@@ -56,11 +56,13 @@ class _ScriptedChat:
     run says is running.
     """
 
-    def __init__(self, storage: Any, script: list[Any]) -> None:
+    def __init__(self, storage: Any, bus: Any, script: list[Any]) -> None:
         """Remember the script, and what it gets asked."""
         self._storage = storage
+        self._bus = bus
         self.script = list(script)
         self.asked: list[tuple[str, Any]] = []
+        self.dispatched: list[str | None] = []
         self.sop_run_id = ""
 
     async def run(
@@ -73,6 +75,12 @@ class _ScriptedChat:
         """Take one turn, doing whatever the script says it does."""
         _ = agent_id
         self.asked.append((session_id, input_msg))
+        self.dispatched.append(
+            await self._bus.registry_get(
+                MessageBusKeys.sop_dispatch(),
+                session_id,
+            ),
+        )
         action = self.script.pop(0)
         if action is None:
             return
@@ -183,6 +191,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
 
         chat = _ScriptedChat(
             self.storage,
+            self.bus,
             [
                 (SubmitHandover, {"handover": "a hull"}),
                 (SubmitVerdict, {"passed": True}),
@@ -262,6 +271,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
 
         chat = _ScriptedChat(
             self.storage,
+            self.bus,
             [
                 (SubmitHandover, {"handover": "a leaky hull"}),
                 (SubmitVerdict, {"passed": False, "message": "panel 3 leaks"}),
@@ -292,6 +302,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
 
         chat = _ScriptedChat(
             self.storage,
+            self.bus,
             [
                 (SubmitHandover, {"handover": "draft"}),
                 (SubmitVerdict, {"passed": False, "message": "no"}),
@@ -311,7 +322,10 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         service = SOPService(self.storage, _Workspaces(), self.bus, None)
         run = await service.create_run("user-1", sop)
 
-        await self._drive(_ScriptedChat(self.storage, [None]), run.id)
+        await self._drive(
+            _ScriptedChat(self.storage, self.bus, [None]),
+            run.id,
+        )
 
         stored = await self.storage.get_sop_run("user-1", run.id)
         self.assertEqual(stored.state.phase, SOPPhase.FAILED)
@@ -348,6 +362,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
 
         chat = _ScriptedChat(
             self.storage,
+            self.bus,
             [(SubmitHandover, {"handover": "a hull"})],
         )
         await self._drive(chat, run.id)
@@ -366,12 +381,97 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             verifier="user-1",
         )(passed=True)
 
-        await self._drive(_ScriptedChat(self.storage, []), run.id)
+        await self._drive(_ScriptedChat(self.storage, self.bus, []), run.id)
 
         self.assertEqual(
             (await self.storage.get_sop_run("user-1", run.id)).state.phase,
             SOPPhase.COMPLETED,
         )
+
+    async def test_a_turn_is_claimed_only_while_the_run_asked_for_it(
+        self,
+    ) -> None:
+        """What tells a step's turn apart from a person typing."""
+        sop = _sop(
+            "user-1",
+            AgentVerifier(
+                agent=SOPAgentRef(agent_id="a-2", session_key="reviewer"),
+            ),
+            ("modeller", "reviewer"),
+        )
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
+        run = await service.create_run("user-1", sop)
+
+        chat = _ScriptedChat(
+            self.storage,
+            self.bus,
+            [
+                (SubmitHandover, {"handover": "a hull"}),
+                (SubmitVerdict, {"passed": True}),
+            ],
+        )
+        await self._drive(chat, run.id)
+
+        # Each turn saw itself claimed, for its own step.
+        self.assertListEqual(chat.dispatched, [f"{run.id}:0", f"{run.id}:0"])
+        # And nothing is left claimed once the run stops.
+        for session_id in run.sessions.values():
+            self.assertIsNone(
+                await self.bus.registry_get(
+                    MessageBusKeys.sop_dispatch(),
+                    session_id,
+                ),
+            )
+
+    async def test_a_turn_that_raises_still_releases_its_claim(self) -> None:
+        """Otherwise the next person to type there inherits the claim."""
+        sop = _sop("user-1", None, ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
+        run = await service.create_run("user-1", sop)
+
+        class _Failing:
+            """A chat service whose turn blows up."""
+
+            async def run(self, *args: Any, **kwargs: Any) -> None:
+                """Fail the way an unassemblable agent would."""
+                raise RuntimeError("no model configured")
+
+        service = SOPService(self.storage, _Workspaces(), self.bus, _Failing())
+        with self.assertRaises(RuntimeError):
+            await service.run("user-1", run.id)
+
+        self.assertIsNone(
+            await self.bus.registry_get(
+                MessageBusKeys.sop_dispatch(),
+                run.sessions["modeller"],
+            ),
+        )
+
+    async def test_a_verdict_is_refused_unless_the_step_asked_for_one(
+        self,
+    ) -> None:
+        """The two ways a person's verdict does not belong on a step."""
+        sop = _sop(
+            "user-1",
+            AgentVerifier(
+                agent=SOPAgentRef(agent_id="a-2", session_key="reviewer"),
+            ),
+            ("modeller", "reviewer"),
+        )
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
+        run = await service.create_run("user-1", sop)
+
+        with self.assertRaises(ValueError) as judged:
+            await service.record_verdict("user-1", run.id, 0, True)
+        self.assertIn("not judged by a person", str(judged.exception))
+
+        with self.assertRaises(KeyError):
+            await service.record_verdict("user-1", run.id, 9, True)
+        with self.assertRaises(KeyError):
+            await service.record_verdict("user-2", run.id, 0, True)
 
     async def test_deleting_a_run_takes_its_conversations(self) -> None:
         """A session nobody opened is still wakeable, so none is left."""

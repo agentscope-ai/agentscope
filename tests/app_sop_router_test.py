@@ -148,6 +148,19 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
         self.assertEqual(refused.status_code, 422)
         self.assertIn("modeller", refused.json()["detail"])
 
+    def test_a_procedure_with_no_steps_is_refused(self) -> None:
+        """A run of one could never reach any phase but pending."""
+        data = self._data()
+        data["steps"] = []
+
+        refused = self._client.post(
+            "/sop/",
+            json={"data": data},
+            headers=HEADERS,
+        )
+
+        self.assertEqual(refused.status_code, 422)
+
     def test_the_schema_resolves_every_ref_it_names(self) -> None:
         """A tagged union's mapping has to point at something."""
         schema = self._client.get("/sop/schema", headers=HEADERS).json()[
@@ -191,7 +204,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
         )
         self.assertEqual(started.status_code, 201)
-        run = started.json()["run"]
+        run = started.json()
         self.assertEqual(list(run["sessions"]), ["modeller"])
         self.assertEqual(run["sop_id"], sop_id)
 
@@ -206,7 +219,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             self._client.get(
                 f"/sop/runs/{run['id']}",
                 headers=HEADERS,
-            ).json()["run"]["id"],
+            ).json()["id"],
             run["id"],
         )
 
@@ -223,7 +236,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             f"/sop/{sop_id}/runs",
             json={"inputs": []},
             headers=HEADERS,
-        ).json()["run"]["id"]
+        ).json()["id"]
 
         refused = self._client.post(
             f"/sop/runs/{run_id}/verdict",
@@ -250,7 +263,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             f"/sop/{sop_id}/runs",
             json={"inputs": []},
             headers=HEADERS,
-        ).json()["run"]["id"]
+        ).json()["id"]
 
         # Park the step the way a handover would, without a model.
         state = self._run_state(run_id)
@@ -270,9 +283,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [
                 {k: v for k, v in _.items() if k != "created_at"}
-                for _ in answered.json()["run"]["state"]["steps"][0][
-                    "verifications"
-                ]
+                for _ in answered.json()["state"]["steps"][0]["verifications"]
             ],
             [{"passed": True, "message": "", "verifier": "alice"}],
         )
@@ -282,7 +293,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
         return self._client.get(
             f"/sop/runs/{run_id}",
             headers=HEADERS,
-        ).json()["run"]["state"]
+        ).json()["state"]
 
     def _put_run_state(self, run_id: str, state: dict) -> None:
         """Write a run's state back through the storage the app holds."""
@@ -307,7 +318,7 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             f"/sop/{sop_id}/runs",
             json={"inputs": []},
             headers=HEADERS,
-        ).json()["run"]["id"]
+        ).json()["id"]
 
         other = {"X-User-ID": "bob"}
         self.assertEqual(
