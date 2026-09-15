@@ -155,9 +155,10 @@ class SessionSOPStep(SOPStepBase):
         # The engine hands over ``given`` for the former, which the
         # briefing already carries.
         resuming = inputs is not None and not isinstance(inputs, (Msg, list))
-        # Claimed for the length of the turn: the submit tool exists
-        # because a run asked for this turn, so a person who opens the
-        # same session and types into it must not be handed one.
+        # Claimed for as long as this step is expecting something of
+        # this session, which is what the submit tool hangs off: a
+        # person who opens the same session and types into it while the
+        # step wants nothing of it must not be handed one.
         await self._message_bus.registry_set(
             MessageBusKeys.sop_dispatch(),
             session_id,
@@ -171,57 +172,63 @@ class SessionSOPStep(SOPStepBase):
                 ref.agent_id,
                 inputs if resuming else opening,
             )
-        finally:
-            await self._message_bus.registry_del(
-                MessageBusKeys.sop_dispatch(),
+
+            stored = await self._storage.get_sop_run(
+                self._user_id,
+                self._sop_run_id,
+            )
+            if stored is None:
+                # Deleted mid-turn; nothing left to record against.
+                state.phase = SOPPhase.FAILED
+                return
+            filed = stored.state.steps[self._index]
+            state.submission = filed.submission
+            verdicts = list(filed.verifications)
+
+            if len(verdicts) > len(state.verifications):
+                state.verifications = verdicts
+                if verdicts[-1].passed:
+                    state.phase = SOPPhase.COMPLETED
+                else:
+                    state.submission = None
+                    state.phase = SOPPhase.PENDING
+                return
+
+            if state.submission is not None:
+                # Handed over; the same step is judged on the next pass.
+                state.phase = SOPPhase.RUNNING
+                return
+
+            session = await self._storage.get_session(
+                self._user_id,
+                ref.agent_id,
                 session_id,
             )
+            if session is not None and (
+                SessionService.derive_parked_status(session.state.context)
+                in _PARKED
+            ):
+                state.phase = SOPPhase.AWAITING
+                return
 
-        stored = await self._storage.get_sop_run(
-            self._user_id,
-            self._sop_run_id,
-        )
-        if stored is None:
-            # Deleted mid-turn; there is nothing left to record against.
-            state.phase = SOPPhase.FAILED
-            return
-        filed = stored.state.steps[self._index]
-        state.submission = filed.submission
-        verdicts = list(filed.verifications)
-
-        if len(verdicts) > len(state.verifications):
-            state.verifications = verdicts
-            if verdicts[-1].passed:
-                state.phase = SOPPhase.COMPLETED
-            else:
-                state.submission = None
-                state.phase = SOPPhase.PENDING
-            return
-
-        if state.submission is not None:
-            # Handed over; the same step is judged on the next pass.
-            state.phase = SOPPhase.RUNNING
-            return
-
-        session = await self._storage.get_session(
-            self._user_id,
-            ref.agent_id,
-            session_id,
-        )
-        if session is not None and (
-            SessionService.derive_parked_status(session.state.context)
-            in _PARKED
-        ):
-            state.phase = SOPPhase.AWAITING
-            return
-
-        self.record(
-            state,
-            False,
-            "Your turn ended without submitting anything, so the step "
-            "has nothing to show for it.",
-            "sop",
-        )
+            self.record(
+                state,
+                False,
+                "Your turn ended without submitting anything, so the "
+                "step has nothing to show for it.",
+                "sop",
+            )
+        finally:
+            # A parked turn is unfinished, not over: whoever answers it
+            # resumes this same attempt, through the ordinary chat
+            # endpoint rather than through the run, and still has to be
+            # able to submit. Every other ending is the step letting go
+            # of the session.
+            if state.phase is not SOPPhase.AWAITING:
+                await self._message_bus.registry_del(
+                    MessageBusKeys.sop_dispatch(),
+                    session_id,
+                )
 
     def _brief(self, state: SOPStepRunState) -> list[Msg]:
         """What the author is asked at the start of an attempt."""

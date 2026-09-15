@@ -29,7 +29,12 @@ from agentscope.app.storage import (
     SOPStepDataV1,
 )
 from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.message import UserMsg
+from agentscope.message import (
+    AssistantMsg,
+    ToolCallBlock,
+    ToolCallState,
+    UserMsg,
+)
 from agentscope.sop import SOPPhase
 
 
@@ -83,6 +88,35 @@ class _ScriptedChat:
         )
         action = self.script.pop(0)
         if action is None:
+            return
+        if action == "park":
+            record = await self._storage.get_session(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            record.state.context = [
+                AssistantMsg(
+                    name="ex",
+                    content=[
+                        ToolCallBlock(
+                            type="tool_call",
+                            id="call-1",
+                            name="shell",
+                            input="{}",
+                            state=ToolCallState.SUBMITTED,
+                        ),
+                    ],
+                ),
+            ]
+            await self._storage.upsert_session(
+                user_id=user_id,
+                agent_id=agent_id,
+                config=record.config,
+                state=record.state,
+                session_id=session_id,
+                origin=record.origin,
+            )
             return
 
         record = await self._storage.get_sop_run(user_id, self.sop_run_id)
@@ -423,6 +457,35 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
                     session_id,
                 ),
             )
+
+    async def test_a_parked_turn_keeps_its_claim(self) -> None:
+        """Whoever answers it resumes this attempt and must still submit.
+
+        The answer arrives through the ordinary chat endpoint, not
+        through the run, so the claim is the only thing that will still
+        be saying this session owes the step a deliverable.
+        """
+        sop = _sop("user-1", None, ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
+        run = await service.create_run("user-1", sop)
+
+        await self._drive(
+            _ScriptedChat(self.storage, self.bus, ["park"]),
+            run.id,
+        )
+
+        stored = await self.storage.get_sop_run("user-1", run.id)
+        self.assertEqual(stored.state.phase, SOPPhase.AWAITING)
+        self.assertEqual(
+            await self.bus.registry_get(
+                MessageBusKeys.sop_dispatch(),
+                run.sessions["modeller"],
+            ),
+            f"{run.id}:0",
+        )
+        # Nothing was held against the step for parking.
+        self.assertListEqual(stored.state.steps[0].verifications, [])
 
     async def test_a_turn_that_raises_still_releases_its_claim(self) -> None:
         """Otherwise the next person to type there inherits the claim."""
