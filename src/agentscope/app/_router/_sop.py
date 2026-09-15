@@ -229,7 +229,7 @@ async def get_sop_run(
 async def delete_sop_run(
     sop_run_id: str,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
+    service: SOPService = Depends(get_sop_service),
 ) -> None:
     """Delete one run and the conversations it opened.
 
@@ -242,10 +242,10 @@ async def delete_sop_run(
             The run to delete.
         user_id (`str`):
             Injected authenticated user id.
-        storage (`StorageBase`):
-            Injected storage backend.
+        service (`SOPService`):
+            Injected SOP service.
     """
-    if not await storage.delete_sop_run(user_id, sop_run_id):
+    if not await service.delete_run(user_id, sop_run_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"SOP run {sop_run_id!r} not found.",

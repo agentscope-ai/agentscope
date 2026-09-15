@@ -173,8 +173,12 @@ class SOPRunRecord(_RecordBase):
     user_id: str
     """The user id."""
 
-    sop_id: str
-    """The :class:`SOPRecord` this run came from."""
+    sop_id: str = Field(frozen=True)
+    """The :class:`SOPRecord` this run came from.
+
+    Frozen: a backend indexes runs under it, and moving one would leave
+    it listed under the procedure it left — and so deletable by a
+    cascade that no longer owns it."""
 
     definition: SOPData
     """The procedure as it read when the run started.

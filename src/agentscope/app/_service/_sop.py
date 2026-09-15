@@ -155,21 +155,18 @@ class SessionSOPStep(SOPStepBase):
         # The engine hands over ``given`` for the former, which the
         # briefing already carries.
         resuming = inputs is not None and not isinstance(inputs, (Msg, list))
-        # Claimed for as long as this step is expecting something of
-        # this session, which is what the submit tool hangs off: a
-        # person who opens the same session and types into it while the
-        # step wants nothing of it must not be handed one.
-        await self._message_bus.registry_set(
-            MessageBusKeys.sop_dispatch(session_id),
-            MessageBusKeys.SOP_DISPATCH_FIELD,
-            f"{self._sop_run_id}:{self._index}",
-        )
+        dispatch = f"{self._sop_run_id}:{self._index}"
         try:
+            # Handed to the turn rather than left where the session can
+            # see it: a claim lying about would be picked up by whoever
+            # takes the session lock first, and that may be a person who
+            # happened to be typing into the same conversation.
             await self._chat.run(
                 self._user_id,
                 session_id,
                 ref.agent_id,
                 inputs if resuming else opening,
+                sop_dispatch=dispatch,
             )
 
             stored = await self._storage.get_sop_run(
@@ -219,11 +216,17 @@ class SessionSOPStep(SOPStepBase):
             )
         finally:
             # A parked turn is unfinished, not over: whoever answers it
-            # resumes this same attempt, through the ordinary chat
-            # endpoint rather than through the run, and still has to be
-            # able to submit. Every other ending is the step letting go
-            # of the session.
-            if state.phase is not SOPPhase.AWAITING:
+            # resumes this same attempt through the ordinary chat
+            # endpoint, which knows nothing of this step, so what it is
+            # owed is left where that turn will find it. Every other
+            # ending is the step letting go of the session.
+            if state.phase is SOPPhase.AWAITING:
+                await self._message_bus.registry_set(
+                    MessageBusKeys.sop_dispatch(session_id),
+                    MessageBusKeys.SOP_DISPATCH_FIELD,
+                    dispatch,
+                )
+            else:
                 await self._message_bus.registry_drop(
                     MessageBusKeys.sop_dispatch(session_id),
                 )
@@ -477,27 +480,40 @@ class SOPService:
             MessageBusKeys.sop_lock(sop_id),
             ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
         ):
-            runs = await self._storage.list_sop_runs(user_id, sop_id=sop_id)
-            for run in runs:
-                for task in list(self._advancing.get(run.id, ())):
-                    task.cancel()
-            await asyncio.gather(
-                *(
-                    task
-                    for run in runs
-                    for task in self._advancing.get(run.id, ())
-                ),
-                return_exceptions=True,
-            )
-            # An advance on another node cannot be cancelled from here;
-            # its lock is what makes this wait for it instead.
-            for run in runs:
-                async with self._message_bus.acquire_lock(
-                    MessageBusKeys.sop_run_lock(run.id),
-                    ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
-                ):
-                    pass
+            for run in await self._storage.list_sop_runs(
+                user_id,
+                sop_id=sop_id,
+            ):
+                await self.delete_run(user_id, run.id)
             return await self._storage.delete_sop(user_id, sop_id)
+
+    async def delete_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete a run and the conversations it opened.
+
+        Under the run's lock, and after stopping whatever is carrying it
+        on in this process: an advance reads the run, changes it in
+        memory and writes it back, so one that finishes after the delete
+        would put the record back with its sessions already gone.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run to delete.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+        going = list(self._advancing.get(sop_run_id, ()))
+        for task in going:
+            task.cancel()
+        await asyncio.gather(*going, return_exceptions=True)
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.sop_run_lock(sop_run_id),
+            ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
+        ):
+            return await self._storage.delete_sop_run(user_id, sop_run_id)
 
     async def record_verdict(
         self,

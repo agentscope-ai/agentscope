@@ -9,7 +9,7 @@ tools, and caller-supplied extras — into one :class:`Toolkit`.
 from typing import Any, Literal
 
 from .._manager import BackgroundTaskManager, SchedulerManager
-from ..message_bus import MessageBus, MessageBusKeys
+from ..message_bus import MessageBus
 from .._tool import (
     SubmitHandover,
     SubmitVerdict,
@@ -20,13 +20,7 @@ from .._tool import (
     TeamSay,
 )
 from .._types import AgentToolFactory, SubAgentTemplate
-from ..storage import (
-    AgentRecord,
-    SessionRecord,
-    SOPOrigin,
-    StorageBase,
-)
-from ...sop import SOPPhase
+from ..storage import AgentRecord, SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
@@ -60,6 +54,7 @@ async def get_toolkit(
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     team_role: Literal["leader", "worker"] | None = None,
     channel_tools: list[ToolBase] | None = None,
+    sop_dispatch: str | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -128,6 +123,11 @@ optional):
         team_role (`Literal["leader", "worker"] | None`, optional):
             The session's team role, resolved once by the caller.
             ``None`` means not in any team.
+        sop_dispatch (`str | None`, optional):
+            ``"<run id>:<step index>"`` when this turn is one a
+            procedure asked for, which is what gives it a submit
+            tool. Resolved by the caller so the same answer decides
+            the tool and the middleware that enforces it.
         channel_tools (`list[ToolBase] | None`, optional):
             Platform tools of the originating channel, resolved once
             by the caller. ``None`` / empty when channel-less.
@@ -230,35 +230,17 @@ time or interval"
 
     # SOP submission tool — a step's agent reports through storage
     # rather than through its reply, so it carries exactly one of the
-    # two. Only the turn a run asked for: a person who opens the same
-    # session and types into it is having a conversation, not filing a
-    # deliverable. Which of the two is the half of the step being
-    # played — a step is worked on until it has handed something over,
-    # and judged afterwards, the same rule the SDK's own step uses.
-    # The origin is the cheap half of the question — only a session a
-    # run opened can ever be one it dispatched — so the bus is asked
-    # only about those, and an ordinary chat turn costs nothing.
-    dispatched = (
-        await message_bus.registry_get(
-            MessageBusKeys.sop_dispatch(session_record.id),
-            MessageBusKeys.SOP_DISPATCH_FIELD,
-        )
-        if isinstance(session_record.origin, SOPOrigin)
-        else None
-    )
-    if dispatched is not None:
-        sop_run_id, _, step_index = dispatched.rpartition(":")
+    # two. Only on the turn a run asked for, which the caller has
+    # already established: a person who opens the same session and
+    # types into it is having a conversation, not filing a deliverable.
+    # Which of the two is the half of the step being played — a step is
+    # worked on until it has handed something over, and judged
+    # afterwards, the same rule the SDK's own step uses.
+    if sop_dispatch is not None:
+        sop_run_id, _, step_index = sop_dispatch.rpartition(":")
         run = await storage.get_sop_run(user_id, sop_run_id)
         index = int(step_index)
-        # A claim carries no lease, so it is checked rather than timed
-        # out: the step it names has to still be under way. Anything
-        # else is a claim left behind by a node that died holding it.
-        if (
-            run is not None
-            and index < len(run.state.steps)
-            and run.state.steps[index].phase
-            in (SOPPhase.RUNNING, SOPPhase.AWAITING)
-        ):
+        if run is not None and index < len(run.state.steps):
             submit_kwargs: dict[str, Any] = {
                 "storage": storage,
                 "user_id": user_id,

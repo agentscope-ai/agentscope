@@ -69,6 +69,7 @@ class _ScriptedChat:
         self.script = list(script)
         self.asked: list[tuple[str, Any]] = []
         self.dispatched: list[str | None] = []
+        self.lying_about: list[str | None] = []
         self.sop_run_id = ""
 
     async def run(
@@ -77,11 +78,13 @@ class _ScriptedChat:
         session_id: str,
         agent_id: str,
         input_msg: Any = None,
+        sop_dispatch: str | None = None,
     ) -> None:
         """Take one turn, doing whatever the script says it does."""
         _ = agent_id
         self.asked.append((session_id, input_msg))
-        self.dispatched.append(
+        self.dispatched.append(sop_dispatch)
+        self.lying_about.append(
             await self._bus.registry_get(
                 MessageBusKeys.sop_dispatch(session_id),
                 MessageBusKeys.SOP_DISPATCH_FIELD,
@@ -448,9 +451,12 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         )
         await self._drive(chat, run.id)
 
-        # Each turn saw itself claimed, for its own step.
+        # Each turn was told which step it was for.
         self.assertListEqual(chat.dispatched, [f"{run.id}:0", f"{run.id}:0"])
-        # And nothing is left claimed once the run stops.
+        # And nothing was left lying in the registry while it ran, for
+        # a turn the run never asked for to pick up.
+        self.assertListEqual(chat.lying_about, [None, None])
+        # Nor once the run stops.
         for session_id in run.sessions.values():
             self.assertIsNone(
                 await self.bus.registry_get(
@@ -499,12 +505,14 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             """A chat service whose turn never comes back."""
 
             def __init__(self) -> None:
-                """Start out uncancelled."""
+                """Start out uncancelled, with nobody inside yet."""
+                self.entered = asyncio.Event()
                 self.cancelled = False
 
             async def run(self, *args: Any, **kwargs: Any) -> None:
                 """Wait to be cancelled, and remember that it was."""
                 _ = args, kwargs
+                self.entered.set()
                 try:
                     await asyncio.Event().wait()
                 except asyncio.CancelledError:
@@ -520,8 +528,9 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
         ) as service:
             run = await service.create_run("user-1", sop.id)
             service.advance_later("user-1", run.id)
-            # Let the advance get as far as the turn it hangs on.
-            await asyncio.sleep(0.05)
+            # Waited for rather than slept on: how long an advance
+            # takes to reach its turn is the scheduler's business.
+            await chat.entered.wait()
 
         self.assertTrue(chat.cancelled)
 
@@ -537,6 +546,7 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
 
             async def run(self, *args: Any, **kwargs: Any) -> None:
                 """Fail the way an unassemblable agent would."""
+                _ = args, kwargs
                 raise RuntimeError("no model configured")
 
         service = SOPService(self.storage, _Workspaces(), self.bus, _Failing())
