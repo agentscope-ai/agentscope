@@ -143,7 +143,7 @@ class LocalWorkspace(WorkspaceBase):
         from ..tool import Bash, Edit, Glob, Grep, PowerShell, Read, Write
 
         backend = self.get_backend()
-        glob_kwargs: dict = {"backend": backend}
+        glob_kwargs: dict = {"backend": backend, "cwd": self.workdir}
         if self._glob_helper_path is not None:
             glob_kwargs["glob_helper_path"] = self._glob_helper_path
 
@@ -156,7 +156,7 @@ class LocalWorkspace(WorkspaceBase):
             shell,
             Edit(backend=backend),
             Glob(**glob_kwargs),
-            Grep(backend=backend),
+            Grep(backend=backend, cwd=self.workdir),
             Read(backend=backend),
             Write(backend=backend),
         ]

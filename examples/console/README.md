@@ -33,6 +33,12 @@ python main.py --verbosity debug      # plus lifecycle events
 python main.py --verbosity quiet      # only the reply text
 ```
 
+The workspace's `Glob` and `Grep` tools search under `--workdir` when
+`path` is omitted. Relative search paths such as `.` or `src` are resolved
+against that directory; absolute paths are used as supplied. When assembling
+tools yourself, set `Glob(cwd=...)` or `Grep(cwd=...)` to choose the same
+default. Without `cwd`, standalone tools retain their backend's defaults.
+
 Things worth trying:
 
 - `List the python files in this directory` — read-only tools run
