@@ -3903,6 +3903,8 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        # Keep the block id so replay groups one payload.
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
@@ -3910,6 +3912,7 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )
