@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { credentialApi } from '@/api';
 import type { CredentialSchema } from '@/api';
 import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -36,6 +37,7 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 	const { t } = useTranslation();
 	const [schemas, setSchemas] = useState<CredentialSchema[]>([]);
 	const [loadingSchemas, setLoadingSchemas] = useState(false);
+	const [schemaError, setSchemaError] = useState<string | null>(null);
 	const [selectedType, setSelectedType] = useState('');
 	const [values, setValues] = useState<Record<string, SchemaFormValue>>({});
 	const [submitting, setSubmitting] = useState(false);
@@ -43,6 +45,10 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 	useEffect(() => {
 		if (!open) return;
 		setLoadingSchemas(true);
+		setSchemaError(null);
+		setSchemas([]);
+		setSelectedType('');
+		setValues({});
 		credentialApi
 			.schemas()
 			.then((res) => {
@@ -52,8 +58,11 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 					setSelectedType(defaultType ?? first);
 				}
 			})
+			.catch(() => {
+				setSchemaError(t('dialog-credential-create.schemaLoadError'));
+			})
 			.finally(() => setLoadingSchemas(false));
-	}, [open, defaultType]);
+	}, [open, defaultType, t]);
 
 	const selectedSchema = schemas.find(
 		(s) => (s.properties.type?.const as string) === selectedType,
@@ -97,7 +106,7 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 						<Select
 							value={selectedType}
 							onValueChange={handleTypeChange}
-							disabled={loadingSchemas}
+							disabled={loadingSchemas || !!schemaError}
 						>
 							<SelectTrigger>
 								<SelectValue
@@ -120,6 +129,12 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 							</SelectContent>
 						</Select>
 					</Field>
+					{schemaError && (
+						<Alert variant="destructive">
+							<CircleAlert />
+							<AlertDescription>{schemaError}</AlertDescription>
+						</Alert>
+					)}
 					{selectedSchema && (
 						<SchemaForm
 							schema={selectedSchema}
