@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from ._credential_binding import CredentialBindingBase
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
+    from ..message_bus import MessageBus
 
 _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
@@ -485,6 +486,19 @@ class ChannelBase(ABC):
         ``finally`` to close it. Override to close those; the connection
         loop keeps releasing its own. Default: nothing to do.
         """
+
+    def bind_message_bus(self, message_bus: "MessageBus") -> None:
+        """Provide the process-shared bus to channels that need it.
+
+        Most channels do not need this hook. Channels that require
+        cross-process correlation or coordination may retain the bus and use
+        its shared registry, locks, streams, or queues. The default remains a
+        no-op.
+
+        Args:
+            message_bus (`MessageBus`): Shared application message bus.
+        """
+        del message_bus
 
     async def send_reaction(  # pylint: disable=unused-argument
         self,
