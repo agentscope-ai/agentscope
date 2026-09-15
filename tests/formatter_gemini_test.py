@@ -372,6 +372,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(thought_parts, [])
         self.assertEqual(res[0]["parts"], [{"text": "reply"}])
 
+    async def test_empty_text_block_is_dropped(self) -> None:
+        """Gemini rejects content parts whose text is empty."""
+        fmt = GeminiChatFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[TextBlock(text="")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(res, [])
+
+    async def test_empty_text_does_not_hide_valid_text(self) -> None:
+        """Only empty text parts are removed from a mixed message."""
+        fmt = GeminiChatFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text=""),
+                        TextBlock(text="reply"),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [{"role": "model", "parts": [{"text": "reply"}]}],
+        )
+
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
     ) -> None:

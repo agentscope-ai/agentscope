@@ -152,7 +152,8 @@ class GeminiChatFormatter(_GeminiFormatterBase):
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
-                    parts.append({"text": block.text})
+                    if block.text:
+                        parts.append({"text": block.text})
 
                 elif isinstance(block, ThinkingBlock):
                     # Gemini API requires `thought: true` to mark a part as a
