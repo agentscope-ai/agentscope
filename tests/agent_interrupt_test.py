@@ -17,7 +17,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.event import (
     ReplyEndEvent,
     ToolResultStartEvent,
@@ -87,6 +87,8 @@ class _TimeoutConcurrentTool(ToolBase):
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
+        """Allow the test tool regardless of its input or context."""
+        del tool_input, context
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             decision_reason="ok",
@@ -250,9 +252,9 @@ async def _run_and_cancel(
     agent: Agent,
     inputs: Any,
     cancel_after: float = 0.05,
-) -> list[Any]:
+) -> tuple[list[Any], asyncio.Task[None]]:
     """Drive ``agent.reply_stream(inputs)`` in a background task, cancel
-    after ``cancel_after`` seconds, and return the collected events."""
+    it, and return both the collected events and completed task."""
     events: list[Any] = []
 
     async def _drive() -> None:
@@ -266,7 +268,7 @@ async def _run_and_cancel(
         await task
     except asyncio.CancelledError:
         pass
-    return events
+    return events, task
 
 
 def _assert_interrupted_end(
@@ -296,7 +298,11 @@ def _assert_interrupted_end(
 class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
     """``task.cancel()`` lands during tool execution."""
 
-    def _make_agent(self, tools: list[ToolBase]) -> tuple[Agent, MockModel]:
+    def _make_agent(
+        self,
+        tools: list[ToolBase],
+        raise_cancelled_error: bool = False,
+    ) -> tuple[Agent, MockModel]:
         model = MockModel(model="mock-model", stream=True)
         agent = Agent(
             name="Friday",
@@ -307,8 +313,61 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             # agent_injection_test, turn it off to keep the assertions
             # focused.
             injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(
+                interruption_raise_cancelled_error=raise_cancelled_error,
+            ),
         )
         return agent, model
+
+    async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
+        """The opt-in flag propagates cancellation after tool cleanup."""
+        cases = [
+            _TimeoutSequentialTool(),
+            _TimeoutConcurrentTool(),
+        ]
+
+        for tool in cases:
+            with self.subTest(tool=tool.name):
+                agent, model = self._make_agent(
+                    [tool],
+                    raise_cancelled_error=True,
+                )
+                model.set_responses(
+                    [
+                        [
+                            ChatResponse(
+                                content=[
+                                    ToolCallBlock(
+                                        id=f"tc-{tool.name}",
+                                        name=tool.name,
+                                        input="{}",
+                                    ),
+                                ],
+                                is_last=True,
+                            ),
+                        ],
+                    ],
+                )
+
+                events, task = await _run_and_cancel(
+                    agent,
+                    UserMsg(name="user", content="Hi"),
+                )
+
+                _assert_interrupted_end(
+                    self,
+                    events,
+                    reply_id=agent.state.reply_id,
+                    session_id=agent.state.session_id,
+                )
+                self.assertListEqual(
+                    agent.state.get_unfinished_tool_calls(agent.name),
+                    [],
+                )
+                self.assertTrue(
+                    task.cancelled(),
+                    "reply task completed instead of propagating cancellation",
+                )
 
     async def test_sequential_tool_cancelled_mid_execution(self) -> None:
         """Sequential batch: model emits one slow sequential tool call,
@@ -335,7 +394,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events = await _run_and_cancel(
+        events, _ = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -407,7 +466,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events = await _run_and_cancel(
+        events, _ = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -499,7 +558,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events = await _run_and_cancel(
+        events, _ = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -584,7 +643,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events = await _run_and_cancel(
+        events, _ = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -677,7 +736,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events = await _run_and_cancel(
+        events, _ = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
