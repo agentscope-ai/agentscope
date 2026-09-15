@@ -1584,6 +1584,24 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                 expected,
             )
 
+    async def test_failed_typed_turn_is_not_shown(self) -> None:
+        agent = _FakeRealtimeAgent()
+        app = _RealtimeTUI(agent, object(), [], "user")
+        msg = UserMsg(name="user", content="not delivered")
+        error = RuntimeError("send failed")
+        with patch.object(agent, "send", side_effect=error):
+            async with app.run_test(size=(80, 24)):
+                with patch.object(app, "notify") as notify:
+                    await app._send(msg)
+
+                self.assertTupleEqual(app.query_one(ChatUI).messages, ())
+
+        notify.assert_called_once_with(
+            "send failed",
+            title="Agent error",
+            severity="error",
+        )
+
     async def test_confirmation_and_interrupt_reach_the_agent(self) -> None:
         agent = _FakeRealtimeAgent()
         app = _RealtimeTUI(

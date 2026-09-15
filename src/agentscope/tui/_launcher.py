@@ -279,16 +279,18 @@ class _RealtimeTUI(_ChatAppBase):
 
     async def _send(self, inputs: _RealtimeInput) -> None:
         """Hand the agent everything that is not audio."""
-        # An interrupt leaves its mark on the reply it cuts off; the rest
-        # is shown as it is submitted, since the agent does not echo it.
-        if not isinstance(inputs, UserInterruptEvent):
-            await self._publish(inputs)
         try:
             await self.agent.send(inputs)
         # pylint: disable-next=broad-exception-caught
         except Exception as error:
             logger.exception("Realtime TUI input failed")
             self.notify(str(error), title="Agent error", severity="error")
+        else:
+            # An interrupt leaves its mark on the reply it cuts off; the
+            # rest is shown after the agent accepts it, since the agent does
+            # not echo it.
+            if not isinstance(inputs, UserInterruptEvent):
+                await self._publish(inputs)
 
     def _submit(self, msg: Msg) -> None:
         self._spawn(self._send(msg))
