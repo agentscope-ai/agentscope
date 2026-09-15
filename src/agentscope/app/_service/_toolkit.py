@@ -20,7 +20,12 @@ from .._tool import (
     TeamSay,
 )
 from .._types import AgentToolFactory, SubAgentTemplate
-from ..storage import AgentRecord, SessionRecord, StorageBase
+from ..storage import (
+    AgentRecord,
+    SessionRecord,
+    SOPOrigin,
+    StorageBase,
+)
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
@@ -229,9 +234,16 @@ time or interval"
     # deliverable. Which of the two is the half of the step being
     # played — a step is worked on until it has handed something over,
     # and judged afterwards, the same rule the SDK's own step uses.
-    dispatched = await message_bus.registry_get(
-        MessageBusKeys.sop_dispatch(),
-        session_record.id,
+    # The origin is the cheap half of the question — only a session a
+    # run opened can ever be one it dispatched — so the bus is asked
+    # only about those, and an ordinary chat turn costs nothing.
+    dispatched = (
+        await message_bus.registry_get(
+            MessageBusKeys.sop_dispatch(),
+            session_record.id,
+        )
+        if isinstance(session_record.origin, SOPOrigin)
+        else None
     )
     if dispatched is not None:
         sop_run_id, _, step_index = dispatched.rpartition(":")

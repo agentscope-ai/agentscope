@@ -787,6 +787,7 @@ class ChatService:
         # Bound out here because the procedure a session belongs to is
         # carried on after the lock is let go, not under it.
         sop_run_id: str | None = None
+        interrupted = False
 
         async with self._message_bus.acquire_lock(
             MessageBusKeys.session_lock(session_id),
@@ -973,7 +974,10 @@ class ChatService:
                 # asked for: a person typing into the same session is
                 # having a conversation, and holding that to a
                 # submission would put their words in a deliverable.
-                if await self._message_bus.registry_exists(
+                if isinstance(
+                    session_record.origin,
+                    SOPOrigin,
+                ) and await self._message_bus.registry_exists(
                     MessageBusKeys.sop_dispatch(),
                     session_id,
                 ):
@@ -1425,6 +1429,11 @@ class ChatService:
                 ):
                     reply_msgs.append(reply_msg)
 
+                interrupted = any(
+                    msg.finished_reason is ReplyFinishedReason.INTERRUPTED
+                    for msg in reply_msgs
+                )
+
                 # All persistence in a single coroutine, shielded from
                 # outer cancellation.  Must complete BEFORE the session
                 # lock is released — otherwise another worker could
@@ -1493,7 +1502,11 @@ class ChatService:
                     trigger_text,
                 )
 
-        if sop_run_id is not None:
+        # An interrupted turn is a person saying stop. Carrying the
+        # procedure on from it would start the step again, which is the
+        # opposite of what they asked for — the run waits where it is
+        # until something else moves it.
+        if sop_run_id is not None and not interrupted:
             await self._advance_sop(user_id, sop_run_id)
 
     async def _advance_sop(self, user_id: str, sop_run_id: str) -> None:
