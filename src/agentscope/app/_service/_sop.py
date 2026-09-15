@@ -8,6 +8,7 @@ persistence. What comes back is read out of the run state rather than
 out of the reply, because the step's agent wrote it there through its
 submit tool.
 """
+import asyncio
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from ..storage import (
@@ -24,6 +25,7 @@ from ..storage import (
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from ..workspace_manager import WorkspaceManagerBase
+from ..._logging import logger
 from ._session import SessionService, SessionStatus
 from ...event import (
     ExternalExecutionResultEvent,
@@ -266,6 +268,10 @@ class SOPService:
         self._workspace_manager = workspace_manager
         self._message_bus = message_bus
         self._chat = chat
+        # asyncio holds only a weak reference to a running task, so a
+        # detached advance has to be kept alive here or it can be
+        # collected mid-step.
+        self._advancing: set[asyncio.Task] = set()
 
     async def create_run(
         self,
@@ -358,6 +364,34 @@ class SOPService:
             run.sessions[key] = session.id
 
         return await self._storage.upsert_sop_run(user_id, run)
+
+    def advance_later(self, user_id: str, sop_run_id: str) -> None:
+        """Set a run going without waiting for it to stop again.
+
+        A run is many chat turns long — often the whole rest of the
+        procedure — so whatever asked for this (a request handler, a
+        finished chat turn) must not be held open for it. Failures are
+        logged: there is no caller left to raise at.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run to carry on.
+        """
+
+        async def _run() -> None:
+            try:
+                await self.run(user_id, sop_run_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Advancing SOP run %r failed.",
+                    sop_run_id,
+                )
+
+        task = asyncio.create_task(_run(), name=f"sop-run:{sop_run_id}")
+        self._advancing.add(task)
+        task.add_done_callback(self._advancing.discard)
 
     async def run(
         self,

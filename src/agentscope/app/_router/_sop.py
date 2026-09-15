@@ -8,16 +8,12 @@ sessions. Only the first is answered here; the second goes through
 ordinary session. Neither needs an endpoint to restart the run —
 answering is what restarts it.
 """
-import asyncio
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..deps import (
-    get_chat_service,
     get_current_user_id,
-    get_message_bus,
+    get_sop_service,
     get_storage,
-    get_workspace_manager,
 )
 from ._schema import (
     CreateSOPRequest,
@@ -30,9 +26,8 @@ from ._schema import (
     SubmitVerdictRequest,
     UpdateSOPRequest,
 )
-from .._service import ChatService, SOPService
+from .._service import SOPService
 from .._tool import SubmitVerdict
-from ..message_bus import MessageBus
 from ..storage import (
     HumanVerifier,
     SOPData,
@@ -40,7 +35,6 @@ from ..storage import (
     SOPRunRecord,
     StorageBase,
 )
-from ..workspace_manager import WorkspaceManagerBase
 from ...sop import SOPPhase
 
 sop_router = APIRouter(
@@ -48,16 +42,6 @@ sop_router = APIRouter(
     tags=["sop"],
     responses={404: {"description": "Not found"}},
 )
-
-
-def _service(
-    storage: StorageBase,
-    workspace_manager: WorkspaceManagerBase,
-    message_bus: MessageBus,
-    chat: ChatService,
-) -> SOPService:
-    """Build the service from what the request already injected."""
-    return SOPService(storage, workspace_manager, message_bus, chat)
 
 
 async def _require_sop(
@@ -281,14 +265,15 @@ async def submit_verdict(
     body: SubmitVerdictRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-    message_bus: MessageBus = Depends(get_message_bus),
-    chat: ChatService = Depends(get_chat_service),
+    service: SOPService = Depends(get_sop_service),
 ) -> SOPRunResponse:
-    """Answer a step that was waiting on a person, and carry the run on.
+    """Answer a step that was waiting on a person.
 
     Filed through the same tool an agent reviewer calls, so a verdict is
-    one thing however it was reached.
+    one thing however it was reached. Answers as soon as the verdict is
+    recorded: carrying the run on from it can take the rest of the
+    procedure, which is no more this request's business than a chat
+    turn's events are ``POST /chat``'s.
 
     Args:
         sop_run_id (`str`):
@@ -299,16 +284,12 @@ async def submit_verdict(
             Injected authenticated user id.
         storage (`StorageBase`):
             Injected storage backend.
-        workspace_manager (`WorkspaceManagerBase`):
-            Injected workspace manager.
-        message_bus (`MessageBus`):
-            Injected message bus.
-        chat (`ChatService`):
-            Injected chat service.
+        service (`SOPService`):
+            Injected SOP service.
 
     Returns:
         `SOPRunResponse`:
-            The run as it stands once it stopped again.
+            The run with the verdict recorded on it.
 
     Raises:
         `HTTPException`:
@@ -341,9 +322,8 @@ async def submit_verdict(
         verifier=user_id,
     )(passed=body.passed, message=body.message)
 
-    service = _service(storage, workspace_manager, message_bus, chat)
-    await service.run(user_id, sop_run_id)
     updated = await _require_run(storage, user_id, sop_run_id)
+    service.advance_later(user_id, sop_run_id)
     return SOPRunResponse(run=updated, phase=updated.state.phase)
 
 
@@ -456,9 +436,7 @@ async def start_sop_run(
     body: StartSOPRunRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-    message_bus: MessageBus = Depends(get_message_bus),
-    chat: ChatService = Depends(get_chat_service),
+    service: SOPService = Depends(get_sop_service),
 ) -> SOPRunResponse:
     """Open a run of a procedure and set it going.
 
@@ -476,23 +454,16 @@ async def start_sop_run(
             Injected authenticated user id.
         storage (`StorageBase`):
             Injected storage backend.
-        workspace_manager (`WorkspaceManagerBase`):
-            Injected workspace manager.
-        message_bus (`MessageBus`):
-            Injected message bus.
-        chat (`ChatService`):
-            Injected chat service.
+        service (`SOPService`):
+            Injected SOP service.
 
     Returns:
         `SOPRunResponse`:
             The opened run, before it has got anywhere.
     """
     record = await _require_sop(storage, user_id, sop_id)
-    service = _service(storage, workspace_manager, message_bus, chat)
     run = await service.create_run(user_id, record, body.inputs)
-    # Detached on purpose: a run is many chat turns long, and the client
-    # follows it through its sessions' streams rather than this response.
-    asyncio.create_task(service.run(user_id, run.id))
+    service.advance_later(user_id, run.id)
     return SOPRunResponse(run=run, phase=run.state.phase)
 
 

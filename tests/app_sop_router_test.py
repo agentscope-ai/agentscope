@@ -15,6 +15,7 @@ from agentscope.app import create_app
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.sop import SOPRunState
 
 HEADERS = {"X-User-ID": "alice"}
 
@@ -237,6 +238,63 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
         )
         self.assertEqual(missing.status_code, 404)
+
+    def test_a_verdict_answers_before_the_run_carries_on(self) -> None:
+        """The reply is "recorded", not "and here is where it got to"."""
+        sop_id = self._client.post(
+            "/sop/",
+            json={"data": self._data()},
+            headers=HEADERS,
+        ).json()["sop_id"]
+        run_id = self._client.post(
+            f"/sop/{sop_id}/runs",
+            json={"inputs": []},
+            headers=HEADERS,
+        ).json()["run"]["id"]
+
+        # Park the step the way a handover would, without a model.
+        state = self._run_state(run_id)
+        state["steps"][0]["phase"] = "awaiting"
+        state["steps"][0]["submission"] = [
+            {"type": "text", "text": "a hull"},
+        ]
+        self._put_run_state(run_id, state)
+
+        answered = self._client.post(
+            f"/sop/runs/{run_id}/verdict",
+            json={"step_index": 0, "passed": True},
+            headers=HEADERS,
+        )
+
+        self.assertEqual(answered.status_code, 200)
+        self.assertListEqual(
+            [
+                {k: v for k, v in _.items() if k != "created_at"}
+                for _ in answered.json()["run"]["state"]["steps"][0][
+                    "verifications"
+                ]
+            ],
+            [{"passed": True, "message": "", "verifier": "alice"}],
+        )
+
+    def _run_state(self, run_id: str) -> dict:
+        """Read a run's state straight back out of the API."""
+        return self._client.get(
+            f"/sop/runs/{run_id}",
+            headers=HEADERS,
+        ).json()["run"]["state"]
+
+    def _put_run_state(self, run_id: str, state: dict) -> None:
+        """Write a run's state back through the storage the app holds."""
+        storage = self._client.app.state.storage
+        portal = self._client.portal
+
+        async def _write() -> None:
+            record = await storage.get_sop_run("alice", run_id)
+            record.state = SOPRunState.model_validate(state)
+            await storage.upsert_sop_run("alice", record)
+
+        portal.call(_write)
 
     def test_another_user_sees_none_of_it(self) -> None:
         """Everything is owner-scoped, including the run endpoints."""

@@ -252,6 +252,7 @@ class ChatService:
                 pass
         self._extra_agent_tools = extra_agent_tools
         self._channel_clients = channel_clients
+        self._sop_service: SOPService | None = None
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -1490,11 +1491,18 @@ class ChatService:
             await self._advance_sop(user_id, sop_run_id)
 
     async def _advance_sop(self, user_id: str, sop_run_id: str) -> None:
-        """Carry the procedure this session belongs to on from here.
+        """Set the procedure this session belongs to going again.
 
         A person answering a tool call in a step's session answers it
         through the ordinary chat endpoint, so the procedure has no
         other way to learn that the step got moving again.
+
+        Handed off rather than awaited: this reply is finished, and the
+        rest of the procedure can be many turns more. Waiting for it
+        would keep this run's task — and so this session's slot in
+        :class:`~agentscope.app._manager.ChatRunRegistry` — occupied the
+        whole time, which is how long the next message to this session
+        would be refused for.
 
         Skipped while the run's lock is held, which means the run is
         already driving: this reply was one it dispatched, and it reads
@@ -1510,21 +1518,18 @@ class ChatService:
             MessageBusKeys.sop_run_lock(sop_run_id),
         ):
             return
-        try:
-            await SOPService(
+        if self._sop_service is None:
+            # Built here rather than taken at construction: a SOP
+            # service needs a chat service, so one of the two has to
+            # come second. Kept because it holds the handles of the
+            # advances it has going.
+            self._sop_service = SOPService(
                 self._storage,
                 self._workspace_manager,
                 self._message_bus,
                 self,
-            ).run(user_id, sop_run_id)
-        except Exception:  # pylint: disable=broad-except
-            # The reply itself landed; a procedure that cannot be
-            # carried on is not a reason to report that one as failed.
-            logger.exception(
-                "Advancing SOP run %r after session %r failed.",
-                sop_run_id,
-                user_id,
             )
+        self._sop_service.advance_later(user_id, sop_run_id)
 
     async def _project_event(
         self,

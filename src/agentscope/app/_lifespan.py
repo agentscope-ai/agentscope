@@ -22,6 +22,7 @@ from ._service import (
     KnowledgeBaseService,
     ResourceAccessService,
     SessionService,
+    SOPService,
     WorkspaceService,
 )
 
@@ -181,6 +182,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             storage=storage,
             message_bus=message_bus,
             workspace_manager=workspace_manager,
+        )
+
+        app.state.sop_service = SOPService(
+            storage=storage,
+            workspace_manager=workspace_manager,
+            message_bus=message_bus,
+            chat=chat_service,
         )
 
         app.state.workspace_service = WorkspaceService(
