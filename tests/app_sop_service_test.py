@@ -373,6 +373,43 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             SOPPhase.COMPLETED,
         )
 
+    async def test_deleting_a_run_takes_its_conversations(self) -> None:
+        """A session nobody opened is still wakeable, so none is left."""
+        sop = _sop("user-1", None, ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
+        run = await service.create_run("user-1", sop)
+        session_id = run.sessions["modeller"]
+
+        self.assertTrue(await self.storage.delete_sop_run("user-1", run.id))
+
+        self.assertIsNone(
+            await self.storage.get_session("user-1", "a-1", session_id),
+        )
+        self.assertEqual(await self.storage.list_sessions("user-1", "a-1"), [])
+
+    async def test_deleting_a_procedure_takes_every_run_conversation(
+        self,
+    ) -> None:
+        """The same cascade, one level up."""
+        sop = _sop("user-1", None, ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(self.storage, _Workspaces(), self.bus, None)
+        first = await service.create_run("user-1", sop)
+        second = await service.create_run("user-1", sop)
+
+        self.assertTrue(await self.storage.delete_sop("user-1", sop.id))
+
+        for run in (first, second):
+            self.assertIsNone(
+                await self.storage.get_session(
+                    "user-1",
+                    "a-1",
+                    run.sessions["modeller"],
+                ),
+            )
+        self.assertEqual(await self.storage.list_sop_runs("user-1"), [])
+
     async def test_one_conversation_per_session_key(self) -> None:
         """A key named twice is one session; two keys are two."""
         sop = _sop("user-1", None, ("modeller", "modeller"))

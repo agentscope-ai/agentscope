@@ -3,9 +3,10 @@
 
 A run advances on its own as far as it can and then stops for someone:
 a person to judge a step, or a tool call to be approved in one of its
-sessions. Both are answered elsewhere — the verdict here, the tool call
-through ``POST /chat`` like any other — and both are followed by an
-advance, which is what carries the run on from wherever it stopped.
+sessions. Only the first is answered here; the second goes through
+``POST /chat`` like any other tool call, because a step's session is an
+ordinary session. Neither needs an endpoint to restart the run —
+answering is what restarts it.
 """
 import asyncio
 
@@ -268,51 +269,6 @@ async def delete_sop_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"SOP run {sop_run_id!r} not found.",
         )
-
-
-@sop_router.post(
-    "/runs/{sop_run_id}/advance",
-    response_model=SOPRunResponse,
-    summary="Carry a run on from where it stopped",
-)
-async def advance_sop_run(
-    sop_run_id: str,
-    user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-    message_bus: MessageBus = Depends(get_message_bus),
-    chat: ChatService = Depends(get_chat_service),
-) -> SOPRunResponse:
-    """Drive a run as far as it goes, then report where it stopped.
-
-    Call this after answering whatever it was waiting on — a tool call
-    confirmed through ``POST /chat`` in one of its sessions, say. Runs
-    of one procedure are serialised by the run's own lock, so calling it
-    twice is safe.
-
-    Args:
-        sop_run_id (`str`):
-            The run to carry on.
-        user_id (`str`):
-            Injected authenticated user id.
-        storage (`StorageBase`):
-            Injected storage backend.
-        workspace_manager (`WorkspaceManagerBase`):
-            Injected workspace manager.
-        message_bus (`MessageBus`):
-            Injected message bus.
-        chat (`ChatService`):
-            Injected chat service — where each step's turn is taken.
-
-    Returns:
-        `SOPRunResponse`:
-            The run as it stands once it stopped again.
-    """
-    await _require_run(storage, user_id, sop_run_id)
-    service = _service(storage, workspace_manager, message_bus, chat)
-    await service.run(user_id, sop_run_id)
-    record = await _require_run(storage, user_id, sop_run_id)
-    return SOPRunResponse(run=record, phase=record.state.phase)
 
 
 @sop_router.post(

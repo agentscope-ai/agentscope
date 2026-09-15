@@ -1825,6 +1825,38 @@ class TestSOP(IsolatedAsyncioTestCase):
         self.assertIsNone(await self.storage.get_sop_run(self.user_id, run.id))
         self.assertEqual(await self.storage.list_sop_runs(self.user_id), [])
 
+    async def test_deleting_a_run_takes_its_sessions(self) -> None:
+        """The run minted them, so none is left behind to be woken."""
+        await self.storage.upsert_agent(
+            self.user_id,
+            make_agent_record(self.user_id),
+        )
+        agents = await self.storage.list_agents(self.user_id)
+        session = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=agents[0].id,
+            config=SessionConfig(workspace_id="ws-1"),
+        )
+        run = SOPRunRecord(
+            user_id=self.user_id,
+            sop_id="sop-1",
+            definition=SOPData(name="ship", steps=[]),
+            sessions={"modeller": session.id},
+        )
+        await self.storage.upsert_sop_run(self.user_id, run)
+
+        self.assertTrue(
+            await self.storage.delete_sop_run(self.user_id, run.id),
+        )
+
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                agents[0].id,
+                session.id,
+            ),
+        )
+
     async def test_a_step_state_subclass_survives_redis(self) -> None:
         """What a step kept beyond the base record is stored, not trimmed."""
         run = SOPRunRecord(

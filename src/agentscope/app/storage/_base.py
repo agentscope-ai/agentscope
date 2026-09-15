@@ -850,10 +850,11 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
-        """Delete a procedure and every run of it.
+        """Delete a procedure, every run of it, and their conversations.
 
         The runs go too because a run is only readable through the
-        definition it snapshotted — nothing else can rebuild one.
+        definition it snapshotted — nothing else can rebuild one — and
+        each run takes its own conversations with it.
 
         Args:
             user_id (`str`):
@@ -959,7 +960,12 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
-        """Delete one run.
+        """Delete one run and the conversations it opened.
+
+        The conversations go too because the run minted every one of
+        them: left behind they are sessions nobody opened, still
+        wakeable by a background tool finishing, and still carrying the
+        procedure's instructions.
 
         Args:
             user_id (`str`):

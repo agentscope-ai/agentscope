@@ -1088,22 +1088,49 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return [_to_record(r, SOPRecord) for r in rows]
 
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
-        """Delete a procedure and its runs in one transaction."""
-        from sqlalchemy import delete
+        """Delete a procedure, its runs and their sessions atomically."""
+        from sqlalchemy import select
 
         async with self._session() as sess:
             row = await sess.get(SOPRow, sop_id)
             if row is None or row.user_id != user_id:
                 return False
-            await sess.execute(
-                delete(SOPRunRow).where(
-                    SOPRunRow.user_id == user_id,
-                    SOPRunRow.sop_id == sop_id,
-                ),
+            runs = (
+                (
+                    await sess.execute(
+                        select(SOPRunRow).where(
+                            SOPRunRow.user_id == user_id,
+                            SOPRunRow.sop_id == sop_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
             )
+            for run in runs:
+                await self._delete_sop_run_impl(sess, user_id, run)
             await sess.delete(row)
             await sess.commit()
         return True
+
+    async def _delete_sop_run_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        row: Any,
+    ) -> None:
+        """Delete a run row and the sessions it opened, on *sess*."""
+        record = _to_record(row, SOPRunRecord)
+        for session_id in record.sessions.values():
+            session_row = await sess.get(SessionRow, session_id)
+            if session_row is not None:
+                await self._delete_session_impl(
+                    sess,
+                    user_id,
+                    session_row.agent_id,
+                    session_id,
+                )
+        await sess.delete(row)
 
     async def upsert_sop_run(
         self,
@@ -1170,12 +1197,12 @@ class AsyncSQLAlchemyStorage(StorageBase):
             await sess.commit()
 
     async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
-        """Delete one run."""
+        """Delete one run and its sessions in one transaction."""
         async with self._session() as sess:
             row = await sess.get(SOPRunRow, sop_run_id)
             if row is None or row.user_id != user_id:
                 return False
-            await sess.delete(row)
+            await self._delete_sop_run_impl(sess, user_id, row)
             await sess.commit()
         return True
 

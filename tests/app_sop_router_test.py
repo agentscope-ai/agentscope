@@ -246,7 +246,8 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             self._client.post(
-                f"/sop/runs/{run_id}/advance",
+                f"/sop/runs/{run_id}/verdict",
+                json={"step_index": 0, "passed": True},
                 headers=other,
             ).status_code,
             404,

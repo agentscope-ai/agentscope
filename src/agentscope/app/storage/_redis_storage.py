@@ -1712,10 +1712,21 @@ class RedisStorage(StorageBase):
         await self.upsert_sop_run(user_id, record)
 
     async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
-        """Delete one run and drop it from both indexes."""
+        """Delete one run, its sessions, and both index entries."""
         record = await self.get_sop_run(user_id, sop_run_id)
         if record is None:
             return False
+        for session_id in record.sessions.values():
+            # ``get_session`` keys on the session alone, so the agent id
+            # it wants is read back off the record it returns — the run
+            # never stored one.
+            session = await self.get_session(user_id, "", session_id)
+            if session is not None:
+                await self.delete_session(
+                    user_id,
+                    session.agent_id,
+                    session_id,
+                )
         await self._client.srem(
             self._key(self.key_config.sop_run_index, user_id=user_id),
             sop_run_id,

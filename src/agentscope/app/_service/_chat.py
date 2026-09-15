@@ -62,6 +62,7 @@ from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
 from ._session_projection import SessionProjection
+from ._sop import SOPService
 from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
@@ -782,6 +783,10 @@ class ChatService:
         otherwise a waiter can assemble an agent from a snapshot that the
         preceding holder replaces before releasing the lock."""
 
+        # Bound out here because the procedure a session belongs to is
+        # carried on after the lock is let go, not under it.
+        sop_run_id: str | None = None
+
         async with self._message_bus.acquire_lock(
             MessageBusKeys.session_lock(session_id),
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
@@ -830,6 +835,8 @@ class ChatService:
                         ),
                     )
                 worker_name = agent_record.data.name
+                if isinstance(session_record.origin, SOPOrigin):
+                    sop_run_id = session_record.origin.sop_run_id
 
                 # -------------------------------------------------------------
                 # 1b. Resolve the team identity ONCE, before anything that
@@ -1478,6 +1485,46 @@ class ChatService:
                     model,
                     trigger_text,
                 )
+
+        if sop_run_id is not None:
+            await self._advance_sop(user_id, sop_run_id)
+
+    async def _advance_sop(self, user_id: str, sop_run_id: str) -> None:
+        """Carry the procedure this session belongs to on from here.
+
+        A person answering a tool call in a step's session answers it
+        through the ordinary chat endpoint, so the procedure has no
+        other way to learn that the step got moving again.
+
+        Skipped while the run's lock is held, which means the run is
+        already driving: this reply was one it dispatched, and it reads
+        the result back itself the moment this returns.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run this session belongs to.
+        """
+        if await self._message_bus.is_locked(
+            MessageBusKeys.sop_run_lock(sop_run_id),
+        ):
+            return
+        try:
+            await SOPService(
+                self._storage,
+                self._workspace_manager,
+                self._message_bus,
+                self,
+            ).run(user_id, sop_run_id)
+        except Exception:  # pylint: disable=broad-except
+            # The reply itself landed; a procedure that cannot be
+            # carried on is not a reason to report that one as failed.
+            logger.exception(
+                "Advancing SOP run %r after session %r failed.",
+                sop_run_id,
+                user_id,
+            )
 
     async def _project_event(
         self,
