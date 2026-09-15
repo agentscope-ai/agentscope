@@ -24,6 +24,7 @@ from ._router import (
     schedule_router,
     session_router,
     skill_router,
+    sop_router,
     workspace_router,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
@@ -396,6 +397,7 @@ def create_app(
         schedule_router,
         session_router,
         skill_router,
+        sop_router,
         workspace_router,
         model_router,
         tts_model_router,

@@ -79,13 +79,33 @@ class TeamOrigin(BaseModel):
     type: Literal["team"] = "team"
 
 
+class SOPOrigin(BaseModel):
+    """A session a SOP run opened to hold one of its conversations."""
+
+    type: Literal["sop"] = "sop"
+
+    sop_run_id: str
+    """The run that opened it."""
+
+    session_key: str
+    """Which of the run's conversations this is, under the name the
+    procedure gave it. Enough to label the session without reading the
+    run."""
+
+
 # How a session came to exist. Fixed when the session is created and
 # never rewritten, which is what separates it from
 # ``SessionRecord.team_id``: team membership is granted by a tool call
 # inside an existing session and can be revoked, so it is a field of its
 # own rather than a member of this union.
 SessionOrigin = Annotated[
-    Union[UserOrigin, ScheduleOrigin, ChannelOrigin, TeamOrigin],
+    Union[
+        UserOrigin,
+        ScheduleOrigin,
+        ChannelOrigin,
+        TeamOrigin,
+        SOPOrigin,
+    ],
     Field(discriminator="type"),
 ]
 

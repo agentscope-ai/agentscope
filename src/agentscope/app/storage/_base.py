@@ -19,10 +19,13 @@ from ._model import (
     SessionConfig,
     SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
+from ...sop import SOPPhase, SOPRunState
 from ...state import AgentState
 
 
@@ -796,6 +799,183 @@ class StorageBase(ABC):
             `tuple[list[Msg], bool]`: A tuple of (messages in
             chronological order, has_more). ``has_more`` is ``True``
             when older messages exist before the returned page.
+        """
+
+    # ------------------------------------------------------------------
+    # SOP persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Create or overwrite a procedure.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`SOPRecord`):
+                The procedure to store.
+
+        Returns:
+            `SOPRecord`:
+                The stored record, with its timestamps refreshed.
+        """
+
+    @abstractmethod
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure; owner-scoped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure id.
+
+        Returns:
+            `SOPRecord | None`:
+                The record, or ``None`` if the user has no such one.
+        """
+
+    @abstractmethod
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """List the user's procedures.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[SOPRecord]`:
+                Every procedure the user owns.
+        """
+
+    @abstractmethod
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure, every run of it, and their conversations.
+
+        The runs go too because a run is only readable through the
+        definition it snapshotted — nothing else can rebuild one — and
+        each run takes its own conversations with it.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure id.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+
+    @abstractmethod
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Create or overwrite a run.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`SOPRunRecord`):
+                The run to store.
+
+        Returns:
+            `SOPRunRecord`:
+                The stored record, with its timestamps refreshed.
+        """
+
+    @abstractmethod
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run; owner-scoped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+
+        Returns:
+            `SOPRunRecord | None`:
+                The record, or ``None`` if the user has no such one.
+        """
+
+    @abstractmethod
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """List the user's runs, newest first.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str | None`, optional):
+                Only runs of this procedure. ``None`` means all of them.
+            phase (`SOPPhase | None`, optional):
+                Only runs standing here — ``AWAITING`` is the one worth
+                asking for, since those are the runs waiting on a
+                person. ``None`` means all of them.
+
+        Returns:
+            `list[SOPRunRecord]`:
+                The matching runs.
+        """
+
+    @abstractmethod
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Update only what a run changes as it goes.
+
+        The hot path: every attempt writes back, and the definition it
+        snapshotted never changes, so it is not resent.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+            state (`SOPRunState`):
+                How the run is going now.
+            sessions (`dict[str, str] | None`, optional):
+                The run's conversations, when it opened one this time.
+                ``None`` leaves them as they are.
+
+        Raises:
+            `KeyError`:
+                If the user has no such run.
+        """
+
+    @abstractmethod
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run and the conversations it opened.
+
+        The conversations go too because the run minted every one of
+        them: left behind they are sessions nobody opened, still
+        wakeable by a background tool finishing, and still carrying the
+        procedure's instructions.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
         """
 
     # ------------------------------------------------------------------
