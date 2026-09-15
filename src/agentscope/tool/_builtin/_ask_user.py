@@ -2,7 +2,6 @@
 """The asking user tool class."""
 from typing import Any
 
-import jsonschema
 from pydantic import BaseModel, Field, model_validator
 
 from .._base import ToolBase
@@ -101,12 +100,6 @@ class _Question(BaseModel):
         labels = [option.label for option in self.options]
         if len(labels) != len(set(labels)):
             raise ValueError("option labels must be unique within a question")
-        if self.multi_select and any(
-            option.preview is not None for option in self.options
-        ):
-            raise ValueError(
-                "preview is only supported for single-select questions",
-            )
         return self
 
 
@@ -216,23 +209,6 @@ Use this tool when you need to ask the user questions during execution:
     is_state_injected: bool = False
     is_concurrency_safe: bool = True
     is_external_tool: bool = True
-
-    def validate_input(self, tool_input: dict[str, Any]) -> None:
-        """Validate the schema and cross-field question constraints.
-
-        Args:
-            tool_input (`dict[str, Any]`):
-                The parsed AskUser arguments.
-
-        Raises:
-            `jsonschema.ValidationError`:
-                If the input violates the AskUser contract.
-        """
-        super().validate_input(tool_input)
-        try:
-            AskUserParams.model_validate(tool_input)
-        except ValueError as exc:
-            raise jsonschema.ValidationError(str(exc)) from exc
 
     async def check_permissions(
         self,

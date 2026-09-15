@@ -301,8 +301,6 @@ class Toolkit:
                 tool_call.input,
                 tool_func.input_schema,
             )
-            tool_func.validate_input(kwargs)
-
             # State injection
             if (
                 tool_func.is_state_injected
