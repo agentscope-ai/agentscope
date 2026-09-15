@@ -179,6 +179,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "metadata": {},
+            "visibility": "user",
             "reply_id": reply_id,
         }
 
@@ -192,6 +193,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             "structured_output": None,
             "error": None,
             "metadata": {},
+            "visibility": "user",
             "name": "Friday",
             "role": "assistant",
             "usage": None,

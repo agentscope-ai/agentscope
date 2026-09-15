@@ -353,6 +353,7 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
                     "type": "CUSTOM",
                     "id": AnyString(),
                     "created_at": AnyString(),
+                    "visibility": "user",
                     "name": "session_updated",
                     "value": {},
                     "metadata": {},

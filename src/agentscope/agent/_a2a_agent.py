@@ -30,6 +30,7 @@ from ..message import (
     DataBlock,
     URLSource,
 )
+from ..types import Visibility
 
 if TYPE_CHECKING:
     from a2a.client import Client
@@ -210,6 +211,7 @@ class A2AAgent:
         *,
         client: Client | None = None,
         state: A2AAgentState | None = None,
+        visibility: Visibility = Visibility.USER,
     ) -> None:
         """Initialize the A2A agent adapter.
 
@@ -230,6 +232,11 @@ class A2AAgent:
                 An existing state to resume, e.g. one saved from an earlier
                 adapter, so its ``context_id`` continues the same remote
                 conversation. A fresh state is created when omitted.
+            visibility (`Visibility`, defaults to `Visibility.USER`):
+                Who the remote agent's output is for, stamped on every
+                event and message this adapter yields. A remote worker
+                that only reports back to a local orchestrator is
+                ``INTERNAL``.
         """
         try:
             import a2a  # noqa: F401  pylint: disable=unused-import
@@ -258,6 +265,7 @@ class A2AAgent:
 
         self._client = client
         self.state = state or A2AAgentState()
+        self.visibility = visibility
         self._closed = False
 
     async def __aenter__(self) -> A2AAgent:
@@ -298,6 +306,7 @@ class A2AAgent:
                 Streamed events produced during the reply.
         """
         async for event_or_msg in self._reply(inputs):
+            event_or_msg.visibility = self.visibility
             if isinstance(event_or_msg, Msg) and not yield_final_msg:
                 continue
             yield event_or_msg
@@ -316,6 +325,7 @@ class A2AAgent:
         final_msg: Msg | None = None
         async for event_or_msg in self._reply(inputs):
             if isinstance(event_or_msg, Msg):
+                event_or_msg.visibility = self.visibility
                 final_msg = event_or_msg
         if final_msg is None:
             raise RuntimeError("A2AAgent did not produce a final message.")

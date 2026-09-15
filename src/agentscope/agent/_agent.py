@@ -65,6 +65,7 @@ from ..event import (
     HintBlockEvent,
 )
 from ..exception import AgentOrientedException
+from ..types import Visibility
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -131,6 +132,7 @@ class Agent:
         context_config: ContextConfig | None = None,
         react_config: ReActConfig | None = None,
         injection_config: InjectionConfig | None = None,
+        visibility: Visibility = Visibility.USER,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -167,11 +169,19 @@ class Agent:
                 The runtime state injection config, which controls how the
                 time, (plan) tasks and context usage are injected into the
                 context to help the agent better reason and act.
+            visibility (`Visibility`, defaults to `Visibility.USER`):
+                Who this agent's output is for. Every event yielded by
+                :meth:`reply_stream` and every message returned by
+                :meth:`reply` carries it, so a frontend can keep a worker
+                agent out of the main conversation (``INTERNAL``) or divert
+                it into a side panel (``ARTIFACT``). It changes nothing
+                about what the agent reads, or how it runs.
         """
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
         self.state = state or AgentState()
+        self.visibility = visibility
 
         self.model_config = model_config or ModelConfig()
         self.context_config = context_config or ContextConfig()
@@ -295,6 +305,7 @@ class Agent:
         | None = None,
         structured_schema: Type[BaseModel] | None = None,
         yield_final_msg: bool = False,
+        visibility: Visibility | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply to the given inputs and stream agent events.
 
@@ -311,6 +322,10 @@ class Agent:
                 If yield the final reply message. When requiring structured
                 output, use this option to get the final message, and access
                 it via the `structured_output` attribute.
+            visibility (`Visibility | None`, optional):
+                Who this one reply is for, overriding the agent's own
+                :attr:`visibility` for this call only. Every yielded event
+                and the final message carry it.
 
         Yields:
             `AgentEvent | Msg`:
@@ -324,6 +339,7 @@ class Agent:
         async for chunk in self._reply(
             inputs=inputs,
             structured_schema=structured_schema,
+            visibility=visibility,
         ):
             if isinstance(chunk, Msg) and not yield_final_msg:
                 continue
@@ -338,6 +354,7 @@ class Agent:
         | ExternalExecutionResultEvent
         | None = None,
         structured_schema: Type[BaseModel] | None = None,
+        visibility: Visibility | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
@@ -362,6 +379,10 @@ class Agent:
                 The Pydantic model class that the reply's structured output
                 must conform to, with the validated result carried on the
                 final message's ``structured_output`` attribute as a dict.
+            visibility (`Visibility | None`, optional):
+                Who this one reply is for, overriding the agent's own
+                :attr:`visibility` for this call only. Carried on the
+                returned message.
 
         Returns:
             `Msg`:
@@ -371,6 +392,7 @@ class Agent:
         async for evt_or_msg in self._reply(
             inputs=inputs,
             structured_schema=structured_schema,
+            visibility=visibility,
         ):
             if isinstance(evt_or_msg, Msg):
                 final_msg = evt_or_msg
@@ -888,11 +910,16 @@ class Agent:
         | ExternalExecutionResultEvent
         | None = None,
         structured_schema: Type[BaseModel] | None = None,
+        visibility: Visibility | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware). The reply loop
         exits only after its ``ReplyEndEvent`` escapes the middleware chain,
         so an ``on_reply`` middleware can swallow the event (receive it
-        without yielding) to force another reasoning-acting round."""
+        without yielding) to force another reasoning-acting round.
+
+        Everything leaving here is stamped with ``visibility`` (or the
+        agent's own when it is `None`) — the last point every event and the
+        final message pass through, middleware-injected ones included."""
         if not self._reply_middlewares:
             agen = self._reply_impl(
                 inputs=inputs,
@@ -941,12 +968,14 @@ class Agent:
 
             agen = execute_chain()
 
+        audience = self.visibility if visibility is None else visibility
         self._receive_reply_end = False
         async for item in agen:
             # Set before the yield: the suspended `_reply_impl` checks the
             # flag once resumed by the next pull
             if isinstance(item, ReplyEndEvent):
                 self._receive_reply_end = True
+            item.visibility = audience
             yield item
 
     async def _close_unfinished_tool_calls(

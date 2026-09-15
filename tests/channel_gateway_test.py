@@ -740,6 +740,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                     "id": event["id"],
                     "created_at": event["created_at"],
                     "metadata": {},
+                    "visibility": "user",
                     "type": "USER_CONFIRM_RESULT",
                     "reply_id": "reply-1",
                     "confirm_results": [

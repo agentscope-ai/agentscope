@@ -157,6 +157,7 @@ def _msg_base(name: str = "Friday") -> dict[str, Any]:
         "structured_output": None,
         "error": None,
         "metadata": {},
+        "visibility": "user",
         "name": name,
         "role": "assistant",
         "usage": None,
@@ -172,6 +173,7 @@ def _user_msg_dict(content: str) -> dict[str, Any]:
         "structured_output": None,
         "error": None,
         "metadata": {},
+        "visibility": "user",
         "name": "user",
         "role": "user",
         "content": [
@@ -284,6 +286,7 @@ def _assert_interrupted_end(
             "id": AnyString(),
             "created_at": AnyString(),
             "metadata": {},
+            "visibility": "user",
             "type": "REPLY_END",
             "error": None,
             "session_id": session_id,
