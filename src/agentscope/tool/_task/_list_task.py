@@ -41,7 +41,7 @@ Use TaskGet with a specific task ID to view full details including description a
 
     input_schema: dict = _TaskListParams.model_json_schema()
 
-    async def __call__(self, _agent_state: AgentState) -> ToolChunk:
+    async def call(self, _agent_state: AgentState) -> ToolChunk:
         """List tasks for the agent to perform."""
         if not isinstance(_agent_state, AgentState):
             # Expose error to the developer

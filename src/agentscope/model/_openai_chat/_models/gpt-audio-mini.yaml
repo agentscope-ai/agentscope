@@ -1,6 +1,7 @@
 name: gpt-audio-mini
 label: GPT Audio Mini
-status: active
+status: deprecated
+deprecated_at: "2027-01-20T00:00:00"
 
 input_types:
   - text/plain

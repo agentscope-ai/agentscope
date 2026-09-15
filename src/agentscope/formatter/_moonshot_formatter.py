@@ -109,7 +109,14 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
             reasoning_parts: list[str] = []
             tool_calls: list[dict] = []
 
+            # Hold the promoted media until this turn's tool messages are out.
+            pending_media: list[dict] = []
+
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    messages.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, ThinkingBlock):
                     # Preserve reasoning_content for multi-turn
                     # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
@@ -230,7 +237,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
                         if promo_content:
-                            messages.append(
+                            pending_media.append(
                                 {
                                     "role": "user",
                                     "name": "system-reminder",
@@ -243,6 +250,8 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            messages.extend(pending_media)
 
             msg_moonshot = {
                 "role": msg.role,

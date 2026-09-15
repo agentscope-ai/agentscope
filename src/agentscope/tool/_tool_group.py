@@ -51,7 +51,7 @@ class ToolGroup:
         """Initialize the tool group.
 
         Args:
-            name (`Literal["basic"] | str):
+            name (`Literal["basic"] | str`):
                 The name of the tool group.
             description (`str | None`):
                 The description of the tool group.

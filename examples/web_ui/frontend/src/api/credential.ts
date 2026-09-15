@@ -3,7 +3,7 @@ import type {
 	CreateCredentialRequest,
 	CreateCredentialResponse,
 	CredentialListResponse,
-	CredentialRecord,
+	CredentialView,
 	CredentialSchemasResponse,
 	UpdateCredentialRequest,
 } from './types';
@@ -17,7 +17,7 @@ export const credentialApi = {
 		client.post<CreateCredentialResponse>('/credential/', body),
 
 	update: (credentialId: string, body: UpdateCredentialRequest) =>
-		client.patch<CredentialRecord>(`/credential/${credentialId}`, body),
+		client.patch<CredentialView>(`/credential/${credentialId}`, body),
 
 	delete: (credentialId: string) => client.delete(`/credential/${credentialId}`),
 };

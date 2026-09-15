@@ -44,7 +44,7 @@ Returns full task details:
 
     input_schema: dict = _TaskGetParams.model_json_schema()
 
-    async def __call__(
+    async def call(
         self,
         task_id: str,
         _agent_state: AgentState,

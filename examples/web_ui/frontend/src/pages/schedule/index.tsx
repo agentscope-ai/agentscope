@@ -5,6 +5,7 @@ import * as React from 'react';
 import type { ScheduleEvent } from './event';
 import type { ScheduleRecord } from '@/api';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useSchedules } from '@/hooks/useSchedules';
 import { useTranslation } from '@/i18n/useI18n';
@@ -78,42 +79,50 @@ export function SchedulePage() {
 	};
 
 	return (
-		<div className="w-full h-full flex flex-col bg-sidebar overflow-hidden">
-			<div className="flex items-center justify-between p-4 flex-shrink-0">
-				<span className="text-2xl font-semibold">{t('common.schedule')}</span>
-				<div className="flex items-center gap-2">
-					<Button size="icon-sm" onClick={() => setIsCreateOpen(true)}>
-						<Plus />
-					</Button>
-					<Tabs
-						value={viewMode}
-						onValueChange={(value) => setViewMode(value as 'calendar' | 'list')}
-					>
-						<TabsList>
-							<TabsTrigger value="calendar" className="border-none w-[100px]">
-								<Calendar className="h-4 w-4" />
-								<span>{t('schedule.calendar')}</span>
-							</TabsTrigger>
-							<TabsTrigger value="list" className="border-none w-[100px]">
-								<List className="h-4 w-4" />
-								<span>{t('schedule.list')}</span>
-							</TabsTrigger>
-						</TabsList>
-					</Tabs>
+		<div className="flex size-full p-2">
+			<main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] bg-card shadow-panel">
+				<div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4">
+					<div>
+						<div className="text-2xl font-semibold">{t('common.schedule')}</div>
+						<div className="mt-1 text-sm text-muted-foreground">
+							{t('schedule.subtitle')}
+						</div>
+					</div>
+					<div className="flex items-center gap-2">
+						<Button size="icon-sm" onClick={() => setIsCreateOpen(true)}>
+							<Plus />
+						</Button>
+						<Tabs
+							value={viewMode}
+							onValueChange={(value) => setViewMode(value as 'calendar' | 'list')}
+						>
+							<TabsList>
+								<TabsTrigger value="calendar" className="border-none w-[100px]">
+									<Calendar className="h-4 w-4" />
+									<span>{t('schedule.calendar')}</span>
+								</TabsTrigger>
+								<TabsTrigger value="list" className="border-none w-[100px]">
+									<List className="h-4 w-4" />
+									<span>{t('schedule.list')}</span>
+								</TabsTrigger>
+							</TabsList>
+						</Tabs>
+					</div>
 				</div>
-			</div>
+				<Separator />
 
-			<div className="flex-1 overflow-hidden rounded-t-3xl bg-white">
-				{viewMode === 'calendar' && (
-					<CalendarTabPage
-						events={events}
-						onEventClick={handleEventClick}
-						currentDate={currentDate}
-						onMonthChange={setCurrentDate}
-					/>
-				)}
-				{viewMode === 'list' && <ListTabPage />}
-			</div>
+				<div className="flex-1 overflow-hidden">
+					{viewMode === 'calendar' && (
+						<CalendarTabPage
+							events={events}
+							onEventClick={handleEventClick}
+							currentDate={currentDate}
+							onMonthChange={setCurrentDate}
+						/>
+					)}
+					{viewMode === 'list' && <ListTabPage />}
+				</div>
+			</main>
 
 			<ScheduleDetailDrawer
 				schedule={selectedSchedule}

@@ -26,7 +26,7 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
     """Test cases for E2BWorkspace lifecycle and MCP integration.
 
     Each test creates a real E2B cloud sandbox and tears it down
-    (``pause``) afterwards.  The suite is skipped entirely when
+    (``pause``) afterward.  The suite is skipped entirely when
     ``E2B_API_KEY`` is absent so that CI runs without E2B credentials
     are unaffected.
     """
@@ -62,7 +62,10 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         await workspace.initialize()
 
-        mcps = await workspace.list_mcps()
+        mcps = await workspace.list_mcps(
+            agent_id="test-agent",
+            session_id="test-session",
+        )
         self.assertGreater(len(mcps), 0)
 
         for mcp in mcps:

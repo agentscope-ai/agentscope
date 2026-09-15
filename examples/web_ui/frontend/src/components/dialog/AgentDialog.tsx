@@ -1,8 +1,8 @@
 import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ContextConfig, ReActConfig } from '@/api';
+import type { ContextConfig, InviteConfig, ReActConfig } from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
@@ -10,6 +10,7 @@ import {
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
 import type { SchemaFormValue } from '@/components/form/SchemaForm';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -22,28 +23,34 @@ import {
 } from '@/components/ui/dialog';
 import { useAgents } from '@/hooks/useAgents';
 import { useAgentSchema } from '@/hooks/useAgentSchema';
+import { formatApiErrorForAlert } from '@/lib/api-error';
 
 interface Props {
 	onCreated?: () => void;
-	triggerId?: string;
+	children: ReactNode;
 }
 
-export function AgentDialog({ onCreated, triggerId }: Props) {
+export function AgentDialog({ onCreated, children }: Props) {
 	const { create } = useAgents();
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
 	const [open, setOpen] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
+	const [errorMsg, setErrorMsg] = useState('');
 
 	useEffect(() => {
 		if (open && schema && !values) {
 			setValues(defaultAgentFormValues(schema));
 		}
-		if (!open) setValues(null);
+		if (!open) {
+			setValues(null);
+			setErrorMsg('');
+		}
 	}, [open, schema, values]);
 
 	const handleChange = (section: AgentSection, key: string, value: SchemaFormValue) => {
+		setErrorMsg('');
 		setValues((prev) =>
 			prev ? { ...prev, [section]: { ...prev[section], [key]: value } } : prev,
 		);
@@ -53,16 +60,23 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 		if (!values) return;
 		const name = (values.identity.name as string | undefined)?.trim();
 		if (!name) return;
+		setErrorMsg('');
 		setSubmitting(true);
 		try {
-			await create({
-				name,
-				system_prompt: values.identity.system_prompt as string | undefined,
-				context_config: values.context_config as unknown as ContextConfig,
-				react_config: values.react_config as unknown as ReActConfig,
-			});
+			await create(
+				{
+					name,
+					system_prompt: values.identity.system_prompt as string | undefined,
+					context_config: values.context_config as unknown as ContextConfig,
+					react_config: values.react_config as unknown as ReActConfig,
+					invite_config: values.invite_config as unknown as InviteConfig,
+				},
+				{ silent: true },
+			);
 			setOpen(false);
 			onCreated?.();
+		} catch (e) {
+			setErrorMsg(formatApiErrorForAlert(e));
 		} finally {
 			setSubmitting(false);
 		}
@@ -72,12 +86,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger asChild>
-				<Button id={triggerId}>
-					<PlusCircle />
-					<span>{t('dialog-agent-create.trigger')}</span>
-				</Button>
-			</DialogTrigger>
+			<DialogTrigger asChild>{children}</DialogTrigger>
 			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-create.title')}</DialogTitle>
@@ -92,6 +101,14 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
 					)}
 				</div>
+				{errorMsg && (
+					<Alert variant="destructive">
+						<CircleAlert />
+						<AlertDescription className="whitespace-pre-wrap">
+							{errorMsg}
+						</AlertDescription>
+					</Alert>
+				)}
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>
 						<CircleAlert className="size-3.5" />

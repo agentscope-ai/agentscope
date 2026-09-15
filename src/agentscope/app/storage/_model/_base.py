@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """The base attributes used in storage."""
-import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
+
+from ...._utils._common import _generate_id
 
 
 class _RecordBase(BaseModel):
     """The base class for all records."""
 
     id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex,
+        default_factory=_generate_id,
         description="Unique identifier for the credential.",
     )
 

@@ -4,17 +4,26 @@
 from ._types import ToolChoice, Function, RegisteredTool
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
-from ._base import ToolBase, ParamsBase
+from ._base import ToolBase, ParamsBase, ToolMiddlewareBase
 from ._adapters import MCPTool, FunctionTool
 from ._constants import MCP_CALL_META_KEY
 from ._builtin import (
+    AskUser,
+    AskUserAnswer,
+    AskUserMetadata,
+    AskUserParams,
     ResetTools,
     Bash,
+    PowerShell,
     Edit,
     Glob,
     Grep,
     Read,
     Write,
+    BackendBase,
+    DirEntry,
+    ExecResult,
+    LocalBackend,
 )
 from ._task import (
     TaskUpdate,
@@ -25,11 +34,16 @@ from ._task import (
 from ._tool_group import ToolGroup
 
 __all__ = [
+    "AskUser",
+    "AskUserAnswer",
+    "AskUserMetadata",
+    "AskUserParams",
     # Basic tool related types and functions
     "ToolChoice",
     "Function",
     "ToolBase",
     "ParamsBase",
+    "ToolMiddlewareBase",
     "MCPTool",
     "FunctionTool",
     "ToolGroup",
@@ -39,8 +53,13 @@ __all__ = [
     "RegisteredTool",
     "MCP_CALL_META_KEY",
     # Builtin tools
+    "BackendBase",
+    "LocalBackend",
+    "DirEntry",
+    "ExecResult",
     "ResetTools",
     "Bash",
+    "PowerShell",
     "Edit",
     "Glob",
     "Grep",

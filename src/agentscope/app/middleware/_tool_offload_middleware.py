@@ -35,6 +35,7 @@ from ...message import (
 )
 from ...agent import Agent
 from ..message_bus import MessageBus
+from .._bus_ops import deliver_to_inbox
 from ..._logging import logger
 
 
@@ -53,7 +54,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     Args:
         bg_manager (`BackgroundTaskManager`):
             Application-level background task manager. Used to register
-            the running asyncio task so :class:`TaskStop` can target it.
+            the running asyncio task so :class:`ToolStop` can target it.
         message_bus (`MessageBus`):
             Application message bus. The completion callback uses it to
             push the result HintBlock to the session's inbox and to
@@ -116,7 +117,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
 
         - The running task is **not** cancelled.
         - It is registered with :attr:`_bg_manager` so that
-          :class:`TaskStop` can target it and shutdown can cancel it.
+          :class:`ToolStop` can target it and shutdown can cancel it.
         - A separate watcher coroutine is spawned to await the task's
           completion and then push the result as a
           :class:`HintBlock` to the session inbox + enqueue a wakeup.
@@ -239,7 +240,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             """Wait for the offloaded tool to finish, then push its
             result to the session inbox + enqueue a wakeup.
 
-            On cancellation (e.g. ``TaskStop``) or unhandled exception
+            On cancellation (e.g. ``ToolStop``) or unhandled exception
             no result is delivered — the agent is left without a
             completion notification in those edge cases.
             """
@@ -344,14 +345,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 tool_name,
                 session_id,
             )
-            await self._message_bus.inbox_push(
-                session_id,
-                hint.model_dump(mode="json"),
-            )
-            await self._message_bus.enqueue_wakeup(
+            await deliver_to_inbox(
+                self._message_bus,
                 user_id=self._user_id,
                 session_id=session_id,
                 agent_id=self._agent_id,
+                payload=hint.model_dump(mode="json"),
             )
 
         asyncio.create_task(_deliver_when_done())
@@ -360,6 +359,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             session_id=session_id,
             agent_id=self._agent_id,
             user_id=self._user_id,
+            tool_name=tool_name,
         )
 
         logger.info(
