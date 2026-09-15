@@ -44,15 +44,25 @@ class SOPEngine:
 
         Raises:
             `ValueError`:
-                If the state has a different number of steps than the
-                SOP, which means the procedure was edited since.
+                If the state's stored step count or ordered subjects do not
+                match the SOP, which means the procedure was edited since.
         """
         self.state = state or SOPRunState()
+        step_subjects = [step.subject for step in sop.steps]
+        if self.state.step_subjects and (
+            self.state.step_subjects != step_subjects
+        ):
+            raise ValueError(
+                "State belongs to SOP steps "
+                f"{self.state.step_subjects}, but this SOP has "
+                f"{step_subjects}.",
+            )
         if self.state.steps and len(self.state.steps) != len(sop.steps):
             raise ValueError(
                 f"State has {len(self.state.steps)} steps, but this SOP "
                 f"has {len(sop.steps)}.",
             )
+        self.state.step_subjects = step_subjects
         self.sop = sop
         # A stored run was read back as the base record; a step that
         # keeps more than that gets it back through its own type.
