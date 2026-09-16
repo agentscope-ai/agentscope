@@ -17,6 +17,7 @@ from ._parser import (
 )
 from ._vdb import (
     DocumentSummary,
+    ChromaStore,
     ElasticsearchStore,
     MilvusLiteStore,
     VectorStoreBase,
@@ -32,6 +33,7 @@ __all__ = [
     "ChunkerBase",
     "Chunk",
     "DocumentSummary",
+    "ChromaStore",
     "ElasticsearchStore",
     "ImageParser",
     "MilvusLiteStore",
