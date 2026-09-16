@@ -1223,6 +1223,7 @@ class ChatService:
                                         id=event.reply_id,
                                         name=event.name,
                                         content=[],
+                                        visibility=event.visibility,
                                     )
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)

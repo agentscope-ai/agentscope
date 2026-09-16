@@ -16,8 +16,9 @@ from a2a.utils.errors import TaskNotFoundError
 from utils import AnyString
 
 from agentscope.agent import A2AAgent
-from agentscope.message import UserMsg
+from agentscope.message import Msg, UserMsg
 from agentscope.state import A2AAgentState
+from agentscope.types import Visibility
 
 
 class _FakeClient:
@@ -179,6 +180,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "REPLY_START",
                     "session_id": AnyString(),
                     "reply_id": AnyString(),
@@ -189,6 +191,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_START",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -197,6 +200,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_DELTA",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -206,6 +210,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {"a2a": {"message_id": "msg-1"}},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_END",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -215,6 +220,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {"a2a": {"context_id": "context-1"}},
+                    "visibility": "user",
                     "type": "REPLY_END",
                     "session_id": AnyString(),
                     "reply_id": AnyString(),
@@ -315,6 +321,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {"a2a": {"context_id": "context-1"}},
+                "visibility": "user",
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
                 "finished_reason": "completed",
@@ -371,6 +378,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "REPLY_START",
                     "session_id": AnyString(),
                     "reply_id": AnyString(),
@@ -381,6 +389,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_START",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -389,6 +398,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_DELTA",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -403,6 +413,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                             "artifact_id": "artifact-1",
                         },
                     },
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_END",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -412,6 +423,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_START",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -420,6 +432,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_DELTA",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -429,6 +442,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {"a2a": {"task_id": "task-1"}},
+                    "visibility": "user",
                     "type": "TEXT_BLOCK_END",
                     "reply_id": AnyString(),
                     "block_id": AnyString(),
@@ -438,6 +452,7 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                     "created_at": AnyString(),
                     "metadata": {"a2a": {"context_id": "context-1"}},
+                    "visibility": "user",
                     "type": "REPLY_END",
                     "session_id": AnyString(),
                     "reply_id": AnyString(),
@@ -806,6 +821,42 @@ class A2AAgentLifecycleTest(IsolatedAsyncioTestCase):
             await agent.compress_context("anything", keyword="ignored")
 
         self.assertIn("compress_context", logs.output[0])
+        await agent.aclose()
+
+    async def test_visibility_is_stamped_on_the_remote_stream(self) -> None:
+        """A remote worker reporting to a local orchestrator stays out of
+        the conversation, final message included."""
+        client = _FakeClient(
+            [
+                [
+                    types.StreamResponse(
+                        message=types.Message(
+                            message_id="msg-1",
+                            context_id="context-1",
+                            role=types.Role.ROLE_AGENT,
+                            parts=[types.Part(text="hello")],
+                        ),
+                    ),
+                ],
+            ],
+        )
+        agent = A2AAgent(
+            self.card,
+            client=client,
+            visibility=Visibility.INTERNAL,
+        )
+
+        items = [
+            _
+            async for _ in agent.reply_stream(
+                UserMsg(name="user", content="hi"),
+                yield_final_msg=True,
+            )
+        ]
+
+        self.assertTrue(any(isinstance(_, Msg) for _ in items))
+        for item in items:
+            self.assertEqual(item.visibility, Visibility.INTERNAL)
         await agent.aclose()
 
 

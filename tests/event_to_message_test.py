@@ -212,6 +212,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "id": _REPLY_ID,
                 "metadata": {},
+                "visibility": "user",
                 "created_at": _created_at,
                 "finished_at": finished_at,
                 "finished_reason": finished_reason,
