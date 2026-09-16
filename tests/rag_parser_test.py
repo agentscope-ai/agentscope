@@ -1624,6 +1624,7 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(text.count("Callout"), 1)
 
     async def test_paragraph_without_a_text_box_is_unchanged(self) -> None:
+        """A document with no text box produces the same string as before."""
         docx_bytes = _make_docx_simple(["Hello", "World"])
         parser = WordParser(include_image=False)
         sections = await parser.parse(docx_bytes, "demo.docx")
