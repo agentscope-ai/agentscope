@@ -41,7 +41,7 @@ def _iter_shapes(shapes: Any) -> Iterator[Any]:
             A python-pptx shape collection.
 
     Yields:
-        `Any`: Each leaf shape, in reading order.
+        `Any`: Each leaf shape, in depth-first shape-tree order.
     """
     for shape in shapes:
         # A group is the only shape with its own ``shapes`` collection.

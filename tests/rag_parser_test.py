@@ -957,15 +957,33 @@ class PPTParserTest(IsolatedAsyncioTestCase):
             await parser.parse("/no/such/file.pptx", "x.pptx")
 
     async def test_group_shape_text_is_read(self) -> None:
-        """Text inside a group reaches the Sections, in reading order."""
+        """Text inside a group reaches the Sections, in shape-tree order."""
         parser = PPTParser(include_image=False)
         sections = await parser.parse(_make_pptx_with_group(), "demo.pptx")
 
-        text = "\n".join(s.content.text for s in sections)
-        self.assertIn("Standalone", text)
-        self.assertIn("Grouped one", text)
-        self.assertIn("Grouped two", text)
-        self.assertLess(text.index("Standalone"), text.index("Grouped one"))
+        # Only "Standalone" was read before; the group held the other two.
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "<slide index=1>\n"
+                            "Standalone\n"
+                            "Grouped one\n"
+                            "Grouped two\n"
+                            "</slide>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
 
     async def test_nested_group_shape_text_is_read(self) -> None:
         """A group can hold a group, so the descent has to recurse."""
@@ -975,10 +993,30 @@ class PPTParserTest(IsolatedAsyncioTestCase):
             "demo.pptx",
         )
 
-        text = "\n".join(s.content.text for s in sections)
-        self.assertIn("Innermost", text)
-        self.assertIn("Sibling", text)
-        self.assertIn("Outer", text)
+        # Depth first: the inner group is emptied before its sibling, and
+        # both come before the shape that follows the outer group.
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "<slide index=1>\n"
+                            "Innermost\n"
+                            "Sibling\n"
+                            "Outer\n"
+                            "</slide>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
 
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
