@@ -46,6 +46,12 @@ export function useSessions(agentId: string | null) {
 		// two mounts is the point here, not skipping the read — so a
 		// view that needs it still re-reads it when it mounts.
 		staleTime: 0,
+		// While any session holds the run lock, keep soft-refreshing so
+		// the sidebar clears `is_running` after a background run ends —
+		// without this, leaving a hung session to start a new one leaves
+		// a permanent spinner until the next manual navigation.
+		refetchInterval: (query) =>
+			query.state.data?.some((view) => view.is_running) ? 4_000 : false,
 	});
 
 	/** Drop every agent's list, so both mounts re-read after a write. */

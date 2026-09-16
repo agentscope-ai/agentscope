@@ -302,15 +302,29 @@ export function useMessages(
 				try {
 					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
 					if (cancelled) return;
-					msgsRef.current = messages;
+					// When the run lock is already gone but a persisted
+					// assistant reply still lacks `finished_at` (crashed
+					// worker / dropped REPLY_END), close it for display so
+					// the bubble does not spin forever. Display-only — we
+					// do not write this back to storage.
+					const closedMessages = is_running
+						? messages
+						: messages.map((m) => {
+								if (m.role === 'user' || m.finished_at) return m;
+								return {
+									...m,
+									finished_at: m.created_at ?? new Date().toISOString(),
+								};
+							});
+					msgsRef.current = closedMessages;
 					// If a reply is in flight (running on a worker) OR the
 					// tail msg is parked on a pending tool_call (awaiting
-					// user confirmation / external execution), initialise the
+					// user confirmation or an external execution), initialise the
 					// phase to ``streaming`` so the interrupt button is
 					// available immediately — otherwise a fresh page load
 					// while parked leaves the UI stuck on ``idle`` with no
 					// way to abort.
-					const tail = messages[messages.length - 1];
+					const tail = closedMessages[closedMessages.length - 1];
 					if (is_running || hasPendingToolCall(tail)) {
 						setPhase('streaming');
 						if (hasPendingToolCall(tail)) {
