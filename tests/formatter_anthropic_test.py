@@ -663,12 +663,34 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                     name="assistant",
                     content=[ThinkingBlock(thinking="unsigned")],
                 ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_capital",
+                            input='{"country": "Japan"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_capital",
+                            output=[
+                                TextBlock(
+                                    text="The capital of Japan is Tokyo.",
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
                 UserMsg(name="user", content=[TextBlock(text="hello")]),
             ],
         )
 
         self.assertListEqual(
             [
+                self._gt_tool_call,
+                self._gt_tool_result,
                 {
                     "role": "user",
                     "content": [
