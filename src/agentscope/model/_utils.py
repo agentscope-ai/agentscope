@@ -89,8 +89,13 @@ class _AccToolCallBlock(ToolCallBlock):
         self.input.append(block.input)
         # Most providers carry ``name`` on the opening delta only, but some
         # send an empty one first and fill the name in afterwards.
-        if not self.name and block.name:
+        if not getattr(self, "name", "") and block.name:
             self.name = block.name
+        # Provider-specific extras (e.g. Gemini's ``thought_signature``)
+        # may arrive on a later delta of the block.
+        for key, value in (block.model_extra or {}).items():
+            if value is not None:
+                setattr(self, key, value)
 
     def build(self) -> ToolCallBlock:
         """Join the fragments into a plain ``ToolCallBlock``."""
