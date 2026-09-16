@@ -53,8 +53,10 @@ async def _run_reply(
     try:
         await task
     except asyncio.CancelledError:
-        # Raised when the agent re-raises after the interruption
-        pass
+        # Swallow the SIGINT child cancellation, not caller cancellation.
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task.cancelling():
+            raise
     finally:
         if sigint_hooked:
             loop.remove_signal_handler(signal.SIGINT)
