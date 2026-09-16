@@ -63,6 +63,11 @@ class _FakeChannel(ChannelBase):
         self.closed = False
         self.sent_to = ""
         self.returned = False
+        self.storage: Any = None
+
+    def _bind_storage(self, storage: Any) -> None:
+        """Record the internal storage binding."""
+        self.storage = storage
 
     @property
     def channel_id(self) -> str:
@@ -139,13 +144,15 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
     async def test_builds_without_opening_a_connection(self) -> None:
         """The instance is usable but never listened — that is what lets
         it live in a process that holds no connection."""
-        clients = self._clients(_Storage(_record()))
+        storage = _Storage(_record())
+        clients = self._clients(storage)
 
         channel = await clients.get("chan-1")
 
         self.assertIsInstance(channel, _FakeChannel)
         self.assertFalse(channel.listened)
         self.assertEqual(channel.bot_id, "bot-1")
+        self.assertIs(channel.storage, storage)
 
     async def test_cached_until_the_record_changes(self) -> None:
         """A rotated credential takes effect without a restart."""
