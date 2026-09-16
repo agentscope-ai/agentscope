@@ -111,6 +111,85 @@ def _make_pptx_rich() -> bytes:
     return buffer.getvalue()
 
 
+def _make_pptx_with_group() -> bytes:
+    """Build a PPTX whose slide holds a text box and a group of two boxes.
+
+    A group carries no text frame of its own, so a loop over ``slide.shapes``
+    that only looks at text frames, tables and pictures never reaches it.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    standalone = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(0.2),
+        Inches(4),
+        Inches(0.5),
+    )
+    standalone.text_frame.text = "Standalone"
+
+    first = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    first.text_frame.text = "Grouped one"
+    second = slide.shapes.add_textbox(
+        Inches(3.0),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    second.text_frame.text = "Grouped two"
+    slide.shapes.add_group_shape([first, second])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_pptx_with_nested_group() -> bytes:
+    """Build a PPTX whose slide holds a group inside a group."""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    inner_a = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(0.5),
+        Inches(2),
+        Inches(0.5),
+    )
+    inner_a.text_frame.text = "Innermost"
+    inner_b = slide.shapes.add_textbox(
+        Inches(3.0),
+        Inches(0.5),
+        Inches(2),
+        Inches(0.5),
+    )
+    inner_b.text_frame.text = "Sibling"
+    inner_group = slide.shapes.add_group_shape([inner_a, inner_b])
+
+    outer = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    outer.text_frame.text = "Outer"
+    slide.shapes.add_group_shape([inner_group, outer])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_pptx_with_special_table_cells() -> bytes:
     """Build a PPTX table with pipes and a multi-line cell."""
     from pptx import Presentation
@@ -876,6 +955,30 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         parser = PPTParser()
         with self.assertRaises(FileNotFoundError):
             await parser.parse("/no/such/file.pptx", "x.pptx")
+
+    async def test_group_shape_text_is_read(self) -> None:
+        """Text inside a group reaches the Sections, in reading order."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(_make_pptx_with_group(), "demo.pptx")
+
+        text = "\n".join(s.content.text for s in sections)
+        self.assertIn("Standalone", text)
+        self.assertIn("Grouped one", text)
+        self.assertIn("Grouped two", text)
+        self.assertLess(text.index("Standalone"), text.index("Grouped one"))
+
+    async def test_nested_group_shape_text_is_read(self) -> None:
+        """A group can hold a group, so the descent has to recurse."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            _make_pptx_with_nested_group(),
+            "demo.pptx",
+        )
+
+        text = "\n".join(s.content.text for s in sections)
+        self.assertIn("Innermost", text)
+        self.assertIn("Sibling", text)
+        self.assertIn("Outer", text)
 
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
