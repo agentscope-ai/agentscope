@@ -652,6 +652,61 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_multiagent_empty_group_keeps_first_history_marker(
+        self,
+    ) -> None:
+        """A skipped group must not consume the first-history marker."""
+        fmt = AnthropicMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[ThinkingBlock(thinking="unsigned")],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_capital",
+                            input='{"country": "Japan"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_capital",
+                            output=[
+                                TextBlock(
+                                    text="The capital of Japan is Tokyo.",
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+                UserMsg(name="user", content=[TextBlock(text="hello")]),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                self._gt_tool_call,
+                self._gt_tool_result,
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                fmt.conversation_history_prompt
+                                + "<history>\nuser: hello\n</history>"
+                            ),
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
