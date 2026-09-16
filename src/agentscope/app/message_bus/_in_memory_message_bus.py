@@ -79,7 +79,9 @@ class InMemoryMessageBus(
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        self._lock_holders: dict[str, str] = {}
+        # key -> (holder token, monotonic deadline or None when held by
+        # ``acquire_lock``, which has no lease).
+        self._lock_holders: dict[str, tuple[str, float | None]] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -381,7 +383,7 @@ class InMemoryMessageBus(
         lock = self._locks[key]
         token = uuid.uuid4().hex
         async with lock:
-            self._lock_holders[key] = token
+            self._lock_holders[key] = (token, None)
             try:
                 yield
             finally:
@@ -398,13 +400,26 @@ class InMemoryMessageBus(
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return key in self._lock_holders
+        return self._held(key)
+
+    def _held(self, key: str) -> bool:
+        """Whether ``key`` is held, dropping an expired claim."""
+        holder = self._lock_holders.get(key)
+        if holder is None:
+            return False
+        _, deadline = holder
+        if deadline is not None and deadline <= time.monotonic():
+            self._lock_holders.pop(key, None)
+            return False
+        return True
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if key in self._lock_holders:
+        if self._held(key):
             return False
-        self._lock_holders[key] = "1"
+        # The lease is what keeps a crashed holder from blocking the
+        # key forever, the contract the Redis bus gets from SET NX EX.
+        self._lock_holders[key] = ("1", time.monotonic() + ttl_secs)
         return True
 
     async def unlock(self, key: str) -> None:
