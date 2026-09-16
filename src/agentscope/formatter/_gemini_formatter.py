@@ -169,33 +169,33 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         )
 
                 elif isinstance(block, HintBlock):
-                    if parts:
-                        role = "model" if msg.role == "assistant" else "user"
-                        messages.append({"role": role, "parts": parts})
-                        parts = []
-
                     if isinstance(block.hint, str):
-                        messages.append(
-                            {
-                                "role": "user",
-                                "parts": [{"text": block.hint}],
-                            },
+                        hint_parts = (
+                            [{"text": block.hint}] if block.hint else []
                         )
                     else:
-                        hint_parts: list[dict] = []
+                        hint_parts = []
                         for sub in block.hint:
                             if isinstance(sub, TextBlock):
-                                hint_parts.append({"text": sub.text})
+                                if sub.text:
+                                    hint_parts.append({"text": sub.text})
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = self._format_gemini_data_block(
                                     sub,
                                 )
                                 if formatted_sub:
                                     hint_parts.append(formatted_sub)
-                        if hint_parts:
-                            messages.append(
-                                {"role": "user", "parts": hint_parts},
+
+                    if hint_parts:
+                        if parts:
+                            role = (
+                                "model" if msg.role == "assistant" else "user"
                             )
+                            messages.append({"role": role, "parts": parts})
+                            parts = []
+                        messages.append(
+                            {"role": "user", "parts": hint_parts},
+                        )
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_gemini_data_block(block)

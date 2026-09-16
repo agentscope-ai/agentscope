@@ -773,6 +773,51 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_drops_empty_hint_text(self) -> None:
+        """Empty hint text is ignored without splitting adjacent content."""
+        fmt = GeminiChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text="before"),
+                        HintBlock(hint=""),
+                        TextBlock(text="after"),
+                        HintBlock(hint=[TextBlock(text="")]),
+                        HintBlock(
+                            hint=[
+                                TextBlock(text=""),
+                                TextBlock(text="valid hint"),
+                            ],
+                        ),
+                        TextBlock(text="done"),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "before"},
+                        {"text": "after"},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [{"text": "valid hint"}],
+                },
+                {
+                    "role": "model",
+                    "parts": [{"text": "done"}],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_hint_block_multimodal(self) -> None:
         """Multimodal HintBlock becomes a single user message with text +
         image."""
