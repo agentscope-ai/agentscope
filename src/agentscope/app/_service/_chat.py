@@ -461,9 +461,13 @@ class ChatService:
             end_event.model_dump(mode="json"),
         )
         logger.exception(
-            "Reply failed for session %r; reported to the client as %s.",
+            "Reply failed: session_id=%s reply_id=%s agent_name=%s "
+            "error_type=%s exception_type=%s",
             session_id,
+            reply_msg.id,
+            reply_msg.name,
             end_event.error.type if end_event.error else "error",
+            type(error).__name__,
         )
 
     async def _notify_leader_of_failure(
