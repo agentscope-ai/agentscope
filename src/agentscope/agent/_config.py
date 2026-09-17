@@ -216,13 +216,16 @@ class ContextConfig(BaseModel):
             # introspected reliably here, so leave those to the runtime.
             return self
 
-        placeholders = {
-            field_name
-            for _, field_name, _, _ in string.Formatter().parse(
-                self.summary_template,
-            )
-            if field_name is not None
-        }
+        placeholders = set()
+        for _, field_name, _, _ in string.Formatter().parse(
+            self.summary_template,
+        ):
+            if field_name is None:
+                continue
+            # ``{stats[count]}`` and ``{stats.total}`` reach *into* a declared
+            # field; ``format`` resolves that part at render time, so only the
+            # base name has to exist.
+            placeholders.add(field_name.split("[", 1)[0].split(".", 1)[0])
         undeclared = sorted(placeholders - set(properties))
         if undeclared:
             raise ValueError(

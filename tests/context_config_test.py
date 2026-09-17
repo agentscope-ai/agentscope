@@ -9,6 +9,7 @@ used to surface as a bare ``KeyError`` while rendering the summary, in the
 middle of a reply. The pair is checked when the configuration is built.
 """
 import unittest
+from types import SimpleNamespace
 
 from pydantic import ValidationError
 
@@ -88,6 +89,52 @@ class ContextConfigSummaryTemplateTest(unittest.TestCase):
         )
 
         self.assertEqual(config.summary_schema, {"$ref": "#/$defs/Summary"})
+
+    def test_reaching_into_a_declared_field_is_accepted(self) -> None:
+        """An accessor into a declared field needs only its base declared.
+
+        ``Formatter().parse()`` reports the whole accessor as the field name,
+        but ``format`` resolves it at render time against whatever the field
+        holds, so validating the accessor itself would reject templates that
+        render fine.
+        """
+        schema = {
+            "type": "object",
+            "properties": {"stats": {"type": "object"}},
+            "required": ["stats"],
+        }
+
+        indexed = ContextConfig(
+            summary_template="<system-info>{stats[count]}</system-info>",
+            summary_schema=schema,
+        )
+        attributed = ContextConfig(
+            summary_template="<system-info>{stats.total}</system-info>",
+            summary_schema=schema,
+        )
+
+        self.assertEqual(
+            indexed.summary_template.format(stats={"count": 5}),
+            "<system-info>5</system-info>",
+        )
+        self.assertEqual(
+            attributed.summary_template.format(stats=SimpleNamespace(total=9)),
+            "<system-info>9</system-info>",
+        )
+
+    def test_undeclared_base_field_is_still_rejected(self) -> None:
+        """Dropping the accessor must not let a missing field through."""
+        with self.assertRaises(ValidationError) as context:
+            ContextConfig(
+                summary_template="<system-info>{missing[count]}</system-info>",
+                summary_schema={
+                    "type": "object",
+                    "properties": {"stats": {"type": "object"}},
+                    "required": ["stats"],
+                },
+            )
+
+        self.assertIn("missing", str(context.exception))
 
 
 if __name__ == "__main__":
