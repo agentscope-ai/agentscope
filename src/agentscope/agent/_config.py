@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field, field_validator
+import string
+
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from ..model import ChatModelBase
 
@@ -190,6 +197,42 @@ class ContextConfig(BaseModel):
     workspace (if an offloader is provided) and replaced by a hint that
     records the offloaded path; otherwise they are dropped and replaced by a
     hint without path information."""
+
+    @model_validator(mode="after")
+    def _check_summary_template_fields(self) -> "ContextConfig":
+        """Check the summary template only uses fields the schema declares.
+
+        Once a compression summary is generated, the template is rendered
+        with ``summary_template.format(**res.content)``, where ``res.content``
+        holds exactly the fields that ``summary_schema`` declares. The two are
+        configured independently, so a schema that drops a field the template
+        still references makes that call raise a bare ``KeyError`` in the
+        middle of a reply, long after configuration. Report the mismatch when
+        the configuration is built instead.
+        """
+        properties = self.summary_schema.get("properties")
+        if not isinstance(properties, dict):
+            # Schemas composed with ``$ref``/``allOf``/... cannot be
+            # introspected reliably here, so leave those to the runtime.
+            return self
+
+        placeholders = {
+            field_name
+            for _, field_name, _, _ in string.Formatter().parse(
+                self.summary_template,
+            )
+            if field_name is not None
+        }
+        undeclared = sorted(placeholders - set(properties))
+        if undeclared:
+            raise ValueError(
+                f"summary_template references {undeclared}, which "
+                f"summary_schema does not declare, so formatting the "
+                f"summary would fail with a KeyError. Declare them in "
+                f"summary_schema['properties'] or remove them from "
+                f"summary_template.",
+            )
+        return self
 
 
 class InjectionConfig(BaseModel):
