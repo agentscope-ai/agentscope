@@ -438,6 +438,7 @@ class Agent:
         estimated_tokens = await self._count_model_tokens(
             kwargs["messages"],
             kwargs.get("tools"),
+            full_request=True,
         )
 
         # Skip if no compression is needed
@@ -1398,6 +1399,7 @@ class Agent:
             input_tokens = await self._count_model_tokens(
                 kwargs["messages"],
                 kwargs.get("tools"),
+                full_request=True,
             )
 
             trigger_tokens = int(
@@ -3004,9 +3006,19 @@ class Agent:
         self,
         messages: list[Msg],
         tools: list[dict] | None,
+        *,
+        full_request: bool = False,
     ) -> int:
-        """Count tokens while preserving per-session calibration."""
+        """Use calibration only for a current full-request threshold."""
         with self._model_calibration_scope():
+            if full_request:
+                count_full_request = getattr(
+                    self.model,
+                    "_count_full_request_tokens",
+                    None,
+                )
+                if count_full_request is not None:
+                    return await count_full_request(messages, tools)
             return await self.model.count_tokens(messages, tools)
 
     async def _generate_structured_output(

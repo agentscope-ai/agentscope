@@ -12,6 +12,7 @@ from agentscope.message import (
     Msg,
     SystemMsg,
     TextBlock,
+    ToolResultBlock,
     URLSource,
     UserMsg,
 )
@@ -265,6 +266,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
 
     async def test_provider_usage_anchors_are_session_local(self) -> None:
         """Provider overhead calibrates later turns without cross-talk."""
+        # pylint: disable=protected-access
         messages = [UserMsg(name="user", content="short prompt")]
         raw_estimate = await self.model.count_tokens(messages, None)
         self.model.set_responses(
@@ -280,13 +282,16 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
         with self._calibration_scope(self.model, "session-a"):
             await self.model(messages=messages)
             self.assertEqual(
-                await self.model.count_tokens(messages, None),
+                await self.model._count_full_request_tokens(messages, None),
                 52,
             )
             expanded = [
                 UserMsg(name="user", content="short prompt plus new text"),
             ]
-            expanded_estimate = await self.model.count_tokens(expanded, None)
+            expanded_estimate = await self.model._count_full_request_tokens(
+                expanded,
+                None,
+            )
             with self._calibration_scope(self.model, "session-b"):
                 expanded_raw_estimate = await self.model.count_tokens(
                     expanded,
@@ -311,6 +316,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """A usage-bearing final stream chunk calibrates later turns."""
+        # pylint: disable=protected-access
         model = MockModel(stream=True, use_fallback_token_estimate=True)
         model.set_responses(
             [
@@ -338,7 +344,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
             chunks = [chunk async for chunk in response]
             self.assertTrue(chunks[-1].is_last)
             self.assertEqual(
-                await model.count_tokens(messages, None),
+                await model._count_full_request_tokens(messages, None),
                 52,
             )
 
@@ -346,6 +352,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Provider counters are not replaced by fallback calibration."""
+        # pylint: disable=protected-access
         model = ProviderCountMockModel(stream=False)
         model.set_responses(
             [
@@ -365,6 +372,10 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
         with self._calibration_scope(model, "exact-session"):
             await model(messages=messages)
             self.assertEqual(await model.count_tokens(messages, None), 7)
+            self.assertEqual(
+                await model._count_full_request_tokens(messages, None),
+                7,
+            )
 
     async def test_usage_anchor_table_is_bounded(
         self,
@@ -386,6 +397,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
 
     async def test_agent_reply_sets_the_calibration_session(self) -> None:
         """The public reply path records usage under its Agent session."""
+        # pylint: disable=protected-access
         model = MockModel(stream=False, use_fallback_token_estimate=True)
         model.set_responses(
             [
@@ -409,7 +421,7 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
 
         with self._calibration_scope(model, "reply-session"):
             self.assertEqual(
-                await model.count_tokens(
+                await model._count_full_request_tokens(
                     [UserMsg(name="user", content="hello")],
                     None,
                 ),
@@ -643,3 +655,148 @@ class ModelCountTokensTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(base64_tokens, 2000)
         self.assertEqual(url_tokens, 2000)
+
+
+class AnchoredCompressionModel(DropOldestMockModel):
+    """Return actual usage on the first recorded provider response."""
+
+    async def _call_api(self, model_name: str, **kwargs: Any) -> ChatResponse:
+        """Record the provider request and attach first-turn usage."""
+        response = await super()._call_api(model_name, **kwargs)
+        if len(self.provider_messages) == 1:
+            response.usage = ChatUsage(
+                input_tokens=int(self.context_size * 0.95),
+                output_tokens=1,
+                time=0,
+            )
+        return response
+
+
+class UsageCalibrationCompressionTest(IsolatedAsyncioTestCase):
+    """Exercise partial counts after usage is learned by Agent.reply."""
+
+    async def _agent_with_usage(
+        self,
+        context_size: int = 1000,
+    ) -> tuple[Agent, AnchoredCompressionModel]:
+        """Learn a usage anchor through the first public reply."""
+        model = AnchoredCompressionModel(context_size=context_size)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "Keep the active task.",
+                    "current_state": "Older context was summarized.",
+                    "important_discoveries": "Usage includes overhead.",
+                    "next_steps": "Continue with the newest input.",
+                    "context_to_preserve": "Preserve current requirements.",
+                },
+            ),
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Be concise.",
+            model=model,
+            toolkit=Toolkit(),
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                tool_result_limit=100,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        await agent.reply(UserMsg("user", "Earlier context. " * 100))
+        return agent, model
+
+    async def test_reply_preserves_newest_message_after_usage_anchor(
+        self,
+    ) -> None:
+        """A previous full request must not consume the reserved suffix."""
+        agent, model = await self._agent_with_usage()
+        latest = "NEWEST_REQUEST_MUST_SURVIVE"
+        await agent.reply(UserMsg("user", latest))
+
+        self.assertEqual(len(model.structured_messages), 1)
+        compressed = "".join(
+            block.text
+            for msg in model.structured_messages[0]
+            for block in msg.get_content_blocks("text")
+        )
+        delivered = "".join(
+            block.text
+            for msg in model.provider_messages[-1]
+            for block in msg.get_content_blocks("text")
+        )
+        self.assertNotIn(latest, compressed)
+        self.assertIn(latest, delivered)
+
+    async def test_partial_counts_ignore_full_request_usage(self) -> None:
+        """Suffixes, boundary blocks and one result keep their own budgets."""
+        # pylint: disable=protected-access
+        agent, model = await self._agent_with_usage()
+        suffix = [UserMsg("user", "Keep this latest block.")]
+        expected = await model.count_tokens(suffix, None)
+        with agent._model_calibration_scope():
+            self.assertEqual(await model.count_tokens(suffix, None), expected)
+        self.assertEqual(
+            await agent._count_model_tokens(suffix, None),
+            expected,
+        )
+        agent.state.context = [
+            UserMsg(
+                "user",
+                [
+                    TextBlock(text="Earlier context. " * 100),
+                    TextBlock(text="Keep this latest block."),
+                ],
+            ),
+        ]
+        compressed, reserved = await agent._split_context_for_compression(
+            agent.context_config.reserve_ratio * model.context_size,
+            [],
+        )
+        self.assertEqual(len(compressed), 1)
+        self.assertEqual(len(reserved), 1)
+        self.assertEqual(
+            [block.text for block in reserved[0].get_content_blocks("text")],
+            ["Keep this latest block."],
+        )
+        tool_result = ToolResultBlock(
+            id="small-result",
+            name="example",
+            output=[TextBlock(text="Small tool result.")],
+        )
+        kept, offloaded = await agent._split_tool_result_for_compression(
+            tool_result,
+        )
+        self.assertIs(kept, tool_result)
+        self.assertIsNone(offloaded)
+
+    async def test_drop_oldest_after_usage_anchor_keeps_remaining_input(
+        self,
+    ) -> None:
+        """A retry stops evicting once its smaller request fits the budget."""
+        agent, model = await self._agent_with_usage(context_size=1600)
+        oldest = "OLDEST_ANCHORED_CONTEXT " + ('{"amount":10000.50},' * 100)
+        second = "SECOND_ANCHORED_CONTEXT " + ("9876543210," * 4)
+        agent.state.context = [
+            UserMsg("user", oldest),
+            UserMsg("user", second),
+            UserMsg("user", "recent context " * 50),
+        ]
+        model.oldest_marker = "OLDEST_ANCHORED_CONTEXT"
+        latest = "LATEST_AFTER_RETRY"
+        await agent.reply(UserMsg("user", latest))
+        self.assertEqual(len(model.structured_messages), 2)
+        retry_text = "".join(
+            block.text
+            for msg in model.structured_messages[-1]
+            for block in msg.get_content_blocks("text")
+        )
+        self.assertNotIn("OLDEST_ANCHORED_CONTEXT", retry_text)
+        self.assertIn("SECOND_ANCHORED_CONTEXT", retry_text)
+        delivered = "".join(
+            block.text
+            for msg in model.provider_messages[-1]
+            for block in msg.get_content_blocks("text")
+        )
+        self.assertIn(latest, delivered)

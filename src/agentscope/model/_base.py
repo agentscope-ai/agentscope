@@ -482,7 +482,22 @@ class ChatModelBase:
             `int`:
                 The number of tokens in the model.
         """
-        estimated_tokens = self._estimate_input_tokens(messages, tools)
+        return self._estimate_input_tokens(messages, tools)
+
+    async def _count_full_request_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """Apply session usage only to the current full request threshold.
+
+        Suffixes, individual blocks and replacement compression requests have
+        a different input surface, so they must use ``count_tokens`` instead.
+        Provider-specific counters remain authoritative in both cases.
+        """
+        estimated_tokens = await self.count_tokens(messages, tools)
+        if type(self).count_tokens is not ChatModelBase.count_tokens:
+            return estimated_tokens
         session_id = _TOKEN_CALIBRATION_SESSION.get()
         anchor = (
             self._usage_anchors.get(session_id)
