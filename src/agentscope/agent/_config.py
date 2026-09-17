@@ -216,17 +216,27 @@ class ContextConfig(BaseModel):
             # introspected reliably here, so leave those to the runtime.
             return self
 
-        placeholders = set()
-        for _, field_name, _, _ in string.Formatter().parse(
-            self.summary_template,
-        ):
-            if field_name is None:
-                continue
-            # ``{stats[count]}`` and ``{stats.total}`` reach *into* a declared
-            # field; ``format`` resolves that part at render time, so only the
-            # base name has to exist.
-            placeholders.add(field_name.split("[", 1)[0].split(".", 1)[0])
-        undeclared = sorted(placeholders - set(properties))
+        def _referenced_fields(template: str) -> set:
+            """Base field names ``template`` needs, nested specs included.
+
+            ``{stats[count]}`` and ``{stats.total}`` reach *into* a declared
+            field and only need the base name, but a nested spec such as
+            ``{a:{width}}`` needs ``width`` as a field of its own. Both are
+            supplied by ``format(**content)``, so both are checked here.
+            """
+            names = set()
+            for _, field_name, format_spec, _ in string.Formatter().parse(
+                template,
+            ):
+                if field_name is None:
+                    continue
+                names.add(field_name.split("[", 1)[0].split(".", 1)[0])
+                if format_spec:
+                    names |= _referenced_fields(format_spec)
+            return names
+
+        referenced = _referenced_fields(self.summary_template)
+        undeclared = sorted(referenced - set(properties))
         if undeclared:
             raise ValueError(
                 f"summary_template references {undeclared}, which "

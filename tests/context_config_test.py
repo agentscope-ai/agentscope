@@ -136,6 +136,38 @@ class ContextConfigSummaryTemplateTest(unittest.TestCase):
 
         self.assertIn("missing", str(context.exception))
 
+    def test_nested_format_spec_field_is_checked(self) -> None:
+        """``{overview:{width}}`` needs ``width`` too, so it is checked."""
+        template = "<system-info>{overview:{current_state}}</system-info>"
+        config = ContextConfig(
+            summary_template=template,
+            summary_schema={
+                "type": "object",
+                "properties": {
+                    "overview": {"type": "string"},
+                    "current_state": {"type": "string"},
+                },
+                "required": ["overview", "current_state"],
+            },
+        )
+
+        self.assertEqual(
+            config.summary_template.format(overview="ok", current_state="<8"),
+            "<system-info>ok      </system-info>",
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            ContextConfig(
+                summary_template="<system-info>{o:{undeclared}}</system-info>",
+                summary_schema={
+                    "type": "object",
+                    "properties": {"o": {"type": "string"}},
+                    "required": ["o"],
+                },
+            )
+
+        self.assertIn("undeclared", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
