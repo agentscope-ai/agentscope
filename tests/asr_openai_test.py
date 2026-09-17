@@ -15,6 +15,7 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
         self,
         parameters: OpenAIASRModel.Parameters | None = None,
     ) -> OpenAIASRModel:
+        """Build a model whose transcription call is stubbed out."""
         model = OpenAIASRModel(
             credential=OpenAICredential(api_key="test"),
             parameters=parameters,
@@ -26,6 +27,7 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
         return model
 
     async def test_transcribes_audio(self) -> None:
+        """Transcribe audio and send the default model and format."""
         model = self.make_model()
         response = await model.transcribe(b"audio bytes", "sample.mp3")
 
@@ -40,6 +42,7 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
         )
 
     async def test_forwards_parameters(self) -> None:
+        """Forward the optional language and prompt parameters."""
         model = self.make_model(
             OpenAIASRModel.Parameters(language="en", prompt="AgentScope"),
         )
@@ -54,18 +57,21 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
         )
 
     async def test_rejects_empty_audio(self) -> None:
+        """Reject empty audio before reaching the API."""
         model = self.make_model()
         with self.assertRaisesRegex(ValueError, "audio must not be empty"):
             await model.transcribe(b"")
         model.client.audio.transcriptions.create.assert_not_awaited()
 
     async def test_rejects_missing_filename(self) -> None:
+        """Reject a missing filename before reaching the API."""
         model = self.make_model()
         with self.assertRaisesRegex(ValueError, "filename must not be empty"):
             await model.transcribe(b"audio", "")
         model.client.audio.transcriptions.create.assert_not_awaited()
 
     async def test_credential_discovers_models(self) -> None:
+        """Expose the ASR model class and its cards via the credential."""
         self.assertEqual(
             OpenAICredential.get_asr_model_classes(),
             [OpenAIASRModel],
