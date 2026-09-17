@@ -4,6 +4,7 @@ import asyncio
 import base64
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -190,7 +191,8 @@ class RealtimeAgent:
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
-        self._out: asyncio.Queue = asyncio.Queue()
+        self._out: deque[AgentEvent] = deque()
+        self._out_ready = asyncio.Event()
         self._reply: _Reply | None = None
         self._finished_item = ""
         # The agent's open reply, and whether the next response continues
@@ -396,32 +398,74 @@ class RealtimeAgent:
             self._pump_uplink(transport),
             name="rt-up",
         )
+        # One getter for the whole loop, replaced only after a yield, so a
+        # getter holding a dequeued event is never cancelled mid-loop.
+        getter: asyncio.Future[AgentEvent] | None = asyncio.ensure_future(
+            self._get_out(),
+        )
         try:
-            while not uplink.done():
-                getter = asyncio.ensure_future(self._out.get())
+            while not uplink.done() and getter is not None:
                 done, _ = await asyncio.wait(
                     {getter, uplink},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if getter in done:
-                    yield getter.result()
-                else:
-                    getter.cancel()
-            # The transport is gone: cut off any reply still in flight so
-            # the model stops talking to nobody, then hand the caller the
-            # events that produced (the interrupted ReplyEnd) before the
-            # stream ends rather than leaking them into the next run.
+                    event = getter.result()
+                    getter = None
+                    yield event
+                    if not uplink.done():
+                        getter = asyncio.ensure_future(self._get_out())
+            # The transport is gone: put any unyielded event back, cut off
+            # any reply still in flight so the model stops talking to
+            # nobody, then hand the caller the events that produced (the
+            # interrupted ReplyEnd) before the stream ends rather than
+            # leaking them into the next run.
+            if getter is not None:
+                await self._close_out_getter(getter)
+                getter = None
             await self._barge_in()
-            while not self._out.empty():
-                yield self._out.get_nowait()
+            while self._out:
+                yield self._out.popleft()
             # A transport failure must not look like a clean disconnect.
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
         finally:
+            if getter is not None:
+                await self._close_out_getter(getter)
             if not uplink.done():
                 uplink.cancel()
                 await asyncio.gather(uplink, return_exceptions=True)
             self._transport = None
+
+    async def _close_out_getter(
+        self,
+        getter: asyncio.Future[AgentEvent],
+    ) -> None:
+        """Cancel a pending *getter*, or put a completed event back.
+
+        A pending getter has not dequeued, so cancelling it is safe. A
+        completed getter holds an event that was never yielded;
+        ``appendleft`` puts it back at the head of :attr:`_out`.
+        """
+        if not getter.done():
+            getter.cancel()
+        try:
+            event = await getter
+        except asyncio.CancelledError:
+            return
+        self._out.appendleft(event)
+        self._out_ready.set()
+
+    async def _get_out(self) -> AgentEvent:
+        """Wait for and pop the next event queued for :meth:`reply_stream`."""
+        while True:
+            try:
+                return self._out.popleft()
+            except IndexError:
+                self._out_ready.clear()
+                if self._out:
+                    continue
+                await self._out_ready.wait()
 
     # ------------------------------------------------------------------
     # Discrete input
@@ -969,7 +1013,8 @@ class RealtimeAgent:
 
     def _emit(self, event: AgentEvent) -> None:
         """Queue one event for :meth:`reply_stream`."""
-        self._out.put_nowait(event)
+        self._out.append(event)
+        self._out_ready.set()
 
     # ------------------------------------------------------------------
     # Tools
