@@ -75,14 +75,11 @@ class ContextConfigSummaryTemplateTest(unittest.TestCase):
 
     def test_template_without_placeholders_is_accepted(self) -> None:
         """A constant template needs no schema fields at all."""
-        config = ContextConfig(
-            summary_template="<system-info>none</system-info>"
-        )
+        template = "<system-info>none</system-info>"
 
-        self.assertEqual(
-            config.summary_template,
-            "<system-info>none</system-info>",
-        )
+        config = ContextConfig(summary_template=template)
+
+        self.assertEqual(config.summary_template, template)
 
     def test_uninspectable_schema_is_left_to_runtime(self) -> None:
         """Schemas without top-level ``properties`` are not rejected."""
