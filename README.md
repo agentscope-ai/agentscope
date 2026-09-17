@@ -69,7 +69,7 @@ We design for increasingly agentic LLMs.
 Our approach leverages the models' reasoning and tool use abilities
 rather than constraining them with strict prompts and opinionated orchestrations.
 
-<img src="assets/images/agentscope.png" alt="agentscope" width="100%"/>
+<img src="https://img.alicdn.com/imgextra/i3/O1CN01k5XbA5dLCIB4S3xd_!!6000000003894-2-tps-2193-1564.png" alt="agentscope" width="100%"/>
 
 ## News
 <!-- BEGIN NEWS -->

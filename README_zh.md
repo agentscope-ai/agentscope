@@ -68,7 +68,7 @@ AgentScope 2.0 是一款面向生产、易于使用的智能体框架，提供�
 AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 而非用严格的提示词和固化的编排方式来束缚它们。
 
-<img src="assets/images/agentscope.png" alt="agentscope" width="100%"/>
+<img src="https://img.alicdn.com/imgextra/i3/O1CN01k5XbA5dLCIB4S3xd_!!6000000003894-2-tps-2193-1564.png" alt="agentscope" width="100%"/>
 
 ## 新闻
 <!-- BEGIN NEWS -->
