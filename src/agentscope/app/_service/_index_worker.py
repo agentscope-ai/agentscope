@@ -169,12 +169,11 @@ class IndexWorker:
                 renews periodically so long-running parses do not
                 trip the sweeper.
             parser_executor (`ProcessPoolExecutor | None`, optional):
-                Process pool used to off-load CPU-intensive parses
-                (PDF, Office).  ``None`` runs parses in the event-loop
-                thread, which is fine for plain text but unsafe for
-                third-party byte-oriented parsers.  Injected so a
-                single pool can be shared across the app (built in
-                lifespan).
+                Optional process pool used to off-load CPU-intensive
+                parses (PDF, Office).  When omitted, parsing runs in
+                the default thread pool so synchronous parser work does
+                not block the event loop.  Inject an executor when
+                process-based parallelism is needed.
             **kwargs (`Any`):
                 Deprecated. ``chunker`` (a shared chunker instance) is
                 still accepted for backward compatibility; only its
@@ -457,9 +456,14 @@ class IndexWorker:
         file_bytes: bytes,
         filename: str,
     ) -> "list[Section]":
-        """Run the parser, optionally on the process pool."""
+        """Run the parser in a thread or an explicitly supplied executor."""
         if self._parser_executor is None:
-            return await parser.parse(file_bytes, filename)
+            return await asyncio.to_thread(
+                _run_parser_sync,
+                parser,
+                file_bytes,
+                filename,
+            )
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._parser_executor,
@@ -604,7 +608,7 @@ class IndexWorker:
 
 
 # ----------------------------------------------------------------------
-# Module-level helpers (picklable for ProcessPoolExecutor)
+# Module-level helper used by thread and process executors
 # ----------------------------------------------------------------------
 
 
