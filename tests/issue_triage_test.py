@@ -160,12 +160,14 @@ class PristineCheckoutTest(IsolatedAsyncioTestCase):
 
     async def test_an_untouched_checkout_passes(self) -> None:
         """Nothing to complain about when nothing changed."""
-        with tempfile.TemporaryDirectory() as tmp:
+        # Cleanup is best-effort: Windows refuses to delete the read-only
+        # files git leaves under .git/objects.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             issue_triage._assert_pristine(self._repo(tmp))
 
     async def test_a_shell_write_is_caught(self) -> None:
         """The deny rules cover Write and Edit; a shell can still reach it."""
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             repo = self._repo(tmp)
             with open(os.path.join(repo, "a.py"), "w", encoding="utf-8") as f:
                 f.write("instrumented\n")
@@ -205,23 +207,26 @@ class MissingOutputTest(IsolatedAsyncioTestCase):
             content=[TextBlock(type="text", text="prose")],
             role="assistant",
         )
-        with (
-            tempfile.NamedTemporaryFile("w", suffix=".md") as f,
-            patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test"}),
-            patch.object(claim_intent, "DashScopeChatModel"),
-            patch.object(claim_intent, "Agent") as agent_cls,
-            patch.object(
-                sys,
-                "argv",
-                ["x", "--comment-file", "", "--model", "m"],
-            ),
-        ):
-            f.write("I would like to work on this")
-            f.flush()
-            sys.argv[2] = f.name
-            agent_cls.return_value.reply = AsyncMock(return_value=msg)
-            with patch("builtins.print") as printed:
-                await claim_intent.main()
+        # A directory rather than NamedTemporaryFile: on Windows the script
+        # cannot open a temporary file that the test still holds open.
+        with tempfile.TemporaryDirectory() as tmp:
+            comment = os.path.join(tmp, "comment.md")
+            with open(comment, "w", encoding="utf-8") as f:
+                f.write("I would like to work on this")
+
+            with (
+                patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test"}),
+                patch.object(claim_intent, "DashScopeChatModel"),
+                patch.object(claim_intent, "Agent") as agent_cls,
+                patch.object(
+                    sys,
+                    "argv",
+                    ["x", "--comment-file", comment, "--model", "m"],
+                ),
+            ):
+                agent_cls.return_value.reply = AsyncMock(return_value=msg)
+                with patch("builtins.print") as printed:
+                    await claim_intent.main()
         self.assertIn(
             '"wants_to_claim": false',
             printed.call_args_list[0].args[0],
