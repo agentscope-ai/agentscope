@@ -63,6 +63,7 @@ from ..event import (
     ReplyFinishedReason,
     UserInterruptEvent,
     HintBlockEvent,
+    StatusEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (
@@ -1174,7 +1175,25 @@ class Agent:
                             self.state.append_context(self.name, [hint])
 
                         # Compressed the memory if needed before reasoning
+                        n_ctx_before = len(self.state.context)
                         await self.compress_context()
+                        n_ctx_after = len(self.state.context)
+                        if n_ctx_after != n_ctx_before:
+                            yield StatusEvent(
+                                session_id=getattr(
+                                    self.state,
+                                    "session_id",
+                                    None,
+                                ),
+                                reply_id=self.state.reply_id,
+                                operation="context_compaction",
+                                message="Context compressed successfully.",
+                                phase="completed",
+                                value={
+                                    "messages_before": n_ctx_before,
+                                    "messages_after": n_ctx_after,
+                                },
+                            )
 
                         # Inject runtime state if needed before reasoning
                         async for evt in self._inject_runtime_state():
