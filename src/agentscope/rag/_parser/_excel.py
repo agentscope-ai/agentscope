@@ -134,7 +134,8 @@ class ExcelParser(ParserBase):
 
     Each sheet is scanned for tabular data and (optionally) images.
     Tables are rendered as Markdown pipe-tables or JSON arrays; images
-    are emitted as standalone :class:`DataBlock` sections.
+    are emitted as standalone :class:`DataBlock` sections, including on
+    sheets without cell values. Header-only tables are preserved.
 
     When ``separate_sheet=True`` each sheet becomes a batch of
     sections that never intermix with other sheets, making it possible
@@ -310,24 +311,25 @@ class ExcelParser(ParserBase):
             logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
             return sheet_sections
 
-        if df.empty:
-            return sheet_sections
+        # pandas considers header-only tables empty, but their columns
+        # still contain worksheet content. Images need neither rows nor
+        # columns, so only table rendering is conditional here.
+        if len(df.columns) > 0:
+            table_data = _extract_table_data(df)
 
-        table_data = _extract_table_data(df)
+            if self.table_format == "markdown":
+                table_text = self._table_to_markdown(table_data, sheet_name)
+            else:
+                table_text = self._table_to_json(table_data, sheet_name)
 
-        if self.table_format == "markdown":
-            table_text = self._table_to_markdown(table_data, sheet_name)
-        else:
-            table_text = self._table_to_json(table_data, sheet_name)
-
-        if table_text:
-            sheet_sections.append(
-                Section(
-                    content=TextBlock(text=table_text),
-                    source=filename,
-                    metadata={"sheet": sheet_name},
-                ),
-            )
+            if table_text:
+                sheet_sections.append(
+                    Section(
+                        content=TextBlock(text=table_text),
+                        source=filename,
+                        metadata={"sheet": sheet_name},
+                    ),
+                )
 
         if self.include_image and workbook is not None:
             try:
