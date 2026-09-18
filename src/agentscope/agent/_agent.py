@@ -961,6 +961,10 @@ class Agent:
 
     async def _close_unfinished_tool_calls(
         self,
+        interruption_message: str = (
+            "<system-reminder>The tool call has been interrupted by "
+            "the user.</system-reminder>"
+        ),
     ) -> AsyncGenerator[
         ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
         None,
@@ -983,14 +987,18 @@ class Agent:
             elif isinstance(block, ToolResultBlock):
                 awaiting_tool_calls.pop(block.id, None)
 
-        interruption_message = (
-            "<system-reminder>The tool call has been interrupted by "
-            "the user.</system-reminder>"
-        )
-
         for index in awaiting_tool_calls.values():
             call_block = last_msg.content[index]
             assert isinstance(call_block, ToolCallBlock)
+
+            logger.warning(
+                "Closing unfinished tool call: "
+                "session_id=%s reply_id=%s tool_call_id=%s tool_name=%s",
+                self.state.session_id,
+                self.state.reply_id,
+                call_block.id,
+                call_block.name,
+            )
 
             # ALLOWED calls are running and SUBMITTED external calls are
             # awaiting their result; both already emitted START.
@@ -1271,6 +1279,21 @@ class Agent:
                 # or an external execution, leaves the round unfinished
                 if not self.state.get_unfinished_tool_calls(self.name):
                     self.state.cur_iter += 1
+
+        except Exception:
+            # A fatal error can happen after the assistant tool call has been
+            # appended but before its matching result is recorded. Close every
+            # unfinished call before propagating the original exception so the
+            # session remains valid and the service can emit ReplyEnd(ERROR).
+            async for event in self._close_unfinished_tool_calls(
+                interruption_message=(
+                    "<system-reminder>The tool call was interrupted because "
+                    "the reply encountered an internal "
+                    "error.</system-reminder>"
+                ),
+            ):
+                yield event
+            raise
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
