@@ -520,6 +520,118 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         self.assertEqual(chat.calls[0]["session_id"], "w2")
         self.assertIsNone(chat.calls[0]["input_msg"])
 
+    async def test_lock_held_retries_coalesce_to_one_timer(self) -> None:
+        """A held lock must not spawn one retry task per trigger (#2677)."""
+        from unittest.mock import patch
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="storm")
+        bus._locks.add(lock_key)
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        def _hold(_attempt: int) -> float:
+            return 30.0
+
+        with patch.object(
+            WakeupDispatcher,
+            "_retry_delay_secs",
+            staticmethod(_hold),
+        ):
+            async with dispatcher:
+                for _ in range(12):
+                    await bus.queue_push(
+                        MessageBusKeys.wakeup_queue(),
+                        {
+                            "user_id": "u",
+                            "session_id": "storm",
+                            "agent_id": "a",
+                        },
+                    )
+                    await bus.publish(MessageBusKeys.wakeup_signal(), {})
+                await _yield_a_few_times()
+                self.assertEqual(len(dispatcher._retry_tasks), 1)
+                self.assertEqual(chat.calls, [])
+
+    async def test_retry_deadline_drops_trigger(self) -> None:
+        """A lock-held retry older than the deadline is not re-queued."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="stale")
+        bus._locks.add(lock_key)
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "stale",
+                    "agent_id": "a",
+                    "retry_attempt": 4,
+                    "retry_started_at": 0.0,
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.sleep(0.05)
+
+        self.assertEqual(chat.calls, [])
+        self.assertEqual(
+            bus.queues.get(MessageBusKeys.wakeup_queue(), []),
+            [],
+        )
+
+    async def test_dispatch_error_does_not_stop_later_entries(self) -> None:
+        """A failure dispatching one entry must not drop the rest."""
+
+        class _BoomStorage(_FakeStorage):
+            """Raises once, then behaves like the normal fake storage."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls = 0
+
+            async def get_session(
+                self,
+                user_id: str,
+                agent_id: str,
+                session_id: str,
+            ) -> object | None:
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("bus blip")
+                return await super().get_session(user_id, agent_id, session_id)
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_BoomStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {"user_id": "u", "session_id": "boom", "agent_id": "a"},
+            )
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {"user_id": "u", "session_id": "ok", "agent_id": "a"},
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(chat.calls[0]["session_id"], "ok")
+
 
 class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
     """Tests covering the ``__aenter__`` / ``__aexit__`` ACM behaviour."""
