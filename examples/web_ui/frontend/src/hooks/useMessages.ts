@@ -12,6 +12,7 @@ import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/me
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
@@ -91,6 +92,13 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  * history. User input and human-in-the-loop confirmations are sent
  * via ``POST /chat/`` (fire-and-forget); the resulting events arrive
  * through the already-open SSE connection.
+ *
+ * The SSE stream is a long-lived connection with heartbeats. If it
+ * drops (backend restart, proxy reset, network blip), the hook
+ * reconnects with exponential backoff and re-syncs ``phase`` from
+ * ``GET /sessions/{sid}/messages`` (``is_running`` / pending HITL)
+ * before opening a new stream — otherwise a missed ``ReplyEndEvent``
+ * can leave the UI stuck in ``streaming``.
  *
  * ``phase`` is driven by event content, not HTTP lifecycle: it moves
  * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
@@ -340,19 +348,106 @@ export function useMessages(
 				}
 			}
 
-			// 2. Open SSE long connection for live events
-			try {
-				for await (const event of sessionApi.streamEvents(
-					sessionId,
-					agentId,
-					controller.signal,
-				)) {
-					if (cancelled) break;
-					processEvent(event);
-				}
-			} catch (e) {
-				if ((e as Error).name !== 'AbortError' && !cancelled) {
+			// 2. SSE long connection: reconnect with exponential backoff and
+			// correct ``phase`` from ``is_running`` / pending HITL. Without
+			// this, a dropped stream after ``ReplyStartEvent`` (or while
+			// parked on HITL) leaves the UI stuck in ``streaming``.
+			const STREAM_MAX_RETRIES = 8;
+			const STREAM_BASE_DELAY_MS = 800;
+			let streamAttempt = 0;
+
+			while (!cancelled && !controller.signal.aborted) {
+				try {
+					if (streamAttempt > 0) {
+						const delay = Math.min(
+							STREAM_BASE_DELAY_MS * 2 ** (streamAttempt - 1),
+							10_000,
+						);
+						toast.message(
+							`Live connection lost. Reconnecting in ${Math.max(1, Math.round(delay / 1000))}s…`,
+						);
+						await new Promise<void>((resolve) => {
+							const t = window.setTimeout(resolve, delay);
+							controller.signal.addEventListener(
+								'abort',
+								() => {
+									window.clearTimeout(t);
+									resolve();
+								},
+								{ once: true },
+							);
+						});
+						if (cancelled || controller.signal.aborted) break;
+
+						try {
+							const { messages, is_running } = await sessionApi.messages(
+								sessionId,
+								agentId,
+							);
+							if (cancelled) break;
+							const localExtra = msgsRef.current.filter(
+								(m) => !messages.some((hm) => hm.id === m.id),
+							);
+							msgsRef.current = [...messages, ...localExtra];
+							const tail = msgsRef.current[msgsRef.current.length - 1];
+							if (is_running || hasPendingToolCall(tail)) {
+								setPhase('streaming');
+								if (hasPendingToolCall(tail)) {
+									currentReplyRef.current = tail ?? null;
+								}
+							} else {
+								setPhase('idle');
+								currentReplyRef.current = null;
+							}
+							scheduleUpdate();
+						} catch {
+							// History sync failed — still retry the SSE stream.
+						}
+					}
+
+					let announcedRecover = false;
+					for await (const event of sessionApi.streamEvents(
+						sessionId,
+						agentId,
+						controller.signal,
+					)) {
+						if (cancelled) break;
+						if (streamAttempt > 0 && !announcedRecover) {
+							toast.success('Live connection restored');
+							announcedRecover = true;
+						}
+						streamAttempt = 0;
+						setError(null);
+						processEvent(event);
+					}
+
+					// Server closed the stream while this session is still open —
+					// treat as a disconnect and reconnect.
+					if (cancelled || controller.signal.aborted) break;
+					streamAttempt += 1;
+					if (streamAttempt > STREAM_MAX_RETRIES) {
+						toast.error('Live connection failed repeatedly. Please refresh.');
+						setPhase((p) =>
+							p === 'streaming' || p === 'interrupting' ? 'idle' : p,
+						);
+						break;
+					}
+				} catch (e) {
+					// Chrome may surface abort as TypeError("Failed to fetch")
+					// instead of AbortError — also check signal.aborted.
+					const isAbort =
+						(e as Error).name === 'AbortError' || controller.signal.aborted;
+					if (isAbort || cancelled) break;
+
+					streamAttempt += 1;
 					setError(e as Error);
+					if (streamAttempt > STREAM_MAX_RETRIES) {
+						toast.error('Live connection lost. Please refresh and retry.');
+						setPhase((p) =>
+							p === 'streaming' || p === 'interrupting' ? 'idle' : p,
+						);
+						break;
+					}
 				}
 			}
 		})();
