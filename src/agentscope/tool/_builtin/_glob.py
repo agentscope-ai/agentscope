@@ -101,6 +101,8 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         backend: BackendBase | None = None,
         glob_helper_path: str | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
+        *,
+        cwd: str | None = None,
     ) -> None:
         """Initialize the glob tool.
 
@@ -117,11 +119,17 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
                 (suitable for :class:`LocalBackend`). Remote backends
                 (Docker, E2B) should pass the path where the script
                 was deployed during workspace initialization.
+            cwd (`str | None`, optional):
+                Default search directory, also used to resolve relative
+                search paths. When ``None``, preserve the backend's
+                current-directory behavior. Relative ``cwd`` values are
+                resolved against the backend's current directory.
         """
         from ._backend import LocalBackend
 
         super().__init__(middlewares=middlewares)
         self._backend = backend or LocalBackend()
+        self._cwd = cwd
         # When running against the host, invoke the helper with the
         # current interpreter (``sys.executable``) rather than assuming
         # ``python3`` is on PATH.
@@ -131,6 +139,18 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
             if glob_helper_path is not None
             else _default_glob_helper_path()
         )
+
+    async def _resolve_path(self, path: str | None) -> str:
+        """Resolve a search path using this tool's configured directory."""
+        if self._cwd is None:
+            return path or await self._backend.getcwd()
+        cwd = self._cwd
+        if not self._backend.isabs(cwd):
+            cwd = self._backend.abspath(
+                cwd,
+                cwd=await self._backend.getcwd(),
+            )
+        return self._backend.abspath(path or ".", cwd=cwd)
 
     async def check_permissions(
         self,
@@ -179,6 +199,12 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         if path and fnmatch.fnmatch(path, rule_content):
             return True
 
+        if self._cwd is not None and fnmatch.fnmatch(
+            await self._resolve_path(path),
+            rule_content,
+        ):
+            return True
+
         # Fall back to matching against the pattern itself
         pattern = tool_input.get("pattern", "")
         if pattern and fnmatch.fnmatch(pattern, rule_content):
@@ -203,13 +229,15 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
             `List[PermissionRule]`:
                 A single suggested rule covering the search directory
         """
-        backend_cwd = await self._backend.getcwd()
-        path = tool_input.get("path") or backend_cwd
+        path = await self._resolve_path(tool_input.get("path"))
 
         # Normalize path and build a glob pattern. Glob patterns are
         # POSIX-style strings (matched by fnmatch), not real filesystem
         # paths — do NOT use backend.join_path here.
-        abs_path = self._backend.abspath(path, cwd=backend_cwd)
+        abs_path = self._backend.abspath(
+            path,
+            cwd=await self._backend.getcwd(),
+        )
         pattern = abs_path.rstrip("/\\") + "/**"
 
         return [
@@ -276,7 +304,7 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
                 is_last=True,
             )
 
-        base_dir = path if path else await self._backend.getcwd()
+        base_dir = await self._resolve_path(path)
 
         # The base must be an existing directory; a regular file would
         # otherwise be accepted here and fail later with a confusing
