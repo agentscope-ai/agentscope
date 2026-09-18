@@ -28,15 +28,15 @@ jobs:
     steps:
       - if: github.event.action != 'edited' && !github.event.pull_request.draft
         run: |
-          gh pr edit "$PR" --add-label "state: awaiting review" --remove-label "state: awaiting changes"
+          gh pr edit "$PR" --add-label "pr/awaiting-review" --remove-label "pr/awaiting-changes"
 
       - if: github.event.action == 'opened' || github.event.action == 'edited'
         run: |
           linked=$(gh pr view "$PR" --json closingIssuesReferences --jq '.closingIssuesReferences | length')
           if [ "$linked" = 0 ]; then
-            gh pr edit "$PR" --add-label "no linked issue"
+            gh pr edit "$PR" --add-label "pr/no-linked-issue"
           else
-            gh pr edit "$PR" --remove-label "no linked issue"
+            gh pr edit "$PR" --remove-label "pr/no-linked-issue"
           fi
 
       # Say out loud what the labels only hint at: no issue to close, or
@@ -158,7 +158,7 @@ jobs:
           case " $MAINTAINERS " in *" $reviewer "*) ;; *) exit 0 ;; esac
           if [ "$reviewer" = "$author" ]; then exit 0; fi
           if [ "$state" = approved ]; then
-            gh pr edit "$number" --remove-label "state: awaiting review" --remove-label "state: awaiting changes"
+            gh pr edit "$number" --remove-label "pr/awaiting-review" --remove-label "pr/awaiting-changes"
           else
-            gh pr edit "$number" --add-label "state: awaiting changes" --remove-label "state: awaiting review"
+            gh pr edit "$number" --add-label "pr/awaiting-changes" --remove-label "pr/awaiting-review"
           fi
