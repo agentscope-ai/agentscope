@@ -1,0 +1,82 @@
+name: Claim Expiry
+
+# Releases a claim that went quiet, so one abandoned claim cannot park an
+# issue forever. Without this, the "the claim is released after N days"
+# promise the other two workflows make would not be true.
+
+on:
+  schedule:
+    # 01:00 UTC daily = 09:00 Asia/Shanghai.
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  CLAIM_DAYS: '14'
+
+jobs:
+  expire:
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          CLAIM_DAYS: ${{ env.CLAIM_DAYS }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const days = Number(process.env.CLAIM_DAYS);
+            const cutoff = Date.now() - days * 86400000;
+
+            const claimed = await github.paginate(
+              github.rest.issues.listForRepo,
+              { owner, repo, state: 'open', labels: 'triage/claimed',
+                per_page: 100 },
+            );
+            core.notice(`${claimed.length} claimed issue(s).`);
+
+            for (const issue of claimed) {
+              const issue_number = issue.number;
+
+              // An open pull request means the work is under way; the claim
+              // stands however long the review takes.
+              const timeline = await github.paginate(
+                github.rest.issues.listEventsForTimeline,
+                { owner, repo, issue_number, per_page: 100 },
+              );
+              const working = timeline.some((event) => {
+                const source = event.source && event.source.issue;
+                return event.event === 'cross-referenced' && source &&
+                  source.pull_request && source.state === 'open';
+              });
+              if (working) continue;
+
+              // Otherwise the clock runs from the last thing anyone said.
+              if (new Date(issue.updated_at).getTime() >= cutoff) continue;
+
+              const { data: comments } =
+                await github.rest.issues.listComments({
+                  owner, repo, issue_number, per_page: 100,
+                });
+              const record = comments.reverse().find(
+                (c) => c.body.includes('<!-- claim-record -->'),
+              );
+              const found = record && record.body.match(/@([\w-]+)/);
+              const holder = found ? `@${found[1]}` : 'whoever claimed it';
+
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number, name: 'triage/claimed',
+              });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body:
+                  `Releasing this claim: ${days} days have passed with no ` +
+                  `pull request and no activity. ${holder}, if you are still ` +
+                  `on it just say so and it is yours again. Otherwise it is ` +
+                  `open for anyone to take.`,
+              });
+              core.notice(`Released #${issue_number}.`);
+            }
