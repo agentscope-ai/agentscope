@@ -172,6 +172,12 @@ class Agent:
         self._system_prompt = system_prompt
         self.model = model
         self.state = state or AgentState()
+        # A successful model call anchors estimates for subsequently appended
+        # context. Keep this transient: restored sessions start with a fresh
+        # full estimate until their next model call.
+        self._input_token_baseline: (
+            tuple[ChatModelBase, int, list[Msg], list[dict]] | None
+        ) = None
 
         self.model_config = model_config or ModelConfig()
         self.context_config = context_config or ContextConfig()
@@ -512,7 +518,7 @@ class Agent:
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
-        estimated_tokens = await self.model.count_tokens(**kwargs)
+        estimated_tokens = await self._estimate_input_tokens(**kwargs)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
@@ -1566,7 +1572,7 @@ class Agent:
         if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
-            input_tokens = await self.model.count_tokens(**kwargs)
+            input_tokens = await self._estimate_input_tokens(**kwargs)
 
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
@@ -1801,6 +1807,22 @@ class Agent:
 
         # Send the model call ended event with usage if available
         usage = completed_response.usage
+        if (
+            usage is not None
+            and self.model.usage_input_tokens(usage) > 0
+            and not self._model_call_middlewares
+            and self.model_config.fallback_model is None
+        ):
+            self._input_token_baseline = (
+                self.model,
+                self.model.usage_input_tokens(usage),
+                deepcopy(kwargs["messages"]),
+                deepcopy(kwargs["tools"]),
+            )
+        else:
+            # Middleware can replace the request, and a fallback can use a
+            # different tokenizer. Neither request is represented by kwargs.
+            self._input_token_baseline = None
         yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
             input_tokens=usage.input_tokens if usage else 0,
@@ -3273,6 +3295,89 @@ class Agent:
             "messages": messages,
             "tools": tools,
         }
+
+    async def _estimate_input_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict],
+    ) -> int:
+        """Anchor an append-only input estimate to the last actual usage.
+
+        Any change to the previous request, including a system prompt,
+        summary, tool schema, or existing context block, invalidates the
+        baseline and falls back to counting the full request.
+        """
+        baseline = self._input_token_baseline
+        if baseline is None:
+            return await self.model.count_tokens(messages, tools)
+
+        model, input_tokens, previous_messages, previous_tools = baseline
+        if (
+            self.model is not model
+            or tools != previous_tools
+            or len(messages) < len(previous_messages)
+        ):
+            return await self.model.count_tokens(messages, tools)
+
+        def same_content(left: Msg, right: Msg) -> bool:
+            """Ignore message metadata when checking the input."""
+            return (
+                left.role == right.role
+                and left.name == right.name
+                and len(left.content) == len(right.content)
+                and all(
+                    same_block(old, new)
+                    for old, new in zip(left.content, right.content)
+                )
+            )
+
+        def same_block(left: Any, right: Any) -> bool:
+            """Ignore lifecycle fields on regenerated text blocks."""
+            if isinstance(left, TextBlock) and isinstance(right, TextBlock):
+                return left.text == right.text
+            return left == right
+
+        if all(
+            same_content(old, new)
+            for old, new in zip(previous_messages, messages)
+        ):
+            added_messages = messages[len(previous_messages) :]
+        elif previous_messages and all(
+            same_content(old, new)
+            for old, new in zip(previous_messages[:-1], messages)
+        ):
+            old_tail = previous_messages[-1]
+            new_tail = messages[len(previous_messages) - 1]
+            if (
+                old_tail.role != new_tail.role
+                or old_tail.name != new_tail.name
+                or len(new_tail.content) < len(old_tail.content)
+                or not all(
+                    same_block(old, new)
+                    for old, new in zip(
+                        old_tail.content,
+                        new_tail.content[: len(old_tail.content)],
+                    )
+                )
+            ):
+                return await self.model.count_tokens(messages, tools)
+            added_messages = [
+                new_tail.model_copy(
+                    update={
+                        "content": new_tail.content[len(old_tail.content) :],
+                    },
+                ),
+                *messages[len(previous_messages) :],
+            ]
+        else:
+            return await self.model.count_tokens(messages, tools)
+
+        if not added_messages:
+            return input_tokens
+        return input_tokens + await self.model.count_tokens(
+            added_messages,
+            None,
+        )
 
     async def _call_model(
         self,

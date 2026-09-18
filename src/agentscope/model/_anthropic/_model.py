@@ -27,6 +27,14 @@ else:
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
 
+    def usage_input_tokens(self, usage: ChatUsage) -> int:
+        """Anthropic reports cached prompt tokens separately."""
+        return (
+            usage.input_tokens
+            + usage.cache_input_tokens
+            + usage.cache_creation_input_tokens
+        )
+
     type: Literal["anthropic_chat"] = "anthropic_chat"
     """The type of the chat model."""
 

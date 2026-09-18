@@ -12,6 +12,7 @@ import jsonschema
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from ._model_response import StructuredResponse, ChatResponse, FinishedReason
+from ._model_usage import ChatUsage
 from ._model_card import ModelCard
 from ._utils import _StreamAccumulator
 from .._logging import logger
@@ -453,6 +454,10 @@ class ChatModelBase:
         cnt += int(len(acc_text.encode("utf-8")) / 4 + 0.5)
 
         return cnt
+
+    def usage_input_tokens(self, usage: ChatUsage) -> int:
+        """Return the full prompt size reported by a model call."""
+        return usage.input_tokens
 
     async def generate_structured_output(
         self,
