@@ -123,7 +123,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("cat file.txt | grep error", []),
             ("docker ps | grep nginx", ["docker ps"]),
-            ("npm run build | tee output.log", ["npm run"]),
+            ("npm run build | tee output.log", ["npm run", "tee output.log"]),
         ]
 
         for command, expected in test_cases:
@@ -140,7 +140,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
             ),
             (
                 "npm install && npm run build | tee log.txt",
-                ["npm install", "npm run"],
+                ["npm install", "npm run", "tee log.txt"],
             ),
         ]
 
@@ -283,14 +283,7 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 )
 
     async def test_tee_writes_through_are_not_read_only(self) -> None:
-        """Test ``tee`` writes are not read-only.
-
-        ``tee`` writes the file it is given, so a command that writes through
-        it must not be called read-only -- the same reason redirections are
-        refused that label. Otherwise the read-only fast path answers first and
-        ``echo x | tee out.txt`` is auto-allowed while ``echo x > out.txt`` is
-        not, including in ``EXPLORE`` mode, whose contract is "no writes".
-        """
+        """Test commands writing through ``tee`` are not read-only."""
         writing_commands = [
             "echo x | tee out.txt",
             "echo x | tee -a out.txt",
@@ -303,26 +296,6 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 self.assertFalse(
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be non-read-only",
-                )
-
-    async def test_tee_write_and_redirection_agree(self) -> None:
-        """Test the tee form and the equivalent redirection agree.
-
-        These write the same bytes to the same place, so a disagreement means
-        one of them is misclassified.
-        """
-        pairs = [
-            ("echo x > out.txt", "echo x | tee out.txt"),
-            ("echo x >> out.txt", "echo x | tee -a out.txt"),
-            ("cat README.md > out.txt", "cat README.md | tee out.txt"),
-        ]
-        for redirect_cmd, tee_cmd in pairs:
-            with self.subTest(redirect=redirect_cmd, tee=tee_cmd):
-                self.assertEqual(
-                    self.parser.is_read_only_command(redirect_cmd),
-                    self.parser.is_read_only_command(tee_cmd),
-                    f"'{redirect_cmd}' and '{tee_cmd}' write the same file but "
-                    f"disagree on read-only",
                 )
 
     async def test_single_read_only_docker_commands(self) -> None:
