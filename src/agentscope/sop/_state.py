@@ -125,11 +125,8 @@ class SOPRunState(BaseModel):
     out rather than trimmed back to this base."""
 
     step_subjects: list[str] = Field(default_factory=list)
-    """The ordered step identities of the SOP that created this run.
-
-    Empty only for states written before this field was introduced. The
-    engine fills those on restore so subsequent saves can detect a reordered
-    or replaced step sequence."""
+    """The SOP's ordered step subjects, which reject a state restored against
+    a reordered procedure — best effort, as subjects need not be unique."""
 
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the run was created."""
