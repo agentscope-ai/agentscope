@@ -71,8 +71,8 @@ jobs:
         env:
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
         run: |
-          uv venv --python 3.11
-          uv pip install -e ".[dev]"
+          uv venv --clear --python 3.11
+          uv pip install --python .venv/bin/python -e ".[dev]"
           result=$(.venv/bin/python scripts/claim_intent.py \
             --comment-file /tmp/claim/comment.md \
             --model "$TRIAGE_MODEL")

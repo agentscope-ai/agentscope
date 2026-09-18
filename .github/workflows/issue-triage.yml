@@ -53,13 +53,16 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
+          # There is no uv.lock, so without this the cache key never
+          # changes and the cache is never invalidated.
+          cache-dependency-glob: pyproject.toml
 
       # A separate step so a dependency failure is obvious in the log and
       # costs no model tokens. The agent never installs anything itself.
       - name: Prepare the environment the agent verifies against
         run: |
-          uv venv --python 3.11
-          uv pip install -e ".[dev]"
+          uv venv --clear --python 3.11
+          uv pip install --python .venv/bin/python -e ".[dev]"
 
       # Written as files, never spliced into a shell command: an issue title is
       # attacker-controlled and `${{ }}` would interpolate it before bash runs.
