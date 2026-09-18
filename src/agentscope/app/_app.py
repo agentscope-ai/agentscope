@@ -166,9 +166,10 @@ def create_app(
             ``knowledge_base_manager`` is set.
         knowledge_chunkers (`list[Type[ChunkerBase]] | None`, optional):
             The chunker classes users can choose from when creating a
-            knowledge base.  The chunker type and parameters are pinned
-            on the knowledge base record and reconstructed by the index
-            worker.  Defaults to ``[ApproxTokenChunker]`` when
+            knowledge base. The selected type and parameters are stored
+            on the knowledge base record, may be updated with a full
+            reindex, and are reconstructed by the index worker. Defaults
+            to ``[ApproxTokenChunker]`` when
             ``knowledge_base_manager`` is set.
         blob_store (`BlobStoreBase | None`, optional):
             Backend storing uploaded document bytes between the
