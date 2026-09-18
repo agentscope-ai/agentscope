@@ -18,9 +18,10 @@ handled:
 - ``resume`` (a parked HITL run being fed its result): carries the
   event the parked run is waiting for.
 
-No kind is ever dropped. A trigger whose session still holds its run
-lock is re-queued after a short backoff until the lock frees, then
-spawned.
+No kind is ever dropped while the session lock is held. Retries are
+coalesced per ``(kind, session_id)``, use exponential backoff, and are
+dropped only after a deadline so a long-held lock cannot exhaust the
+message-bus connection pool (see #2677).
 
 All bus keys live on the :class:`MessageBus` base class (see
 ``enqueue_wakeup`` / ``enqueue_input``, ``dequeue_wakeups``,
@@ -28,6 +29,9 @@ All bus keys live on the :class:`MessageBus` base class (see
 no hard-coded key strings.
 """
 import asyncio
+import random
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Self
 
 from pydantic import TypeAdapter
@@ -56,10 +60,34 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
     UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
 )
 
-# Delay before re-queuing a trigger whose target session still holds
-# its run lock. Short enough to feel instant to the user, long enough
-# to avoid a hot re-enqueue loop while the lock is held.
+# Base delay before re-queuing a trigger whose target session still
+# holds its run lock. Combined with exponential growth + jitter so a
+# long-held lock cannot spawn a Redis connection-pool storm.
 _RESUME_RETRY_BACKOFF_SECS = 0.1
+_RESUME_RETRY_BACKOFF_CAP_SECS = 2.0
+_RESUME_RETRY_DEADLINE_SECS = 60.0
+_RESUME_RETRY_JITTER = 0.1
+
+TriggerInput = (
+    UserConfirmResultEvent
+    | ExternalExecutionResultEvent
+    | UserInterruptEvent
+    | Msg
+    | None
+)
+
+
+@dataclass
+class _RetryBatch:
+    """Buffered re-enqueue requests for one ``(kind, session_id)`` key."""
+
+    user_id: str
+    session_id: str
+    agent_id: str
+    kind: str
+    inputs: list[TriggerInput] = field(default_factory=list)
+    attempt: int = 0
+    retry_started_at: float = field(default_factory=time.time)
 
 
 class WakeupDispatcher:
@@ -105,10 +133,12 @@ class WakeupDispatcher:
         self._chat_service = chat_service
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
-        # Detached backoff timers for deferred ``resume`` re-enqueues.
-        # Held so they are not garbage-collected mid-sleep and can be
-        # cancelled on shutdown.
-        self._retry_tasks: set[asyncio.Task] = set()
+        # One detached backoff timer per ``(kind, session_id)``. Held so
+        # timers are not garbage-collected mid-sleep, can be cancelled on
+        # shutdown, and cannot multiply into a Redis connection storm
+        # while a session lock is held (see #2677).
+        self._retry_tasks: dict[str, asyncio.Task] = {}
+        self._retry_batches: dict[str, _RetryBatch] = {}
 
     async def __aenter__(self) -> Self:
         """Start the dispatcher loop and wait until its bus
@@ -132,7 +162,7 @@ class WakeupDispatcher:
 
     async def __aexit__(self, *exc: object) -> None:
         """Cancel the dispatcher loop and any pending retries."""
-        retries = list(self._retry_tasks)
+        retries = list(self._retry_tasks.values())
         for retry in retries:
             retry.cancel()
         for retry in retries:
@@ -141,6 +171,7 @@ class WakeupDispatcher:
             except asyncio.CancelledError:
                 pass
         self._retry_tasks.clear()
+        self._retry_batches.clear()
         if self._task is None:
             return
         self._task.cancel()
@@ -200,13 +231,25 @@ class WakeupDispatcher:
                 continue
             # Entries from older producers omit ``kind`` — treat as wake.
             kind = payload.get("kind", MessageBusKeys.WAKEUP_KIND_WAKE)
-            await self._dispatch_one(
-                user_id=user_id,
-                session_id=session_id,
-                agent_id=agent_id,
-                kind=kind,
-                raw_input=payload.get("input"),
-            )
+            try:
+                await self._dispatch_one(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    kind=kind,
+                    raw_input=payload.get("input"),
+                    retry_attempt=int(payload.get("retry_attempt", 0) or 0),
+                    retry_started_at=payload.get("retry_started_at"),
+                )
+            except Exception:  # pylint: disable=broad-except
+                # A single bad entry or transient bus error must not tear
+                # down the long-lived subscription loop (#2677).
+                logger.exception(
+                    "WakeupDispatcher: dispatch failed for session %s "
+                    "(kind=%s); continuing.",
+                    session_id,
+                    kind,
+                )
 
     async def _dispatch_one(
         self,
@@ -215,6 +258,8 @@ class WakeupDispatcher:
         agent_id: str,
         kind: str,
         raw_input: dict | None,
+        retry_attempt: int = 0,
+        retry_started_at: float | None = None,
     ) -> None:
         """Dispatch a single trigger entry by its ``kind``.
 
@@ -230,6 +275,13 @@ class WakeupDispatcher:
             raw_input (`dict | None`):
                 Serialised input event for ``resume`` triggers, else
                 ``None``.
+            retry_attempt (`int`):
+                How many times this trigger has already been deferred
+                because the session lock was held. Used for backoff and
+                deadline checks.
+            retry_started_at (`float | None`):
+                Wall-clock time of the first deferral, carried on the
+                queue so the deadline is not reset each re-queue.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
         is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
@@ -240,13 +292,7 @@ class WakeupDispatcher:
         # Parse the carried input early so every downstream path
         # (lock-retry, spawn-retry) receives a typed object rather than a
         # raw dict.
-        input_msg: (
-            UserConfirmResultEvent
-            | ExternalExecutionResultEvent
-            | UserInterruptEvent
-            | Msg
-            | None
-        ) = None
+        input_msg: TriggerInput = None
         if carries_input:
             if raw_input is None:
                 logger.warning(
@@ -289,6 +335,8 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
+                retry_attempt=retry_attempt,
+                retry_started_at=retry_started_at,
             )
             return
 
@@ -350,7 +398,25 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
+                retry_attempt=retry_attempt,
+                retry_started_at=retry_started_at,
             )
+
+    @staticmethod
+    def _retry_key(kind: str, session_id: str) -> str:
+        """Stable key for coalescing deferred re-enqueues."""
+        return f"{kind}:{session_id}"
+
+    @staticmethod
+    def _retry_delay_secs(attempt: int) -> float:
+        """Exponential backoff with jitter, capped for lock-held retries."""
+        exp = min(max(attempt, 0), 6)
+        delay = min(
+            _RESUME_RETRY_BACKOFF_CAP_SECS,
+            _RESUME_RETRY_BACKOFF_SECS * (2**exp),
+        )
+        jitter = 1.0 + random.uniform(-_RESUME_RETRY_JITTER, _RESUME_RETRY_JITTER)
+        return max(0.0, delay * jitter)
 
     def _schedule_retry(
         self,
@@ -358,19 +424,16 @@ class WakeupDispatcher:
         session_id: str,
         agent_id: str,
         kind: str,
-        input_msg: UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | UserInterruptEvent
-        | Msg
-        | None,
+        input_msg: TriggerInput,
+        *,
+        retry_attempt: int = 0,
+        retry_started_at: float | None = None,
     ) -> None:
-        """Re-enqueue an input-carrying (``resume``/``message``) trigger
-        after a short backoff.
+        """Re-enqueue a trigger after backoff, coalesced per session/kind.
 
-        Spawns a detached timer that sleeps, then re-enqueues the trigger
-        (which re-fires the signal, re-driving the drain). This keeps the
-        input alive across the window where the running turn still holds
-        the session lock, without a hot re-enqueue loop.
+        Spawns at most one detached timer per ``(kind, session_id)``. Extra
+        lock-held arrivals while that timer is pending are buffered onto the
+        same batch so Redis re-enqueue concurrency stays bounded (#2677).
 
         Args:
             user_id (`str`):
@@ -380,24 +443,90 @@ class WakeupDispatcher:
             agent_id (`str`):
                 The agent that owns the session.
             kind (`str`):
-                The trigger kind to re-enqueue (``resume`` / ``message``).
+                The trigger kind to re-enqueue (``wake`` / ``resume`` /
+                ``message``).
             input_msg:
-                The parsed input to redeliver.
+                The parsed input to redeliver (``None`` for ``wake``).
+            retry_attempt (`int`):
+                Prior deferral count for backoff / deadline.
+            retry_started_at (`float | None`):
+                Wall-clock start of this retry chain. ``None`` on the
+                first deferral.
         """
+        key = self._retry_key(kind, session_id)
+        started = (
+            retry_started_at
+            if retry_started_at is not None
+            else time.time()
+        )
+        batch = self._retry_batches.get(key)
+        if batch is None:
+            batch = _RetryBatch(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                kind=kind,
+                attempt=retry_attempt,
+                retry_started_at=started,
+            )
+            self._retry_batches[key] = batch
+        else:
+            batch.attempt = max(batch.attempt, retry_attempt)
+            batch.retry_started_at = min(batch.retry_started_at, started)
+
+        # ``wake`` carries no input — keep a single slot. Input-carrying
+        # kinds buffer each payload so HITL / channel messages are not
+        # dropped when coalescing timers.
+        if kind == MessageBusKeys.WAKEUP_KIND_WAKE:
+            batch.inputs = [None]
+        else:
+            batch.inputs.append(input_msg)
+
+        if key in self._retry_tasks:
+            return
+        self._arm_retry(key, batch)
+
+    def _arm_retry(self, key: str, batch: _RetryBatch) -> None:
+        """Start the single backoff timer for ``batch`` if none is running."""
+        if key in self._retry_tasks:
+            return
+        kind = batch.kind
+        session_id = batch.session_id
 
         async def _retry() -> None:
+            cancelled = False
             try:
-                await asyncio.sleep(_RESUME_RETRY_BACKOFF_SECS)
-                await enqueue_run_trigger(
-                    self._bus,
-                    user_id=user_id,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    kind=kind,  # type: ignore[arg-type]  # resume | message
-                    inputs=input_msg,
-                )
+                elapsed = time.time() - batch.retry_started_at
+                if elapsed >= _RESUME_RETRY_DEADLINE_SECS:
+                    logger.warning(
+                        "WakeupDispatcher: dropping %s trigger(s) for "
+                        "session %s after %.1fs of lock-held retries "
+                        "(%d buffered).",
+                        kind,
+                        session_id,
+                        elapsed,
+                        len(batch.inputs),
+                    )
+                    batch.inputs.clear()
+                    return
+
+                await asyncio.sleep(self._retry_delay_secs(batch.attempt))
+                pending = list(batch.inputs)
+                batch.inputs.clear()
+                next_attempt = batch.attempt + 1
+                for buffered in pending:
+                    await enqueue_run_trigger(
+                        self._bus,
+                        user_id=batch.user_id,
+                        session_id=batch.session_id,
+                        agent_id=batch.agent_id,
+                        kind=kind,  # type: ignore[arg-type]
+                        inputs=buffered,
+                        retry_attempt=next_attempt,
+                        retry_started_at=batch.retry_started_at,
+                    )
             except asyncio.CancelledError:
-                pass
+                cancelled = True
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
                     "WakeupDispatcher: failed to re-enqueue %s trigger "
@@ -405,10 +534,15 @@ class WakeupDispatcher:
                     kind,
                     session_id,
                 )
+            finally:
+                self._retry_tasks.pop(key, None)
+                if cancelled or not batch.inputs:
+                    self._retry_batches.pop(key, None)
+                else:
+                    self._arm_retry(key, batch)
 
         task = asyncio.create_task(
             _retry(),
             name=f"{kind}-retry:{session_id}",
         )
-        self._retry_tasks.add(task)
-        task.add_done_callback(self._retry_tasks.discard)
+        self._retry_tasks[key] = task
