@@ -17,8 +17,8 @@ dependency.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -79,9 +79,9 @@ class InMemoryMessageBus(
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        # key -> (holder token, monotonic deadline or None when held by
-        # ``acquire_lock``, which has no lease).
-        self._lock_holders: dict[str, tuple[str, float | None]] = {}
+        # key -> monotonic expiry deadline; ``acquire_lock`` has no
+        # lease, so it stores infinity.
+        self._lock_holders: dict[str, float] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -381,9 +381,8 @@ class InMemoryMessageBus(
             `None`: while the lock is held.
         """
         lock = self._locks[key]
-        token = uuid.uuid4().hex
         async with lock:
-            self._lock_holders[key] = (token, None)
+            self._lock_holders[key] = math.inf
             try:
                 yield
             finally:
@@ -400,26 +399,15 @@ class InMemoryMessageBus(
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return self._held(key)
-
-    def _held(self, key: str) -> bool:
-        """Whether ``key`` is held, dropping an expired claim."""
-        holder = self._lock_holders.get(key)
-        if holder is None:
-            return False
-        _, deadline = holder
-        if deadline is not None and deadline <= time.monotonic():
-            self._lock_holders.pop(key, None)
-            return False
-        return True
+        return self._lock_holders.get(key, 0.0) > time.monotonic()
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if self._held(key):
+        if self._lock_holders.get(key, 0.0) > time.monotonic():
             return False
-        # The lease is what keeps a crashed holder from blocking the
-        # key forever, the contract the Redis bus gets from SET NX EX.
-        self._lock_holders[key] = ("1", time.monotonic() + ttl_secs)
+        # The lease keeps a crashed holder from blocking the key
+        # forever, the contract the Redis bus gets from SET NX EX.
+        self._lock_holders[key] = time.monotonic() + ttl_secs
         return True
 
     async def unlock(self, key: str) -> None:

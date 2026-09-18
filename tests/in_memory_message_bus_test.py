@@ -301,13 +301,7 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
     async def test_try_lock_lease_expires_for_a_holder_that_crashed(
         self,
     ) -> None:
-        """The lease is what stops a holder that never calls ``unlock``.
-
-        This is the contract ``try_lock`` documents, and the reason the
-        Redis backend claims with ``SET ... NX EX``: whoever wins the
-        claim does the work, so if that process dies the key has to
-        become claimable again on its own.
-        """
+        """A claim whose lease expired is claimable again."""
         with patch.object(_bus.time, "monotonic") as monotonic:
             monotonic.return_value = 1_000.0
             self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
