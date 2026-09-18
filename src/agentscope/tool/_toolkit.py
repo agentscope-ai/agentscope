@@ -293,6 +293,8 @@ class Toolkit:
         # Obtain the tool function
         tool_func = available_tools[tool_call.name].tool
 
+        fatal_exc_pending = False
+
         # Async function
         try:
             # Prepare keyword arguments, repairing the argument types
@@ -356,6 +358,7 @@ class Toolkit:
         except Exception as e:
             # Raise the developer-oriented exception
             if isinstance(e, DeveloperOrientedException):
+                fatal_exc_pending = True
                 raise e from None
 
             # The exceptions should be handled by the agent
@@ -388,8 +391,8 @@ class Toolkit:
             tool_response.append_chunk(chunk)
 
         finally:
-            # Finally, yield the complete tool response
-            yield tool_response
+            if not fatal_exc_pending:
+                yield tool_response
 
     async def _get_available_skills(
         self,
