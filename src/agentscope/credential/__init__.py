@@ -2,6 +2,7 @@
 """The credential module."""
 
 from ._base import CredentialBase
+from ._aimlapi import AIMLAPICredential
 from ._anthropic import AnthropicCredential
 from ._dashscope import DashScopeCredential
 from ._deepseek import DeepSeekCredential
@@ -16,6 +17,7 @@ from ._factory import CredentialFactory
 
 __all__ = [
     "CredentialBase",
+    "AIMLAPICredential",
     "AnthropicCredential",
     "DashScopeCredential",
     "DeepSeekCredential",
