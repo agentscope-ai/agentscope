@@ -4,19 +4,23 @@ import {
 	Cable,
 	CalendarClock,
 	Ellipsis,
+	Loader2,
 	type LucideIcon,
 	MessageSquareDashed,
 	Pencil,
 	Plus,
 	Settings2,
+	Square,
 	Trash2,
 	Users,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 
 import { ChatViewport } from './ChatViewport';
 import type { SessionRecord, SessionSourceKind } from '@/api';
+import { sessionApi } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
@@ -221,6 +225,18 @@ const ChatPageInner = () => {
 		setDeleteSessionOpen(true);
 	};
 
+	/** Stop a background run from the sidebar without opening the session. */
+	const handleInterruptSession = async (session: SessionRecord) => {
+		if (!urlAgentId) return;
+		try {
+			await sessionApi.interrupt(session.id, urlAgentId);
+			toast.success(t('session-menu.stopped'));
+			await refetchSessions();
+		} catch {
+			toast.error(t('session-menu.stopFailed'));
+		}
+	};
+
 	const handleRenameConfirm = async (name: string) => {
 		if (!renameSession) return;
 		await updateSession(renameSession.id, { name });
@@ -361,6 +377,14 @@ const ChatPageInner = () => {
 																		{session.config.name ||
 																			session.id}
 																	</span>
+																	{view.is_running && (
+																		<Loader2
+																			className="ml-auto size-3.5 shrink-0 animate-spin text-primary"
+																			aria-label={t(
+																				'messageBubble.running',
+																			)}
+																		/>
+																	)}
 																</SidebarMenuButton>
 																{/* Badge and action are mutually exclusive.
 															    Keyboard focus reveals the action, plain
@@ -398,6 +422,20 @@ const ChatPageInner = () => {
 																				'session-menu.rename',
 																			)}
 																		</DropdownMenuItem>
+																		{view.is_running && (
+																			<DropdownMenuItem
+																				onClick={() => {
+																					void handleInterruptSession(
+																						session,
+																					);
+																				}}
+																			>
+																				<Square />
+																				{t(
+																					'session-menu.stop',
+																				)}
+																			</DropdownMenuItem>
+																		)}
 																		<DropdownMenuItem
 																			variant="destructive"
 																			onClick={() =>
@@ -451,6 +489,14 @@ const ChatPageInner = () => {
 																		{session.config.name ||
 																			session.id}
 																	</span>
+																	{view.is_running && (
+																		<Loader2
+																			className="ml-auto size-3.5 shrink-0 animate-spin text-primary"
+																			aria-label={t(
+																				'messageBubble.running',
+																			)}
+																		/>
+																	)}
 																</SidebarMenuButton>
 																<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
 																	{format(
@@ -484,6 +530,20 @@ const ChatPageInner = () => {
 																				'session-menu.rename',
 																			)}
 																		</DropdownMenuItem>
+																		{view.is_running && (
+																			<DropdownMenuItem
+																				onClick={() => {
+																					void handleInterruptSession(
+																						session,
+																					);
+																				}}
+																			>
+																				<Square />
+																				{t(
+																					'session-menu.stop',
+																				)}
+																			</DropdownMenuItem>
+																		)}
 																		<DropdownMenuItem
 																			variant="destructive"
 																			onClick={() =>

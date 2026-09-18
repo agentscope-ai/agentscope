@@ -255,6 +255,9 @@
 	},
 	"session-menu": {
 		"rename": "Rename",
+		"stop": "Stop generating",
+		"stopped": "Stop requested for this session",
+		"stopFailed": "Failed to stop; please try again",
 		"delete": "Delete"
 	},
 	"dialog-credential-create": {
