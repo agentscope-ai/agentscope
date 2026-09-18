@@ -206,6 +206,85 @@ class _FakeBus(MessageBus):
         raise NotImplementedError
 
 
+class _StartupDrainBus(_FakeBus):
+    """Let retry tasks refill each subsequent startup-drain batch."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._drain_count = 0
+        self._retry_pushes = 0
+        self._retry_batch_size = 0
+        self._track_retries = False
+        self._retry_batch_ready = asyncio.Event()
+
+    def track_retries(self) -> None:
+        """Start counting queue entries created by deferred retries."""
+        self._track_retries = True
+
+    async def queue_push(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        ttl_secs: int | None = None,
+    ) -> str:
+        entry_id = await super().queue_push(
+            key,
+            payload,
+            ttl_secs=ttl_secs,
+        )
+        if self._track_retries:
+            self._retry_pushes += 1
+            if self._retry_pushes >= self._retry_batch_size:
+                self._retry_batch_ready.set()
+        return entry_id
+
+    async def queue_drain(
+        self,
+        key: str,
+        *,
+        max_count: int,
+    ) -> list[tuple[str, dict]]:
+        self._drain_count += 1
+        self._retry_batch_size = max_count
+        if self._drain_count > 1:
+            await self._retry_batch_ready.wait()
+            self._retry_batch_ready.clear()
+            self._retry_pushes = 0
+        return await super().queue_drain(key, max_count=max_count)
+
+    async def subscribe(
+        self,
+        _key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        if on_ready is not None:
+            on_ready()
+        await asyncio.Future()
+        yield {}
+
+
+class _FlakyQueueBus(_FakeBus):
+    """Fail one configured queue read before recovering."""
+
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self.fail_on_call = fail_on_call
+        self.drain_calls = 0
+
+    async def queue_drain(
+        self,
+        key: str,
+        *,
+        max_count: int,
+    ) -> list[tuple[str, dict]]:
+        self.drain_calls += 1
+        if self.drain_calls == self.fail_on_call:
+            raise ConnectionError("simulated queue read failure")
+        return await super().queue_drain(key, max_count=max_count)
+
+
 class _FakeChatService:
     """Records calls to :meth:`run` so tests can assert dispatch."""
 
@@ -326,6 +405,77 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await _yield_a_few_times()
+
+        self.assertEqual(len(chat.calls), 65)
+        self.assertEqual(bus.queues[queue_key], [])
+
+    async def test_startup_drain_does_not_wait_for_retry_refill(self) -> None:
+        """Startup returns even when retries refill a full initial batch."""
+        bus = _StartupDrainBus()
+        chat = _FakeChatService()
+        queue_key = MessageBusKeys.wakeup_queue()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="busy")
+        bus._locks.add(lock_key)
+        for index in range(64):
+            await bus.queue_push(
+                queue_key,
+                {
+                    "user_id": "u",
+                    "session_id": "busy",
+                    "agent_id": f"a-{index}",
+                },
+            )
+        bus.track_retries()
+
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        )
+        # pylint: disable=unnecessary-dunder-call
+        enter_task = asyncio.create_task(dispatcher.__aenter__())
+        try:
+            done, _pending = await asyncio.wait(
+                {enter_task},
+                timeout=0.5,
+            )
+            self.assertIn(enter_task, done)
+        finally:
+            if not enter_task.done():
+                enter_task.cancel()
+            await dispatcher.__aexit__(None, None, None)
+            await asyncio.gather(enter_task, return_exceptions=True)
+
+        self.assertEqual(chat.calls, [])
+
+    async def test_initial_recovery_retries_after_transient_queue_failure(
+        self,
+    ) -> None:
+        """A failed recovery read does not strand the remaining backlog."""
+        bus = _FlakyQueueBus(fail_on_call=2)
+        chat = _FakeChatService()
+        queue_key = MessageBusKeys.wakeup_queue()
+        for index in range(65):
+            await bus.queue_push(
+                queue_key,
+                {
+                    "user_id": "u",
+                    "session_id": f"pre-{index}",
+                    "agent_id": "a",
+                },
+            )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            for _ in range(100):
+                if len(chat.calls) == 65:
+                    break
+                await asyncio.sleep(0.01)
 
         self.assertEqual(len(chat.calls), 65)
         self.assertEqual(bus.queues[queue_key], [])

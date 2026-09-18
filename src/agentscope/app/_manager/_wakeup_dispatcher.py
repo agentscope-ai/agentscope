@@ -61,9 +61,14 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
 # to avoid a hot re-enqueue loop while the lock is held.
 _RESUME_RETRY_BACKOFF_SECS = 0.1
 
-# Keep each queue operation bounded while allowing startup to consume a
-# backlog over multiple calls.
+# Keep each queue operation bounded. A full batch re-drives the signal
+# path so the next batch is consumed by the long-lived loop instead of
+# extending startup indefinitely.
 _WAKEUP_DRAIN_BATCH_SIZE = 64
+
+# A failed queue read should be retried through the signal path, but not
+# in a tight loop while the backing store is unavailable.
+_WAKEUP_DRAIN_RETRY_BACKOFF_SECS = 0.1
 
 
 class WakeupDispatcher:
@@ -131,9 +136,8 @@ class WakeupDispatcher:
             name="wakeup-dispatcher",
         )
         await ready.wait()
-        while True:
-            if not await self._drain_and_dispatch():
-                break
+        drain_result = await self._drain_and_dispatch()
+        await self._republish_wakeup_if_needed(drain_result)
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -175,19 +179,21 @@ class WakeupDispatcher:
                 MessageBusKeys.wakeup_signal(),
                 on_ready=ready.set,
             ):
-                await self._drain_and_dispatch()
+                drain_result = await self._drain_and_dispatch()
+                await self._republish_wakeup_if_needed(drain_result)
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "WakeupDispatcher loop crashed; subscription ended.",
             )
 
-    async def _drain_and_dispatch(self) -> bool:
+    async def _drain_and_dispatch(self) -> bool | None:
         """Read a batch of trigger entries and dispatch each.
 
         Returns:
-            `bool`:
-                Whether the queue returned a full batch and may still have
-                more entries to drain.
+            `bool | None`:
+                ``True`` when the queue returned a full batch and may still
+                have more entries, ``False`` when a successful read returned
+                fewer entries, or ``None`` when the queue read failed.
         """
         try:
             raw_entries = await self._bus.queue_drain(
@@ -197,7 +203,7 @@ class WakeupDispatcher:
             entries = [payload for _, payload in raw_entries]
         except Exception:  # pylint: disable=broad-except
             logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
-            return False
+            return None
 
         for payload in entries:
             try:
@@ -220,7 +226,29 @@ class WakeupDispatcher:
                 raw_input=payload.get("input"),
             )
 
-        return len(raw_entries) == _WAKEUP_DRAIN_BATCH_SIZE
+        return len(raw_entries) >= _WAKEUP_DRAIN_BATCH_SIZE
+
+    async def _republish_wakeup_if_needed(
+        self,
+        drain_result: bool | None,
+    ) -> None:
+        """Continue recovery through the normal signal-driven drain path.
+
+        A full batch means the durable queue may still contain entries, so
+        publish one more signal for the long-lived loop. A failed read is
+        retried after a short delay; treating it as an empty queue would
+        strand the backlog until an unrelated producer sends another
+        signal. A successful short read is the only terminal result.
+
+        Args:
+            drain_result (`bool | None`):
+                Result returned by :meth:`_drain_and_dispatch`.
+        """
+        if drain_result is False:
+            return
+        if drain_result is None:
+            await asyncio.sleep(_WAKEUP_DRAIN_RETRY_BACKOFF_SECS)
+        await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
 
     async def _dispatch_one(
         self,
