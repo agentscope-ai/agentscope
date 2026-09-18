@@ -64,6 +64,8 @@ class EventType(StrEnum):
     USER_INTERRUPT = "USER_INTERRUPT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
+    STATUS = "STATUS"
+
     CUSTOM = "CUSTOM"
 
 
@@ -515,6 +517,35 @@ class ExternalExecutionResultEvent(EventBase):
     """Results returned by the external executor."""
 
 
+class StatusEvent(EventBase):
+    """General-purpose status notification for long-running backend work.
+
+    Unlike ``CustomEvent`` (application-specific signals) or reply-scoped
+    events, this type is operation-agnostic: backends emit it whenever a
+    time-consuming internal step (context compaction, indexing, migration, …)
+    starts, progresses, completes, or fails, so frontends can show progress
+    without hard-coding each operation into the core event enum.
+
+    Front-end implementations should handle unknown ``operation`` values
+    gracefully — render ``message``/``phase`` or skip with no error.
+    """
+
+    type: Literal[EventType.STATUS] = EventType.STATUS
+    """Event type discriminator."""
+    session_id: str | None = None
+    """Session this status belongs to, when known."""
+    reply_id: str | None = None
+    """Reply this status belongs to, when the work is reply-scoped."""
+    operation: str
+    """Stable identifier of the operation, e.g. ``context_compaction``."""
+    message: str = ""
+    """Human-readable status text for display."""
+    phase: Literal["started", "progress", "completed", "failed"] = "progress"
+    """Lifecycle phase of the operation."""
+    value: Dict[str, Any] = Field(default_factory=dict)
+    """Operation-specific payload (token counts, sizes, …)."""
+
+
 class CustomEvent(EventBase):
     """Generic extensible event for signals that don't fit a specific
     ``AgentEvent`` subtype.
@@ -577,5 +608,6 @@ AgentEvent: TypeAlias = (
     | UserConfirmResultEvent
     | UserInterruptEvent
     | ExternalExecutionResultEvent
+    | StatusEvent
     | CustomEvent
 )

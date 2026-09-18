@@ -5,7 +5,11 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from pydantic import ValidationError
 
 from utils import AnyString
-from agentscope.event import ReplyStartEvent, ToolResultDataDeltaEvent
+from agentscope.event import (
+    ReplyStartEvent,
+    StatusEvent,
+    ToolResultDataDeltaEvent,
+)
 
 
 class EventTest(IsolatedAsyncioTestCase):
@@ -48,6 +52,45 @@ class EventTest(IsolatedAsyncioTestCase):
             "role": "assistant",
         }
         ReplyStartEvent.model_validate(data)
+
+    async def test_status_event_dump_and_validate(self) -> None:
+        """Status events are operation-agnostic progress notifications."""
+        event = StatusEvent(
+            session_id="test_session",
+            reply_id="test_reply",
+            operation="context_compaction",
+            message="Context compressed successfully.",
+            phase="completed",
+            value={"messages_before": 12, "messages_after": 4},
+        ).model_dump()
+        self.assertDictEqual(
+            event,
+            {
+                "type": "STATUS",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "metadata": {},
+                "session_id": "test_session",
+                "reply_id": "test_reply",
+                "operation": "context_compaction",
+                "message": "Context compressed successfully.",
+                "phase": "completed",
+                "value": {"messages_before": 12, "messages_after": 4},
+            },
+        )
+        StatusEvent.model_validate(event)
+
+        defaults = StatusEvent(operation="indexing", message="working")
+        self.assertIsNone(defaults.session_id)
+        self.assertIsNone(defaults.reply_id)
+        self.assertEqual(defaults.phase, "progress")
+        self.assertEqual(defaults.value, {})
+
+        with self.assertRaises(ValidationError):
+            StatusEvent(
+                operation="indexing",
+                phase="not-a-phase",
+            )
 
     async def test_tool_result_data_delta_source_validation(self) -> None:
         """Test exactly one data source is required."""

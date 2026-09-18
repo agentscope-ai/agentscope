@@ -32,6 +32,7 @@ from ....event import (
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
+    StatusEvent,
 )
 from ....types import ReplyFinishedReason
 
@@ -216,6 +217,12 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
                 tool_call_id=event.tool_call_id,
                 message_id=event.reply_id,
                 content=content or str(event.state),
+            )
+
+        if isinstance(event, StatusEvent):
+            return AGUICustomEvent(
+                name="status",
+                value=event.model_dump(exclude_none=True),
             )
 
         if isinstance(event, DataBlockStartEvent):
