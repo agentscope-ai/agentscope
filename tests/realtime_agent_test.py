@@ -3,6 +3,7 @@
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
 import asyncio
+import contextlib
 from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
@@ -10,6 +11,7 @@ from utils import AnyString
 from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
+    ModelCallStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
@@ -212,6 +214,23 @@ class FakeTransport(TransportBase):
             played_ms=320,
             first_played_at=1.0,
         )
+
+
+class IdleTransport(FakeTransport):
+    """Stays open until the test ends it, so ``reply_stream`` keeps a
+    reader on the outgoing events."""
+
+    def __init__(self) -> None:
+        super().__init__(frames=0)
+        self.ready = asyncio.Event()
+        self.stop = asyncio.Event()
+
+    async def incoming(self) -> AsyncIterator[AudioFrame]:
+        """Block until the test finishes the uplink."""
+        self.ready.set()
+        await self.stop.wait()
+        return
+        yield  # pylint: disable=unreachable
 
 
 class EndOnSecondFrameVAD(VADBase):
@@ -532,6 +551,127 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 
         self.assertListEqual(summary, [])
         self.assertListEqual(agent.state.context, [])
+
+    async def _wait_for_out_getter(self, agent: RealtimeAgent) -> None:
+        """Spin until ``reply_stream`` is blocked in ``_get_out``."""
+        for _ in range(50):
+            waiters = getattr(agent._out_ready, "_waiters", None)
+            if waiters:
+                return
+            await asyncio.sleep(0)
+        self.fail("reply_stream never waited on the outgoing events")
+
+    def _assert_no_out_waiter(self, agent: RealtimeAgent) -> None:
+        """The outgoing Event must have no leftover waiters."""
+        self.assertFalse(getattr(agent._out_ready, "_waiters", ()))
+
+    async def test_cancel_reply_stream_does_not_steal_next_start(self) -> None:
+        """Cancelling reply_stream must not leave a reader that consumes
+        the next stream's ReplyStartEvent."""
+        model = ScriptedModel(
+            [["WAIT", me.ResponseCreatedEvent(item_id="reply-after-cancel")]],
+        )
+        async with RealtimeAgent("assistant", "Be brief.", model) as agent:
+            transport = IdleTransport()
+            stream = agent.reply_stream(transport)
+            pending = asyncio.create_task(anext(stream))
+            await transport.ready.wait()
+            await self._wait_for_out_getter(agent)
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pending
+            await stream.aclose()
+            self._assert_no_out_waiter(agent)
+
+            await model.request_response()
+            for _ in range(50):
+                if agent._reply is not None:
+                    break
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            resumed = agent.reply_stream(IdleTransport())
+            try:
+                event = await asyncio.wait_for(anext(resumed), timeout=1)
+                self.assertIsInstance(event, ReplyStartEvent)
+            finally:
+                await resumed.aclose()
+
+    async def test_aclose_releases_outstanding_queue_getter(self) -> None:
+        """Closing the generator cancels the outstanding out-event reader."""
+        model = ScriptedModel([[]])
+        async with RealtimeAgent("Friday", "be brief", model) as agent:
+            transport = IdleTransport()
+            stream = agent.reply_stream(transport)
+            async with contextlib.aclosing(stream):
+                pending = asyncio.create_task(anext(stream))
+                await transport.ready.wait()
+                await self._wait_for_out_getter(agent)
+                pending.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pending
+            self._assert_no_out_waiter(agent)
+            self.assertIsNone(agent._transport)
+
+    async def test_unyielded_event_is_preserved_at_front(self) -> None:
+        """A dequeued event that was never yielded is put back ahead of
+        later queued events, so the next stream still sees it first."""
+        model = ScriptedModel([[]])
+        first = ReplyStartEvent(
+            session_id="s",
+            reply_id="kept",
+            name="Friday",
+        )
+        later = ModelCallStartEvent(reply_id="kept", model_name="scripted")
+        real_wait = asyncio.wait
+        armed = True
+
+        async def wait_cancel_after_dequeue(
+            aws: Any,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            nonlocal armed
+            done, pending = await real_wait(aws, *args, **kwargs)
+            if armed:
+                for fut in done:
+                    if (
+                        fut.done()
+                        and not fut.cancelled()
+                        and fut.exception() is None
+                        and fut.result() is first
+                    ):
+                        armed = False
+                        raise asyncio.CancelledError
+            return done, pending
+
+        async with RealtimeAgent("Friday", "be brief", model) as agent:
+            transport = IdleTransport()
+            asyncio.wait = wait_cancel_after_dequeue
+            try:
+                stream = agent.reply_stream(transport)
+                pending = asyncio.create_task(anext(stream))
+                await transport.ready.wait()
+                await self._wait_for_out_getter(agent)
+                agent._emit(first)
+                agent._emit(later)
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pending
+                await stream.aclose()
+            finally:
+                asyncio.wait = real_wait
+
+            self._assert_no_out_waiter(agent)
+            self.assertIs(agent._out[0], first)
+            self.assertIs(agent._out[1], later)
+            resumed = agent.reply_stream(IdleTransport())
+            try:
+                event = await asyncio.wait_for(anext(resumed), timeout=1)
+                self.assertIs(event, first)
+                event = await asyncio.wait_for(anext(resumed), timeout=1)
+                self.assertIs(event, later)
+            finally:
+                await resumed.aclose()
 
 
 class StreamTool(ToolBase):
