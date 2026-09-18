@@ -3,6 +3,7 @@
 retry / accumulation / interrupt wrapper around ``_call_api``."""
 import asyncio
 import base64
+import json
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -163,6 +164,52 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                 is_last=True,
             ),
         )
+
+    async def test_non_stream_repairs_partial_tool_input(self) -> None:
+        """Repair incomplete tool arguments in a non-stream response."""
+        response = ChatResponse(
+            content=[
+                ToolCallBlock(
+                    id="tool-1",
+                    name="get_weather",
+                    input='{"city":"Beijing"',
+                ),
+            ],
+            is_last=True,
+        )
+        self.model.set_responses([response])
+
+        result = await self.model(messages=self.messages)
+
+        self.assertIsInstance(result, ChatResponse)
+        assert isinstance(result, ChatResponse)
+        tool_call = result.content[0]
+        self.assertIsInstance(tool_call, ToolCallBlock)
+        assert isinstance(tool_call, ToolCallBlock)
+        self.assertDictEqual(json.loads(tool_call.input), {"city": "Beijing"})
+
+    async def test_non_stream_preserves_unrepairable_tool_input(self) -> None:
+        """Keep invalid input when it cannot be repaired into an object."""
+        response = ChatResponse(
+            content=[
+                ToolCallBlock(
+                    id="tool-1",
+                    name="get_weather",
+                    input="not json",
+                ),
+            ],
+            is_last=True,
+        )
+        self.model.set_responses([response])
+
+        result = await self.model(messages=self.messages)
+
+        self.assertIsInstance(result, ChatResponse)
+        assert isinstance(result, ChatResponse)
+        tool_call = result.content[0]
+        self.assertIsInstance(tool_call, ToolCallBlock)
+        assert isinstance(tool_call, ToolCallBlock)
+        self.assertEqual(tool_call.input, "not json")
 
     # ------------------------------------------------------------------
     # 2) non-stream CancelledError raised from inside _call_api
@@ -508,9 +555,8 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                     ],
                     is_last=False,
                 ),
-                # accumulated final — thinking / text preserved,
-                # tool_call.input concatenated to the partial JSON
-                # received before the cancellation (no closing "}")
+                # accumulated final — thinking / text preserved and the
+                # partial tool input repaired before it is returned
                 _expected(
                     content=[
                         {
@@ -527,7 +573,7 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                             "type": "tool_call",
                             "id": "tool-1",
                             "name": "get_weather",
-                            "input": '{"city":"Beijing"',
+                            "input": '{"city": "Beijing"}',
                             "state": "pending",
                             "suggested_rules": [],
                         },
@@ -652,6 +698,32 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_repairs_model_provided_final_chunk(self) -> None:
+        """Repair a partial tool call in a provider's final chunk."""
+        deltas = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="get_weather",
+                        input='{"city":"Beijing"',
+                    ),
+                ],
+                is_last=True,
+                id="chunk-final",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        collected = [chunk async for chunk in gen]
+
+        self.assertEqual(len(collected), 1)
+        tool_call = collected[0].content[0]
+        self.assertIsInstance(tool_call, ToolCallBlock)
+        assert isinstance(tool_call, ToolCallBlock)
+        self.assertDictEqual(json.loads(tool_call.input), {"city": "Beijing"})
 
     # ------------------------------------------------------------------
     # 9) stream mixed block types — normal completion (happy path)
