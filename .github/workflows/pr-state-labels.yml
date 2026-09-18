@@ -9,6 +9,8 @@ on:
 
 permissions:
   pull-requests: write
+  # Reading the assignees of the issues a pull request closes.
+  issues: read
   actions: read
 
 env:
@@ -36,6 +38,114 @@ jobs:
           else
             gh pr edit "$PR" --remove-label "no linked issue"
           fi
+
+      # Say out loud what the labels only hint at: no issue to close, or
+      # somebody else is already on the one this closes. `closingIssuesReferences`
+      # is the same source the label above uses, so there is one answer to
+      # "what does this close", and it sees links made through the sidebar
+      # rather than only the ones spelled out in the body.
+      - if: github.event.action == 'opened' || github.event.action == 'edited'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+            const MARKER = '<!-- pr-guard -->';
+            if (process.env.MAINTAINERS.split(/\s+/).includes(author)) return;
+
+            // `edited` fires on every body change, so each thing is said once.
+            const mine = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: pr.number, per_page: 100 },
+            );
+            if (mine.some((c) => c.body.includes(MARKER))) return;
+
+            // One query answers everything: what this closes, who holds
+            // those issues, and which other pull requests really close them.
+            // A cross-reference is only a mention, so each candidate is asked
+            // what it closes — otherwise a pull request that merely names the
+            // issue would read as a duplicate.
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 10) {
+                      nodes {
+                        number
+                        assignees(first: 10) { nodes { login } }
+                        timelineItems(
+                          first: 100, itemTypes: [CROSS_REFERENCED_EVENT]
+                        ) {
+                          nodes {
+                            ... on CrossReferencedEvent {
+                              source {
+                                ... on PullRequest {
+                                  number state author { login }
+                                  closingIssuesReferences(first: 10) {
+                                    nodes { number }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }`, { owner, repo, number: pr.number });
+            const issues =
+              repository.pullRequest.closingIssuesReferences.nodes;
+
+            const notes = [];
+            if (issues.length === 0) {
+              notes.push(
+                '- This pull request does not close an issue. Please open ' +
+                'one describing the problem first and link it with ' +
+                '`Fixes #<number>`, so the change can be discussed against ' +
+                'the problem it solves.',
+              );
+            }
+            for (const issue of issues) {
+              const holders = issue.assignees.nodes.map((a) => a.login);
+              if (holders.length && !holders.includes(author)) {
+                notes.push(
+                  `- #${issue.number} is claimed by ` +
+                  `${holders.map((h) => '@' + h).join(', ')}. Please leave it ` +
+                  'with them while the claim stands.',
+                );
+              }
+              for (const node of issue.timelineItems.nodes) {
+                const other = node.source;
+                if (!other || !other.number) continue;
+                if (other.number === pr.number || other.state !== 'OPEN') {
+                  continue;
+                }
+                const closes = other.closingIssuesReferences.nodes.some(
+                  (i) => i.number === issue.number,
+                );
+                if (!closes) continue;
+                notes.push(
+                  other.author.login === author
+                    ? `- #${issue.number} already has your own open pull ` +
+                      `request #${other.number}. Consider continuing there.`
+                    : `- #${issue.number} already has an open pull request, ` +
+                      `#${other.number} by @${other.author.login}.`,
+                );
+              }
+            }
+
+            if (notes.length === 0) return;
+
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pr.number,
+              body:
+                `${MARKER}\nThanks for the pull request. One thing worth ` +
+                `sorting out before it is reviewed:\n\n${notes.join('\n')}\n\n` +
+                `If you think it belongs here anyway, say so and a ` +
+                `maintainer will take a look.`,
+            });
 
   # A maintainer review hands the ball to the author.
   on-review:

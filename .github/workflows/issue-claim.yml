@@ -2,10 +2,9 @@ name: Issue Claim
 
 # Lets a contributor take an issue by saying so in a comment.
 #
-# The claim is recorded as the `triage/claimed` label plus a comment, not as an
-# assignee: GitHub only allows assigning users with push access, and
-# `addAssignees` silently ignores everyone else — so assigning an outside
-# contributor would look like it worked and do nothing.
+# The claim is a real assignee. GitHub allows assigning anyone who has taken
+# part in the issue, and whoever claims it has just commented, so the person
+# asking is always assignable.
 
 on:
   issue_comment:
@@ -16,11 +15,12 @@ permissions: {}
 env:
   TRIAGE_MODEL: qwen3.8-max
   CLAIM_DAYS: '14'
+  MAINTAINERS: DavdGao qbc2016
 
 jobs:
   claim:
-    # `issue_comment` also fires for pull request comments, and a bot replying
-    # to itself would loop.
+    # `issue_comment` fires for pull request comments too, and a bot answering
+    # itself would loop.
     if: >-
       github.event.issue.pull_request == null &&
       github.event.comment.user.type != 'Bot'
@@ -34,8 +34,8 @@ jobs:
       group: issue-claim-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
-      # A cheap gate first: most comments say nothing about claiming, and
-      # they should cost seconds rather than a model call and an install.
+      # Most comments say nothing about claiming, and those should cost
+      # seconds rather than an install and a model call.
       - name: Could this be a claim?
         id: gate
         env:
@@ -80,44 +80,114 @@ jobs:
           steps.gate.outputs.verdict == 'explicit' ||
           steps.intent.outputs.wants == 'true'
         uses: actions/github-script@v7
-        env:
-          CLAIM_DAYS: ${{ env.CLAIM_DAYS }}
         with:
           script: |
             const issue_number = context.payload.issue.number;
             const { owner, repo } = context.repo;
             const who = context.payload.comment.user.login;
             const days = Number(process.env.CLAIM_DAYS);
-
-            const { data: labels } =
-              await github.rest.issues.listLabelsOnIssue({
-                owner, repo, issue_number,
-              });
-            const names = labels.map((l) => l.name);
-            const has = (n) => names.includes(n);
-            const triaged = names.some((n) => n.startsWith('triage/'));
+            const maintainers = process.env.MAINTAINERS.split(/\s+/);
 
             const say = (body) => github.rest.issues.createComment({
               owner, repo, issue_number, body,
             });
 
-            // Someone already holds it. Name them rather than silently
-            // refusing, so the newcomer knows who to talk to.
-            if (has('triage/claimed')) {
-              const { data: comments } =
-                await github.rest.issues.listComments({
-                  owner, repo, issue_number, per_page: 100,
-                });
-              const record = comments.reverse().find(
-                (c) => c.body.includes('<!-- claim-record -->'),
+            const { data: issue } = await github.rest.issues.get({
+              owner, repo, issue_number,
+            });
+            const names = issue.labels.map(
+              (l) => (typeof l === 'string' ? l : l.name),
+            );
+            const has = (n) => names.includes(n);
+
+            const holders = issue.assignees.map((a) => a.login);
+            if (holders.length > 0) {
+              if (holders.includes(who)) {
+                core.notice('Already theirs; nothing to do.');
+                return;
+              }
+              // A claim the maintainers hold is theirs for as long as they
+              // want it.
+              if (holders.some((h) => maintainers.includes(h))) {
+                await say(
+                  `This one is with ${holders.map((h) => '@' + h).join(', ')}.`,
+                );
+                return;
+              }
+
+              // Is the standing claim stale? The same rule as
+              // claim-expiry.yml — keep the two in step if either changes.
+              // `issue.updated_at` is useless here: the claiming comment
+              // just bumped it.
+              //
+              // A cross-reference is only a mention, so each candidate has to
+              // be asked what it actually closes — otherwise any pull request
+              // that merely names the issue would keep the claim alive.
+              const { repository } = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $number) {
+                      timelineItems(
+                        first: 100, itemTypes: [CROSS_REFERENCED_EVENT]
+                      ) {
+                        nodes {
+                          ... on CrossReferencedEvent {
+                            source {
+                              ... on PullRequest {
+                                number state
+                                closingIssuesReferences(first: 10) {
+                                  nodes { number }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }`, { owner, repo, number: issue_number });
+              const working = repository.issue.timelineItems.nodes.some((n) => {
+                const s = n.source;
+                return s && s.state === 'OPEN' &&
+                  s.closingIssuesReferences.nodes.some(
+                    (i) => i.number === issue_number,
+                  );
+              });
+
+              const timeline = await github.paginate(
+                github.rest.issues.listEventsForTimeline,
+                { owner, repo, issue_number, per_page: 100 },
               );
-              const holder = record
-                ? (record.body.match(/@([\w-]+)/) || [])[0] || 'someone'
-                : 'someone';
+              const marks = timeline
+                .filter((e) => (
+                  (e.event === 'assigned' &&
+                    holders.includes(e.assignee && e.assignee.login)) ||
+                  (e.event === 'commented' &&
+                    holders.includes(e.actor && e.actor.login))
+                ))
+                .map((e) => new Date(e.created_at).getTime());
+              const last = marks.length ? Math.max(...marks) : 0;
+              const stale = !working &&
+                last < Date.now() - days * 86400000;
+
+              if (!stale) {
+                await say(
+                  `This issue is already claimed by ` +
+                  `${holders.map((h) => '@' + h).join(', ')}. The claim is ` +
+                  `released after ${days} days with no pull request and no ` +
+                  `word from them, and you are welcome to take it then.`,
+                );
+                return;
+              }
+              await github.rest.issues.removeAssignees({
+                owner, repo, issue_number, assignees: holders,
+              });
+              await github.rest.issues.addAssignees({
+                owner, repo, issue_number, assignees: [who],
+              });
               await say(
-                `This issue is already claimed by ${holder}. If they have ` +
-                `gone quiet the claim is released after ${days} days of ` +
-                `inactivity, and you are welcome to take it then.`,
+                `The earlier claim went quiet for more than ${days} days, so ` +
+                `this is yours now, @${who}. Thanks for picking it up.`,
               );
               return;
             }
@@ -130,47 +200,38 @@ jobs:
               return;
             }
 
-            // The verification workflow only labels issues opened after it
-            // landed, so an unlabelled issue is old rather than unchecked.
-            if (!triaged) {
-              await say(
-                'This issue predates automatic verification, so nobody has ' +
-                'confirmed it yet. @DavdGao can confirm it, and then it is ' +
-                'yours to take.',
-              );
-              return;
-            }
-
-            if (!has('triage/confirmed')) {
+            // An issue with no triage label predates the verification
+            // workflow, so treat it as open for work rather than unchecked.
+            const triaged = names.some((n) => n.startsWith('triage/'));
+            if (triaged && !has('triage/confirmed')) {
               await say(
                 'This issue has not been confirmed as a bug, so it is not ' +
-                'open for work yet. Its current labels: ' +
+                'open for work yet. Its triage labels: ' +
                 names.filter((n) => n.startsWith('triage/')).join(', ') + '.',
               );
               return;
             }
 
-            // On the roadmap means the team owns it, unless it is explicitly
-            // offered to the community.
+            // On the roadmap means the maintainers are carrying it, unless it
+            // is explicitly offered to the community.
             if (has('Roadmap') && !has('Help Wanted')) {
               await say(
                 'Thanks for offering. This one is on the roadmap and the ' +
                 'maintainers are carrying it, so it is not open to the ' +
-                'community yet — issues that are carry the `Help Wanted` ' +
+                'community yet — the ones that are carry the `Help Wanted` ' +
                 'label.',
               );
               return;
             }
 
+            await github.rest.issues.addAssignees({
+              owner, repo, issue_number, assignees: [who],
+            });
             const until = new Date(Date.now() + days * 86400000)
               .toISOString()
               .slice(0, 10);
-            await github.rest.issues.addLabels({
-              owner, repo, issue_number, labels: ['triage/claimed'],
-            });
             await say(
-              `<!-- claim-record -->\nClaimed by @${who} until ${until}. ` +
-              `The claim is released automatically after ${days} days with ` +
-              `no linked pull request, so nobody is blocked if plans ` +
-              `change — comment here to renew it.`,
+              `It's yours, @${who}. If there is no pull request and no word ` +
+              `from you by ${until} the claim is released so nobody is ` +
+              `blocked — a comment here renews it.`,
             );

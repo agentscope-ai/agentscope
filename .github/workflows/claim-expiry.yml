@@ -1,8 +1,11 @@
 name: Claim Expiry
 
 # Releases a claim that went quiet, so one abandoned claim cannot park an
-# issue forever. Without this, the "the claim is released after N days"
-# promise the other two workflows make would not be true.
+# issue forever. Without this, the promise the other workflows make — that a
+# claim lapses — would not be kept.
+#
+# The sweep is the backstop. Someone asking for a lapsed issue is handed it
+# straight away by issue-claim.yml, so nobody waits for this to run.
 
 on:
   schedule:
@@ -14,69 +17,106 @@ permissions: {}
 
 env:
   CLAIM_DAYS: '14'
+  MAINTAINERS: DavdGao qbc2016
 
 jobs:
   expire:
     permissions:
       issues: write
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/github-script@v7
-        env:
-          CLAIM_DAYS: ${{ env.CLAIM_DAYS }}
         with:
           script: |
             const { owner, repo } = context.repo;
             const days = Number(process.env.CLAIM_DAYS);
             const cutoff = Date.now() - days * 86400000;
+            const maintainers = process.env.MAINTAINERS.split(/\s+/);
 
-            const claimed = await github.paginate(
+            const issues = await github.paginate(
               github.rest.issues.listForRepo,
-              { owner, repo, state: 'open', labels: 'triage/claimed',
-                per_page: 100 },
+              { owner, repo, state: 'open', assignee: '*', per_page: 100 },
             );
-            core.notice(`${claimed.length} claimed issue(s).`);
+            core.notice(`${issues.length} assigned issue(s) to check.`);
 
-            for (const issue of claimed) {
+            for (const issue of issues) {
+              if (issue.pull_request) continue;
               const issue_number = issue.number;
+              const holders = issue.assignees.map((a) => a.login);
 
-              // An open pull request means the work is under way; the claim
-              // stands however long the review takes.
+              // A maintainer's claim never lapses.
+              if (holders.some((h) => maintainers.includes(h))) continue;
+
+              // The same staleness rule as issue-claim.yml — keep the two in
+              // step if either changes. `issue.updated_at` is not usable:
+              // anyone's comment bumps it, including one that has nothing to
+              // do with the person holding the claim.
+              //
+              // An open pull request means the work is under way, and the
+              // claim stands however long the review takes. A cross-reference
+              // is only a mention, so each candidate is asked what it really
+              // closes — otherwise naming the issue would keep a dead claim
+              // alive forever.
+              const { repository } = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $number) {
+                      timelineItems(
+                        first: 100, itemTypes: [CROSS_REFERENCED_EVENT]
+                      ) {
+                        nodes {
+                          ... on CrossReferencedEvent {
+                            source {
+                              ... on PullRequest {
+                                state
+                                closingIssuesReferences(first: 10) {
+                                  nodes { number }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }`, { owner, repo, number: issue_number });
+              const working = repository.issue.timelineItems.nodes.some((n) => {
+                const s = n.source;
+                return s && s.state === 'OPEN' &&
+                  s.closingIssuesReferences.nodes.some(
+                    (i) => i.number === issue_number,
+                  );
+              });
+              if (working) continue;
+
               const timeline = await github.paginate(
                 github.rest.issues.listEventsForTimeline,
                 { owner, repo, issue_number, per_page: 100 },
               );
-              const working = timeline.some((event) => {
-                const source = event.source && event.source.issue;
-                return event.event === 'cross-referenced' && source &&
-                  source.pull_request && source.state === 'open';
-              });
-              if (working) continue;
 
-              // Otherwise the clock runs from the last thing anyone said.
-              if (new Date(issue.updated_at).getTime() >= cutoff) continue;
+              const marks = timeline
+                .filter((e) => (
+                  (e.event === 'assigned' &&
+                    holders.includes(e.assignee && e.assignee.login)) ||
+                  (e.event === 'commented' &&
+                    holders.includes(e.actor && e.actor.login))
+                ))
+                .map((e) => new Date(e.created_at).getTime());
+              const last = marks.length ? Math.max(...marks) : 0;
+              if (last >= cutoff) continue;
 
-              const { data: comments } =
-                await github.rest.issues.listComments({
-                  owner, repo, issue_number, per_page: 100,
-                });
-              const record = comments.reverse().find(
-                (c) => c.body.includes('<!-- claim-record -->'),
-              );
-              const found = record && record.body.match(/@([\w-]+)/);
-              const holder = found ? `@${found[1]}` : 'whoever claimed it';
-
-              await github.rest.issues.removeLabel({
-                owner, repo, issue_number, name: 'triage/claimed',
+              await github.rest.issues.removeAssignees({
+                owner, repo, issue_number, assignees: holders,
               });
               await github.rest.issues.createComment({
                 owner, repo, issue_number,
                 body:
                   `Releasing this claim: ${days} days have passed with no ` +
-                  `pull request and no activity. ${holder}, if you are still ` +
-                  `on it just say so and it is yours again. Otherwise it is ` +
-                  `open for anyone to take.`,
+                  `pull request and no word from ` +
+                  `${holders.map((h) => '@' + h).join(', ')}. If you are ` +
+                  `still on it, just say so and it is yours again — ` +
+                  `otherwise it is open for anyone to take.`,
               });
-              core.notice(`Released #${issue_number}.`);
+              core.notice(`Released #${issue_number} (was ${holders}).`);
             }
