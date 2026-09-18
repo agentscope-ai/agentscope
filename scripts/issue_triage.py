@@ -18,6 +18,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 from typing import Literal, TypeVar
 
@@ -121,9 +122,10 @@ AND gives no steps -> answer `needs_info`, listing what is missing. Stop.
 == STEP 2 - Locate the code ==
 Grep and Glob for every symbol the issue names, then Read the whole function \
 or class and its callers.
-EXIT: if a named function, class, method or parameter exists nowhere under \
-src/ -> answer `invalid`. Evidence: the search you ran and that it found \
-nothing. Stop.
+EXIT: if a named function, class, method or parameter exists nowhere in \
+the checkout -> answer `invalid`. Evidence: the search you ran and that it \
+found nothing. Search the whole tree, not only src/: the web UI lives under \
+examples/, and a bug there is still a bug.
 
 == STEP 3 - Judge the claim against the code ==
 Decide whether the code AS WRITTEN produces the behaviour the issue describes.
@@ -293,16 +295,62 @@ async def _verify(
         return await _run(agent, issue, BugVerdict)
 
 
-def _sanitise(text: str) -> str:
-    """Make model-written text safe to post under the repository's identity.
+def _assert_pristine(workdir: str) -> None:
+    """Refuse a verdict about a checkout the agent has altered.
 
-    It is derived from untrusted input, so it must not be able to notify
-    people or smuggle markup into the comment.
+    The deny rules only cover the Write and Edit tools; a shell command can
+    still reach the tree. Rather than trying to name every way in, check the
+    one thing that matters afterwards — the verdict has to describe the code
+    as it was.
+    """
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    if dirty:
+        raise RuntimeError(
+            f"The checkout was modified during verification, so the verdict "
+            f"does not describe main:\n{dirty}",
+        )
+
+
+def _defuse(text: str) -> str:
+    """Trim model-written text and stop it notifying people.
+
+    It is derived from untrusted input, so it must not be able to summon
+    anyone into a thread by being quoted back at them.
     """
     text = text[:_MAX_COMMENT_CHARS]
     # Defuse mentions rather than dropping them: the name may be the point.
-    text = re.sub(r"(?<![\w`])@([A-Za-z0-9][\w-]*)", r"`@\1`", text)
-    return html.escape(text, quote=False)
+    return re.sub(r"(?<![\w`])@([A-Za-z0-9][\w-]*)", r"`@\1`", text)
+
+
+def _as_quote(text: str) -> str:
+    """Render untrusted text as a block quote it cannot break out of.
+
+    Escaping HTML is not enough on its own — a bare newline ends a quote, so
+    every line needs the marker, and a leading Markdown character would still
+    be read as structure.
+    """
+    lines = html.escape(_defuse(text), quote=False).splitlines() or [""]
+    return "\n".join(
+        "> " + re.sub(r"^([#>\-*+=|]|\d+\.)", r"\\\1", ln) for ln in lines
+    )
+
+
+def _as_code(text: str) -> str:
+    """Render untrusted text as a fence it cannot break out of.
+
+    A fence ends at the first run of backticks at least as long as its own,
+    so the fence has to be longer than anything in the text.
+    """
+    body = _defuse(text)
+    longest = max((len(m) for m in re.findall(r"`+", body)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{body}\n{fence}"
 
 
 _COMMENT_INTRO = {
@@ -321,9 +369,9 @@ def _comment(verdict: str, summary: str, evidence: str) -> str | None:
         f"**Automated preliminary check** — a first pass by a bot, not a "
         f"maintainer decision.\n\n"
         f"On this run, {intro}.\n\n"
-        f"> {_sanitise(summary)}\n\n"
+        f"{_as_quote(summary)}\n\n"
         f"<details><summary>What it looked at</summary>\n\n"
-        f"```\n{_sanitise(evidence)}\n```\n\n</details>\n\n"
+        f"{_as_code(evidence)}\n\n</details>\n\n"
         f"If this is wrong, please say so here with the AgentScope version "
         f"you ran and the exact steps — a maintainer will look either way."
     )
@@ -392,6 +440,7 @@ async def main() -> int:
     else:
         print(f"::group::Stage 2 — verifying issue #{args.number}")
         verdict = await _verify(model, issue, args.workdir)
+        _assert_pristine(args.workdir)
         print("::endgroup::")
         result["verdict"] = verdict.model_dump()
         result["comment"] = _comment(

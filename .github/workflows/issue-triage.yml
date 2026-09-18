@@ -34,6 +34,10 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Otherwise the job token is left in .git/config, where the
+          # agent's own shell could read it and act as this job.
+          persist-credentials: false
 
       - name: Say the triage has started
         uses: actions/github-script@v7

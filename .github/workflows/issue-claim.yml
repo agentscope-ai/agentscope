@@ -43,7 +43,9 @@ jobs:
         run: |
           mkdir -p /tmp/claim
           printf '%s' "$BODY" > /tmp/claim/comment.md
-          if grep -qiE '^[[:space:]]*/assign\b' /tmp/claim/comment.md; then
+          # Only a bare self-claim skips the classifier: `/assign @someone`
+          # asks for a third party, which is not a claim at all.
+          if grep -qiE '^[[:space:]]*/assign([[:space:]]+me)?[[:space:]]*$' /tmp/claim/comment.md; then
             echo "verdict=explicit" >> "$GITHUB_OUTPUT"
           elif grep -qiE 'assign|claim|take (this|it)|work(ing)? on|pick (this|it) up|认领|我来|我想做|接手' /tmp/claim/comment.md; then
             echo "verdict=maybe" >> "$GITHUB_OUTPUT"
@@ -52,6 +54,10 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
+        with:
+          # Otherwise the job token is left in .git/config, where the
+          # agent's own shell could read it and act as this job.
+          persist-credentials: false
         if: steps.gate.outputs.verdict == 'maybe'
 
       - uses: astral-sh/setup-uv@v5
@@ -99,13 +105,59 @@ jobs:
               (l) => (typeof l === 'string' ? l : l.name),
             );
             const has = (n) => names.includes(n);
-
             const holders = issue.assignees.map((a) => a.login);
-            if (holders.length > 0) {
-              if (holders.includes(who)) {
-                core.notice('Already theirs; nothing to do.');
+
+            if (holders.includes(who)) {
+              core.notice('Already theirs; nothing to do.');
+              return;
+            }
+
+            // Whether the issue is open for work at all comes first. Deciding
+            // it after the assignee checks would let a lapsed claim be handed
+            // on for an issue nobody may claim in the first place.
+            if (has('triage/verifying')) {
+              await say(
+                'This issue is still being verified. Please comment again ' +
+                'once it is confirmed, and it is yours.',
+              );
+              return;
+            }
+
+            const triaged = names.some((n) => n.startsWith('triage/'));
+            if (!triaged) {
+              // No label is only evidence of age once triage has had its run:
+              // this workflow and the triage one fire on separate events, so a
+              // comment can arrive before the first label is applied.
+              const age = Date.now() - new Date(issue.created_at).getTime();
+              if (age < 30 * 60000) {
+                await say(
+                  'This issue is new and has not been through verification ' +
+                  'yet. Please comment again in a few minutes.',
+                );
                 return;
               }
+            } else if (!has('triage/confirmed')) {
+              await say(
+                'This issue has not been confirmed as a bug, so it is not ' +
+                'open for work yet. Its triage labels: ' +
+                names.filter((n) => n.startsWith('triage/')).join(', ') + '.',
+              );
+              return;
+            }
+
+            // On the roadmap means the maintainers are carrying it, unless it
+            // is explicitly offered to the community.
+            if (has('Roadmap') && !has('Help Wanted')) {
+              await say(
+                'Thanks for offering. This one is on the roadmap and the ' +
+                'maintainers are carrying it, so it is not open to the ' +
+                'community yet — the ones that are carry the `Help Wanted` ' +
+                'label.',
+              );
+              return;
+            }
+
+            if (holders.length > 0) {
               // A claim the maintainers hold is theirs for as long as they
               // want it.
               if (holders.some((h) => maintainers.includes(h))) {
@@ -117,12 +169,10 @@ jobs:
 
               // Is the standing claim stale? The same rule as
               // claim-expiry.yml — keep the two in step if either changes.
-              // `issue.updated_at` is useless here: the claiming comment
-              // just bumped it.
-              //
-              // A cross-reference is only a mention, so each candidate has to
-              // be asked what it actually closes — otherwise any pull request
-              // that merely names the issue would keep the claim alive.
+              // `issue.updated_at` is useless here: the claiming comment just
+              // bumped it. And a cross-reference is only a mention, so each
+              // candidate is asked what it really closes, or any pull request
+              // naming the issue would keep a dead claim alive.
               const { repository } = await github.graphql(`
                 query($owner: String!, $repo: String!, $number: Int!) {
                   repository(owner: $owner, name: $repo) {
@@ -134,7 +184,7 @@ jobs:
                           ... on CrossReferencedEvent {
                             source {
                               ... on PullRequest {
-                                number state
+                                state
                                 closingIssuesReferences(first: 10) {
                                   nodes { number }
                                 }
@@ -167,15 +217,13 @@ jobs:
                 ))
                 .map((e) => new Date(e.created_at).getTime());
               const last = marks.length ? Math.max(...marks) : 0;
-              const stale = !working &&
-                last < Date.now() - days * 86400000;
 
-              if (!stale) {
+              if (working || last >= Date.now() - days * 86400000) {
                 await say(
-                  `This issue is already claimed by ` +
+                  'This issue is already claimed by ' +
                   `${holders.map((h) => '@' + h).join(', ')}. The claim is ` +
                   `released after ${days} days with no pull request and no ` +
-                  `word from them, and you are welcome to take it then.`,
+                  'word from them, and you are welcome to take it then.',
                 );
                 return;
               }
@@ -192,38 +240,6 @@ jobs:
               return;
             }
 
-            if (has('triage/verifying')) {
-              await say(
-                'This issue is still being verified. Please comment again ' +
-                'once it is confirmed, and it is yours.',
-              );
-              return;
-            }
-
-            // An issue with no triage label predates the verification
-            // workflow, so treat it as open for work rather than unchecked.
-            const triaged = names.some((n) => n.startsWith('triage/'));
-            if (triaged && !has('triage/confirmed')) {
-              await say(
-                'This issue has not been confirmed as a bug, so it is not ' +
-                'open for work yet. Its triage labels: ' +
-                names.filter((n) => n.startsWith('triage/')).join(', ') + '.',
-              );
-              return;
-            }
-
-            // On the roadmap means the maintainers are carrying it, unless it
-            // is explicitly offered to the community.
-            if (has('Roadmap') && !has('Help Wanted')) {
-              await say(
-                'Thanks for offering. This one is on the roadmap and the ' +
-                'maintainers are carrying it, so it is not open to the ' +
-                'community yet — the ones that are carry the `Help Wanted` ' +
-                'label.',
-              );
-              return;
-            }
-
             await github.rest.issues.addAssignees({
               owner, repo, issue_number, assignees: [who],
             });
@@ -233,5 +249,5 @@ jobs:
             await say(
               `It's yours, @${who}. If there is no pull request and no word ` +
               `from you by ${until} the claim is released so nobody is ` +
-              `blocked — a comment here renews it.`,
+              'blocked — a comment here renews it.',
             );

@@ -54,12 +54,18 @@ jobs:
             const MARKER = '<!-- pr-guard -->';
             if (process.env.MAINTAINERS.split(/\s+/).includes(author)) return;
 
-            // `edited` fires on every body change, so each thing is said once.
+            // `edited` fires on every body change, so the same note is not
+            // repeated — but the note is rewritten when it changes, because a
+            // pull request can gain a linked issue after being told it had
+            // none. Only this bot's own comment counts: otherwise anyone could
+            // post the marker and switch the check off.
             const mine = await github.paginate(
               github.rest.issues.listComments,
               { owner, repo, issue_number: pr.number, per_page: 100 },
             );
-            if (mine.some((c) => c.body.includes(MARKER))) return;
+            const previous = mine.find(
+              (c) => c.user.type === 'Bot' && c.body.includes(MARKER),
+            );
 
             // One query answers everything: what this closes, who holds
             // those issues, and which other pull requests really close them.
@@ -136,15 +142,26 @@ jobs:
               }
             }
 
-            if (notes.length === 0) return;
+            if (notes.length === 0) {
+              // Nothing left to say. An earlier note stays as a record of what
+              // was asked; the labels already show the current state.
+              return;
+            }
 
+            const body =
+              `${MARKER}\nThanks for the pull request. One thing worth ` +
+              `sorting out before it is reviewed:\n\n${notes.join('\n')}\n\n` +
+              `If you think it belongs here anyway, say so and a ` +
+              `maintainer will take a look.`;
+            if (previous) {
+              if (previous.body.trim() === body.trim()) return;
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: previous.id, body,
+              });
+              return;
+            }
             await github.rest.issues.createComment({
-              owner, repo, issue_number: pr.number,
-              body:
-                `${MARKER}\nThanks for the pull request. One thing worth ` +
-                `sorting out before it is reviewed:\n\n${notes.join('\n')}\n\n` +
-                `If you think it belongs here anyway, say so and a ` +
-                `maintainer will take a look.`,
+              owner, repo, issue_number: pr.number, body,
             });
 
   # A maintainer review hands the ball to the author.
