@@ -35,7 +35,6 @@ class _Renderer:
 
     def render(self, _event: object) -> None:
         """Accept an event without producing terminal output."""
-        del _event
 
 
 class ConsoleCancellationTest(IsolatedAsyncioTestCase):
