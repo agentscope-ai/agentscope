@@ -251,6 +251,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                         ],
                     },
                 ],
+                "step_subjects": ["A", "B"],
                 "phase": SOPPhase.COMPLETED,
             },
         )
@@ -508,6 +509,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                         "note": "kept",
                     },
                 ],
+                "step_subjects": ["A"],
                 "created_at": AnyString(),
                 "phase": "completed",
             },
@@ -537,6 +539,48 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
             str(ctx.exception),
             "State has 2 steps, but this SOP has 1.",
         )
+
+    async def test_a_run_from_reordered_sop_steps_is_refused(self) -> None:
+        """Stored progress cannot move to a different step by position."""
+        original = SOP(
+            name="demo",
+            description="d",
+            steps=[
+                SOPStep("A", "do a", _Scripted("a", [])),
+                SOPStep("B", "do b", _Scripted("b", [])),
+            ],
+        )
+        state = SOPEngine(original).state
+        reordered = SOP(
+            name="demo",
+            description="d",
+            steps=[
+                SOPStep("B", "do b", _Scripted("b", [])),
+                SOPStep("A", "do a", _Scripted("a", [])),
+            ],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            SOPEngine(reordered, state)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "State belongs to SOP steps ['A', 'B'], but this SOP has "
+            "['B', 'A'].",
+        )
+
+    async def test_legacy_run_records_step_subjects_on_restore(self) -> None:
+        """States written before step identities remain resumable."""
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", _Scripted("a", []))],
+        )
+        legacy = SOPRunState(steps=[SOPStepRunState()])
+
+        engine = SOPEngine(sop, legacy)
+
+        self.assertListEqual(engine.state.step_subjects, ["A"])
 
     async def test_an_interrupt_abandons_the_attempt_without_charging_it(
         self,
