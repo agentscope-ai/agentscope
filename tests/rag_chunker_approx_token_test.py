@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the ApproxTokenChunker class."""
+
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -271,3 +272,37 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
         chunks = await chunker.chunk(sections)
 
         self.assertEqual(chunks, [])
+
+    async def test_whitespace_run_piece_is_dropped(self) -> None:
+        """A whitespace-only piece sliced from a non-blank section must
+        not become a chunk.
+
+        PDF layout spacing can put a long whitespace run in the middle
+        of an otherwise fine page; the byte-window splitter then cuts a
+        whitespace-only piece out of it.  Only the pieces carrying
+        actual text may survive, with continuous numbering.
+        """
+        chunker = ApproxTokenChunker(chunk_size=512, overlap=0)
+        # 12 + 5000 + 12 chars; with a 2048-byte window the splitter
+        # cuts [0:2048), [2048:4096) and [4096:5024) — the middle
+        # piece is nothing but spaces.
+        text = "Header line." + (" " * 5000) + "Footer line."
+        sections = [
+            Section(
+                content=TextBlock(text=text),
+                source="layout.pdf",
+                metadata={"page": 1},
+            ),
+        ]
+
+        chunks = await chunker.chunk(sections)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertTrue(all(c.content.text.strip() for c in chunks))
+        self.assertEqual(
+            [(c.content.text, c.chunk_index, c.total_chunks) for c in chunks],
+            [
+                (text[:2048], 0, 2),
+                (text[4096:], 1, 2),
+            ],
+        )
