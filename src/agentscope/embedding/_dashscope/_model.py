@@ -159,6 +159,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        self.supports_multimodal = self._is_multimodal
         self.api_key: str = credential.api_key.get_secret_value()
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
