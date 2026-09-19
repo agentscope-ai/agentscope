@@ -1035,3 +1035,61 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_rejects_orphaned_tool_result(self) -> None:
+        """Tool results without a preceding tool call are rejected."""
+        fmt = OpenAIChatFormatter()
+        with self.assertRaisesRegex(
+            ValueError,
+            "ToolResultBlock has no preceding ToolCallBlock: "
+            "orphan",
+        ):
+            await fmt.format(
+                [
+                    AssistantMsg(
+                        name="assistant",
+                        content=[
+                            ToolResultBlock(
+                                id="orphan",
+                                name="missing_call",
+                                output=[TextBlock(text="result")],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                        ],
+                    ),
+                ],
+            )
+
+    async def test_chat_formatter_keeps_cross_message_tool_result(
+        self,
+    ) -> None:
+        """A result in the next message remains paired with its call."""
+        fmt = OpenAIChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="func",
+                            input="{}",
+                        ),
+                    ],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="func",
+                            output=[TextBlock(text="result")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual("assistant", res[0]["role"])
+        self.assertEqual("tool", res[1]["role"])
+        self.assertEqual("call_1", res[1]["tool_call_id"])

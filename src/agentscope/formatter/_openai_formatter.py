@@ -245,6 +245,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
         ),
     )
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -263,6 +264,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
         self.assert_list_of_msgs(msgs)
 
         messages: list[dict] = []
+        pending_tool_call_ids: set[str] = set()
         i = 0
         while i < len(msgs):
             msg = msgs[i]
@@ -328,6 +330,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             )
 
                 elif isinstance(block, ToolCallBlock):
+                    pending_tool_call_ids.add(block.id)
                     tool_calls.append(
                         {
                             "id": block.id,
@@ -340,6 +343,13 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if block.id not in pending_tool_call_ids:
+                        raise ValueError(
+                            "ToolResultBlock has no preceding ToolCallBlock: "
+                            f"{block.id}",
+                        )
+                    pending_tool_call_ids.remove(block.id)
+
                     if content_blocks or tool_calls:
                         msg_openai_flush = {
                             "role": msg.role,
