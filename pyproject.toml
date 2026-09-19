@@ -127,6 +127,7 @@ vdb-milvus = [
 ]
 vdb-mongodb = ["pymongo>=4.7"]
 vdb-elasticsearch = ["elasticsearch[async]>=8.12"]
+vdb-chroma = ["chromadb>=0.5.0"]
 # ------------ RAG ------------
 # Document parsers; pick a vector store via the vdb-* extras.
 rag = [
@@ -165,6 +166,7 @@ k8s = ["agentscope[workspace-k8s]"]
 milvuslite = ["agentscope[vdb-milvus]"]
 mongodb = ["agentscope[vdb-mongodb]"]
 elasticsearch = ["agentscope[vdb-elasticsearch]"]
+chroma = ["agentscope[vdb-chroma]"]
 mem0 = ["agentscope[memory-mem0]"]
 reme = ["agentscope[memory-reme]"]
 # ------------ Full ------------
@@ -184,6 +186,7 @@ full = [
     "agentscope[vdb-milvus]",
     "agentscope[vdb-mongodb]",
     "agentscope[vdb-elasticsearch]",
+    "agentscope[vdb-chroma]",
     "agentscope[memory]",
 ]
 
