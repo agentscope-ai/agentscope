@@ -1,0 +1,11 @@
+name: speech-01-hd
+label: MiniMax Speech 01 HD
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+
+parameter_overrides: {}

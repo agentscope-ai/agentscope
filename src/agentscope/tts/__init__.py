@@ -10,6 +10,7 @@ from ._dashscope import (
     DashScopeRealtimeTTSModel,
 )
 from ._gemini import GeminiTTSModel
+from ._minimax import MiniMaxTTSModel
 from ._openai import OpenAITTSModel
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "DashScopeTTSModel",
     "DashScopeRealtimeTTSModel",
     "GeminiTTSModel",
+    "MiniMaxTTSModel",
     "OpenAITTSModel",
 ]
