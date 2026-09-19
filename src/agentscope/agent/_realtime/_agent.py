@@ -480,7 +480,7 @@ class RealtimeAgent:
 
     async def interrupt(self) -> None:
         """Stop the active reply, as when the user presses stop."""
-        await self.send(UserInterruptEvent())
+        await self._barge_in()
 
     @property
     def last_turn_metrics(self) -> TurnMetrics:
@@ -552,14 +552,14 @@ class RealtimeAgent:
             await self.model.push_audio(pcm)
 
     async def _on_control(self, frame: ControlFrame) -> None:
-        """Translate one upstream control frame into :meth:`send`."""
+        """Dispatch one upstream control frame to its input handler."""
         match frame.type:
             case ControlFrameType.TEXT:
                 await self.send(frame.data.get("text", ""))
             case ControlFrameType.USER_CONFIRM:
                 await self.send(UserConfirmResultEvent(**frame.data))
             case ControlFrameType.INTERRUPT:
-                await self.send(UserInterruptEvent())
+                await self.interrupt()
             case _:
                 logger.debug("RealtimeAgent: ignoring %s frame", frame.type)
 
