@@ -218,3 +218,56 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_empty_text_section_produces_no_chunk(self) -> None:
+        """Empty-text sections must not produce chunks."""
+        chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
+        sections = [
+            Section(
+                content=TextBlock(text=""),
+                source="scan.pdf",
+                metadata={"page": 1},
+            ),
+            Section(
+                content=TextBlock(text="  \n "),
+                source="scan.pdf",
+                metadata={"page": 2},
+            ),
+        ]
+
+        chunks = await chunker.chunk(sections)
+
+        self.assertEqual(chunks, [])
+
+    async def test_empty_section_keeps_numbering_continuous(self) -> None:
+        """Blank sections dropped in the middle must not leave gaps in
+        ``chunk_index`` / ``total_chunks``."""
+        chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
+        sections = [
+            Section(content=TextBlock(text=""), source="scan.pdf"),
+            Section(content=TextBlock(text="page two"), source="scan.pdf"),
+            Section(content=TextBlock(text="  \n "), source="scan.pdf"),
+            Section(content=TextBlock(text="page four"), source="scan.pdf"),
+        ]
+
+        chunks = await chunker.chunk(sections)
+
+        self.assertEqual(
+            [(c.content.text, c.chunk_index, c.total_chunks) for c in chunks],
+            [
+                ("page two", 0, 2),
+                ("page four", 1, 2),
+            ],
+        )
+
+    async def test_all_sections_empty_produces_no_chunks(self) -> None:
+        """A document whose sections are all blank yields no chunks."""
+        chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
+        sections = [
+            Section(content=TextBlock(text=""), source="scan.pdf"),
+            Section(content=TextBlock(text="   "), source="scan.pdf"),
+        ]
+
+        chunks = await chunker.chunk(sections)
+
+        self.assertEqual(chunks, [])
