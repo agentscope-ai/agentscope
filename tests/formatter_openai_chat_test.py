@@ -946,7 +946,16 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                     ToolResultBlock(
                         id="call_title",
                         name="get_title",
-                        output=[TextBlock(text="Example Domain")],
+                        output=[
+                            TextBlock(text="Example Domain"),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=URLSource(
+                                    url="https://example.com/title.png",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
                         state=ToolResultState.SUCCESS,
                     ),
                     TextBlock(text="The page is Example Domain."),
@@ -958,6 +967,12 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
 
         shot_output = (
             "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+        title_output = (
+            "Example Domain\n"
             "<system-reminder>A(n) image file is returned and will be "
             "presented to you with the identifier "
             f"[{_FIXED_ID}].</system-reminder>"
@@ -997,7 +1012,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "tool",
                     "tool_call_id": "call_title",
-                    "content": "Example Domain",
+                    "content": title_output,
                     "name": "get_title",
                 },
                 {
@@ -1017,6 +1032,28 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                             "type": "image_url",
                             "image_url": {
                                 "url": "https://example.com/shot.png",
+                            },
+                        },
+                        {"type": "text", "text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "name": "system-reminder",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>The multimodal data "
+                            "and their identifiers are listed as follows:",
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/title.png",
                             },
                         },
                         {"type": "text", "text": "</system-reminder>"},
