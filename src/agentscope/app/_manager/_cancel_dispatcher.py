@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
 """Single per-process dispatcher for cross-process cancels.
 
-Subscribes to two bus channels:
+Subscribes to three bus channels:
 
 1. **Session cancel** — cancel all local work for a session (chat run
    + all BG tasks). Triggered by session deletion or explicit abort.
 2. **Task cancel** — cancel a single BG task by task_id. Triggered by
    the :class:`ToolStop` agent tool when the target task lives on a
    different worker.
+3. **Session interrupt** — stop a local chat run without cancelling its
+   background tasks.
 
 Processes whose registry / BG-manager do not hold the targeted session
 or task simply do no work — the publisher does not need to know which
 worker holds what; it broadcasts and lets each holder self-select.
 """
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
@@ -63,8 +66,10 @@ class CancelDispatcher:
         self._interrupt_task: asyncio.Task | None = None
 
     async def __aenter__(self) -> Self:
-        """Start both dispatcher loops and wait until their bus
-        subscriptions are live.
+        """Start all dispatcher loops and wait for their first attempts.
+
+        A failed first subscription still unblocks startup; its loop
+        continues retrying in the background.
 
         Returns:
             `Self`: This dispatcher instance.
@@ -109,6 +114,44 @@ class CancelDispatcher:
         self._task_cancel_task = None
         self._interrupt_task = None
 
+    async def _listen_with_reconnect(
+        self,
+        key: str,
+        ready: asyncio.Event,
+        label: str,
+        handler: Callable[[dict], None],
+    ) -> None:
+        """Keep one cancellation channel subscribed across bus failures."""
+        backoff = 1.0
+        while True:
+            try:
+                async for payload in self._bus.subscribe(
+                    key,
+                    on_ready=ready.set,
+                ):
+                    backoff = 1.0
+                    try:
+                        handler(payload)
+                    except Exception:  # pylint: disable=broad-except
+                        logger.exception(
+                            "CancelDispatcher %s signal handling failed.",
+                            label,
+                        )
+                logger.warning(
+                    "CancelDispatcher %s subscription ended; reconnecting.",
+                    label,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "CancelDispatcher %s subscription lost; reconnecting.",
+                    label,
+                )
+            finally:
+                # Keep startup fail-open if the first subscribe fails.
+                ready.set()
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
+
     # ------------------------------------------------------------------
     # Session-level cancel loop
     # ------------------------------------------------------------------
@@ -120,22 +163,18 @@ class CancelDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
         """
-        try:
-            async for payload in self._bus.subscribe(
-                MessageBusKeys.session_cancel_channel(),
-                on_ready=ready.set,
-            ):
-                sid = payload.get("session_id")
-                if isinstance(sid, str):
-                    self._cancel_session(sid)
-        except Exception:
-            logger.exception(
-                "CancelDispatcher session-cancel loop crashed.",
-            )
-        finally:
-            # Unblock ``__aenter__`` even if subscribe failed before
-            # ``on_ready`` ran, so startup cannot deadlock.
-            ready.set()
+        await self._listen_with_reconnect(
+            MessageBusKeys.session_cancel_channel(),
+            ready,
+            "session-cancel",
+            self._handle_session_cancel,
+        )
+
+    def _handle_session_cancel(self, payload: dict) -> None:
+        """Cancel local work when a session-cancel signal names a session."""
+        sid = payload.get("session_id")
+        if isinstance(sid, str):
+            self._cancel_session(sid)
 
     def _cancel_session(self, session_id: str) -> None:
         """Cancel every locally-tracked task for a session.
@@ -173,29 +212,25 @@ class CancelDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
         """
-        try:
-            async for payload in self._bus.subscribe(
-                MessageBusKeys.task_cancel_channel(),
-                on_ready=ready.set,
-            ):
-                task_id = payload.get("task_id")
-                if not isinstance(task_id, str):
-                    continue
-                cancelled = self._bg_manager.cancel_task(task_id)
-                if cancelled:
-                    logger.info(
-                        "CancelDispatcher: cancelled local BG task %s "
-                        "via task-level broadcast.",
-                        task_id,
-                    )
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "CancelDispatcher task-cancel loop crashed.",
+        await self._listen_with_reconnect(
+            MessageBusKeys.task_cancel_channel(),
+            ready,
+            "task-cancel",
+            self._handle_task_cancel,
+        )
+
+    def _handle_task_cancel(self, payload: dict) -> None:
+        """Cancel the matching local background task, if present."""
+        task_id = payload.get("task_id")
+        if not isinstance(task_id, str):
+            return
+        cancelled = self._bg_manager.cancel_task(task_id)
+        if cancelled:
+            logger.info(
+                "CancelDispatcher: cancelled local BG task %s "
+                "via task-level broadcast.",
+                task_id,
             )
-        finally:
-            # Unblock ``__aenter__`` even if subscribe failed before
-            # ``on_ready`` ran, so startup cannot deadlock.
-            ready.set()
 
     # ------------------------------------------------------------------
     # Session-level interrupt loop
@@ -209,20 +244,18 @@ class CancelDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
         """
-        try:
-            async for payload in self._bus.subscribe(
-                MessageBusKeys.session_interrupt_channel(),
-                on_ready=ready.set,
-            ):
-                sid = payload.get("session_id")
-                if isinstance(sid, str):
-                    self._interrupt_session(sid)
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "CancelDispatcher interrupt loop crashed.",
-            )
-        finally:
-            ready.set()
+        await self._listen_with_reconnect(
+            MessageBusKeys.session_interrupt_channel(),
+            ready,
+            "interrupt",
+            self._handle_interrupt,
+        )
+
+    def _handle_interrupt(self, payload: dict) -> None:
+        """Interrupt the local chat run named by a signal."""
+        sid = payload.get("session_id")
+        if isinstance(sid, str):
+            self._interrupt_session(sid)
 
     def _interrupt_session(self, session_id: str) -> None:
         """Cancel the local chat-run task for a session.
