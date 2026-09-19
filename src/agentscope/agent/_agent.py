@@ -1200,14 +1200,10 @@ class Agent:
                             yield evt
 
                         if interrupted:
-                            end_event = ReplyEndEvent(
-                                session_id=self.state.session_id,
-                                reply_id=self.state.reply_id,
-                                finished_reason=(
-                                    ReplyFinishedReason.INTERRUPTED
-                                ),
-                            )
-                            return
+                            # ChatModelBase normalizes cancellation into an
+                            # interrupted response. Route it through the common
+                            # cancellation handler below.
+                            raise asyncio.CancelledError()
 
                     case Acting(tool_calls=tool_calls):
                         made_progress = True
@@ -1253,14 +1249,10 @@ class Agent:
                                     break_execution_for_interruption = True
 
                             if break_execution_for_interruption:
-                                end_event = ReplyEndEvent(
-                                    session_id=self.state.session_id,
-                                    reply_id=self.state.reply_id,
-                                    finished_reason=(
-                                        ReplyFinishedReason.INTERRUPTED
-                                    ),
-                                )
-                                return
+                                # Toolkit normalizes cancellation into an
+                                # interrupted result. Route it through the
+                                # common cancellation handler below.
+                                raise asyncio.CancelledError()
 
                             if break_execution_for_hitl:
                                 break
