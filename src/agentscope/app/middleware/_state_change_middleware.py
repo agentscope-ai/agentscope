@@ -13,7 +13,8 @@ Two kinds of change are detected:
   while handling a user confirmation). Pushes
   ``CustomEvent(name="state_updated", value={...})``.
 - **Team change** — the tool that just ran is one of the team tools
-  (``TeamCreate``, ``AgentCreate``, ``AgentInvite``, ``TeamDelete``).
+  (``TeamCreate``, ``AgentCreate``, ``AgentInvite``, ``AgentKick``,
+  ``TeamDelete``).
   These tools directly mutate storage (``TeamRecord``,
   ``SessionRecord.team_id``), so we don't need to check storage; the
   fact that the tool ran is the trigger. Pushes
@@ -25,6 +26,7 @@ event chain, because ``on_acting`` yields ``ToolChunk | ToolResponse``
 — not ``AgentEvent``. The SSE ``/stream`` endpoint picks them up from
 the bus like any other session event.
 """
+
 import hashlib
 from typing import Any, AsyncGenerator, Callable
 
@@ -34,7 +36,13 @@ from ...event import CustomEvent
 from ...middleware import MiddlewareBase
 
 _TEAM_TOOL_NAMES = frozenset(
-    {"TeamCreate", "AgentCreate", "AgentInvite", "TeamDelete"},
+    {
+        "TeamCreate",
+        "AgentCreate",
+        "AgentInvite",
+        "AgentKick",
+        "TeamDelete",
+    },
 )
 # Tool names whose execution implies a team membership change.
 
