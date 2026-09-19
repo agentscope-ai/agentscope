@@ -480,7 +480,7 @@ class RealtimeAgent:
 
     async def interrupt(self) -> None:
         """Stop the active reply, as when the user presses stop."""
-        await self.send(UserInterruptEvent())
+        await self.send(UserInterruptEvent(reply_id=self._reply_id))
 
     @property
     def last_turn_metrics(self) -> TurnMetrics:
@@ -559,7 +559,7 @@ class RealtimeAgent:
             case ControlFrameType.USER_CONFIRM:
                 await self.send(UserConfirmResultEvent(**frame.data))
             case ControlFrameType.INTERRUPT:
-                await self.send(UserInterruptEvent())
+                await self.send(UserInterruptEvent(reply_id=self._reply_id))
             case _:
                 logger.debug("RealtimeAgent: ignoring %s frame", frame.type)
 
