@@ -14,6 +14,7 @@ SDK's public ``start()`` — the one place to adapt if the SDK changes.
 """
 import asyncio
 import base64
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
 import threading
 import time
@@ -27,6 +28,7 @@ from ....message import Base64Source, DataBlock, Msg, TextBlock
 from .._base import (
     ChannelBase,
     ChannelCapability,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelConfirmationResultEvent,
     ChannelStatus,
@@ -37,6 +39,7 @@ from ._credential_binding import FeishuCredentialBinding
 from ._card_templates import (
     _build_action_response,
     _build_approval_card,
+    _build_notice_toast,
     _build_toast,
     _parse_action,
 )
@@ -184,7 +187,7 @@ class FeishuChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Open the HTTP client, run the WS client (reconnecting with
@@ -627,24 +630,55 @@ class FeishuChannel(ChannelBase):
         parsed = _parse_action(action)
         if parsed is None:
             return _build_toast(False)
-        tool_call_id, chat_id, approved, agent_id, session_id = parsed
+        (
+            tool_call_id,
+            chat_id,
+            approved,
+            agent_id,
+            session_id,
+            approval_id,
+        ) = parsed
         operator = getattr(data.event, "operator", None)
         user_id = getattr(operator, "open_id", "") or ""
         if self._emit:
-            asyncio.run_coroutine_threadsafe(
-                self._emit(
-                    ChannelConfirmationResultEvent(
-                        channel_id=self._channel_id,
-                        chat_id=chat_id,
-                        channel_user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        tool_call_id=tool_call_id,
-                        approved=approved,
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._emit(
+                        ChannelConfirmationResultEvent(
+                            channel_id=self._channel_id,
+                            chat_id=chat_id,
+                            channel_user_id=user_id,
+                            agent_id=agent_id,
+                            session_id=session_id,
+                            tool_call_id=tool_call_id,
+                            approved=approved,
+                            actor=user_id,
+                            approval_id=approval_id,
+                        ),
                     ),
-                ),
-                loop,
-            )
+                    loop,
+                )
+                status = future.result(timeout=5.0)
+            except FutureTimeoutError:
+                future.cancel()
+                status = ChannelDecisionStatus.ERROR
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Feishu approval callback failed")
+                status = ChannelDecisionStatus.ERROR
+            if status is ChannelDecisionStatus.UNAUTHORIZED:
+                return _build_notice_toast(
+                    "Only the requester or an authorized reviewer can "
+                    "approve or deny this tool call.",
+                )
+            if status is ChannelDecisionStatus.STALE:
+                return _build_notice_toast(
+                    "This approval request is no longer pending.",
+                )
+            if status is ChannelDecisionStatus.ERROR:
+                return _build_notice_toast(
+                    "Your approval permission could not be verified. Please "
+                    "try again later.",
+                )
         # Update the clicked card in place via the callback response —
         # reliable even while the approved run floods the card API.
         return _build_action_response(approved)
@@ -855,6 +889,9 @@ class FeishuChannel(ChannelBase):
             req (`RequireUserConfirmEvent`): The approval request to show.
         """
         for tool in req.tool_calls:
+            approval_id = str(
+                req.metadata.get("channel_approval_ids", {}).get(tool.id, ""),
+            )
             await self._send(
                 event.channel_message_id,
                 event.chat_id,
@@ -866,6 +903,7 @@ class FeishuChannel(ChannelBase):
                     str(tool.input)[:800],
                     event.metadata.get("agent_id", ""),
                     event.metadata.get("session_id", ""),
+                    approval_id,
                 ),
             )
 

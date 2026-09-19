@@ -33,7 +33,12 @@ from ..storage import (
     StorageBase,
 )
 from ..workspace_manager import WorkspaceManagerBase
-from ._base import ChannelEvent, ChannelConfirmationResultEvent
+from ._approval import forget_approval, load_approval
+from ._base import (
+    ChannelDecisionStatus,
+    ChannelEvent,
+    ChannelConfirmationResultEvent,
+)
 from ._decision import resume_after_decision
 from ._routing import resolve
 
@@ -67,117 +72,88 @@ class ChannelGateway:
     async def process(
         self,
         event: ChannelEvent | ChannelConfirmationResultEvent,
-    ) -> None:
+    ) -> ChannelDecisionStatus | None:
         """Handle one inbound event (message or confirmation decision).
 
         Args:
             event (`ChannelEvent | ChannelConfirmationResultEvent`): The
                 inbound message or card-click decision.
+
+        Returns:
+            `ChannelDecisionStatus | None`: A decision outcome for card clicks,
+            consumed by the platform adapter to update the card or show an
+            authorization/staleness error; ``None`` for normal messages.
         """
         try:
             if isinstance(event, ChannelConfirmationResultEvent):
-                await self._handle_decision(event)
-            else:
-                await self._handle_message(event)
+                return await self._handle_decision(event)
+            await self._handle_message(event)
+            return None
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "ChannelGateway.process failed for channel %s",
                 event.channel_id,
             )
+            return (
+                ChannelDecisionStatus.ERROR
+                if isinstance(event, ChannelConfirmationResultEvent)
+                else None
+            )
 
     async def _handle_decision(
         self,
         event: ChannelConfirmationResultEvent,
-    ) -> None:
+    ) -> ChannelDecisionStatus:
         """Resume the run for a card-click decision.
 
-        Routes the click to its session and resumes; the authoritative
-        tool call is read from session state, so a stale/forged click
-        simply finds nothing to answer.
+        The platform only returns an opaque approval id. Routing and the
+        requester are loaded from server-side state, then the tool call is
+        checked against the current session state before it is resumed.
 
         Args:
             event (`ChannelConfirmationResultEvent`): The click decision.
         """
         record = await self._storage.get_channel(event.channel_id)
-        if record is None or not record.enabled:
-            return
-        # Prefer the target pinned on the card at send time; re-resolving
-        # via routing here would misroute clicks whose original message
-        # matched on metadata, or in per-chat-user scope when a different
-        # member clicks.
-        if event.agent_id and event.session_id:
-            guess = (event.agent_id, event.session_id)
-        else:
-            agent_id, session_id, _ = resolve(
-                ChannelEvent(
-                    channel_id=event.channel_id,
-                    channel_user_id=event.channel_user_id,
-                    chat_id=event.chat_id,
-                ),
-                record,
+        if record is None or not record.enabled or not event.approval_id:
+            return ChannelDecisionStatus.STALE
+        approval = await load_approval(self._bus, event.approval_id)
+        if approval is None:
+            return ChannelDecisionStatus.STALE
+        wrong_channel = approval.channel_id != event.channel_id
+        wrong_chat = approval.chat_id != event.chat_id
+        if wrong_channel or wrong_chat:
+            return ChannelDecisionStatus.STALE
+        actor = event.actor or event.channel_user_id
+        if approval.requester_id and actor != approval.requester_id:
+            logger.warning(
+                "channel '%s': decision by '%s' ignored; requester is '%s'",
+                event.channel_id,
+                actor,
+                approval.requester_id,
             )
-            guess = (agent_id, session_id)
-
-        if await self._resume(record.user_id, guess, event):
-            return
-
-        # A card that reports nothing but the click cannot name its run,
-        # and routing only guesses at one: a platform that identifies the
-        # clicker differently than the sender lands on another session
-        # entirely. Ask the sessions serving the chat the card was
-        # delivered into which of them is waiting; a click cannot answer
-        # for a chat it did not come from.
-        for session in await self._storage.list_sessions_by_channel(
-            record.user_id,
-            event.channel_id,
-        ):
-            target = (session.agent_id, session.id)
-            chat_id = (
-                session.origin.chat_id
-                if isinstance(session.origin, ChannelOrigin)
-                else None
-            )
-            if target == guess or chat_id != event.chat_id:
-                continue
-            if await self._resume(record.user_id, target, event):
-                return
-
-        logger.warning(
-            "channel '%s': no session is waiting on tool call '%s' "
-            "(clicked in chat '%s' by '%s')",
-            event.channel_id,
-            event.tool_call_id,
-            event.chat_id,
-            event.channel_user_id,
-        )
-
-    async def _resume(
-        self,
-        user_id: str,
-        target: tuple[str, str],
-        event: ChannelConfirmationResultEvent,
-    ) -> bool:
-        """Answer the decision in one session, if it is waiting for it.
-
-        Args:
-            user_id (`str`): Owner of the session.
-            target (`tuple[str, str]`): The ``(agent_id, session_id)`` to
-                try.
-            event (`ChannelConfirmationResultEvent`): The click decision.
-
-        Returns:
-            `bool`: Whether the run was resumed.
-        """
-        agent_id, session_id = target
-        return await resume_after_decision(
+            return ChannelDecisionStatus.UNAUTHORIZED
+        accepted = await resume_after_decision(
             self._bus,
             self._storage,
-            user_id=user_id,
-            agent_id=agent_id,
-            session_id=session_id,
-            tool_call_id=event.tool_call_id,
+            user_id=record.user_id,
+            agent_id=approval.agent_id,
+            session_id=approval.session_id,
+            tool_call_id=approval.tool_call_id,
             approved=event.approved,
+            expected_reply_id=approval.reply_id,
+            approval_id=event.approval_id,
         )
+        if not accepted:
+            return ChannelDecisionStatus.STALE
+        try:
+            await forget_approval(self._bus, event.approval_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "channel '%s': accepted approval '%s' could not be removed",
+                event.channel_id,
+                event.approval_id,
+            )
+        return ChannelDecisionStatus.ACCEPTED
 
     # -- Message path --
 

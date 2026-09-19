@@ -1172,6 +1172,7 @@ class ChatService:
                     channel_id=session_record.origin.channel_id,
                     chat_id=session_record.origin.chat_id,
                     agent_id=agent_id,
+                    input_msg=input_msg,
                 )
             reply_msg: Msg | None = None
             reply_msgs: list[Msg] = []

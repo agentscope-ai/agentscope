@@ -13,6 +13,7 @@ from uuid import UUID
 from agentscope.app.channel import DingTalkChannel
 from agentscope.app.channel._base import (
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChatKind,
 )
@@ -517,6 +518,7 @@ def _card_callback(
     action: str = "approve",
     user_id: str = "user-1",
     approver_id: str = "",
+    approval_id: str = "approval-1",
 ) -> dict[str, Any]:
     return {
         "type": "actionCallback",
@@ -532,6 +534,7 @@ def _card_callback(
                         "agentId": "agent-1",
                         "sessionId": "session-1",
                         "approverId": approver_id,
+                        "approvalId": approval_id,
                     },
                 },
             },
@@ -1075,8 +1078,28 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(received[0].session_id, "session-1")
         self.assertFalse(received[0].approved)
         self.assertEqual(received[0].actor, "user-1")
+        self.assertEqual(received[0].approval_id, "approval-1")
         self.assertEqual(media_api.card_updates[0][0], "track-1")
         self.assertEqual(media_api.card_updates[0][1]["status"], "denied")
+
+    async def test_unauthorized_click_keeps_shared_card_pending(self) -> None:
+        channel, media_api = _channel_with_openapi()
+
+        async def reject(
+            event: ChannelConfirmationResultEvent,
+        ) -> ChannelDecisionStatus:
+            del event
+            return ChannelDecisionStatus.UNAUTHORIZED
+
+        channel._emit = reject
+        await channel._on_card_callback(
+            _card_callback(user_id="other-user"),
+        )
+
+        self.assertEqual(media_api.card_updates, [])
+        self.assertEqual(len(media_api.text_calls), 1)
+        self.assertEqual(media_api.text_calls[0][0], "user:other-user")
+        self.assertIn("请求发起者", media_api.text_calls[0][1])
 
     async def test_approval_callback_accepts_approval_aliases(self) -> None:
         for action in ("approve", "agree", "approved"):
