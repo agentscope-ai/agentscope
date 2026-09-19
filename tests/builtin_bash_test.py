@@ -537,6 +537,31 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
                     or "dangerous pattern" in decision.message,
                 )
 
+    async def test_quoted_redirect_target_is_bypass_immune(self) -> None:
+        """A quoted or expanded target gets the same ASK as a bare one.
+
+        The target parses as a ``word`` only when written bare, so a quoted
+        or expanded one used to be skipped by the path extraction. The
+        command then weighed less than a user allow rule instead of being
+        bypass-immune.
+        """
+
+        commands = [
+            "echo x > ~/.zshrc",
+            'echo x > "~/.zshrc"',
+            "echo x > '$HOME/.zshrc'",
+            "echo x > $HOME/.zshrc",
+            'echo x > "~/.ssh/authorized_keys"',
+        ]
+        for cmd in commands:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+                self.assertTrue(decision.bypass_immune)
+
     async def test_rmdir_dangerous_paths_blocked(self) -> None:
         """Test that rmdir on dangerous paths is blocked."""
 
