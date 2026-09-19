@@ -28,7 +28,9 @@ class ApproxTokenChunker(ChunkerBase):
 
     Sections carrying a :class:`~agentscope.message.DataBlock`
     (images, video, etc.) are passed through unchanged as a single
-    chunk.
+    chunk.  Sections whose text is empty or whitespace-only produce
+    no chunks at all — blank pages of a scanned document must not
+    reach the embedding step.
 
     .. note:: Chunks never span across two input Sections, as
         required by :class:`ChunkerBase`.
@@ -144,13 +146,21 @@ class ApproxTokenChunker(ChunkerBase):
         for section in sections:
             contents: list[TextBlock | DataBlock]
             if isinstance(section.content, TextBlock):
+                # Blank / whitespace-only pages (e.g. in a scanned PDF)
+                # produce no chunks — embedding empty strings can fail
+                # the whole document's batch embed, and produces junk
+                # records otherwise.
                 contents = [
                     TextBlock(text=piece)
                     for piece in self._split_text(section.content.text)
+                    if piece.strip()
                 ]
             else:
                 # DataBlock pass-through: never slice multimodal data
                 contents = [section.content]
+
+            if not contents:
+                continue
 
             chunks.extend(
                 Chunk(
