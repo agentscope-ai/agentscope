@@ -120,6 +120,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 "structured_output": {"city": "Hangzhou", "temperature": 25.0},
                 "error": None,
                 "metadata": {},
+                "visibility": "user",
                 "name": "Friday",
                 "role": "assistant",
                 "usage": None,
@@ -447,6 +448,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 "structured_output": None,
                 "error": None,
                 "metadata": {},
+                "visibility": "user",
                 "name": "Friday",
                 "role": "assistant",
                 "usage": {

@@ -1133,6 +1133,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "visibility": "user",
                 "created_at": AnyString(),
                 "finished_at": None,
                 "finished_reason": None,
@@ -1300,6 +1301,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_a",'
                 '"created_at":"2026-01-01T00:00:00","finished_at":null}'
                 '],"role":"user","id":"msg_a","metadata":{},'
+                '"visibility":"user",'
                 '"created_at":"2026-01-01T00:00:00",'
                 '"usage":null,'
                 '"finished_at":"2026-01-01T00:00:00",'
@@ -1354,7 +1356,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 + json.dumps(assistant_1.content[0].finished_at)
                 + "}"
                 '],"role":"assistant","id":"' + assistant_1.id + '",'
-                '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
+                '"metadata":{},"visibility":"user",'
+                '"created_at":"' + assistant_1.created_at + '",'
                 '"usage":null,'
                 '"finished_at":null,'
                 '"finished_reason":null,"structured_output":null,'
@@ -1366,6 +1369,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_b",'
                 '"created_at":"2026-01-02T00:00:00","finished_at":null}'
                 '],"role":"user","id":"msg_b","metadata":{},'
+                '"visibility":"user",'
                 '"created_at":"2026-01-02T00:00:00",'
                 '"usage":null,'
                 '"finished_at":"2026-01-02T00:00:00",'
@@ -1419,6 +1423,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "visibility": "user",
                 "created_at": AnyString(),
                 "finished_at": None,
                 "finished_reason": None,

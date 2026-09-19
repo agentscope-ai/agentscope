@@ -118,6 +118,7 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "metadata": {},
+            "visibility": "user",
             "type": "HINT_BLOCK",
             "reply_id": reply_id,
             "block_id": AnyString(),

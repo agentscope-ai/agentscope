@@ -458,6 +458,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "metadata": {},
+                "visibility": "user",
             },
         )
         self.assertEqual(events[1], "reasoning-evt")

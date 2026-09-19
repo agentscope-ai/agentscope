@@ -17,7 +17,7 @@ from agentscope.message import Base64Source, DataBlock
 from agentscope.middleware import TTSMiddleware
 from agentscope.tts import TTSModelBase, TTSResponse
 
-_EXCLUDE = {"id", "created_at", "metadata"}
+_EXCLUDE = {"id", "created_at", "metadata", "visibility"}
 
 
 def _dump(evt: Any) -> dict:

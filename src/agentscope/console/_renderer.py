@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Render agent event streams as human-readable terminal output."""
 import json
-from typing import Literal
+from typing import Collection, Literal
 
 from rich.console import Console
 from rich.panel import Panel
@@ -35,11 +35,15 @@ from ..message import (
     ToolResultBlock,
 )
 from ..model import FinishedReason
-from ..types import ReplyFinishedReason
+from ..types import ReplyFinishedReason, Visibility
 
 Verbosity = Literal["quiet", "default", "debug"]
 
 _VERBOSITY_LEVELS = {"quiet": 0, "default": 1, "debug": 2}
+
+# A terminal has no side panel to divert an artifact into, so it prints
+# one inline; internal agent-to-agent traffic is dropped unless asked for.
+_DEFAULT_VISIBILITY = (Visibility.USER, Visibility.ARTIFACT)
 
 _RESULT_STATE_STYLES = {
     "success": ("✓", "green"),
@@ -98,6 +102,7 @@ class ConsoleRenderer:
         verbosity: Verbosity = "default",
         max_tool_result_lines: int | None = 20,
         console: Console | None = None,
+        visibility: Collection[Visibility] | None = None,
     ) -> None:
         """Initialize the console renderer.
 
@@ -114,10 +119,24 @@ class ConsoleRenderer:
             console (`Console | None`, optional):
                 The rich console to print to. A new one on stdout is
                 created if not provided.
+            visibility (`Collection[Visibility] | None`, optional):
+                Which audiences to render. Defaults to ``USER`` and
+                ``ARTIFACT`` — everything a person is meant to see, an
+                artifact printed inline for want of a side panel — so an
+                ``INTERNAL`` agent stays out of the transcript. Under
+                `"debug"` verbosity every audience is rendered unless this
+                is given explicitly.
         """
         self.verbosity = verbosity
         self.max_tool_result_lines = max_tool_result_lines
         self.console = console or Console(highlight=False)
+        if visibility is None:
+            visibility = (
+                tuple(Visibility)
+                if verbosity == "debug"
+                else _DEFAULT_VISIBILITY
+            )
+        self.visibility: frozenset[Visibility] = frozenset(visibility)
 
         self._msg: Msg | None = None
         self._mid_stream = False
@@ -138,6 +157,9 @@ class ConsoleRenderer:
             event (`AgentEvent`):
                 The event to render.
         """
+        if event.visibility not in self.visibility:
+            return
+
         self._accumulate(event)
 
         if isinstance(event, ReplyStartEvent):
@@ -195,7 +217,12 @@ class ConsoleRenderer:
         if reply_id is None:
             return
         if isinstance(event, ReplyStartEvent):
-            self._msg = AssistantMsg(name=event.name, content=[], id=reply_id)
+            self._msg = AssistantMsg(
+                name=event.name,
+                content=[],
+                id=reply_id,
+                visibility=event.visibility,
+            )
         elif self._msg is None or self._msg.id != reply_id:
             # A continuation (e.g. after HITL) without a ReplyStartEvent
             self._msg = AssistantMsg(name="agent", content=[], id=reply_id)
