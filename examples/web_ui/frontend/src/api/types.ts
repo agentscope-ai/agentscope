@@ -40,13 +40,18 @@ export interface InviteConfig {
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
+/** Settings that apply when the agent talks in text. */
+export interface ChatConfig {
+	context_config: ContextConfig;
+	react_config: ReActConfig;
+	invite_config: InviteConfig;
+}
+
 export interface AgentData {
 	id: string;
 	name: string;
 	system_prompt: string;
-	context_config: ContextConfig;
-	react_config: ReActConfig;
-	invite_config: InviteConfig;
+	chat_config: ChatConfig;
 }
 
 export interface AgentView extends RecordBase {
@@ -62,9 +67,7 @@ export interface AgentView extends RecordBase {
 export interface CreateAgentRequest {
 	name: string;
 	system_prompt?: string;
-	context_config?: ContextConfig;
-	react_config?: ReActConfig;
-	invite_config?: InviteConfig;
+	chat_config?: ChatConfig;
 }
 
 export interface CreateAgentResponse {
@@ -74,9 +77,7 @@ export interface CreateAgentResponse {
 export interface UpdateAgentRequest {
 	name?: string;
 	system_prompt?: string;
-	context_config?: ContextConfig;
-	react_config?: ReActConfig;
-	invite_config?: InviteConfig;
+	chat_config?: ChatConfig;
 }
 
 export interface AgentListResponse {
@@ -99,11 +100,10 @@ export interface AgentSchemaResponse {
 /**
  * Response of `GET /agent/schema/v2`. `schema` is the full `AgentData`
  * JSON Schema (with `$ref`s inlined, `id` filtered out, and
- * `context_config.summary_schema` filtered out). The frontend derives
- * its section grouping directly from `schema.properties`:
+ * `chat_config.context_config.summary_schema` filtered out). The
+ * frontend derives its section grouping directly from `schema`:
  *   - top-level scalar/textarea/boolean properties → "identity" section
- *   - top-level `object`-typed properties (currently `context_config`,
- *     `react_config`, and `invite_config`) → one section each
+ *   - each object under a mode block (`chat_config`) → one section
  */
 export interface AgentSchemaV2Response {
 	schema: JSONSchema;
