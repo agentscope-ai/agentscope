@@ -214,9 +214,9 @@ class XAIChatModel(ChatModelBase):
                 self.parameters.thinking_enable
                 and self.parameters.reasoning_effort
             ):
-                create_kwargs["reasoning_effort"] = (
-                    self.parameters.reasoning_effort
-                )
+                create_kwargs[
+                    "reasoning_effort"
+                ] = self.parameters.reasoning_effort
             if xai_tools:
                 create_kwargs["tools"] = xai_tools
             if xai_tool_choice is not None:
