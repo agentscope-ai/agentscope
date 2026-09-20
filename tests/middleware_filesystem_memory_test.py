@@ -24,7 +24,13 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
-from agentscope.tool import ToolBase, ToolChunk, Toolkit
+from agentscope.tool import (
+    BackendBase,
+    ExecResult,
+    ToolBase,
+    ToolChunk,
+    Toolkit,
+)
 
 
 class _RecordingMockModel(MockModel):
@@ -140,6 +146,59 @@ class _DummyTool(ToolBase):
                 The fixed tool output.
         """
         return ToolChunk(content=[TextBlock(text="tool result")])
+
+
+class _UnreachableBackend(BackendBase):
+    """A remote backend whose sandbox/container is gone.
+
+    Mirrors the real convention shared by ``E2BBackend``/``DockerBackend``:
+    ``exec_shell`` swallows a transport failure into a normal
+    ``ExecResult(exit_code=-1, ...)``, while ``read_file``/``write_file``
+    raise the raw transport exception on the same failure.
+    """
+
+    async def exec_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        timeout: float | None = None,
+    ) -> ExecResult:
+        """Report the failure as a normal, non-raising result.
+
+        Args:
+            command (`list[str]`):
+                Ignored; every call reports the backend as unreachable.
+            cwd (`str | None`, optional):
+                Ignored.
+            timeout (`float | None`, optional):
+                Ignored.
+
+        Returns:
+            `ExecResult`:
+                ``exit_code=-1``, matching a transport failure.
+        """
+        return ExecResult(exit_code=-1, stdout=b"", stderr=b"gone")
+
+    async def read_file(self, path: str) -> bytes:
+        """Raise the raw transport failure.
+
+        Args:
+            path (`str`):
+                Ignored.
+        """
+        raise TimeoutError("the sandbox was not found: timed out")
+
+    async def write_file(self, path: str, data: bytes) -> None:
+        """Raise the raw transport failure.
+
+        Args:
+            path (`str`):
+                Ignored.
+            data (`bytes`):
+                Ignored.
+        """
+        raise TimeoutError("the sandbox was not found: timed out")
 
 
 def _text_response(text: str) -> ChatResponse:
@@ -394,6 +453,29 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 },
             },
         )
+
+    async def test_agent_reply_survives_unreachable_backend(self) -> None:
+        """Reply should not crash when the sandbox backend is gone.
+
+        ``_ensure_layout`` runs on every reply via ``on_system_prompt``. If
+        the backend cannot be reached, ``file_exists`` (built on
+        ``exec_shell``, which never raises) reports ``False`` for a path
+        whose existence it simply could not check, so ``_ensure_layout``
+        tries to (re)create it. Before the fix that write reached the
+        backend's unguarded ``write_file`` and raised straight out of
+        ``on_system_prompt``, aborting the whole reply.
+        """
+        model = _RecordingMockModel()
+        model.set_responses([_text_response("done")])
+        middleware = AgenticMemoryMiddleware(
+            workdir=self.temp_dir,
+            backend=_UnreachableBackend(),
+        )
+        agent = self._make_agent(model, middleware)
+
+        reply = await agent.reply(UserMsg("user", "hello"))
+
+        self.assertEqual(reply.get_text_content(), "done")
 
     async def test_agent_reasoning_injects_selected_memory_hint(
         self,
