@@ -15,6 +15,7 @@ Verifies the four behaviours that callers rely on:
 - Malformed entries are logged and skipped, not raised.
 """
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
@@ -57,6 +58,7 @@ class _FakeBus(MessageBus):
 
     def __init__(self) -> None:
         self.queues: dict[str, list[tuple[str, dict]]] = {}
+        self.logs: dict[str, list[dict]] = {}
         self._channels: dict[str, asyncio.Queue] = {}
         self._next = 0
         self._locks: set[str] = set()
@@ -97,8 +99,11 @@ class _FakeBus(MessageBus):
         payload: dict,
         *,
         max_len: int | None = None,
-        ttl_secs: int | None = None,
     ) -> str:
+        entries = self.logs.setdefault(key, [])
+        entries.append(payload)
+        if max_len is not None and len(entries) > max_len:
+            del entries[:-max_len]
         return "n/a"
 
     async def log_read(
@@ -558,8 +563,8 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                 self.assertEqual(len(dispatcher._retry_tasks), 1)
                 self.assertEqual(chat.calls, [])
 
-    async def test_retry_deadline_drops_trigger(self) -> None:
-        """A lock-held retry older than the deadline is not re-queued."""
+    async def test_retry_deadline_emits_failure_and_dead_letters(self) -> None:
+        """A budget-exhausted retry fails loud and parks a dead letter."""
         bus = _FakeBus()
         chat = _FakeChatService()
         lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="stale")
@@ -570,7 +575,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             storage=_FakeStorage(),
             chat_service=chat,
             chat_run_registry=ChatRunRegistry(),
-        ):
+        ) as dispatcher:
             await bus.queue_push(
                 MessageBusKeys.wakeup_queue(),
                 {
@@ -584,11 +589,58 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.sleep(0.05)
 
-        self.assertEqual(chat.calls, [])
-        self.assertEqual(
-            bus.queues.get(MessageBusKeys.wakeup_queue(), []),
-            [],
-        )
+            self.assertEqual(chat.calls, [])
+            self.assertEqual(
+                bus.queues.get(MessageBusKeys.wakeup_queue(), []),
+                [],
+            )
+            self.assertEqual(len(dispatcher._dead_letters), 1)
+            letter = dispatcher._dead_letters[0]
+            self.assertEqual(letter.session_id, "stale")
+            self.assertEqual(letter.reason, "deadline")
+            self.assertIn("stale", letter.trigger_id)
+            events = bus.logs.get(MessageBusKeys.session_events("stale"), [])
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["finished_reason"], "error")
+            self.assertIn("trigger_id=", events[0]["error"]["message"])
+            self.assertIn("session_id=stale", events[0]["error"]["message"])
+
+    async def test_retry_max_attempts_emits_failure(self) -> None:
+        """Hitting the attempt ceiling expires without another re-queue."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="capped")
+        bus._locks.add(lock_key)
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ) as dispatcher:
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "capped",
+                    "agent_id": "a",
+                    "retry_attempt": 20,
+                    "retry_started_at": time.time(),
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.sleep(0.05)
+
+            self.assertEqual(chat.calls, [])
+            self.assertEqual(
+                bus.queues.get(MessageBusKeys.wakeup_queue(), []),
+                [],
+            )
+            self.assertEqual(len(dispatcher._dead_letters), 1)
+            self.assertEqual(dispatcher._dead_letters[0].reason, "max_attempts")
+            events = bus.logs.get(MessageBusKeys.session_events("capped"), [])
+            self.assertEqual(len(events), 1)
+            self.assertIn("max_attempts", events[0]["error"]["message"])
 
     async def test_dispatch_error_does_not_stop_later_entries(self) -> None:
         """A failure dispatching one entry must not drop the rest."""
