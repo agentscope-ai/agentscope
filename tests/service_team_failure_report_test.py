@@ -219,6 +219,14 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                 """Return the requested agent record."""
                 return await self._storage.get_agent(user_id, agent_id)
 
+            async def try_resolve_agent(
+                self,
+                user_id: str,
+                agent_id: str,
+            ) -> AgentRecord | None:
+                """Non-raising resolution used by the leader lookup."""
+                return await self._storage.get_agent(user_id, agent_id)
+
         service = ChatService(
             storage=self.storage,
             workspace_manager=self.workspace_manager,

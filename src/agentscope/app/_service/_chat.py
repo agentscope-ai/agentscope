@@ -855,6 +855,7 @@ class ChatService:
                             self._storage,
                             user_id,
                             team,
+                            access=self._access,
                         )
                         if leader is None:
                             # Unreachable while the data is consistent:

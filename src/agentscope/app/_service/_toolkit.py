@@ -179,15 +179,26 @@ time or interval"
         "agent_id": agent_record.id,
     }
     if team_role == "worker":
-        tools.append(TeamSay(**team_tool_kwargs, role="worker"))
+        tools.append(
+            TeamSay(
+                **team_tool_kwargs,
+                role="worker",
+                resource_access_service=resource_access_service,
+            ),
+        )
     else:
         tools += [
             TeamCreate(**team_tool_kwargs),
             AgentCreate(
                 **team_tool_kwargs,
                 sub_agent_templates=sub_agent_templates or {},
+                resource_access_service=resource_access_service,
             ),
-            TeamSay(**team_tool_kwargs, role="leader"),
+            TeamSay(
+                **team_tool_kwargs,
+                role="leader",
+                resource_access_service=resource_access_service,
+            ),
             TeamDelete(**team_tool_kwargs),
         ]
         # Conditionally attach AgentInvite. Skipping construction when
