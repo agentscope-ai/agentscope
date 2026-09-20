@@ -19,9 +19,11 @@ handled:
   event the parked run is waiting for.
 
 No kind is ever dropped while the session lock is held. Retries are
-coalesced per ``(kind, session_id)``, use exponential backoff, and are
-dropped only after a deadline so a long-held lock cannot exhaust the
-message-bus connection pool (see #2677).
+coalesced per ``(kind, session_id)``, use exponential backoff with a
+max-attempt and deadline budget, and on exhaustion emit an explicit
+session failure plus park the entry in a bounded dead-letter list so a
+long-held lock cannot silently exhaust the message-bus connection pool
+(see #2677).
 
 All bus keys live on the :class:`MessageBus` base class (see
 ``enqueue_wakeup`` / ``enqueue_input``, ``dequeue_wakeups``,
@@ -31,8 +33,9 @@ no hard-coded key strings.
 import asyncio
 import random
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import TypeAdapter
 
@@ -66,7 +69,9 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
 _RESUME_RETRY_BACKOFF_SECS = 0.1
 _RESUME_RETRY_BACKOFF_CAP_SECS = 2.0
 _RESUME_RETRY_DEADLINE_SECS = 60.0
+_RESUME_RETRY_MAX_ATTEMPTS = 20
 _RESUME_RETRY_JITTER = 0.1
+_RESUME_DEAD_LETTER_MAX = 128
 
 TriggerInput = (
     UserConfirmResultEvent
@@ -75,6 +80,8 @@ TriggerInput = (
     | Msg
     | None
 )
+
+RetryExhaustReason = Literal["deadline", "max_attempts"]
 
 
 @dataclass
@@ -85,9 +92,26 @@ class _RetryBatch:
     session_id: str
     agent_id: str
     kind: str
+    trigger_id: str
     inputs: list[TriggerInput] = field(default_factory=list)
     attempt: int = 0
     retry_started_at: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class _DeadLetter:
+    """Expired lock-held retry parked for visibility / later replay."""
+
+    trigger_id: str
+    user_id: str
+    session_id: str
+    agent_id: str
+    kind: str
+    attempt: int
+    retry_started_at: float
+    expired_at: float
+    reason: RetryExhaustReason
+    buffered_inputs: int
 
 
 class WakeupDispatcher:
@@ -139,6 +163,11 @@ class WakeupDispatcher:
         # while a session lock is held (see #2677).
         self._retry_tasks: dict[str, asyncio.Task] = {}
         self._retry_batches: dict[str, _RetryBatch] = {}
+        # Bounded park for budget-exhausted retries so operators can see
+        # (and later replay) what would otherwise vanish from Redis.
+        self._dead_letters: deque[_DeadLetter] = deque(
+            maxlen=_RESUME_DEAD_LETTER_MAX,
+        )
 
     async def __aenter__(self) -> Self:
         """Start the dispatcher loop and wait until its bus
@@ -408,6 +437,11 @@ class WakeupDispatcher:
         return f"{kind}:{session_id}"
 
     @staticmethod
+    def _make_trigger_id(kind: str, session_id: str, started: float) -> str:
+        """Stable id for one lock-held retry chain (session + kind + start)."""
+        return f"{kind}:{session_id}:{int(started * 1000)}"
+
+    @staticmethod
     def _retry_delay_secs(attempt: int) -> float:
         """Exponential backoff with jitter, capped for lock-held retries."""
         exp = min(max(attempt, 0), 6)
@@ -415,8 +449,78 @@ class WakeupDispatcher:
             _RESUME_RETRY_BACKOFF_CAP_SECS,
             _RESUME_RETRY_BACKOFF_SECS * (2**exp),
         )
-        jitter = 1.0 + random.uniform(-_RESUME_RETRY_JITTER, _RESUME_RETRY_JITTER)
+        jitter = 1.0 + random.uniform(
+            -_RESUME_RETRY_JITTER,
+            _RESUME_RETRY_JITTER,
+        )
         return max(0.0, delay * jitter)
+
+    @staticmethod
+    def _budget_exhausted(
+        batch: _RetryBatch,
+        *,
+        now: float | None = None,
+    ) -> RetryExhaustReason | None:
+        """Return why the retry budget is spent, or ``None`` if still open."""
+        clock = time.time() if now is None else now
+        if batch.attempt >= _RESUME_RETRY_MAX_ATTEMPTS:
+            return "max_attempts"
+        if clock - batch.retry_started_at >= _RESUME_RETRY_DEADLINE_SECS:
+            return "deadline"
+        return None
+
+    def _park_dead_letter(
+        self,
+        batch: _RetryBatch,
+        reason: RetryExhaustReason,
+    ) -> _DeadLetter:
+        """Append an expired batch to the bounded dead-letter deque."""
+        letter = _DeadLetter(
+            trigger_id=batch.trigger_id,
+            user_id=batch.user_id,
+            session_id=batch.session_id,
+            agent_id=batch.agent_id,
+            kind=batch.kind,
+            attempt=batch.attempt,
+            retry_started_at=batch.retry_started_at,
+            expired_at=time.time(),
+            reason=reason,
+            buffered_inputs=len(batch.inputs),
+        )
+        self._dead_letters.append(letter)
+        return letter
+
+    async def _expire_retry_batch(
+        self,
+        batch: _RetryBatch,
+        reason: RetryExhaustReason,
+    ) -> None:
+        """Fail loud and park an exhausted retry instead of silent drop."""
+        elapsed = time.time() - batch.retry_started_at
+        letter = self._park_dead_letter(batch, reason)
+        buffered = letter.buffered_inputs
+        batch.inputs.clear()
+        message = (
+            f"Wakeup retry budget exhausted "
+            f"(reason={reason}, session_id={batch.session_id}, "
+            f"trigger_id={batch.trigger_id}, kind={batch.kind}, "
+            f"attempts={batch.attempt}, elapsed={elapsed:.1f}s, "
+            f"buffered={buffered})."
+        )
+        logger.warning("WakeupDispatcher: %s", message)
+        await publish_session_event(
+            self._bus,
+            batch.session_id,
+            ReplyEndEvent(
+                session_id=batch.session_id,
+                reply_id="",
+                finished_reason=ReplyFinishedReason.ERROR,
+                error=ErrorInfo(
+                    type=ErrorType.INTERNAL,
+                    message=message,
+                ),
+            ).model_dump(mode="json"),
+        )
 
     def _schedule_retry(
         self,
@@ -448,7 +552,7 @@ class WakeupDispatcher:
             input_msg:
                 The parsed input to redeliver (``None`` for ``wake``).
             retry_attempt (`int`):
-                Prior deferral count for backoff / deadline.
+                Prior deferral count for backoff / deadline / max attempts.
             retry_started_at (`float | None`):
                 Wall-clock start of this retry chain. ``None`` on the
                 first deferral.
@@ -466,6 +570,7 @@ class WakeupDispatcher:
                 session_id=session_id,
                 agent_id=agent_id,
                 kind=kind,
+                trigger_id=self._make_trigger_id(kind, session_id, started),
                 attempt=retry_attempt,
                 retry_started_at=started,
             )
@@ -482,9 +587,33 @@ class WakeupDispatcher:
         else:
             batch.inputs.append(input_msg)
 
+        reason = self._budget_exhausted(batch)
+        if reason is not None:
+            if key not in self._retry_tasks:
+                # Expire immediately on the event loop without another sleep.
+                task = asyncio.create_task(
+                    self._expire_and_drop(key, batch, reason),
+                    name=f"{kind}-expire:{session_id}",
+                )
+                self._retry_tasks[key] = task
+            return
+
         if key in self._retry_tasks:
             return
         self._arm_retry(key, batch)
+
+    async def _expire_and_drop(
+        self,
+        key: str,
+        batch: _RetryBatch,
+        reason: RetryExhaustReason,
+    ) -> None:
+        """Expire a batch and clear its bookkeeping entry."""
+        try:
+            await self._expire_retry_batch(batch, reason)
+        finally:
+            self._retry_tasks.pop(key, None)
+            self._retry_batches.pop(key, None)
 
     def _arm_retry(self, key: str, batch: _RetryBatch) -> None:
         """Start the single backoff timer for ``batch`` if none is running."""
@@ -496,24 +625,27 @@ class WakeupDispatcher:
         async def _retry() -> None:
             cancelled = False
             try:
-                elapsed = time.time() - batch.retry_started_at
-                if elapsed >= _RESUME_RETRY_DEADLINE_SECS:
-                    logger.warning(
-                        "WakeupDispatcher: dropping %s trigger(s) for "
-                        "session %s after %.1fs of lock-held retries "
-                        "(%d buffered).",
-                        kind,
-                        session_id,
-                        elapsed,
-                        len(batch.inputs),
-                    )
-                    batch.inputs.clear()
+                reason = self._budget_exhausted(batch)
+                if reason is not None:
+                    await self._expire_retry_batch(batch, reason)
                     return
 
                 await asyncio.sleep(self._retry_delay_secs(batch.attempt))
+                reason = self._budget_exhausted(batch)
+                if reason is not None:
+                    await self._expire_retry_batch(batch, reason)
+                    return
+
                 pending = list(batch.inputs)
                 batch.inputs.clear()
                 next_attempt = batch.attempt + 1
+                if next_attempt >= _RESUME_RETRY_MAX_ATTEMPTS:
+                    batch.attempt = next_attempt
+                    # Restore buffered inputs so the dead-letter counts them.
+                    batch.inputs.extend(pending)
+                    await self._expire_retry_batch(batch, "max_attempts")
+                    return
+
                 for buffered in pending:
                     await enqueue_run_trigger(
                         self._bus,
