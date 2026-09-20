@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
 from agentscope.model import XAIChatModel
 from agentscope.credential import XAICredential
 from agentscope.tool import ToolChoice
@@ -338,6 +338,102 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
             },
         )
 
+    @patch("xai_sdk.AsyncClient")
+    async def test_client_closed_when_formatter_fails(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """A setup failure must close the per-call xAI client."""
+        client = mock_client_cls.return_value
+        client.close = AsyncMock()
+        with patch.object(
+            type(self.model.formatter),
+            "format",
+            new=AsyncMock(side_effect=ValueError("invalid message")),
+        ):
+            with self.assertRaisesRegex(ValueError, "invalid message"):
+                await self.model([])
+
+        client.close.assert_awaited_once_with()
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_client_closed_when_chat_setup_fails(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """A chat creation failure must close the per-call client."""
+        client = mock_client_cls.return_value
+        client.close = AsyncMock()
+        client.chat.create.side_effect = RuntimeError("create failed")
+
+        with self.assertRaisesRegex(RuntimeError, "create failed"):
+            await self.model([])
+
+        client.close.assert_awaited_once_with()
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_client_closed_when_chat_append_fails(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """An append failure must close the per-call client."""
+        client = mock_client_cls.return_value
+        client.close = AsyncMock()
+        chat = MagicMock()
+        chat.append.side_effect = RuntimeError("append failed")
+        client.chat.create.return_value = chat
+
+        with self.assertRaisesRegex(RuntimeError, "append failed"):
+            await self.model(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[TextBlock(text="hello")],
+                    ),
+                ],
+            )
+
+        client.close.assert_awaited_once_with()
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_client_closed_when_sample_fails(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """A non-streaming API failure must close the client."""
+        client = mock_client_cls.return_value
+        client.close = AsyncMock()
+        chat = _MockChatStream()
+        chat.sample = AsyncMock(side_effect=RuntimeError("sample failed"))
+        client.chat.create.return_value = chat
+
+        with self.assertRaisesRegex(RuntimeError, "sample failed"):
+            await self.model([])
+
+        client.close.assert_awaited_once_with()
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_client_closed_when_completion_parsing_fails(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """A response parsing failure must close the client."""
+        client = mock_client_cls.return_value
+        client.close = AsyncMock()
+        client.chat.create.return_value = _MockChatStream(
+            sample_response=_mock_completion(text="Hello"),
+        )
+
+        with patch.object(
+            self.model,
+            "_parse_completion_response",
+            side_effect=RuntimeError("parse failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "parse failed"):
+                await self.model([])
+
+        client.close.assert_awaited_once_with()
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests
@@ -564,6 +660,30 @@ class TestXAIStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_stream_takes_ownership_of_client(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """The stream closes its client, but not before consumption."""
+        client = mock_client_cls.return_value
+        client.close = AsyncMock()
+        client.chat.create.return_value = _MockChatStream(
+            stream_items=[
+                (
+                    _mock_completion(text="Hello"),
+                    _MockStreamChunk(content="Hello"),
+                ),
+            ],
+        )
+
+        stream = await self.model([])
+        client.close.assert_not_awaited()
+
+        _ = [response async for response in stream]
+
+        client.close.assert_awaited_once_with()
 
 
 class TestXAIModelParameters(unittest.TestCase):

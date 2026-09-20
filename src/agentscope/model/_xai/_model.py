@@ -194,47 +194,56 @@ class XAIChatModel(ChatModelBase):
                 **self.client_kwargs,
             },
         )
-
-        xai_messages = await self.formatter.format(messages)
-
-        xai_tools, xai_tool_choice = self._format_tools(tools, tool_choice)
-
-        create_kwargs: dict[str, Any] = {"model": model_name}
-        if self.parameters.max_tokens is not None:
-            create_kwargs["max_tokens"] = self.parameters.max_tokens
-        if self.parameters.temperature is not None:
-            create_kwargs["temperature"] = self.parameters.temperature
-        if self.parameters.top_p is not None:
-            create_kwargs["top_p"] = self.parameters.top_p
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
-            create_kwargs[
-                "reasoning_effort"
-            ] = self.parameters.reasoning_effort
-        if xai_tools:
-            create_kwargs["tools"] = xai_tools
-        if xai_tool_choice is not None:
-            create_kwargs["tool_choice"] = xai_tool_choice
-
-        create_kwargs.update(generate_kwargs)
-
-        chat = client.chat.create(**create_kwargs)
-        for xai_msg in xai_messages:
-            chat.append(xai_msg)
-
-        start_datetime = datetime.now()
-
-        if self.stream:
-            return self._parse_stream_response(start_datetime, chat, client)
-
+        stream_owns_client = False
         try:
-            response = await chat.sample()
-        finally:
-            await client.close()
+            xai_messages = await self.formatter.format(messages)
 
-        return self._parse_completion_response(start_datetime, response)
+            xai_tools, xai_tool_choice = self._format_tools(
+                tools,
+                tool_choice,
+            )
+
+            create_kwargs: dict[str, Any] = {"model": model_name}
+            if self.parameters.max_tokens is not None:
+                create_kwargs["max_tokens"] = self.parameters.max_tokens
+            if self.parameters.temperature is not None:
+                create_kwargs["temperature"] = self.parameters.temperature
+            if self.parameters.top_p is not None:
+                create_kwargs["top_p"] = self.parameters.top_p
+            if (
+                self.parameters.thinking_enable
+                and self.parameters.reasoning_effort
+            ):
+                create_kwargs["reasoning_effort"] = (
+                    self.parameters.reasoning_effort
+                )
+            if xai_tools:
+                create_kwargs["tools"] = xai_tools
+            if xai_tool_choice is not None:
+                create_kwargs["tool_choice"] = xai_tool_choice
+
+            create_kwargs.update(generate_kwargs)
+
+            chat = client.chat.create(**create_kwargs)
+            for xai_msg in xai_messages:
+                chat.append(xai_msg)
+
+            start_datetime = datetime.now()
+
+            if self.stream:
+                stream = self._parse_stream_response(
+                    start_datetime,
+                    chat,
+                    client,
+                )
+                stream_owns_client = True
+                return stream
+
+            response = await chat.sample()
+            return self._parse_completion_response(start_datetime, response)
+        finally:
+            if not stream_owns_client:
+                await client.close()
 
     def _format_tools(
         self,
