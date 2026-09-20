@@ -3,11 +3,13 @@
 import asyncio
 import threading
 from collections.abc import Iterator
+from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from utils import AnyString, AnyValue
 
 from agentscope.credential import DashScopeCredential, GeminiCredential
 from agentscope.embedding import DashScopeEmbeddingModel, GeminiEmbeddingModel
@@ -136,14 +138,18 @@ def test_embedding_batches_do_not_block(provider: SimpleNamespace) -> None:
             await asyncio.gather(task, return_exceptions=True)
 
         assert completed == [1, 0]
-        assert result.embeddings == [
-            [float(i)] for i in range(provider.batch_size + 1)
-        ]
-        assert result.usage.tokens == (
-            14 if provider.name == "dashscope" else 0
-        )
-        assert result.usage.time >= 0
-        assert result.source == "api"
+        assert asdict(result) == {
+            "embeddings": [[float(i)] for i in range(provider.batch_size + 1)],
+            "id": AnyString(),
+            "created_at": AnyString(),
+            "type": "embedding",
+            "usage": {
+                "tokens": 14 if provider.name == "dashscope" else 0,
+                "time": AnyValue(),
+                "type": "embedding",
+            },
+            "source": "api",
+        }
 
     asyncio.run(run())
 
@@ -159,7 +165,6 @@ def test_embedding_request_and_usage(provider: SimpleNamespace) -> None:
     )
     assert len(calls) == 1
     actual = calls[0].kwargs
-    assert actual["model"] == provider.model.model
     if provider.name == "dashscope":
         expected_input: list[str | dict[str, str]] = (
             [{"text": "hello"}] if provider.multimodal else ["hello"]
@@ -172,17 +177,32 @@ def test_embedding_request_and_usage(provider: SimpleNamespace) -> None:
             **kwargs,
         }
     else:
-        assert actual["config"].output_dimensionality == 1
-        assert actual["config"].task_type == "RETRIEVAL_DOCUMENT"
-        if provider.multimodal:
-            assert len(actual["contents"]) == 1
-            assert actual["contents"][0].parts[0].text == "hello"
-        else:
-            assert actual["contents"] == ["hello"]
-    assert result.embeddings == [[0.25]]
-    assert result.usage.tokens == (7 if provider.name == "dashscope" else None)
-    assert result.usage.time >= 0
-    assert result.source == "api"
+        from google.genai import types
+
+        assert actual == {
+            "model": provider.model.model,
+            "contents": (
+                [types.Content(parts=[types.Part(text="hello")])]
+                if provider.multimodal
+                else ["hello"]
+            ),
+            "config": types.EmbedContentConfig(
+                output_dimensionality=1,
+                task_type="RETRIEVAL_DOCUMENT",
+            ),
+        }
+    assert asdict(result) == {
+        "embeddings": [[0.25]],
+        "id": AnyString(),
+        "created_at": AnyString(),
+        "type": "embedding",
+        "usage": {
+            "tokens": 7 if provider.name == "dashscope" else None,
+            "time": AnyValue(),
+            "type": "embedding",
+        },
+        "source": "api",
+    }
 
 
 def test_embedding_sdk_error_preserves_retries(
