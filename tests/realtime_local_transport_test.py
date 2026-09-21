@@ -3,6 +3,9 @@
 directly — no sound card is opened."""
 # pylint: disable=protected-access
 import asyncio
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import numpy as np
@@ -132,6 +135,45 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
             (len(queued), queued[0], queued[-1]),
             (transport._max_queued, 3, (transport._max_queued + 2) % 256),
         )
+
+    async def test_restart_drops_previous_session_audio(self) -> None:
+        """Restarting a transport starts with fresh capture and playout."""
+
+        class FakeStream:
+            def __init__(self, **_kwargs: object) -> None:
+                pass
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        transport = LocalAudioTransport()
+        transport._enqueue(AudioFrame(pcm=b"stale-input"))
+        await transport.send_audio(b"\x01\x00" * 10, "stale-output")
+        await transport.close()
+
+        sounddevice = SimpleNamespace(
+            InputStream=FakeStream,
+            OutputStream=FakeStream,
+        )
+        with patch.dict(sys.modules, {"sounddevice": sounddevice}):
+            await transport.start()
+
+        transport._enqueue(AudioFrame(pcm=b"fresh-input"))
+        incoming = transport.incoming()
+        self.assertEqual((await anext(incoming)).pcm, b"fresh-input")
+        self.assertEqual(
+            transport.playout().model_dump(),
+            {"item_id": "", "played_ms": 0, "first_played_at": None},
+        )
+        self.assertEqual(bytes(transport._pending), b"")
+        await incoming.aclose()
+        await transport.close()
 
     async def test_playout_position_shape(self) -> None:
         """The position is a plain value object."""
