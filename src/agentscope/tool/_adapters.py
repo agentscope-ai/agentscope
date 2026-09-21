@@ -4,6 +4,7 @@ import inspect
 import json
 import re
 from contextlib import AbstractAsyncContextManager
+from copy import deepcopy
 from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
 
@@ -62,6 +63,7 @@ class FunctionTool(ToolBase):
         is_state_injected: bool = False,
         middlewares: list[ToolMiddlewareBase] | None = None,
         permission: PermissionDecision | None = None,
+        preset_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the FunctionTool.
 
@@ -91,6 +93,12 @@ class FunctionTool(ToolBase):
             permission (`PermissionDecision | None`, optional):
                 The permission decision of this tool. If not provided, the
                 user will be asked to confirm the tool call.
+            preset_kwargs (`dict[str, Any] | None`, optional):
+                Keyword arguments managed by the application rather than the
+                model. These arguments are removed from the input schema and
+                applied after model-provided arguments on every invocation.
+                A callable value is evaluated for each invocation, which
+                allows the application to provide changing runtime values.
         """
         super().__init__(middlewares=middlewares)
         self.name = name or func.__name__
@@ -104,7 +112,24 @@ class FunctionTool(ToolBase):
             input_schema = _remove_title_field(
                 input_schema.model_json_schema(),
             )
-        self.input_schema = input_schema or _extract_input_schema(func)
+        self.input_schema = (
+            deepcopy(input_schema)
+            if input_schema is not None
+            else _extract_input_schema(func)
+        )
+        self._preset_kwargs = dict(preset_kwargs or {})
+        for arg_name in self._preset_kwargs:
+            self.input_schema["properties"].pop(arg_name, None)
+
+        if "required" in self.input_schema:
+            self.input_schema["required"] = [
+                arg_name
+                for arg_name in self.input_schema["required"]
+                if arg_name not in self._preset_kwargs
+            ]
+            if not self.input_schema["required"]:
+                self.input_schema.pop("required")
+
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
         self.is_state_injected = is_state_injected
@@ -144,6 +169,15 @@ class FunctionTool(ToolBase):
             `ToolChunk` or `AsyncGenerator[ToolChunk, None]`:
                 The normalized result of the function execution.
         """
+        # Apply application-managed arguments last so that a model cannot
+        # override values that are intentionally hidden from the schema.
+        for arg_name, value in self._preset_kwargs.items():
+            if callable(value):
+                value = value()
+                if inspect.isawaitable(value):
+                    value = await value
+            kwargs[arg_name] = value
+
         if inspect.iscoroutinefunction(self._func):
             result = await self._func(**kwargs)
         else:

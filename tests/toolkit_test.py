@@ -667,6 +667,70 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_dynamic_preset_kwargs_are_hidden_and_protected(self) -> None:
+        """Preset values should be resolved per call and override model input."""
+        current_project = ["project-a"]
+
+        def search_project(query: str, project_name: str) -> str:
+            """Search within the current project.
+
+            Args:
+                query: The search query.
+                project_name: The project selected by the application.
+            """
+            return f"{project_name}: {query}"
+
+        tool = FunctionTool(
+            search_project,
+            preset_kwargs={"project_name": lambda: current_project[0]},
+        )
+        toolkit = Toolkit(tools=[tool])
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertDictEqual(
+            schemas[0]["function"]["parameters"],
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query.",
+                    },
+                },
+                "required": ["query"],
+            },
+        )
+
+        first_call = ToolCallBlock(
+            id="test_dynamic_preset_first",
+            name="search_project",
+            input=json.dumps(
+                {
+                    "query": "alpha",
+                    "project_name": "model-controlled-project",
+                },
+            ),
+        )
+        first_chunks = [
+            result
+            async for result in toolkit.call_tool(first_call, AgentState())
+            if isinstance(result, ToolChunk)
+        ]
+        self.assertEqual(first_chunks[0].content[0].text, "project-a: alpha")
+
+        current_project[0] = "project-b"
+        second_call = ToolCallBlock(
+            id="test_dynamic_preset_second",
+            name="search_project",
+            input=json.dumps({"query": "beta"}),
+        )
+        second_chunks = [
+            result
+            async for result in toolkit.call_tool(second_call, AgentState())
+            if isinstance(result, ToolChunk)
+        ]
+        self.assertEqual(second_chunks[0].content[0].text, "project-b: beta")
+
     async def test_async_function_returning_json_serializable_value(
         self,
     ) -> None:
