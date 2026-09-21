@@ -147,7 +147,7 @@ class _SearchKnowledgeTool(ToolBase):
 
     def __init__(
         self,
-        knowledge_bases: list["KnowledgeBaseBase"],
+        knowledge_bases: Sequence["KnowledgeBaseBase"],
         top_k: int,
         score_threshold: float | None,
         rerank_model: "ChatModelBase | None" = None,
@@ -157,7 +157,7 @@ class _SearchKnowledgeTool(ToolBase):
         """Initialize the search tool.
 
         Args:
-            knowledge_bases (`list[KnowledgeBaseBase]`):
+            knowledge_bases (`Sequence[KnowledgeBaseBase]`):
                 The knowledge bases the agent may query.
             top_k (`int`):
                 Maximum number of chunks returned per call, after
@@ -178,7 +178,7 @@ class _SearchKnowledgeTool(ToolBase):
         # has none of its own (the owning ``RAGMiddleware`` is an
         # *agent* middleware, not a tool one).
         super().__init__()
-        self._knowledge_bases = knowledge_bases
+        self._knowledge_bases = list(knowledge_bases)
         self._top_k = top_k
         self._score_threshold = score_threshold
         self._rerank_model = rerank_model
@@ -799,14 +799,14 @@ class RAGMiddleware(MiddlewareBase):
 
     def __init__(
         self,
-        knowledge_bases: list["KnowledgeBaseBase"],
+        knowledge_bases: Sequence["KnowledgeBaseBase"],
         parameters: "RAGMiddleware.Parameters | None" = None,
         rerank_model: "ChatModelBase | None" = None,
     ) -> None:
         """Initialize the RAG middleware.
 
         Args:
-            knowledge_bases (`list[KnowledgeBaseBase]`):
+            knowledge_bases (`Sequence[KnowledgeBaseBase]`):
                 The knowledge bases this agent searches.
             parameters (`RAGMiddleware.Parameters | None`, optional):
                 Search-time knobs (mode, top_k, score threshold, hint
@@ -817,7 +817,7 @@ class RAGMiddleware(MiddlewareBase):
                 chunks out of the ``rerank_candidate_k`` retrieved ones.
                 Best-effort: when it fails, the vector order is kept.
         """
-        self._knowledge_bases = knowledge_bases
+        self._knowledge_bases = list(knowledge_bases)
         self._parameters = parameters or RAGMiddleware.Parameters()
         self._rerank_model = rerank_model
         # Static-mode reply scratchpad: populated by ``on_reply`` and
