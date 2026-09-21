@@ -3,6 +3,7 @@
 import asyncio
 import json
 from typing import Any
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
@@ -15,6 +16,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from utils import MockModel
 
 from agentscope.agent import Agent, InjectionConfig
+from agentscope.credential import OpenAICredential, VolcengineCredential
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -29,7 +31,18 @@ from agentscope.message import (
     ToolResultState,
     UserMsg,
 )
-from agentscope.model import ChatResponse, ChatUsage
+from agentscope.middleware._tracing._attributes import SpanAttributes
+from agentscope.middleware._tracing._extractor import (
+    _get_provider_name,
+    _get_llm_response_attributes,
+)
+from agentscope.model import (
+    ChatResponse,
+    ChatUsage,
+    FinishedReason,
+    OpenAIChatModel,
+    VolcengineChatModel,
+)
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -135,6 +148,55 @@ class ExternalWeatherTool(ToolBase):
     async def execute(self, city: str) -> str:
         """Stub weather tool for tracing tests."""
         return f"{city}: sunny, 25°C."
+
+
+class TracingExtractorTest(TestCase):
+    """Tests for tracing attribute extraction helpers."""
+
+    def test_volcengine_provider_name_from_model_class(self) -> None:
+        """Volcengine models should use the Volcengine provider name."""
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model="doubao-seed-2-1-pro-260628",
+        )
+
+        self.assertEqual(_get_provider_name(model), "volcengine")
+
+    def test_volcengine_provider_name_from_openai_base_url(self) -> None:
+        """Ark's OpenAI-compatible endpoint should map to Volcengine."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(
+                api_key="test",
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+            ),
+            model="doubao-seed-2-1-pro-260628",
+        )
+
+        self.assertEqual(_get_provider_name(model), "volcengine")
+
+    def test_llm_response_tracing_uses_chat_response_finish_reason(
+        self,
+    ) -> None:
+        """LLM response tracing should preserve ChatResponse finish reason."""
+        response = ChatResponse(
+            content=[TextBlock(text="partial answer")],
+            is_last=True,
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+
+        attributes = _get_llm_response_attributes(response)
+        output_messages = json.loads(
+            attributes[SpanAttributes.GEN_AI_OUTPUT_MESSAGES],
+        )
+
+        self.assertEqual(
+            attributes[SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS],
+            '["interrupted"]',
+        )
+        self.assertEqual(
+            output_messages[0]["finish_reason"],
+            "interrupted",
+        )
 
 
 def _make_tool_call_response(tool_id: str, city: str) -> ChatResponse:

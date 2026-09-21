@@ -189,6 +189,9 @@ class ProviderNameValues:
     MOONSHOT = "moonshot"
     """The moonshot provider name."""
 
+    VOLCENGINE = "volcengine"
+    """The Volcengine provider name."""
+
     AZURE_AI_OPENAI = (
         GenAIAttributes.GenAiProviderNameValues.AZURE_AI_OPENAI.value
     )

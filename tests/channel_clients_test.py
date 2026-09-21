@@ -278,9 +278,13 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
 class ChannelStatusTest(IsolatedAsyncioTestCase):
     """Status is read from the heartbeat, not from local instances."""
 
-    def _service(self, bus: InMemoryMessageBus) -> ChannelService:
+    def _service(
+        self,
+        bus: InMemoryMessageBus,
+        enabled: bool = True,
+    ) -> ChannelService:
         return ChannelService(
-            storage=_Storage(_record()),
+            storage=_Storage(_record(enabled=enabled)),
             message_bus=bus,
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         )
@@ -303,11 +307,25 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
             ttl_secs=LIVENESS_TTL_SECS,
         )
 
-    async def test_no_heartbeat_reads_as_stopped(self) -> None:
-        """Nothing is holding the channel, so nothing reports it."""
+    async def test_an_enabled_channel_with_no_report_is_connecting(
+        self,
+    ) -> None:
+        """A channel just created has not been picked up yet. Calling
+        that stopped sends the operator looking for something to start
+        that is already starting."""
         bus = InMemoryMessageBus()
         self.assertEqual(
             await self._service(bus).get_status("chan-1"),
+            ChannelStatus(state="connecting"),
+        )
+
+    async def test_a_disabled_channel_with_no_report_is_stopped(
+        self,
+    ) -> None:
+        """Nothing is holding it, and nothing is meant to."""
+        bus = InMemoryMessageBus()
+        self.assertEqual(
+            await self._service(bus, enabled=False).get_status("chan-1"),
             ChannelStatus(state="stopped"),
         )
 
@@ -339,8 +357,11 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
             ChannelStatus(state="connecting"),
         )
 
-    async def test_only_stale_reports_read_as_stopped(self) -> None:
-        """Every holder went away; nothing fresh is left to believe."""
+    async def test_only_stale_reports_fall_back_to_the_enabled_flag(
+        self,
+    ) -> None:
+        """Every holder went away; nothing fresh is left to believe, so
+        this reads like never having been reported at all."""
         bus = InMemoryMessageBus()
         await self._beat(
             bus,
@@ -351,6 +372,10 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             await self._service(bus).get_status("chan-1"),
+            ChannelStatus(state="connecting"),
+        )
+        self.assertEqual(
+            await self._service(bus, enabled=False).get_status("chan-1"),
             ChannelStatus(state="stopped"),
         )
 

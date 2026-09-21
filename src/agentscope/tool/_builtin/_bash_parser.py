@@ -21,7 +21,8 @@ from tree_sitter import Language, Parser, Node
 from .._constants import DANGEROUS_NODE_TYPES, DANGEROUS_COMMANDS
 
 
-# Commands that are considered safe and don't require permission rules
+# Commands that are considered safe and don't require permission rules,
+# so any command that writes must not be listed here
 SAFE_COMMANDS: Set[str] = {
     "echo",
     "cat",
@@ -32,7 +33,6 @@ SAFE_COMMANDS: Set[str] = {
     "false",
     "printf",
     "grep",
-    "tee",
 }
 
 # Safe environment variables that can be skipped when extracting command prefix

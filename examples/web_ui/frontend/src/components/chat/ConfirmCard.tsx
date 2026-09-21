@@ -79,7 +79,7 @@ export function ConfirmCard({
 				{/* Capped so a long tool input (raw JSON for MCP tools) cannot
 				    grow the card past the viewport — it floats above the
 				    composer and is out of flow, so nothing else clips it. */}
-				<div className="px-4 py-2 bg-white rounded-sm max-w-full max-h-[200px] overflow-y-auto">
+				<div className="px-4 py-2 bg-background rounded-sm max-w-full max-h-[200px] overflow-y-auto">
 					{renderConfirmBody(toolCall, t)}
 				</div>
 			</div>

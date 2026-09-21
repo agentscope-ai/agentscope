@@ -11,7 +11,13 @@ from pydantic import Field
 from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
 from .._bus_ops import deliver_to_inbox
-from ..storage import AgentData, AgentRecord, SessionConfig, TeamMember
+from ..storage import (
+    AgentData,
+    AgentRecord,
+    SessionConfig,
+    TeamMember,
+    TeamOrigin,
+)
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
@@ -448,6 +454,7 @@ optional):
                     ),
                 ),
                 state=worker_state,
+                origin=TeamOrigin(),
             )
             await self._storage.set_session_team_id(
                 self._user_id,

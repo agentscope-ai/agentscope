@@ -17,8 +17,8 @@ dependency.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -27,7 +27,9 @@ from typing import Callable, Self
 from ._base import MessageBus
 
 
-class InMemoryMessageBus(MessageBus):
+class InMemoryMessageBus(
+    MessageBus,
+):  # pylint: disable=too-many-public-methods
     """In-memory implementation of :class:`MessageBus`.
 
     Mapping of bus modes to in-memory structures:
@@ -77,7 +79,9 @@ class InMemoryMessageBus(MessageBus):
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        self._lock_holders: dict[str, str] = {}
+        # key -> monotonic expiry deadline; ``acquire_lock`` has no
+        # lease, so it stores infinity.
+        self._lock_holders: dict[str, float] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -377,9 +381,8 @@ class InMemoryMessageBus(MessageBus):
             `None`: while the lock is held.
         """
         lock = self._locks[key]
-        token = uuid.uuid4().hex
         async with lock:
-            self._lock_holders[key] = token
+            self._lock_holders[key] = math.inf
             try:
                 yield
             finally:
@@ -396,13 +399,15 @@ class InMemoryMessageBus(MessageBus):
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return key in self._lock_holders
+        return self._lock_holders.get(key, 0.0) > time.monotonic()
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if key in self._lock_holders:
+        if self._lock_holders.get(key, 0.0) > time.monotonic():
             return False
-        self._lock_holders[key] = "1"
+        # The lease keeps a crashed holder from blocking the key
+        # forever, the contract the Redis bus gets from SET NX EX.
+        self._lock_holders[key] = time.monotonic() + ttl_secs
         return True
 
     async def unlock(self, key: str) -> None:
@@ -436,6 +441,26 @@ class InMemoryMessageBus(MessageBus):
                 Ignored (no TTL support).
         """
         self._registries[namespace][field] = value
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
+        _ = ttl_secs
+        if self._registries.get(namespace, {}).get(field) != expected:
+            return False
+        self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """Read and remove one field. See base."""
+        return self._registries.get(namespace, {}).pop(field, None)
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the registry at ``namespace``.

@@ -1,0 +1,172 @@
+name: Issue Triage
+
+# An agent decides whether a new issue is a bug report and, if so, whether the
+# claim holds on current main. It only ever writes a verdict to a file: the
+# labelling and commenting below are what touch the issue, so the agent — which
+# reads attacker-controlled text — never holds a token that could.
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+env:
+  TRIAGE_MODEL: qwen3.8-max
+
+jobs:
+  triage:
+    # Read the code, label and comment on the issue. Never contents:write — a
+    # run that reads an untrusted issue must not be able to push.
+    permissions:
+      contents: read
+      issues: write
+    # Maintainers file issues they have already verified. No label condition:
+    # blank issues are disabled and the bug form is the only template, so every
+    # issue arrives here and stage 1 decides what it really is.
+    if: >-
+      github.event.issue.user.login != 'DavdGao' &&
+      github.event.issue.user.login != 'qbc2016'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: issue-triage-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Otherwise the job token is left in .git/config, where the
+          # agent's own shell could read it and act as this job.
+          persist-credentials: false
+
+      - name: Say the triage has started
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ['triage/verifying'],
+            });
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          # There is no uv.lock, so without this the cache key never
+          # changes and the cache is never invalidated.
+          cache-dependency-glob: pyproject.toml
+
+      # A separate step so a dependency failure is obvious in the log and
+      # costs no model tokens. The agent never installs anything itself.
+      - name: Prepare the environment the agent verifies against
+        run: |
+          uv venv --clear --python 3.11
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      # Written as files, never spliced into a shell command: an issue title is
+      # attacker-controlled and `${{ }}` would interpolate it before bash runs.
+      - name: Stage the issue text
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          mkdir -p /tmp/triage
+          printf '%s' "$ISSUE_TITLE" > /tmp/triage/title.txt
+          printf '%s' "$ISSUE_BODY" > /tmp/triage/body.md
+
+      - name: Triage
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          # Otherwise rich sees no terminal and falls back to 80 plain columns.
+          FORCE_COLOR: '1'
+          COLUMNS: '200'
+        run: |
+          set -o pipefail
+          .venv/bin/python scripts/issue_triage.py \
+            --number '${{ github.event.issue.number }}' \
+            --author '${{ github.event.issue.user.login }}' \
+            --title-file /tmp/triage/title.txt \
+            --body-file /tmp/triage/body.md \
+            --model "$TRIAGE_MODEL" \
+            --workdir "$PWD" \
+            --out /tmp/triage/result.json 2>&1 | tee /tmp/triage/trace.log
+
+      - name: Apply the verdict
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const issue_number = context.payload.issue.number;
+            const { owner, repo } = context.repo;
+
+            // Only these six strings can ever reach the API.
+            const OUTCOME_LABELS = {
+              confirmed: 'triage/confirmed',
+              invalid: 'triage/suggest-close',
+              cannot_reproduce: 'triage/cannot-reproduce',
+              needs_info: 'triage/needs-info',
+            };
+            const NOT_A_BUG = 'triage/not-a-bug';
+            const FAILED = 'triage/failed';
+
+            let label = FAILED;
+            let comment = null;
+            try {
+              const result = JSON.parse(
+                fs.readFileSync('/tmp/triage/result.json', 'utf8'),
+              );
+              if (result.intent && result.intent.is_bug === false) {
+                label = NOT_A_BUG;
+              } else {
+                const chosen = OUTCOME_LABELS[result.verdict?.verdict];
+                if (chosen) {
+                  label = chosen;
+                } else {
+                  core.error(
+                    `Unrecognised verdict ${JSON.stringify(result.verdict)}.`,
+                  );
+                }
+              }
+              if (label !== FAILED && typeof result.comment === 'string') {
+                comment = result.comment;
+              }
+            } catch (error) {
+              core.error(`No usable verdict: ${error.message}`);
+            }
+
+            // One outcome at a time: clear any triage/* left by an earlier run
+            // so a re-run cannot leave contradictory labels side by side.
+            const current = await github.rest.issues.listLabelsOnIssue({
+              owner, repo, issue_number,
+            });
+            for (const { name } of current.data) {
+              if (name.startsWith('triage/') && name !== label) {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number, name,
+                });
+              }
+            }
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number, labels: [label],
+            });
+
+            if (comment) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body: comment,
+              });
+            }
+            core.notice(
+              `${label}${comment ? ' (commented)' : ''}`,
+            );
+
+      - name: Keep the run for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-${{ github.event.issue.number }}
+          path: |
+            /tmp/triage/result.json
+            /tmp/triage/trace.log
+          if-no-files-found: warn

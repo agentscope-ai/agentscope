@@ -448,7 +448,7 @@ class XAIMultiAgentFormatter(FormatterBase):
                 )
                 if history_text:
                     xai_messages.append(user(history_text))
-                is_first_agent_message = False
+                    is_first_agent_message = False
 
         return xai_messages
 
