@@ -1560,6 +1560,7 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
       with an empty list
     - ``purge_session`` drops declarations, instances and offload files
     - the live-stateful cap never evicts the requesting scope
+    - an explicit live-stateful cap of 0 is honored
     """
 
     async def asyncSetUp(self) -> None:
@@ -1839,6 +1840,48 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
             again = await ws.list_mcps(agent_id="agent-A", session_id="s1")
             self.assertEqual([m.name for m in again], ["a", "b"])
             self.assertEqual(len(connected), 6)
+
+    @staticmethod
+    def _make_stateful_mcp(name: str) -> MCPClient:
+        """Return a stateful spec whose transport is never opened."""
+        return MCPClient(
+            name=name,
+            is_stateful=True,
+            mcp_config={
+                "type": "http_mcp",
+                "url": f"http://127.0.0.1:1/{name}",
+            },
+        )
+
+    async def test_zero_stateful_cap_is_not_treated_as_unset(
+        self,
+    ) -> None:
+        """``max_live_stateful_mcps=0`` is kept, not replaced."""
+        defaults = [
+            self._make_stateful_mcp("a"),
+            self._make_stateful_mcp("b"),
+        ]
+
+        capped = await self._workspace(
+            default_mcps=defaults,
+            max_live_stateful_mcps=0,
+        )
+        self.assertEqual(capped.max_live_stateful_mcps, 0)
+
+        # Control: only an unset cap derives the ``max(40, 2 * n)``
+        # default.
+        derived = await self._workspace(
+            default_mcps=defaults,
+            max_live_stateful_mcps=None,
+        )
+        self.assertEqual(derived.max_live_stateful_mcps, 40)
+
+        # Control: a non-zero explicit cap was never affected.
+        strict = await self._workspace(
+            default_mcps=defaults,
+            max_live_stateful_mcps=1,
+        )
+        self.assertEqual(strict.max_live_stateful_mcps, 1)
 
 
 class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
