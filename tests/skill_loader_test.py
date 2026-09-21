@@ -5,8 +5,11 @@ import os
 import tempfile
 import shutil
 import time
+from dataclasses import asdict
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
+
+from utils import AnyValue
 
 from agentscope.skill import LocalSkillLoader
 
@@ -85,6 +88,45 @@ This is the subdir2 skill content.
             self.assertEqual(len(skills), 0)
         finally:
             shutil.rmtree(empty_dir)
+
+    async def test_skill_md_with_utf8_bom(self) -> None:
+        """A byte order mark does not hide the front matter.
+
+        Windows editors such as PowerShell's ``Out-File`` write UTF-8 with
+        a leading BOM, which used to make the opening ``---`` invisible so
+        the skill was dropped with a "missing required fields" warning.
+        """
+        body = """---
+name: bom_skill
+description: A skill saved with a byte order mark
+---
+
+This skill is loaded despite the BOM.
+"""
+        with tempfile.TemporaryDirectory() as skill_dir:
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "wb",
+            ) as f:
+                f.write(b"\xef\xbb\xbf" + body.encode("utf-8"))
+
+            skills = await LocalSkillLoader(
+                skill_dir,
+                scan_subdir=False,
+            ).list_skills()
+
+            self.assertEqual(
+                [asdict(skill) for skill in skills],
+                [
+                    {
+                        "name": "bom_skill",
+                        "description": "A skill saved with a byte order mark",
+                        "dir": skill_dir,
+                        "markdown": "This skill is loaded despite the BOM.",
+                        "updated_at": AnyValue(),
+                    },
+                ],
+            )
 
     async def test_expanduser_directory(self) -> None:
         """Test that ``~`` is expanded before loading skills."""
