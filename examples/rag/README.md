@@ -1,12 +1,12 @@
 # RAG Examples
 
-Library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no manager, no message bus. The first two scripts wire the building blocks (parser, chunker, embedding model, vector store, `KnowledgeBase` handle) by hand so the data flow is visible end-to-end; the third delegates the whole pipeline to a RAGFlow server via `RAGFlowKnowledge`.
+Library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no manager, no message bus. The first two scripts wire the building blocks (parser, chunker, embedding model, vector store, `KnowledgeBase` handle) by hand so the data flow is visible end-to-end; the third delegates the whole pipeline to a RAGFlow server via `RAGFlowKnowledgeBase`.
 
 | Script | What it shows |
 | --- | --- |
 | [`index_and_search.py`](./index_and_search.py) | The minimal pipeline: parse → chunk → embed → insert, then `KnowledgeBase.search`. Start here. |
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
-| [`ragflow_knowledge.py`](./ragflow_knowledge.py) | Uses `RAGFlowKnowledge` — a knowledge-layer integration that delegates parsing/chunking/indexing/retrieval to a RAGFlow server instead of running the pipeline locally. |
+| [`ragflow_knowledge.py`](./ragflow_knowledge.py) | Uses `RAGFlowKnowledgeBase` — a knowledge-layer integration that delegates parsing/chunking/indexing/retrieval to a RAGFlow server instead of running the pipeline locally. |
 
 Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
 
@@ -232,19 +232,10 @@ store = ElasticsearchStore(
 [RAGFlow](https://ragflow.io/) is a managed, end-to-end RAG pipeline: it
 owns document parsing, chunking, indexing, and retrieval on the server
 side.  Instead of being forced underneath `VectorStoreBase`, it is exposed
-as `RAGFlowKnowledge` — a knowledge-layer handle that exposes the same
-operations as `KnowledgeBase` (`search`, `insert_document`,
-`delete_document`, `list_documents`, `list_chunks`).
-
-Install the optional extra (kept opt-in — it is **not** part of
-`agentscope[full]`, because `ragflow-sdk` does not yet support
-Python 3.13+):
-
-```bash
-uv pip install "agentscope[vdb-ragflow]"
-# Or from source (repo root)
-uv pip install -e ".[vdb-ragflow]"
-```
+as `RAGFlowKnowledgeBase` — a knowledge-layer handle that implements the
+same `KnowledgeBaseBase` retrieval contract used by `RAGMiddleware`.
+It talks to RAGFlow's HTTP API through AgentScope's existing asynchronous
+`httpx` dependency, so no RAGFlow SDK or optional extra is required.
 
 **Prerequisites**
 
@@ -278,11 +269,10 @@ python examples/rag/ragflow_knowledge.py
   the upload is accepted, but a document becomes searchable only after
   RAGFlow finishes parsing it.  The example polls the document's parse
   status before searching (see `wait_until_indexed`).
-- Because the two handles expose *operations with the same names but
-  different signatures*, a caller cannot transparently swap a
-  `RAGFlowKnowledge` in for a `KnowledgeBase` without adapting the
-  `insert_document` / `search` calls.
-- Retrieval tuning (`top_k`, `similarity_threshold`,
+- Both handles are interchangeable for retrieval through `RAGMiddleware`.
+  Ingestion remains intentionally backend-specific: RAGFlow takes source
+  bytes while the built-in vector-store handle takes parsed `Chunk` objects.
+- Retrieval tuning (`knn_top_k`, `similarity_threshold`,
   `vector_similarity_weight`, optional rerank) is configured on
   `RAGFlowConfig`.
 - RAGFlow scores like a hybrid of vector + keyword similarity rather than

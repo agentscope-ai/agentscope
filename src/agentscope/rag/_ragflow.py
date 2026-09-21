@@ -1,473 +1,374 @@
 # -*- coding: utf-8 -*-
-"""RAGFlow-backed knowledge base handle.
+"""RAGFlow-backed knowledge base using its asynchronous HTTP API.
 
-RAGFlow is a managed, end-to-end RAG pipeline: it owns document
-parsing, chunking, indexing, and retrieval all on the server side.
-That makes it fundamentally different from a vector database, where
-AgentScope is responsible for the whole parse -> chunk -> embed
-pipeline.  Forcing RAGFlow underneath :class:`VectorStoreBase` would
-require bypassing its core strengths (its built-in document processing
-and indexing pipeline), so it is exposed instead as a knowledge-layer
-handle that sits *alongside* :class:`~agentscope.rag.KnowledgeBase`
-rather than beneath :class:`~agentscope.rag.VectorStoreBase`.
-
-:class:`RAGFlowKnowledge` exposes the same *purpose-built operations* as
-:class:`~agentscope.rag.KnowledgeBase` — :meth:`search`,
-:meth:`insert_document`, :meth:`delete_document`, :meth:`list_documents`,
-:meth:`list_chunks` — so callers consult and manage a knowledge base
-through the same method names while the heavy lifting is delegated to the
-RAGFlow service.  The method signatures are *not* fully interchangeable:
-``search`` accepts only text queries (RAGFlow embeds them server-side, so
-no embedding model or ``DataBlock`` inputs are involved), and
-``insert_document`` takes raw document bytes rather than pre-embedded
-``Chunk`` objects.
-
-The deliberate divergence in how a document is added follows from
-the same root cause.  ``KnowledgeBase.insert_document`` takes pre-embedded
-``Chunk`` objects because AgentScope runs the parsing and chunking
-locally.  RAGFlow runs those steps on the server, so
-:meth:`RAGFlowKnowledge.insert_document` accepts raw document bytes plus a
-filename and lets RAGFlow parse, chunk, and index them.
-
-.. note:: The ``ragflow-sdk`` package is required.  Install it with
-    ``pip install "agentscope[vdb-ragflow]"``.  It is imported lazily so
-    importing :mod:`agentscope` stays lightweight.
+RAGFlow owns parsing, chunking, embedding, indexing, and retrieval.  It is
+therefore integrated beside :class:`KnowledgeBase`, rather than pretending to
+be a :class:`VectorStoreBase`.  ``httpx`` is already a core AgentScope
+dependency, which keeps this backend usable on every supported Python version
+without the synchronous ``ragflow-sdk`` package.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import Any, Self
+from urllib.parse import quote
 
-from pydantic import BaseModel
+import httpx
+from pydantic import BaseModel, Field
 
 from ._document import Chunk
+from ._knowledge import KnowledgeBaseBase
 from ._vdb import DocumentSummary, VectorSearchResult
-from ..message import TextBlock
+from ..message import DataBlock, TextBlock
 
-if TYPE_CHECKING:
-    from ragflow_sdk import RAGFlow, Dataset, Document
+
+class RAGFlowError(RuntimeError):
+    """Raised when RAGFlow returns an unsuccessful API response."""
+
+    def __init__(self, message: str, *, code: int | str | None = None) -> None:
+        """Initialize the error with RAGFlow's response code, if present."""
+        super().__init__(message)
+        self.code = code
 
 
 class RAGFlowConfig(BaseModel):
-    """Connection and retrieval tuning for a RAGFlow knowledge base.
-
-    Carries everything needed to talk to one RAGFlow dataset (RAGFlow's
-    name for a knowledge base) and to tune how :meth:`RAGFlowKnowledge.search`
-    retrieves chunks from it.
-    """
+    """Connection details and retrieval defaults for one RAGFlow dataset."""
 
     api_key: str
-    """The RAGFlow API key."""
+    """RAGFlow API key."""
 
     base_url: str
-    """The RAGFlow service base URL, e.g. ``"http://localhost:9380"``."""
+    """RAGFlow server URL, for example ``http://localhost:9380``."""
 
     dataset_id: str
-    """The RAGFlow dataset (knowledge base) id to bind against."""
+    """Dataset (knowledge base) identifier."""
 
-    top_k: int = 10
-    """Server-side top-k: the number of candidates RAGFlow considers for
-    vector cosine computation before reranking/filtering."""
+    similarity_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
+    """Default server-side minimum similarity."""
 
-    similarity_threshold: float = 0.2
-    """Server-side minimum similarity score a chunk must reach to be
-    returned."""
+    vector_similarity_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    """Weight of vector similarity versus term similarity."""
 
-    vector_similarity_weight: float = 0.3
-    """Relative weight of vector cosine similarity versus term (keyword)
-    similarity when combining the two.  ``x`` is the weight of the vector
-    score, ``1 - x`` the weight of the term score."""
-
-    enable_rerank: bool = False
-    """Whether to rerank the candidates with a RAGFlow rerank model.  When
-    ``True``, :attr:`rerank_id` must point at a configured rerank model."""
+    knn_top_k: int = Field(default=1024, ge=1)
+    """Number of candidates used for vector similarity computation."""
 
     rerank_id: str | None = None
-    """The id of the rerank model to use when :attr:`enable_rerank` is
-    ``True``."""
+    """Optional RAGFlow reranker model identifier."""
 
     keyword: bool = False
-    """Whether to additionally match chunks by keyword (in addition to the
-    vector similarity search)."""
+    """Whether to enable keyword matching."""
+
+    metadata_condition: dict[str, Any] | None = None
+    """Optional native RAGFlow metadata filter."""
+
+    timeout: float = Field(default=30.0, gt=0.0)
+    """HTTP request timeout in seconds."""
 
 
-class RAGFlowKnowledge:
-    """Runtime handle for one RAGFlow knowledge base.
+class RAGFlowKnowledgeBase(KnowledgeBaseBase):
+    """Runtime handle for one managed RAGFlow dataset.
 
-    Binds a RAGFlow dataset together with retrieval tuning so callers
-    can retrieve / add / delete / list documents without repeating the
-    wiring.  Cheap to construct (no I/O); the RAGFlow client is created
-    lazily on the first network call.
-
-    .. code-block:: python
-
-        kb = RAGFlowKnowledge(
-            name="company-handbook",
-            description="Internal HR and onboarding documents.",
-            config=RAGFlowConfig(
-                api_key="ragflow-xxxxx",
-                base_url="http://localhost:9380",
-                dataset_id="kb-xxxxx",
-            ),
-        )
-        await kb.insert_document(
-            b"...raw pdf bytes...",
-            filename="handbook.pdf",
-        )
-        results = await kb.search(["What is the PTO policy?"])
+    The shared :class:`KnowledgeBaseBase` contract makes this class directly
+    usable by :class:`~agentscope.middleware.RAGMiddleware`.  File ingestion
+    remains intentionally backend-specific because RAGFlow needs the original
+    bytes in order to run its server-side parsing pipeline.
     """
-
-    name: str
-    """Agent-oriented knowledge base name — used by tool descriptions
-    and frontend rendering, mirroring
-    :class:`~agentscope.rag.KnowledgeBase`."""
-
-    description: str
-    """Agent-oriented knowledge base description — what this knowledge
-    base contains and when to retrieve from it."""
 
     def __init__(
         self,
         name: str,
         description: str,
         config: RAGFlowConfig,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Initialize the runtime handle.
+        """Initialize a RAGFlow knowledge base.
 
         Args:
-            name (`str`):
-                Agent-oriented knowledge base name.  Surfaced to the
-                LLM (via tool descriptions) and to the front-end.
-            description (`str`):
-                Agent-oriented description.  Should answer "what is in
-                this knowledge base and when should I search it?" — the
-                LLM uses it to decide whether to call the search tool
-                in agentic mode.
-            config (`RAGFlowConfig`):
-                Connection details (API key, base URL, dataset id) and
-                retrieval tuning.
+            name (`str`): Agent-facing knowledge base name.
+            description (`str`): Agent-facing retrieval description.
+            config (`RAGFlowConfig`): Connection and retrieval settings.
+            client (`httpx.AsyncClient | None`, optional): Existing async
+                client.  Primarily useful for shared connection pools and
+                offline ``MockTransport`` tests.  Caller-owned clients are not
+                closed by :meth:`aclose`.
         """
-        self.name = name
-        self.description = description
+        super().__init__(name, description)
         self._config = config
-        self._client: "RAGFlow | None" = None
-
-    # ------------------------------------------------------------------
-    # Read-only accessors
-    # ------------------------------------------------------------------
+        self._client = client
+        self._owns_client = client is None
 
     @property
     def config(self) -> RAGFlowConfig:
-        """The bound :class:`RAGFlowConfig`."""
+        """The bound connection and retrieval configuration."""
         return self._config
 
-    @property
-    def api_key(self) -> str:
-        """The RAGFlow API key."""
-        return self._config.api_key
+    async def __aenter__(self) -> Self:
+        """Enter the async context."""
+        self._get_client()
+        return self
 
-    @property
-    def base_url(self) -> str:
-        """The RAGFlow service base URL."""
-        return self._config.base_url
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Close a client created by this handle."""
+        await self.aclose()
 
-    @property
-    def dataset_id(self) -> str:
-        """The bound RAGFlow dataset (knowledge base) id."""
-        return self._config.dataset_id
+    async def aclose(self) -> None:
+        """Close the internally created HTTP client, if any."""
+        if self._client is not None and self._owns_client:
+            await self._client.aclose()
+            self._client = None
 
-    # ------------------------------------------------------------------
-    # Client
-    # ------------------------------------------------------------------
-
-    def get_client(self) -> "RAGFlow":
-        """Lazily create and cache the RAGFlow client.
-
-        The ``ragflow-sdk`` package is imported here (not at module top
-        level) so ``import agentscope`` stays lightweight.
-
-        Returns:
-            `ragflow_sdk.RAGFlow`:
-                The shared synchronous RAGFlow client.
-        """
+    def _get_client(self) -> httpx.AsyncClient:
+        """Create the shared asynchronous client on first use."""
         if self._client is None:
-            from ragflow_sdk import RAGFlow
-
-            self._client = RAGFlow(
-                api_key=self._config.api_key,
-                base_url=self._config.base_url,
-            )
+            self._client = httpx.AsyncClient(timeout=self._config.timeout)
         return self._client
 
-    async def _get_dataset(self) -> "Dataset":
-        """Resolve the bound RAGFlow dataset.
+    def _url(self, path: str) -> str:
+        """Build an absolute RAGFlow API URL."""
+        return f"{self._config.base_url.rstrip('/')}/api/v1/{path.lstrip('/')}"
 
-        Returns:
-            `ragflow_sdk.Dataset`:
-                The dataset object matching :attr:`dataset_id`.
-        """
-        client = self.get_client()
-        datasets = await asyncio.to_thread(
-            client.list_datasets,
-            id=self._config.dataset_id,
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Send one request and unwrap RAGFlow's ``code/data`` envelope."""
+        headers = dict(kwargs.pop("headers", {}))
+        headers["Authorization"] = f"Bearer {self._config.api_key}"
+        response = await self._get_client().request(
+            method,
+            self._url(path),
+            headers=headers,
+            **kwargs,
         )
-        if not datasets:
-            raise RuntimeError(
-                f"RAGFlow dataset {self._config.dataset_id!r} not found "
-                f"at {self._config.base_url!r}.",
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RAGFlowError(
+                "RAGFlow returned a non-JSON response.",
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RAGFlowError(
+                "RAGFlow returned an invalid response envelope.",
             )
-        return datasets[0]
+        code = payload.get("code")
+        if code not in (0, "0"):
+            message = payload.get("message") or "RAGFlow request failed."
+            raise RAGFlowError(str(message), code=code)
+        return payload.get("data")
 
-    async def _get_document(self, document_id: str) -> "Document":
-        """Resolve a single document inside the bound dataset.
-
-        Args:
-            document_id (`str`):
-                The RAGFlow document id.
-
-        Returns:
-            `ragflow_sdk.Document`:
-                The document object.
-
-        Raises:
-            `RuntimeError`:
-                If the document does not exist in the dataset.
-        """
-        dataset = await self._get_dataset()
-        documents = await asyncio.to_thread(
-            dataset.list_documents,
-            id=document_id,
-        )
-        if not documents:
-            raise RuntimeError(
-                f"RAGFlow document {document_id!r} not found in dataset "
-                f"{self._config.dataset_id!r}.",
-            )
-        return documents[0]
-
-    # ------------------------------------------------------------------
-    # Search
-    # ------------------------------------------------------------------
+    async def _retrieve(self, question: str, page_size: int) -> dict[str, Any]:
+        """Retrieve one query's result envelope."""
+        body: dict[str, Any] = {
+            "question": question,
+            "dataset_ids": [self._config.dataset_id],
+            "page": 1,
+            "page_size": page_size,
+            "similarity_threshold": self._config.similarity_threshold,
+            "vector_similarity_weight": (
+                self._config.vector_similarity_weight
+            ),
+            "knn_top_k": self._config.knn_top_k,
+            "keyword": self._config.keyword,
+        }
+        if self._config.rerank_id:
+            body["rerank_id"] = self._config.rerank_id
+        if self._config.metadata_condition:
+            body["metadata_condition"] = self._config.metadata_condition
+        data = await self._request("POST", "retrieval", json=body)
+        if not isinstance(data, dict):
+            raise RAGFlowError("RAGFlow retrieval returned invalid data.")
+        return data
 
     async def search(
         self,
-        queries: list[str | TextBlock],
+        queries: list[str | TextBlock | DataBlock],
         top_k: int = 5,
         score_threshold: float | None = None,
     ) -> list[VectorSearchResult]:
-        """Search the knowledge base with one or more queries.
+        """Search the dataset with one or more text queries.
 
-        Each query is sent to RAGFlow's ``retrieve`` endpoint, which
-        combines vector similarity and (optionally) keyword matching and
-        returns chunks already ranked by the server.  Hits across all
-        queries are deduplicated by the RAGFlow chunk id (kept in
-        ``chunk.metadata["ragflow_chunk_id"]``) inside the same
-        ``document_id``, keeping the best similarity score, optionally
-        filtered by ``score_threshold``, and truncated to ``top_k``.
-
-        Unlike :class:`~agentscope.rag.KnowledgeBase`, no embedding model
-        is needed: RAGFlow embeds the query server-side with the model
-        configured on the dataset.  RAGFlow reports neither the 0-based
-        index nor the total chunk count of a chunk *within* its source
-        document, so ``Chunk.chunk_index`` is a per-document ordinal of
-        the retrieved hits and ``Chunk.total_chunks`` is ``0``.
-
-        Args:
-            queries (`list[str | TextBlock]`):
-                Query inputs, each a plain ``str`` or a :class:`TextBlock`.
-            top_k (`int`, defaults to ``5``):
-                Maximum number of results returned across all queries
-                (after dedup).  This is the *client-side* cap and is
-                independent of :attr:`RAGFlowConfig.top_k`, which controls
-                how many candidates RAGFlow considers server-side.
-            score_threshold (`float | None`, optional):
-                Minimum similarity score for a hit to be retained.
-                ``None`` falls back to the server-side
-                :attr:`RAGFlowConfig.similarity_threshold`.
-
-        Returns:
-            `list[VectorSearchResult]`:
-                At most ``top_k`` deduplicated hits ordered by descending
-                similarity score.  Empty when there are no queries.
+        ``DataBlock`` inputs are ignored because RAGFlow's retrieval endpoint
+        accepts text.  Results from all queries are deduplicated by RAGFlow's
+        stable chunk id, keeping the highest score.
         """
-        if not queries:
+        if top_k <= 0:
             return []
-
         query_texts = [
             query.text if isinstance(query, TextBlock) else query
             for query in queries
+            if not isinstance(query, DataBlock)
         ]
+        if not query_texts:
+            return []
 
-        client = self.get_client()
-        page_size = max(top_k, 1)
-
-        results_per_query = await asyncio.gather(
-            *(
-                asyncio.to_thread(
-                    client.retrieve,
-                    question=text,
-                    dataset_ids=[self._config.dataset_id],
-                    similarity_threshold=self._config.similarity_threshold,
-                    vector_similarity_weight=(
-                        self._config.vector_similarity_weight
-                    ),
-                    top_k=self._config.top_k,
-                    rerank_id=(
-                        self._config.rerank_id
-                        if self._config.enable_rerank
-                        else None
-                    ),
-                    keyword=self._config.keyword,
-                    page_size=page_size,
-                )
-                for text in query_texts
-            ),
+        responses = await asyncio.gather(
+            *(self._retrieve(text, top_k) for text in query_texts),
         )
-
-        # The same underlying chunk can surface from more than one query
-        # (and / or under repeated chunks when RAGFlow splits a document),
-        # so it is deduplicated by its stable ``ragflow_chunk_id``.  The
-        # best (highest-similarity) representation of each chunk is kept.
         best: dict[tuple[str, str], VectorSearchResult] = {}
-        # Per-document 0-based ordinal, so ``Chunk.chunk_index`` stays a
-        # meaningful index within its source document rather than a rank.
-        document_offsets: dict[str, int] = defaultdict(int)
-        for query_results in results_per_query:
-            for chunk in query_results:
-                score = chunk.similarity
-                threshold = (
-                    self._config.similarity_threshold
-                    if score_threshold is None
-                    else score_threshold
-                )
-                if threshold is not None and score < threshold:
+        chunk_indexes: dict[tuple[str, str], int] = {}
+        next_index: defaultdict[str, int] = defaultdict(int)
+        for data in responses:
+            chunks = data.get("chunks", [])
+            if not isinstance(chunks, list):
+                raise RAGFlowError("RAGFlow retrieval chunks are invalid.")
+            for raw in chunks:
+                if not isinstance(raw, dict):
                     continue
-                document_id = chunk.document_id
-                # RAGFlow always identifies the source document of a hit;
-                # without it the chunk cannot be cited or deleted, so drop it.
-                if not document_id:
+                document_id = str(raw.get("document_id") or "")
+                chunk_id = str(raw.get("id") or "")
+                if not document_id or not chunk_id:
                     continue
-                chunk_data = chunk.id
-                # ``document_offsets`` keeps a running 0, 1, 2, ... ordinal
-                # per document so ``chunk_index`` is a position within its
-                # document rather than a retrieval rank.
-                chunk_index = document_offsets[document_id]
-                document_offsets[document_id] += 1
-                agent_chunk = Chunk(
-                    content=TextBlock(text=str(chunk.content)),
-                    source=chunk.document_name,
-                    chunk_index=chunk_index,
-                    total_chunks=0,  # RAGFlow does not report a total
-                    metadata={"ragflow_chunk_id": chunk_data},
+                score = float(raw.get("similarity") or 0.0)
+                if score_threshold is not None and score < score_threshold:
+                    continue
+                key = (document_id, chunk_id)
+                if key not in chunk_indexes:
+                    chunk_indexes[key] = next_index[document_id]
+                    next_index[document_id] += 1
+                metadata = {
+                    "ragflow_chunk_id": chunk_id,
+                    **{
+                        field: raw[field]
+                        for field in (
+                            "vector_similarity",
+                            "term_similarity",
+                            "highlight",
+                            "positions",
+                            "important_keywords",
+                        )
+                        if field in raw
+                    },
+                }
+                result = VectorSearchResult(
+                    score=score,
+                    document_id=document_id,
+                    chunk=Chunk(
+                        content=TextBlock(text=str(raw.get("content") or "")),
+                        source=str(
+                            raw.get("document_keyword")
+                            or raw.get("docnm_kwd")
+                            or "",
+                        ),
+                        chunk_index=chunk_indexes[key],
+                        total_chunks=0,
+                        metadata=metadata,
+                    ),
                 )
-                key = (document_id, chunk_data)
-                if key not in best or score > best[key].score:
-                    best[key] = VectorSearchResult(
-                        score=score,
-                        document_id=document_id,
-                        chunk=agent_chunk,
-                    )
-
-        merged = sorted(
+                if key not in best or result.score > best[key].score:
+                    best[key] = result
+        return sorted(
             best.values(),
             key=lambda result: result.score,
             reverse=True,
-        )
-        return merged[:top_k] if top_k > 0 else merged
+        )[:top_k]
 
-    # ------------------------------------------------------------------
-    # Document management
-    # ------------------------------------------------------------------
+    async def insert_document(
+        self,
+        blob: bytes,
+        filename: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Upload a source file and start RAGFlow's asynchronous parser.
 
-    async def insert_document(self, blob: bytes, filename: str) -> str:
-        """Upload a raw document to the bound RAGFlow dataset.
-
-        RAGFlow parses, chunks, and indexes the document on the server
-        side, so — unlike
-        :meth:`~agentscope.rag.KnowledgeBase.insert_document` — this takes
-        raw file bytes rather than pre-embedded ``Chunk`` objects.
-
-        .. note:: Indexing is **asynchronous**.  This method uploads the
-            document and asks RAGFlow to parse it (via
-            ``async_parse_documents``), then returns immediately; the
-            document becomes searchable only after RAGFlow finishes
-            parsing, which may lag behind this call.  Poll
-            :meth:`list_documents` (e.g. on ``parse_progress`` / ``run``)
-            to wait for readiness before searching.
-
-        Args:
-            blob (`bytes`):
-                The raw bytes of the document (PDF, DOCX, TXT, ...).
-            filename (`str`):
-                The display filename RAGFlow stores the document under.
-                RAGFlow infers the parser from its extension.
-
-        Returns:
-            `str`:
-                The RAGFlow document id assigned to the uploaded document.
+        The returned document is not necessarily searchable yet.  Poll
+        :meth:`list_documents` until its ``metadata['run']`` becomes
+        ``'DONE'`` before requiring read-after-write retrieval.
         """
-        dataset = await self._get_dataset()
-        documents = await asyncio.to_thread(
-            dataset.upload_documents,
-            [{"display_name": filename, "blob": blob}],
+        dataset_id = quote(self._config.dataset_id, safe="")
+        data = await self._request(
+            "POST",
+            f"datasets/{dataset_id}/documents",
+            files={"file": (filename, blob, "application/octet-stream")},
         )
-        if not documents:
-            raise RuntimeError(
-                f"RAGFlow did not return a document after uploading "
-                f"{filename!r} to dataset {self._config.dataset_id!r}.",
+        if not isinstance(data, list) or not data:
+            raise RAGFlowError("RAGFlow did not return the uploaded document.")
+        document = data[0]
+        if not isinstance(document, dict) or not document.get("id"):
+            raise RAGFlowError(
+                "RAGFlow returned an invalid uploaded document.",
             )
-        document = documents[0]
-        await asyncio.to_thread(
-            dataset.async_parse_documents,
-            [document.id],
+        document_id = str(document["id"])
+        escaped_document_id = quote(document_id, safe="")
+        if metadata:
+            await self._request(
+                "PATCH",
+                f"datasets/{dataset_id}/documents/{escaped_document_id}",
+                json={"meta_fields": metadata},
+            )
+        await self._request(
+            "POST",
+            f"datasets/{dataset_id}/chunks",
+            json={"document_ids": [document_id]},
         )
-        return document.id
+        return document_id
 
     async def delete_document(self, document_id: str) -> None:
-        """Remove one document from the bound RAGFlow dataset.
-
-        Args:
-            document_id (`str`):
-                The RAGFlow document id to delete.
-        """
-        dataset = await self._get_dataset()
-        await asyncio.to_thread(
-            dataset.delete_documents,
-            ids=[document_id],
+        """Delete one document from the RAGFlow dataset."""
+        dataset_id = quote(self._config.dataset_id, safe="")
+        await self._request(
+            "DELETE",
+            f"datasets/{dataset_id}/documents",
+            json={"ids": [document_id]},
         )
 
     async def list_documents(self) -> list[DocumentSummary]:
-        """List all documents in the bound RAGFlow dataset.
-
-        Returns:
-            `list[DocumentSummary]`:
-                One summary per document in the dataset, in server-defined
-                order.
-        """
-        dataset = await self._get_dataset()
-        documents = await asyncio.to_thread(
-            dataset.list_documents,
-            id=None,
-            page=1,
-            page_size=30,
-        )
-        summaries: list[DocumentSummary] = []
-        for document in documents:
-            summaries.append(
-                DocumentSummary(
-                    document_id=document.id,
-                    source=document.name,
-                    chunk_count=document.chunk_count,
-                    metadata={
-                        "parse_progress": document.progress,
-                        "run": document.run,
-                        "size": document.size,
-                    },
-                ),
+        """List every document and expose RAGFlow's processing status."""
+        dataset_id = quote(self._config.dataset_id, safe="")
+        page = 1
+        page_size = 100
+        raw_documents: list[dict[str, Any]] = []
+        while True:
+            data = await self._request(
+                "GET",
+                f"datasets/{dataset_id}/documents",
+                params={"page": page, "page_size": page_size},
             )
-        return summaries
+            if not isinstance(data, dict) or not isinstance(
+                data.get("docs"),
+                list,
+            ):
+                raise RAGFlowError("RAGFlow document listing is invalid.")
+            batch = [item for item in data["docs"] if isinstance(item, dict)]
+            raw_documents.extend(batch)
+            if len(batch) < page_size:
+                break
+            page += 1
+
+        return [
+            DocumentSummary(
+                document_id=str(document.get("id") or ""),
+                source=str(
+                    document.get("name") or document.get("location") or "",
+                ),
+                chunk_count=int(document.get("chunk_count") or 0),
+                metadata={
+                    field: document[field]
+                    for field in (
+                        "run",
+                        "progress",
+                        "progress_msg",
+                        "size",
+                        "token_count",
+                        "meta_fields",
+                    )
+                    if field in document
+                },
+            )
+            for document in raw_documents
+            if document.get("id")
+        ]
 
     async def list_chunks(
         self,
@@ -476,44 +377,66 @@ class RAGFlowKnowledge:
         offset: int = 0,
         limit: int = 30,
     ) -> list[Chunk]:
-        """List one document's chunks as indexed by RAGFlow.
-
-        RAGFlow does not expose a dense ``chunk_index``/``total_chunks``
-        sequence, so ``chunk_index`` is the 0-based ordinal of the chunk
-        within the pages returned so far and ``total_chunks`` is ``0``.
-        The RAGFlow chunk id is preserved in
-        ``metadata["ragflow_chunk_id"]``.
-
-        Args:
-            document_id (`str`):
-                The RAGFlow document id whose chunks should be listed.
-            offset (`int`, defaults to ``0``):
-                Number of leading chunks to skip.
-            limit (`int`, defaults to ``30``):
-                Maximum number of chunks to return.
-
-        Returns:
-            `list[Chunk]`:
-                At most ``limit`` chunks.
-        """
-        document = await self._get_document(document_id)
-        # RAGFlow pages from 1.
-        page = offset // limit + 1 if limit > 0 else 1
-        chunk_data = await asyncio.to_thread(
-            document.list_chunks,
-            page=page,
-            page_size=limit,
-        )
-        chunks: list[Chunk] = []
-        base_index = (page - 1) * limit
-        for index, chunk in enumerate(chunk_data):
-            chunks.append(
-                Chunk(
-                    content=TextBlock(text=str(chunk.content)),
-                    source=chunk.document_name,
-                    chunk_index=base_index + index,
-                    total_chunks=0,
-                    metadata={"ragflow_chunk_id": chunk.id},
+        """List a page window of one document's RAGFlow chunks."""
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        if limit <= 0:
+            return []
+        dataset_id = quote(self._config.dataset_id, safe="")
+        escaped_document_id = quote(document_id, safe="")
+        target = offset + limit
+        page = 1
+        page_size = min(100, target)
+        raw_chunks: list[dict[str, Any]] = []
+        total = 0
+        source = ""
+        while len(raw_chunks) < target:
+            data = await self._request(
+                "GET",
+                (
+                    f"datasets/{dataset_id}/documents/"
+                    f"{escaped_document_id}/chunks"
                 ),
+                params={"page": page, "page_size": page_size},
             )
-        return chunks
+            if not isinstance(data, dict) or not isinstance(
+                data.get("chunks"),
+                list,
+            ):
+                raise RAGFlowError("RAGFlow chunk listing is invalid.")
+            batch = [item for item in data["chunks"] if isinstance(item, dict)]
+            raw_chunks.extend(batch)
+            total = int(data.get("total") or len(raw_chunks))
+            document = data.get("doc")
+            if isinstance(document, dict):
+                source = str(
+                    document.get("name") or document.get("location") or source,
+                )
+            if len(batch) < page_size or len(raw_chunks) >= total:
+                break
+            page += 1
+
+        return [
+            Chunk(
+                content=TextBlock(text=str(raw.get("content") or "")),
+                source=str(raw.get("docnm_kwd") or source),
+                chunk_index=index,
+                total_chunks=total,
+                metadata={
+                    "ragflow_chunk_id": str(raw.get("id") or ""),
+                    **{
+                        field: raw[field]
+                        for field in (
+                            "available",
+                            "positions",
+                            "important_keywords",
+                        )
+                        if field in raw
+                    },
+                },
+            )
+            for index, raw in enumerate(
+                raw_chunks[offset:target],
+                start=offset,
+            )
+        ]

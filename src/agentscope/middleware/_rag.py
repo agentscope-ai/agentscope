@@ -66,7 +66,7 @@ from ..tool import ParamsBase, ToolBase, ToolChunk
 if TYPE_CHECKING:
     from ..agent import Agent
     from ..model import ChatModelBase
-    from ..rag import KnowledgeBase, VectorSearchResult
+    from ..rag import KnowledgeBaseBase, VectorSearchResult
 
 
 _DEFAULT_HINT_TEMPLATE = (
@@ -147,7 +147,7 @@ class _SearchKnowledgeTool(ToolBase):
 
     def __init__(
         self,
-        knowledge_bases: list["KnowledgeBase"],
+        knowledge_bases: list["KnowledgeBaseBase"],
         top_k: int,
         score_threshold: float | None,
         rerank_model: "ChatModelBase | None" = None,
@@ -157,7 +157,7 @@ class _SearchKnowledgeTool(ToolBase):
         """Initialize the search tool.
 
         Args:
-            knowledge_bases (`list[KnowledgeBase]`):
+            knowledge_bases (`list[KnowledgeBaseBase]`):
                 The knowledge bases the agent may query.
             top_k (`int`):
                 Maximum number of chunks returned per call, after
@@ -349,7 +349,7 @@ class _SearchKnowledgeTool(ToolBase):
 
 
 async def _search_across(
-    knowledge_bases: Sequence["KnowledgeBase"],
+    knowledge_bases: Sequence["KnowledgeBaseBase"],
     queries: Sequence[str | TextBlock | DataBlock],
     top_k: int,
     score_threshold: float | None,
@@ -376,7 +376,7 @@ async def _search_across(
         :meth:`KnowledgeBase.search` already returns ordered results.
 
     Args:
-        knowledge_bases (`list[KnowledgeBase]`):
+        knowledge_bases (`list[KnowledgeBaseBase]`):
             The knowledge bases to query.
         queries (`list[str | TextBlock | DataBlock]`):
             The query inputs.
@@ -799,14 +799,14 @@ class RAGMiddleware(MiddlewareBase):
 
     def __init__(
         self,
-        knowledge_bases: list["KnowledgeBase"],
+        knowledge_bases: list["KnowledgeBaseBase"],
         parameters: "RAGMiddleware.Parameters | None" = None,
         rerank_model: "ChatModelBase | None" = None,
     ) -> None:
         """Initialize the RAG middleware.
 
         Args:
-            knowledge_bases (`list[KnowledgeBase]`):
+            knowledge_bases (`list[KnowledgeBaseBase]`):
                 The knowledge bases this agent searches.
             parameters (`RAGMiddleware.Parameters | None`, optional):
                 Search-time knobs (mode, top_k, score threshold, hint

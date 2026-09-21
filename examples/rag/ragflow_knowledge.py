@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """RAGFlow-backed knowledge — no parse/chunk/embed pipeline on your side.
 
-:class:`~agentscope.rag.RAGFlowKnowledge` is the knowledge-layer
+:class:`~agentscope.rag.RAGFlowKnowledgeBase` is the knowledge-layer
 integration for [RAGFlow](https://ragflow.io/), a managed end-to-end RAG
 pipeline.  Unlike :class:`~agentscope.rag.KnowledgeBase`, you do **not**
 bring your own parser, chunker, embedding model, or vector store:
@@ -25,7 +25,7 @@ import asyncio
 import os
 
 from agentscope.message import TextBlock
-from agentscope.rag import RAGFlowConfig, RAGFlowKnowledge
+from agentscope.rag import RAGFlowConfig, RAGFlowKnowledgeBase
 
 
 # RAGFlow document parse states that mean "finished" (or can never finish).
@@ -33,7 +33,7 @@ _TERMINAL_RUN = {"DONE", "FAIL", "CANCEL"}
 
 
 async def wait_until_indexed(
-    knowledge: RAGFlowKnowledge,
+    knowledge: RAGFlowKnowledgeBase,
     document_id: str,
     timeout_sec: float = 120.0,
     poll_interval_sec: float = 3.0,
@@ -46,7 +46,7 @@ async def wait_until_indexed(
     should wait for the parse to complete.
 
     Args:
-        knowledge (`RAGFlowKnowledge`): The handle used to poll.
+        knowledge (`RAGFlowKnowledgeBase`): The handle used to poll.
         document_id (`str`): The document to wait on.
         timeout_sec (`float`): Give up after this many seconds.
         poll_interval_sec (`float`): Seconds between polls.
@@ -60,7 +60,7 @@ async def wait_until_indexed(
             if str(run).upper() in _TERMINAL_RUN:
                 return
             # ``progress`` reaches 1.0 (100%) on completion.
-            progress = summary.metadata.get("parse_progress", 0.0)
+            progress = summary.metadata.get("progress", 0.0)
             if float(progress) >= 1.0:
                 return
         await asyncio.sleep(poll_interval_sec)
@@ -72,11 +72,11 @@ async def wait_until_indexed(
 
 
 async def search_and_print(
-    knowledge: RAGFlowKnowledge,
+    knowledge: RAGFlowKnowledgeBase,
     query: str,
     top_k: int = 3,
 ) -> None:
-    """Run a search via the :class:`RAGFlowKnowledge` handle and print hits."""
+    """Search via :class:`RAGFlowKnowledgeBase` and print the hits."""
     results = await knowledge.search([query], top_k=top_k)
 
     print(f"\nQuery: {query!r}")
@@ -112,14 +112,14 @@ async def main() -> None:
             "http://localhost:9380).",
         )
 
-    knowledge = RAGFlowKnowledge(
+    knowledge = RAGFlowKnowledgeBase(
         name="demo-kb",
         description="A toy RAGFlow corpus on cats.",
         config=RAGFlowConfig(
             api_key=api_key,
             base_url=base_url,
             dataset_id=dataset_id,
-            top_k=10,
+            knn_top_k=10,
             similarity_threshold=0.2,
         ),
     )
@@ -146,6 +146,7 @@ async def main() -> None:
 
     # Uncomment to remove the uploaded document.
     # await knowledge.delete_document(document_id)
+    await knowledge.aclose()
 
 
 if __name__ == "__main__":

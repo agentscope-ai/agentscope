@@ -25,8 +25,12 @@ from ._vdb import (
     QdrantStore,
     MongoDBStore,
 )
-from ._knowledge import KnowledgeBase
-from ._ragflow import RAGFlowConfig, RAGFlowKnowledge
+from ._knowledge import KnowledgeBase, KnowledgeBaseBase
+from ._ragflow import (
+    RAGFlowConfig,
+    RAGFlowError,
+    RAGFlowKnowledgeBase,
+)
 
 __all__ = [
     "ApproxTokenChunker",
@@ -48,7 +52,9 @@ __all__ = [
     "VectorSearchResult",
     "QdrantStore",
     "KnowledgeBase",
+    "KnowledgeBaseBase",
     "MongoDBStore",
     "RAGFlowConfig",
-    "RAGFlowKnowledge",
+    "RAGFlowError",
+    "RAGFlowKnowledgeBase",
 ]
