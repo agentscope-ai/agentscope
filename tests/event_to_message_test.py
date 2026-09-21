@@ -22,6 +22,7 @@ Coverage
 * Wrong reply_id → event silently skipped
 * Missing block  → warning, no crash
 """
+import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -54,6 +55,9 @@ from agentscope.event import (
     UserConfirmResultEvent,
 )
 from agentscope.message import (
+    AssistantMsg,
+    Base64Source,
+    DataBlock,
     Msg,
     ToolCallBlock,
     ToolResultBlock,
@@ -1055,6 +1059,44 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             original_dump,
             msg="Msg must not change when delta targets a missing block",
         )
+
+    async def test_interleaved_base64_deltas_accumulate_per_block(
+        self,
+    ) -> None:
+        """Interleaved Base64 streams keep independent accumulator state."""
+        msg = AssistantMsg(id="reply", name="agent", content=[])
+        for block_id in ("left", "right"):
+            msg.append_event(
+                DataBlockStartEvent(
+                    reply_id="reply",
+                    block_id=block_id,
+                    media_type="application/octet-stream",
+                ),
+            )
+
+        expected = {"left": bytearray(), "right": bytearray()}
+        for index in range(100):
+            for block_id, offset in (("left", 0), ("right", 100)):
+                value = bytes([(index + offset) % 251]) * (index % 5 + 1)
+                expected[block_id].extend(value)
+                msg.append_event(
+                    DataBlockDeltaEvent(
+                        reply_id="reply",
+                        block_id=block_id,
+                        data=base64.b64encode(value).decode("ascii"),
+                        media_type="application/octet-stream",
+                    ),
+                )
+
+        for block_id, value in expected.items():
+            block = next(
+                block
+                for block in msg.content
+                if isinstance(block, DataBlock) and block.id == block_id
+            )
+            self.assertIsInstance(block, DataBlock)
+            self.assertIsInstance(block.source, Base64Source)
+            self.assertEqual(base64.b64decode(block.source.data), value)
 
     async def asyncTearDown(self) -> None:
         """No teardown needed."""

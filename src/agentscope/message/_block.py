@@ -1,11 +1,49 @@
 # -*- coding: utf-8 -*-
 """The content blocks of messages."""
+import base64
+import binascii
 from enum import StrEnum
 from typing import Literal, List, TypeAlias, Any
-from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
+from pydantic import (
+    BaseModel,
+    Field,
+    AnyUrl,
+    field_serializer,
+    ConfigDict,
+    PrivateAttr,
+)
 
 from .._utils._common import _generate_id, _generate_timestamp
 from ..permission import PermissionRule
+
+
+class _Base64Accumulator:
+    """Incrementally encode concatenated independently encoded chunks."""
+
+    def __init__(self, data: str, validate: bool) -> None:
+        decoded = base64.b64decode(data, validate=validate)
+        prefix_end = len(decoded) - len(decoded) % 3
+        self._prefix = base64.b64encode(decoded[:prefix_end]).decode("ascii")
+        self._tail = decoded[prefix_end:]
+        self.value = self._materialize()
+
+    def _materialize(self) -> str:
+        """Return the complete canonical Base64 value."""
+        if not self._tail:
+            return self._prefix
+        return self._prefix + base64.b64encode(self._tail).decode("ascii")
+
+    def append(self, data: str, validate: bool) -> str:
+        """Decode only the new chunk and append its canonical encoding."""
+        decoded = self._tail + base64.b64decode(data, validate=validate)
+        prefix_end = len(decoded) - len(decoded) % 3
+        if prefix_end:
+            self._prefix += base64.b64encode(
+                decoded[:prefix_end],
+            ).decode("ascii")
+        self._tail = decoded[prefix_end:]
+        self.value = self._materialize()
+        return self.value
 
 
 class TextBlock(BaseModel):
@@ -62,6 +100,35 @@ class Base64Source(BaseModel):
     """The base64-encoded data."""
     media_type: str
     """The media type of the data, e.g., 'image/png', 'audio/mpeg', etc."""
+
+    _accumulator: _Base64Accumulator | None = PrivateAttr(default=None)
+
+
+# The accumulator is private model state intentionally managed only here.
+# pylint: disable=protected-access
+def _append_base64_chunk(
+    source: Base64Source,
+    data: str,
+    *,
+    validate: bool = False,
+    fallback_to_concat: bool = False,
+) -> None:
+    """Append an independently encoded Base64 chunk to a source."""
+    try:
+        if (
+            source._accumulator is None
+            or source._accumulator.value != source.data
+        ):
+            source._accumulator = _Base64Accumulator(source.data, validate)
+        source.data = source._accumulator.append(data, validate)
+    except (binascii.Error, ValueError):
+        source._accumulator = None
+        if not fallback_to_concat:
+            raise
+        source.data += data
+
+
+# pylint: enable=protected-access
 
 
 class URLSource(BaseModel):

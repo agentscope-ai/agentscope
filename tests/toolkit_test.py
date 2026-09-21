@@ -6,6 +6,7 @@ import json
 from typing import Any, AsyncGenerator, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 
 from pydantic import BaseModel, Field
@@ -489,6 +490,91 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             base64.b64decode(merged.source.data),
             b"helloworld",
         )
+
+    async def test_tool_response_base64_cache_is_discardable(self) -> None:
+        """The Base64 cache rebuilds after copies and external mutation."""
+        response = ToolResponse()
+
+        for value in (b"first", b"second"):
+            response.append_chunk(
+                ToolChunk(
+                    content=[
+                        DataBlock(
+                            id="data",
+                            source=Base64Source(
+                                data=base64.b64encode(value).decode("ascii"),
+                                media_type="application/octet-stream",
+                            ),
+                        ),
+                    ],
+                ),
+            )
+
+        copied = response.model_copy(deep=True)
+        restored = ToolResponse.model_validate(response.model_dump())
+        for candidate in (response, copied, restored):
+            block = candidate.content[0]
+            self.assertIsInstance(block, DataBlock)
+            self.assertIsInstance(block.source, Base64Source)
+            block.source.data = base64.b64encode(b"changed").decode("ascii")
+            candidate.append_chunk(
+                ToolChunk(
+                    content=[
+                        DataBlock(
+                            id="data",
+                            source=Base64Source(
+                                data=base64.b64encode(b"tail").decode("ascii"),
+                                media_type="application/octet-stream",
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            self.assertEqual(
+                base64.b64decode(block.source.data),
+                b"changedtail",
+            )
+
+    async def test_tool_response_accumulates_long_base64_stream(self) -> None:
+        """Many independently padded chunks retain their byte ordering."""
+        response = ToolResponse()
+        expected = bytearray()
+        decode = base64.b64decode
+        largest_chunk = 0
+
+        with patch(
+            "agentscope.message._block.base64.b64decode",
+            wraps=decode,
+        ) as decode_mock:
+            for index in range(500):
+                value = bytes([index % 251]) * (index % 7 + 1)
+                expected.extend(value)
+                encoded = base64.b64encode(value).decode("ascii")
+                largest_chunk = max(largest_chunk, len(encoded))
+                response.append_chunk(
+                    ToolChunk(
+                        content=[
+                            DataBlock(
+                                id="data",
+                                source=Base64Source(
+                                    data=encoded,
+                                    media_type="application/octet-stream",
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+
+        self.assertTrue(decode_mock.called)
+        self.assertLessEqual(
+            max(len(call.args[0]) for call in decode_mock.call_args_list),
+            largest_chunk,
+        )
+
+        block = response.content[0]
+        self.assertIsInstance(block, DataBlock)
+        self.assertIsInstance(block.source, Base64Source)
+        self.assertEqual(base64.b64decode(block.source.data), expected)
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):

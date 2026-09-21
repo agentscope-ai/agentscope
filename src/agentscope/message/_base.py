@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
-import base64
 from datetime import datetime
-from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
+from typing import (
+    Literal,
+    List,
+    overload,
+    Sequence,
+    Self,
+    TYPE_CHECKING,
+    Any,
+    cast,
+)
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,6 +28,7 @@ from ._block import (
     ToolResultState,
     ContentBlock,
     ContentBlockTypes,
+    _append_base64_chunk,
 )
 from ..types import ReplyFinishedReason, ErrorInfo
 from .._logging import logger
@@ -339,17 +348,12 @@ class Msg(BaseModel):
                     )
                 elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
                     # Each delta is an independently base64-encoded chunk
-                    # (with its own padding); naive string concat would
-                    # corrupt the byte stream. Decode, concat bytes, re-encode.
-                    existing = (
-                        base64.b64decode(block.source.data)
-                        if block.source.data
-                        else b""
+                    # (with its own padding), so append its decoded bytes
+                    # through the source's incremental encoder.
+                    _append_base64_chunk(
+                        cast(Base64Source, cast(DataBlock, block).source),
+                        event.data,
                     )
-                    incoming = base64.b64decode(event.data)
-                    block.source.data = base64.b64encode(
-                        existing + incoming,
-                    ).decode("ascii")
                 elif event.type == EventType.DATA_BLOCK_END:
                     block.finished_at = event.created_at
 
