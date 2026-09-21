@@ -358,6 +358,10 @@ class InMemoryMessageBus(
     # Mode E — distributed lock (process-local asyncio.Lock)
     # ------------------------------------------------------------------
 
+    # Poll interval while waiting behind a live try_lock() claim. Same
+    # value and name as the Redis bus.
+    _LOCK_RETRY_DELAY_SECS = 0.1
+
     @asynccontextmanager
     async def acquire_lock(
         self,
@@ -381,12 +385,21 @@ class InMemoryMessageBus(
             `None`: while the lock is held.
         """
         lock = self._locks[key]
-        async with lock:
-            self._lock_holders[key] = math.inf
-            try:
-                yield
-            finally:
-                self._lock_holders.pop(key, None)
+        while True:
+            await lock.acquire()
+            # A live try_lock() claim on the same key must keep us out, the
+            # way the Redis bus does by putting both behind one SET NX key.
+            # Back off until the claim is released or its lease expires.
+            if self._lock_holders.get(key, 0.0) <= time.monotonic():
+                break
+            lock.release()
+            await asyncio.sleep(self._LOCK_RETRY_DELAY_SECS)
+        self._lock_holders[key] = math.inf
+        try:
+            yield
+        finally:
+            self._lock_holders.pop(key, None)
+            lock.release()
 
     async def is_locked(self, key: str) -> bool:
         """Return whether ``key`` currently holds a lock.
@@ -403,7 +416,12 @@ class InMemoryMessageBus(
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if self._lock_holders.get(key, 0.0) > time.monotonic():
+        # Refuse while acquire_lock() holds the key too, so the two Mode E
+        # entry points are mutually exclusive like they are on Redis.
+        if (
+            self._locks[key].locked()
+            or self._lock_holders.get(key, 0.0) > time.monotonic()
+        ):
             return False
         # The lease keeps a crashed holder from blocking the key
         # forever, the contract the Redis bus gets from SET NX EX.

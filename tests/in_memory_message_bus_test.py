@@ -323,6 +323,34 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
                 self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
             self.assertFalse(await self.bus.is_locked("k"))
 
+    async def test_acquire_lock_waits_behind_try_lock_claim(self) -> None:
+        """``acquire_lock`` must not enter while a ``try_lock`` claim on the
+        same key is live; both are Mode E entry points on one key, as on
+        the Redis bus. It enters once the claim is released."""
+        order: list[str] = []
+
+        async def holder() -> None:
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+            order.append("claim")
+            await asyncio.sleep(0.05)
+            order.append("unlock")
+            await self.bus.unlock("k")
+
+        async def challenger() -> None:
+            await asyncio.sleep(0.01)
+            async with self.bus.acquire_lock("k"):
+                order.append("acquired")
+
+        await asyncio.gather(holder(), challenger())
+        self.assertEqual(order, ["claim", "unlock", "acquired"])
+
+    async def test_try_lock_is_refused_while_acquire_lock_holds(self) -> None:
+        """The reverse direction: a ``try_lock`` claim on a key currently
+        held by ``acquire_lock`` is refused, and succeeds after release."""
+        async with self.bus.acquire_lock("k"):
+            self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+
 
 class TestRegistryPrimitive(IsolatedAsyncioTestCase):
     """Mode F — ``registry_*`` hash-keyed namespace operations."""
