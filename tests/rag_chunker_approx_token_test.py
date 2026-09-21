@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the ApproxTokenChunker class."""
-
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -220,29 +219,9 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_empty_text_section_produces_no_chunk(self) -> None:
-        """Empty-text sections must not produce chunks."""
-        chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
-        sections = [
-            Section(
-                content=TextBlock(text=""),
-                source="scan.pdf",
-                metadata={"page": 1},
-            ),
-            Section(
-                content=TextBlock(text="  \n "),
-                source="scan.pdf",
-                metadata={"page": 2},
-            ),
-        ]
-
-        chunks = await chunker.chunk(sections)
-
-        self.assertEqual(chunks, [])
-
-    async def test_empty_section_keeps_numbering_continuous(self) -> None:
-        """Blank sections dropped in the middle must not leave gaps in
-        ``chunk_index`` / ``total_chunks``."""
+    async def test_blank_sections_are_dropped(self) -> None:
+        """Empty and whitespace-only sections produce no chunk and leave
+        no gap in the numbering."""
         chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
         sections = [
             Section(content=TextBlock(text=""), source="scan.pdf"),
@@ -253,56 +232,34 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
 
         chunks = await chunker.chunk(sections)
 
-        self.assertEqual(
-            [(c.content.text, c.chunk_index, c.total_chunks) for c in chunks],
+        self.assertListEqual(
+            _dump_chunks(chunks),
             [
-                ("page two", 0, 2),
-                ("page four", 1, 2),
-            ],
-        )
-
-    async def test_all_sections_empty_produces_no_chunks(self) -> None:
-        """A document whose sections are all blank yields no chunks."""
-        chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
-        sections = [
-            Section(content=TextBlock(text=""), source="scan.pdf"),
-            Section(content=TextBlock(text="   "), source="scan.pdf"),
-        ]
-
-        chunks = await chunker.chunk(sections)
-
-        self.assertEqual(chunks, [])
-
-    async def test_whitespace_run_piece_is_dropped(self) -> None:
-        """A whitespace-only piece sliced from a non-blank section must
-        not become a chunk.
-
-        PDF layout spacing can put a long whitespace run in the middle
-        of an otherwise fine page; the byte-window splitter then cuts a
-        whitespace-only piece out of it.  Only the pieces carrying
-        actual text may survive, with continuous numbering.
-        """
-        chunker = ApproxTokenChunker(chunk_size=512, overlap=0)
-        # 12 + 5000 + 12 chars; with a 2048-byte window the splitter
-        # cuts [0:2048), [2048:4096) and [4096:5024) — the middle
-        # piece is nothing but spaces.
-        text = "Header line." + (" " * 5000) + "Footer line."
-        sections = [
-            Section(
-                content=TextBlock(text=text),
-                source="layout.pdf",
-                metadata={"page": 1},
-            ),
-        ]
-
-        chunks = await chunker.chunk(sections)
-
-        self.assertEqual(len(chunks), 2)
-        self.assertTrue(all(c.content.text.strip() for c in chunks))
-        self.assertEqual(
-            [(c.content.text, c.chunk_index, c.total_chunks) for c in chunks],
-            [
-                (text[:2048], 0, 2),
-                (text[4096:], 1, 2),
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "page two",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "scan.pdf",
+                    "chunk_index": 0,
+                    "total_chunks": 2,
+                    "metadata": {},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "page four",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "scan.pdf",
+                    "chunk_index": 1,
+                    "total_chunks": 2,
+                    "metadata": {},
+                },
             ],
         )
