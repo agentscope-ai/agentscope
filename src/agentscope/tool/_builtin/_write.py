@@ -304,8 +304,10 @@ Usage:
             content.encode("utf-8"),
         )
 
-        # Count lines in content
-        line_count = len(content.split("\n"))
+        # Count lines in content. ``splitlines`` matches the numbering the
+        # ``Read`` tool reports and the diff below, so content ending in a
+        # newline is not counted as one line more than it has.
+        line_count = len(content.splitlines())
 
         # Build the unified diff between previous and new content. When the
         # file is brand new, ``unified_diff`` over an empty old side naturally
