@@ -147,8 +147,6 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             retry_delay (`float`, defaults to ``1.0``):
                 Seconds between retry attempts.
         """
-        self._is_multimodal: bool = model.startswith(_MULTIMODAL_PREFIXES)
-
         super().__init__(
             credential=credential,
             model=model,
@@ -159,12 +157,12 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
-        self.supports_multimodal = self._is_multimodal
+        self.supports_multimodal = model.startswith(_MULTIMODAL_PREFIXES)
         self.api_key: str = credential.api_key.get_secret_value()
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
         # Resolve multimodal constraints.
-        if self._is_multimodal:
+        if self.supports_multimodal:
             self._limits = _MODEL_LIMITS.get(model, _DEFAULT_LIMITS)
 
     @classmethod
@@ -210,7 +208,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             for item in inputs
         ]
 
-        if not self._is_multimodal:
+        if not self.supports_multimodal:
             # Text mode — use base class batching.
             return await super().__call__(normalized, **kwargs)
 
@@ -316,7 +314,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         Returns:
             `EmbeddingResponse`: Embedding vectors and usage info.
         """
-        if self._is_multimodal:
+        if self.supports_multimodal:
             return await self._call_multimodal(inputs, **kwargs)
         return await self._call_text(inputs, **kwargs)
 
