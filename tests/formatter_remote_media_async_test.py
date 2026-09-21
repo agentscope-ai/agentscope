@@ -26,7 +26,6 @@ class _Response:
         """Model a successful response."""
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("formatter_cls", "media_type"),
     [
@@ -38,35 +37,43 @@ class _Response:
         (OllamaChatFormatter, "image/png"),
     ],
 )
-async def test_remote_media_download_yields_to_event_loop(
+def test_remote_media_download_yields_to_event_loop(
     monkeypatch: pytest.MonkeyPatch,
     formatter_cls: type,
     media_type: str,
 ) -> None:
     """A callback scheduled during the HTTP wait runs before it returns."""
-    loop = asyncio.get_running_loop()
-    loop_progressed: list[bool] = []
 
-    def _get(*_args: object, **_kwargs: object) -> _Response:
-        progressed = threading.Event()
-        loop.call_soon_threadsafe(progressed.set)
-        loop_progressed.append(progressed.wait(0.5))
-        return _Response()
+    async def _run() -> None:
+        loop = asyncio.get_running_loop()
+        loop_progressed: list[bool] = []
 
-    monkeypatch.setattr("requests.get", _get)
-    message = UserMsg(
-        name="user",
-        content=[
-            DataBlock(
-                source=URLSource(
-                    url="https://example.com/media",
-                    media_type=media_type,
+        def _get(*_args: object, **_kwargs: object) -> _Response:
+            progressed = threading.Event()
+            loop.call_soon_threadsafe(progressed.set)
+            loop_progressed.append(progressed.wait(0.5))
+            return _Response()
+
+        monkeypatch.setattr("requests.get", _get)
+        message = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=URLSource(
+                        url="https://example.com/media",
+                        media_type=media_type,
+                    ),
+                    name=(
+                        "media.pdf"
+                        if media_type == "application/pdf"
+                        else None
+                    ),
                 ),
-                name="media.pdf" if media_type == "application/pdf" else None,
-            ),
-        ],
-    )
+            ],
+        )
 
-    await formatter_cls().format([message])
+        await formatter_cls().format([message])
 
-    assert loop_progressed == [True]
+        assert loop_progressed == [True]
+
+    asyncio.run(_run())
