@@ -93,6 +93,12 @@ class TaskUpdate(_TaskToolBase):
 - **add_blocks**: Mark tasks that cannot start until this one completes
 - **add_blocked_by**: Mark tasks that must complete before this one can start
 
+## Dependency Constraints
+
+- A task cannot block itself
+- Adding an edge must not create a direct or indirect dependency cycle
+- Completed tasks cannot be part of a new blocking relation
+
 ## Status Workflow
 
 Status progresses: `pending` → `in_progress` → `completed`
@@ -180,6 +186,13 @@ Set up task dependencies:
             _agent_state.tasks_context.tasks[index].description = description
 
         existed_ids = [_.id for _ in _agent_state.tasks_context.tasks]
+        # A task completed in this same request must not be introduced
+        # into a new blocking relation either.
+        completing = status == "completed"
+        # Validate each candidate edge against the live graph before
+        # applying it: edges accepted earlier in the same request are
+        # visible to later validations, and invalid candidates are skipped
+        # without affecting the valid ones.
         if add_blocks:
             current_blocks = _agent_state.tasks_context.tasks[index].blocks
             new_blocks = [
@@ -187,14 +200,22 @@ Set up task dependencies:
                 for _ in add_blocks
                 if _ not in current_blocks and _ in existed_ids
             ]
-            if new_blocks:
-                updated_fields.append("add_blocks")
-                for block_id in new_blocks:
+            applied_blocks = False
+            for block_id in new_blocks:
+                if not completing and self._is_valid_block_edge(
+                    task_id,
+                    block_id,
+                    _agent_state,
+                ):
                     self._update_block_relation(
                         task_id,
                         block_id,
                         _agent_state,
                     )
+                    applied_blocks = True
+            # Only report the field when at least one edge was applied.
+            if applied_blocks:
+                updated_fields.append("add_blocks")
 
         if add_blocked_by is not None:
             current_blocked_by = _agent_state.tasks_context.tasks[
@@ -205,14 +226,21 @@ Set up task dependencies:
                 for _ in add_blocked_by
                 if _ not in current_blocked_by and _ in existed_ids
             ]
-            if new_blocked_by:
-                updated_fields.append("add_blocked_by")
-                for blocked_by_id in new_blocked_by:
+            applied_blocked_by = False
+            for blocked_by_id in new_blocked_by:
+                if not completing and self._is_valid_block_edge(
+                    blocked_by_id,
+                    task_id,
+                    _agent_state,
+                ):
                     self._update_block_relation(
                         blocked_by_id,
                         task_id,
                         _agent_state,
                     )
+                    applied_blocked_by = True
+            if applied_blocked_by:
+                updated_fields.append("add_blocked_by")
 
         if status:
             if status == "deleted":
@@ -296,3 +324,60 @@ Set up task dependencies:
 
             if task.id == blocked_by_id and block_id not in task.blocked_by:
                 task.blocked_by.append(block_id)
+
+    @staticmethod
+    def _is_valid_block_edge(
+        block_id: str,
+        blocked_by_id: str,
+        _agent_state: AgentState,
+    ) -> bool:
+        """Check whether a new block relation may be added.
+
+        A candidate edge ``block_id -> blocked_by_id`` is rejected when it
+        makes a task its own prerequisite, introduces a completed task into
+        a new blocking relation, or creates a direct or indirect dependency
+        cycle.
+
+        Args:
+            block_id (`str`):
+                The id of the task that blocks the other task.
+            blocked_by_id (`str`):
+                The id of the task blocked by the task of `block_id`.
+            _agent_state (`AgentState`):
+                The agent state to update.
+
+        Returns:
+            `bool`: `True` if the edge is valid and may be applied.
+        """
+        if block_id == blocked_by_id:
+            # A task cannot be its own prerequisite.
+            return False
+
+        blocks: dict[str, list[str]] = {}
+        for task in _agent_state.tasks_context.tasks:
+            # A completed task is finished, so its retained blocks edges
+            # no longer bind and must not contribute to cycle detection.
+            blocks[task.id] = [] if task.state == "completed" else task.blocks
+            # A completed task is finished, so it must not enter a new
+            # blocking relation as either endpoint.
+            if (
+                task.id in (block_id, blocked_by_id)
+                and task.state == "completed"
+            ):
+                return False
+
+        # The edge closes a cycle when `block_id` is already reachable from
+        # `blocked_by_id` through existing blocks relations.
+        visited: set[str] = set()
+        pending: list[str] = [blocked_by_id]
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            for blocked in blocks[current]:
+                if blocked == block_id:
+                    return False
+                pending.append(blocked)
+
+        return True

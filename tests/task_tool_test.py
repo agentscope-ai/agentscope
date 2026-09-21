@@ -883,6 +883,546 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(tasks_dump, expected)
 
+    async def test_update_rejects_self_dependency(self) -> None:
+        """Test that a task cannot be its own prerequisite."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+
+        result = await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task1_id],
+            add_blocked_by=[task1_id],
+            _agent_state=self.agent_state,
+        )
+
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": "No updates were made to the task "
+                    f"(id={task1_id}). Make sure you provided at least one "
+                    "field to update and the values are correct.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # The task graph is unchanged
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "Task 1",
+                "description": "First task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task1_id,
+                "owner": None,
+                "blocks": [],
+                "blocked_by": [],
+            },
+        ]
+        self.assertEqual(tasks_dump, expected)
+
+    async def test_update_rejects_two_task_cycle(self) -> None:
+        """Test that adding an edge cannot create a direct cycle."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+
+        # Task 1 blocks Task 2
+        await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id],
+            _agent_state=self.agent_state,
+        )
+
+        # Task 2 cannot block Task 1 back
+        result = await self.task_update(
+            task_id=task2_id,
+            add_blocks=[task1_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": "No updates were made to the task "
+                    f"(id={task2_id}). Make sure you provided at least one "
+                    "field to update and the values are correct.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # Task 2 cannot add Task 1 as a blocker either
+        result = await self.task_update(
+            task_id=task2_id,
+            add_blocked_by=[task1_id],
+            _agent_state=self.agent_state,
+        )
+        self.assertDictEqual(result.model_dump(mode="json"), expected_result)
+
+        # The graph still only has the original edge
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "Task 1",
+                "description": "First task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task1_id,
+                "owner": None,
+                "blocks": [task2_id],
+                "blocked_by": [],
+            },
+            {
+                "subject": "Task 2",
+                "description": "Second task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task2_id,
+                "owner": None,
+                "blocks": [],
+                "blocked_by": [task1_id],
+            },
+        ]
+        self.assertEqual(tasks_dump, expected)
+
+    async def test_update_rejects_indirect_cycle(self) -> None:
+        """Test that adding an edge cannot create an indirect cycle."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 3",
+            description="Third task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+        task3_id = self.agent_state.tasks_context.tasks[2].id
+
+        # Task 1 blocks Task 2, Task 2 blocks Task 3
+        await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task2_id,
+            add_blocks=[task3_id],
+            _agent_state=self.agent_state,
+        )
+
+        # Task 3 blocking Task 1 would close the cycle 1 -> 2 -> 3 -> 1
+        result = await self.task_update(
+            task_id=task3_id,
+            add_blocks=[task1_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": "No updates were made to the task "
+                    f"(id={task3_id}). Make sure you provided at least one "
+                    "field to update and the values are correct.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        self.assertEqual(tasks_dump[0]["blocks"], [task2_id])
+        self.assertEqual(tasks_dump[0]["blocked_by"], [])
+        self.assertEqual(tasks_dump[1]["blocks"], [task3_id])
+        self.assertEqual(tasks_dump[1]["blocked_by"], [task1_id])
+        self.assertEqual(tasks_dump[2]["blocks"], [])
+        self.assertEqual(tasks_dump[2]["blocked_by"], [task2_id])
+
+    async def test_update_rejects_completed_prerequisite(self) -> None:
+        """Test that a completed task cannot enter a new blocking relation."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+
+        # Complete Task 1
+        await self.task_update(
+            task_id=task1_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+
+        # Task 2 cannot become blocked by the completed Task 1
+        result = await self.task_update(
+            task_id=task2_id,
+            add_blocked_by=[task1_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": "No updates were made to the task "
+                    f"(id={task2_id}). Make sure you provided at least one "
+                    "field to update and the values are correct.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # The completed Task 1 cannot block Task 2 either
+        result = await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": "No updates were made to the task "
+                    f"(id={task1_id}). Make sure you provided at least one "
+                    "field to update and the values are correct.\n\n"
+                    f"Task completed. "
+                    f"Call TaskList now to find your next available "
+                    f"task or see if your work unblocked others.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        self.assertEqual(tasks_dump[0]["state"], "completed")
+        self.assertEqual(tasks_dump[0]["blocks"], [])
+        self.assertEqual(tasks_dump[1]["blocked_by"], [])
+
+    async def test_update_mixed_valid_and_invalid_edges(self) -> None:
+        """Test valid edges are applied while invalid ones are skipped."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 3",
+            description="Third task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+        task3_id = self.agent_state.tasks_context.tasks[2].id
+
+        # Complete Task 3 so it is an invalid candidate
+        await self.task_update(
+            task_id=task3_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+
+        # Task 1 blocks Task 2 (valid) and the completed Task 3 (invalid)
+        result = await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id, task3_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task1_id}) add_blocks.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # Only the valid edge was applied
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        self.assertEqual(tasks_dump[0]["blocks"], [task2_id])
+        self.assertEqual(tasks_dump[0]["blocked_by"], [])
+        self.assertEqual(tasks_dump[1]["blocked_by"], [task1_id])
+        self.assertEqual(tasks_dump[2]["blocked_by"], [])
+
+    async def test_update_rejects_same_request_cycle(self) -> None:
+        """Test that a cycle within a single request is rejected."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+
+        # Blocking Task 2 while being blocked by it would close a cycle
+        result = await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id],
+            add_blocked_by=[task2_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task1_id}) add_blocks.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # Only the first edge was applied
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        self.assertEqual(tasks_dump[0]["blocks"], [task2_id])
+        self.assertEqual(tasks_dump[0]["blocked_by"], [])
+        self.assertEqual(tasks_dump[1]["blocks"], [])
+        self.assertEqual(tasks_dump[1]["blocked_by"], [task1_id])
+
+    async def test_update_completing_task_skips_new_edges(self) -> None:
+        """Test a task completed in the same request gains no new edges."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+
+        result = await self.task_update(
+            task_id=task1_id,
+            status="completed",
+            add_blocks=[task2_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task1_id}) status.\n\n"
+                    f"Task completed. "
+                    f"Call TaskList now to find your next available "
+                    f"task or see if your work unblocked others.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # The status was applied but no edge was added
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        self.assertEqual(tasks_dump[0]["state"], "completed")
+        self.assertEqual(tasks_dump[0]["blocks"], [])
+        self.assertEqual(tasks_dump[1]["blocked_by"], [])
+
+    async def test_update_completed_chain_allows_new_edge(self) -> None:
+        """Test stale edges of a completed task cannot form a false cycle."""
+        await self.task_create(
+            subject="Task D",
+            description="D blocks A",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task A",
+            description="A blocks B",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task B",
+            description="B blocks E",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task E",
+            description="E tries to block D",
+            _agent_state=self.agent_state,
+        )
+        task_d_id = self.agent_state.tasks_context.tasks[0].id
+        task_a_id = self.agent_state.tasks_context.tasks[1].id
+        task_b_id = self.agent_state.tasks_context.tasks[2].id
+        task_e_id = self.agent_state.tasks_context.tasks[3].id
+
+        # Build the chain D -> A -> B -> E
+        await self.task_update(
+            task_id=task_d_id,
+            add_blocks=[task_a_id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task_a_id,
+            add_blocks=[task_b_id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task_b_id,
+            add_blocks=[task_e_id],
+            _agent_state=self.agent_state,
+        )
+
+        # Completing A severs its edges, but they remain in `blocks` lists
+        await self.task_update(
+            task_id=task_a_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+
+        # E -> D creates no cycle in the live graph and must be accepted
+        result = await self.task_update(
+            task_id=task_e_id,
+            add_blocks=[task_d_id],
+            _agent_state=self.agent_state,
+        )
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task_e_id}) add_blocks.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        self.assertEqual(tasks_dump[0]["blocks"], [task_a_id])
+        self.assertEqual(tasks_dump[0]["blocked_by"], [task_e_id])
+        self.assertEqual(tasks_dump[1]["state"], "completed")
+        self.assertEqual(tasks_dump[2]["blocks"], [task_e_id])
+        self.assertEqual(tasks_dump[2]["blocked_by"], [])
+        self.assertEqual(tasks_dump[3]["blocks"], [task_d_id])
+        self.assertEqual(tasks_dump[3]["blocked_by"], [task_b_id])
+
     async def test_update_completed_unblocks_dependents(self) -> None:
         """Test completing a task removes it from dependents' blocked_by."""
         await self.task_create(
