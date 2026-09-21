@@ -46,9 +46,10 @@ import { useKnowledgeBases } from '@/hooks/useKnowledgeBases.ts';
 interface DetailPanelProps {
 	knowledgeBase?: KnowledgeBaseView;
 	onTest?: () => void;
+	onEdit?: () => void;
 }
 
-function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
+function DetailPanel({ knowledgeBase, onTest, onEdit }: DetailPanelProps) {
 	const { t } = useTranslation();
 
 	if (!knowledgeBase) {
@@ -96,7 +97,7 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 			{/* Configuration + documents */}
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
 				<div className="flex flex-col gap-y-6">
-					<ConfigCard knowledgeBase={knowledgeBase} />
+					<ConfigCard knowledgeBase={knowledgeBase} onEdit={onEdit} />
 					<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
 				</div>
 			</div>
@@ -116,11 +117,16 @@ function ConfigItem({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Read-only card surfacing the full configuration pinned at creation
- * time — embedding model, chunker, credential — plus the aggregated
- * counts the list endpoint now serves (#2360).
+ * Configuration card surfacing the embedding model, current chunker,
+ * credential, plus aggregated counts derived from the knowledge base.
  */
-function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
+function ConfigCard({
+	knowledgeBase,
+	onEdit,
+}: {
+	knowledgeBase: KnowledgeBaseView;
+	onEdit?: () => void;
+}) {
 	const { t } = useTranslation();
 	const embedding = knowledgeBase.embedding_model_config;
 	const chunker = knowledgeBase.chunker_config;
@@ -148,9 +154,17 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 
 	return (
 		<div className="flex flex-col gap-y-3">
-			<h3 className="text-[13.5px] font-medium text-foreground">
-				{t('knowledge.config.title')}
-			</h3>
+			<div className="flex min-h-6 items-center justify-between gap-x-3">
+				<h3 className="text-[13.5px] font-medium text-foreground">
+					{t('knowledge.config.title')}
+				</h3>
+				{knowledgeBase.editable && onEdit && (
+					<Button variant="ghost" size="xs" onClick={onEdit}>
+						<Pencil />
+						{t('common.edit')}
+					</Button>
+				)}
+			</div>
 			<div className="border-border bg-card grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border p-3 sm:grid-cols-3">
 				<ConfigItem label={t('knowledge.config.embeddingModel')} value={embedding.model} />
 				<ConfigItem
@@ -337,7 +351,11 @@ export const KnowledgePage = () => {
 				<SidebarFooter />
 			</Sidebar>
 			<main className="flex-1 min-h-0 overflow-hidden rounded-[22px] bg-card shadow-panel">
-				<DetailPanel knowledgeBase={selectedKb} onTest={() => setTestOpen(true)} />
+				<DetailPanel
+					knowledgeBase={selectedKb}
+					onTest={() => setTestOpen(true)}
+					onEdit={selectedKb ? () => setEditTarget(selectedKb) : undefined}
+				/>
 			</main>
 			<CreateKnowledgeBaseDialog
 				open={createDialogOpen}
