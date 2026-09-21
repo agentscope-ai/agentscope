@@ -214,13 +214,20 @@ class FakeTransport(TransportBase):
         )
 
 
-class InterruptingTransport(FakeTransport):
-    """Sends one INTERRUPT frame once the reply is playing."""
+class GatedTransport(FakeTransport):
+    """Stays open until ``gate`` is set, then sends its control frames, so
+    a test decides when the user acts instead of a clock."""
+
+    def __init__(self, control_frames: list[ControlFrame]) -> None:
+        super().__init__(frames=0)
+        self.control_frames = control_frames
+        self.gate = asyncio.Event()
 
     async def incoming(self) -> AsyncIterator[ControlFrame]:
-        """Emit the interrupt after the scripted reply has streamed."""
-        await asyncio.sleep(0.02)
-        yield ControlFrame(type=ControlFrameType.INTERRUPT)
+        """Emit the control frames once the gate opens, then end."""
+        await self.gate.wait()
+        for frame in self.control_frames:
+            yield frame
 
 
 class EndOnSecondFrameVAD(VADBase):
@@ -336,7 +343,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         """``interrupt()`` cuts the reply in flight to what was heard."""
         model = ScriptedModel([REPLY_R1])
         agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(frames=3)
+        transport = GatedTransport([])
 
         reply_ends = []
         async with agent, transport:
@@ -344,6 +351,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 if isinstance(event, TextBlockDeltaEvent):
                     if event.delta == "老和尚":
                         await agent.interrupt()
+                        transport.gate.set()
                 elif isinstance(event, ReplyEndEvent):
                     reply_ends.append((event.reply_id, event.finished_reason))
 
@@ -361,13 +369,22 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         """An INTERRUPT control frame cuts the reply in flight."""
         model = ScriptedModel([REPLY_R1])
         agent = RealtimeAgent("Friday", "be brief", model)
+        transport = GatedTransport(
+            [ControlFrame(type=ControlFrameType.INTERRUPT)],
+        )
 
-        async with agent:
-            summary = await self._collect(agent, InterruptingTransport(0))
+        reply_ends = []
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if isinstance(event, TextBlockDeltaEvent):
+                    if event.delta == "老和尚":
+                        transport.gate.set()
+                elif isinstance(event, ReplyEndEvent):
+                    reply_ends.append((event.reply_id, event.finished_reason))
 
         self.assertListEqual(
-            summary,
-            [("user", "讲个故事"), ("reply_end", "interrupted")],
+            reply_ends,
+            [("u1", "completed"), ("r1", "interrupted")],
         )
         self.assertListEqual(
             model.calls,
