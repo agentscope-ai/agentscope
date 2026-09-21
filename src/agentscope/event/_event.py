@@ -18,6 +18,7 @@ from ..message import (
 from ..types import (
     ReplyFinishedReason,
     ErrorInfo,
+    Visibility,
 )
 from ..model import FinishedReason
 from ..permission import PermissionRule
@@ -78,6 +79,12 @@ class EventBase(BaseModel):
     """ISO 8601 timestamp of when the event was created."""
     metadata: Dict[str, Any] = Field(default_factory=dict)
     """Optional metadata attached to the event."""
+    visibility: Visibility = Visibility.USER
+    """Who this event is for. :meth:`~..agent.Agent.reply_stream` stamps
+    every event it yields with the agent's visibility, so a frontend can
+    drop an internal agent's stream or divert an artifact into a side
+    panel without inspecting the payload. Defaults to
+    :attr:`~agentscope.types.Visibility.USER`."""
 
 
 class ReplyStartEvent(EventBase):

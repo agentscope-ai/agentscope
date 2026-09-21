@@ -272,6 +272,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "metadata": {},
+            "visibility": "user",
             "reply_id": reply_id,
         }
 
@@ -285,6 +286,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             "structured_output": None,
             "error": None,
             "metadata": {},
+            "visibility": "user",
             "name": "Friday",
             "role": "assistant",
             "usage": None,
@@ -1710,6 +1712,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "structured_output": None,
                 "error": None,
                 "metadata": {},
+                "visibility": "user",
                 "name": "user",
                 "role": "user",
                 "content": [

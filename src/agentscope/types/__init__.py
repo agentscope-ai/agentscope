@@ -15,6 +15,7 @@ from ._reply import (
     ErrorType,
     ErrorInfo,
 )
+from ._visibility import Visibility
 
 __all__ = [
     "AgentHookTypes",
@@ -25,4 +26,5 @@ __all__ = [
     "ReplyFinishedReason",
     "ErrorType",
     "ErrorInfo",
+    "Visibility",
 ]

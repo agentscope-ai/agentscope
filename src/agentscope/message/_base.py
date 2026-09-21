@@ -21,7 +21,7 @@ from ._block import (
     ContentBlock,
     ContentBlockTypes,
 )
-from ..types import ReplyFinishedReason, ErrorInfo
+from ..types import ReplyFinishedReason, ErrorInfo, Visibility
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -92,6 +92,13 @@ class Msg(BaseModel):
 
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
+    visibility: Visibility = Visibility.USER
+    """Who this message is for. Defaults to
+    :attr:`~agentscope.types.Visibility.USER`, meaning it belongs in the
+    main conversation; ``INTERNAL`` marks agent-to-agent traffic and
+    ``ARTIFACT`` a product rendered beside the conversation. Purely a
+    routing hint for the human-facing surface — an agent observing this
+    message still reads it in full."""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """The creation time of the message"""
     usage: Usage | None = Field(default=None)
@@ -544,6 +551,7 @@ def UserMsg(
     finished_at: str | None = None,
     finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
+    visibility: Visibility = Visibility.USER,
 ) -> Msg:
     """Create a user message with role ``"user"``.
 
@@ -569,6 +577,9 @@ def UserMsg(
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
+        visibility (`Visibility`, defaults to `Visibility.USER`):
+            Who the message is for. ``INTERNAL`` keeps it out of the main
+            conversation, ``ARTIFACT`` sends it to a side panel.
 
     Returns:
         `Msg`:
@@ -586,6 +597,7 @@ def UserMsg(
         finished_at=finished_at,
         finished_reason=finished_reason,
         id=id or _generate_id(),
+        visibility=visibility,
     )
 
 
@@ -599,6 +611,7 @@ def AssistantMsg(
     structured_output: dict | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
+    visibility: Visibility = Visibility.USER,
 ) -> Msg:
     """Create an assistant message with role ``"assistant"``.
 
@@ -627,6 +640,9 @@ def AssistantMsg(
             generated when not provided.
         usage (`Usage | None`, optional):
             The token usage information of the message.
+        visibility (`Visibility`, defaults to `Visibility.USER`):
+            Who the message is for. ``INTERNAL`` keeps it out of the main
+            conversation, ``ARTIFACT`` sends it to a side panel.
 
     Returns:
         `Msg`:
@@ -643,6 +659,7 @@ def AssistantMsg(
         structured_output=structured_output,
         id=id or _generate_id(),
         usage=usage,
+        visibility=visibility,
     )
 
 
@@ -654,6 +671,7 @@ def SystemMsg(
     finished_at: str | None = None,
     finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
+    visibility: Visibility = Visibility.USER,
 ) -> Msg:
     """Create a system message with role ``"system"``.
 
@@ -678,6 +696,9 @@ def SystemMsg(
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
+        visibility (`Visibility`, defaults to `Visibility.USER`):
+            Who the message is for. ``INTERNAL`` keeps it out of the main
+            conversation, ``ARTIFACT`` sends it to a side panel.
 
     Returns:
         `Msg`:
@@ -695,4 +716,5 @@ def SystemMsg(
         finished_at=finished_at,
         finished_reason=finished_reason,
         id=id or _generate_id(),
+        visibility=visibility,
     )

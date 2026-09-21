@@ -28,6 +28,7 @@ class EventTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "metadata": {},
+                "visibility": "user",
                 "session_id": "test_session",
                 "reply_id": "test_reply",
                 "name": "Friday",
