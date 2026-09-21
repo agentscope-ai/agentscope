@@ -419,6 +419,39 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_unsupported_audio_skipped(
+        self,
+    ) -> None:
+        """Moonshot declares ``audio/*``, so un-encodable audio is skipped."""
+        fmt = MoonshotChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="listen to this"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="b2dnIGRhdGE=",
+                            media_type="audio/ogg",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "listen to this"},
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
     ) -> None:
