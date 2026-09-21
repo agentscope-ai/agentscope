@@ -370,7 +370,12 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
-    async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
+    async def try_lock(
+        self,
+        key: str,
+        *,
+        ttl_secs: int = 600,
+    ) -> bool:
         """Claim ``key`` without blocking (non-blocking mutex).
 
         Unlike :meth:`acquire_lock` (which waits until free), this
@@ -378,6 +383,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         held. Release with :meth:`unlock`. Used to make an at-least-once
         queue drain effectively once — the node that wins the claim for
         a key does the work; the others skip.
+
+        Implementations attach an opaque ownership token to each lease
+        so a late :meth:`unlock` from an expired holder cannot release a
+        successor's claim.
 
         Args:
             key (`str`):
@@ -392,8 +401,20 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
-    async def unlock(self, key: str) -> None:
-        """Release a lock claimed via :meth:`try_lock` (best-effort)."""
+    async def unlock(
+        self,
+        key: str,
+        *,
+        token: str | None = None,
+    ) -> None:
+        """Release a lock claimed via :meth:`try_lock` (best-effort).
+
+        Only the lease owned by ``token`` is released. When ``token`` is
+        omitted, the token recorded by the current task's successful
+        :meth:`try_lock` is used. A stale unlock — the holder's lease
+        already expired and another task reacquired ``key`` — leaves the
+        successor's lease intact.
+        """
 
     # ------------------------------------------------------------------
     # Mode F — registry map (hash-keyed namespace)

@@ -313,6 +313,39 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             self.assertFalse(await self.bus.is_locked("k"))
             self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
 
+    async def test_stale_unlock_does_not_release_successor_lease(self) -> None:
+        """#2728: an expired holder's late unlock must not free a
+        successor's active lease."""
+        with patch.object(_bus.time, "monotonic") as monotonic:
+            monotonic.return_value = 1_000.0
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+            token_a = (_bus._try_lock_tokens.get() or {})["k"]
+
+            # A's lease expires; B reacquires the key.
+            monotonic.return_value = 1_010.0
+            self.assertFalse(await self.bus.is_locked("k"))
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+            token_b = (_bus._try_lock_tokens.get() or {})["k"]
+            self.assertNotEqual(token_a, token_b)
+
+            # Simulate A's finally-unlock in a fresh context (stale token).
+            _bus._try_lock_tokens.set({"k": token_a})
+            await self.bus.unlock("k")
+            self.assertTrue(await self.bus.is_locked("k"))
+            self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+
+            # B still owns the lease and can release it.
+            await self.bus.unlock("k", token=token_b)
+            self.assertFalse(await self.bus.is_locked("k"))
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+
+    async def test_unlock_without_token_does_not_drop_foreign_lease(self) -> None:
+        """A bare unlock with no proven ownership leaves the key alone."""
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+        _bus._try_lock_tokens.set({})
+        await self.bus.unlock("k")
+        self.assertTrue(await self.bus.is_locked("k"))
+
     async def test_acquire_lock_ignores_ttl_secs(self) -> None:
         """``acquire_lock`` documents that it holds until the body ends."""
         with patch.object(_bus.time, "monotonic") as monotonic:

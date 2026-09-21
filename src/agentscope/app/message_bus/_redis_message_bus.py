@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The Redis-backed message bus implementation."""
 import asyncio
+import contextvars
 import json
+import secrets
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -14,6 +16,13 @@ if TYPE_CHECKING:
 else:
     ConnectionPool = Any
     Redis = Any
+
+_try_lock_tokens: contextvars.ContextVar[dict[str, str] | None] = (
+    contextvars.ContextVar(
+        "agentscope_redis_try_lock_tokens",
+        default=None,
+    )
+)
 
 # Reads and removes a batch in one atomic step. Doing so in two
 # round-trips lets competing consumers on the same key both read an
@@ -34,6 +43,15 @@ if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
 return 1
+"""
+
+# Compare-and-delete a try_lock lease: only the holder whose ownership
+# token is still stored may release the key (#2728).
+_TRY_LOCK_UNLOCK_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
 """
 
 # Read and remove in one step, so a value is consumed exactly once
@@ -714,11 +732,30 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         return bool(result)
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
-        """Non-blocking claim via ``SET key NX EX``. See base."""
-        return bool(
-            await self._client.set(key, "1", nx=True, ex=ttl_secs),
+        """Non-blocking claim via ``SET key <token> NX EX``. See base."""
+        token = secrets.token_hex(16)
+        acquired = bool(
+            await self._client.set(key, token, nx=True, ex=ttl_secs),
         )
+        if not acquired:
+            return False
+        tokens = dict(_try_lock_tokens.get() or {})
+        tokens[key] = token
+        _try_lock_tokens.set(tokens)
+        return True
 
-    async def unlock(self, key: str) -> None:
-        """Release a ``try_lock`` claim (best-effort ``DEL``)."""
-        await self._client.delete(key)
+    async def unlock(
+        self,
+        key: str,
+        *,
+        token: str | None = None,
+    ) -> None:
+        """Release a ``try_lock`` claim only if this holder still owns it."""
+        if token is None:
+            token = (_try_lock_tokens.get() or {}).get(key)
+        if not token:
+            return
+        await self._client.eval(_TRY_LOCK_UNLOCK_LUA, 1, key, token)
+        tokens = dict(_try_lock_tokens.get() or {})
+        tokens.pop(key, None)
+        _try_lock_tokens.set(tokens)

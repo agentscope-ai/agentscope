@@ -17,7 +17,9 @@ dependency.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import math
+import secrets
 import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
@@ -25,6 +27,15 @@ from contextlib import asynccontextmanager
 from typing import Callable, Self
 
 from ._base import MessageBus
+
+# Ownership tokens for the current task's successful try_lock claims;
+# unlock() reads the per-key token when the caller does not pass one.
+_try_lock_tokens: contextvars.ContextVar[dict[str, str] | None] = (
+    contextvars.ContextVar(
+        "agentscope_message_bus_try_lock_tokens",
+        default=None,
+    )
+)
 
 
 class InMemoryMessageBus(
@@ -79,9 +90,10 @@ class InMemoryMessageBus(
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        # key -> monotonic expiry deadline; ``acquire_lock`` has no
-        # lease, so it stores infinity.
-        self._lock_holders: dict[str, float] = {}
+        # key -> (monotonic expiry deadline, ownership token).
+        # ``acquire_lock`` stores math.inf as the deadline; its token is
+        # the empty string (context-manager path does not use unlock()).
+        self._lock_holders: dict[str, tuple[float, str]] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -382,7 +394,7 @@ class InMemoryMessageBus(
         """
         lock = self._locks[key]
         async with lock:
-            self._lock_holders[key] = math.inf
+            self._lock_holders[key] = (math.inf, "")
             try:
                 yield
             finally:
@@ -399,20 +411,48 @@ class InMemoryMessageBus(
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return self._lock_holders.get(key, 0.0) > time.monotonic()
+        held = self._lock_holders.get(key)
+        return held is not None and held[0] > time.monotonic()
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if self._lock_holders.get(key, 0.0) > time.monotonic():
+        held = self._lock_holders.get(key)
+        if held is not None and held[0] > time.monotonic():
             return False
         # The lease keeps a crashed holder from blocking the key
         # forever, the contract the Redis bus gets from SET NX EX.
-        self._lock_holders[key] = time.monotonic() + ttl_secs
+        token = secrets.token_hex(16)
+        self._lock_holders[key] = (time.monotonic() + ttl_secs, token)
+        tokens = dict(_try_lock_tokens.get() or {})
+        tokens[key] = token
+        _try_lock_tokens.set(tokens)
         return True
 
-    async def unlock(self, key: str) -> None:
-        """Release a ``try_lock`` claim."""
+    async def unlock(
+        self,
+        key: str,
+        *,
+        token: str | None = None,
+    ) -> None:
+        """Release a ``try_lock`` claim owned by ``token``."""
+        if token is None:
+            token = (_try_lock_tokens.get() or {}).get(key)
+        held = self._lock_holders.get(key)
+        if held is None:
+            return
+        _deadline, held_token = held
+        # acquire_lock context path uses an empty token and never calls
+        # unlock(); a non-empty mismatch means this is a stale unlock
+        # from an expired holder after a successor reacquired the key.
+        if held_token and token is not None and token != held_token:
+            return
+        if held_token and token is None:
+            # No way to prove ownership — leave the successor lease alone.
+            return
         self._lock_holders.pop(key, None)
+        tokens = dict(_try_lock_tokens.get() or {})
+        tokens.pop(key, None)
+        _try_lock_tokens.set(tokens)
 
     # ------------------------------------------------------------------
     # Mode F — registry map
