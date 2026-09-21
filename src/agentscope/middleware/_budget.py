@@ -2,7 +2,7 @@
 """Budget control middleware for AgentScope agents."""
 from typing import AsyncGenerator, Callable, TYPE_CHECKING
 
-from ..event import ModelCallEndEvent, ReplyStartEvent, ReplyEndEvent
+from ..event import ModelCallEndEvent, ReplyStartEvent
 from ..message import AssistantMsg, HintBlock
 from ..tool import ToolChoice
 from ._base import MiddlewareBase
@@ -35,8 +35,8 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
     Budget state is stored in
     :attr:`~agentscope.agent.AgentState.middle_context`
     keyed by the middleware key, so it persists across human-in-the-loop (HITL)
-    interruptions and resumptions. State is automatically cleaned up when the
-    reply ends via a :class:`~agentscope.event.ReplyEndEvent`.
+    interruptions and resumptions. State is reset when the next reply starts
+    via a :class:`~agentscope.event.ReplyStartEvent`.
 
     .. note::
         The middleware is stateless on the instance itself — all runtime state
@@ -103,10 +103,9 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
     ) -> AsyncGenerator:
         """Manage per-reply budget state in ``agent.state.middle_context``.
 
-        Initializes the weighted cost counter for the reply on
-        :class:`~agentscope.event.ReplyStartEvent`, accumulates cost on each
-        :class:`~agentscope.event.ModelCallEndEvent`, and removes the entry on
-        :class:`~agentscope.event.ReplyEndEvent`.
+        Resets the weighted cost counter to the new reply on
+        :class:`~agentscope.event.ReplyStartEvent` and accumulates cost on
+        each :class:`~agentscope.event.ModelCallEndEvent`.
 
         Args:
             agent (`Agent`):
@@ -124,28 +123,16 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
         async for event in next_handler(**input_kwargs):
             if isinstance(event, ReplyStartEvent):
-                # Initialize the token counting number
-                if middleware_key not in agent.state.middle_context:
-                    agent.state.middle_context[middleware_key] = {}
-                agent.state.middle_context[middleware_key][event.reply_id] = 0
-
-            elif isinstance(event, ReplyEndEvent):
-                # Clean up the token counting number
-                agent.state.middle_context.get(middleware_key, {}).pop(
-                    event.reply_id,
-                    None,
-                )
+                # Start counting for this reply, dropping the previous one.
+                # Not cleaned on ReplyEndEvent: an outer middleware may
+                # swallow it and the same reply then keeps spending tokens
+                agent.state.middle_context[middleware_key] = {
+                    event.reply_id: 0,
+                }
 
             elif isinstance(event, ModelCallEndEvent):
-                # Update the used tokens. Don't assume the counter exists:
-                # an outer middleware may swallow the ReplyEndEvent to force
-                # another reasoning round, and by then the counter for this
-                # reply has already been popped above.
-                bucket = agent.state.middle_context.setdefault(
-                    middleware_key,
-                    {},
-                )
-                bucket[event.reply_id] = bucket.get(event.reply_id, 0) + (
+                # Update the used tokens
+                agent.state.middle_context[middleware_key][event.reply_id] += (
                     self.input_token_weight * event.input_tokens
                     + self.output_token_weight * event.output_tokens
                 )

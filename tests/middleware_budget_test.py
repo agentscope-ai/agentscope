@@ -340,11 +340,14 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         ]
         self.assertGreater(len(hint_msgs), 0)
 
-    async def test_state_cleanup_after_reply(self) -> None:
-        """middle_context entry for the reply is removed after reply ends."""
+    async def test_state_reset_on_next_reply(self) -> None:
+        """middle_context only keeps the counter of the latest reply."""
         model = MockModel()
         model.set_responses(
-            [_response("done", input_tokens=10, output_tokens=5)],
+            [
+                _response("done", input_tokens=10, output_tokens=5),
+                _response("done again", input_tokens=20, output_tokens=8),
+            ],
         )
 
         middleware = ReplyBudgetControlMiddleware(token_budget=1000)
@@ -357,23 +360,17 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         )
 
         await agent.reply(UserMsg("user", "hello"))
+        await agent.reply(UserMsg("user", "hello again"))
 
         middleware_key = await middleware.get_middleware_key()
-        bucket = agent.state.middle_context.get(middleware_key, {})
-        # All per-reply entries must have been cleaned up
-        self.assertEqual(len(bucket), 0)
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {agent.state.reply_id: 28},
+        )
 
-    async def test_swallowed_reply_end_does_not_crash_redo_round(self) -> None:
-        """A swallowed ReplyEndEvent must not crash the redo round.
-
-        An outer ``on_reply`` middleware may swallow the ``ReplyEndEvent``
-        to force another reasoning round (the pattern covered by
-        ``middleware_test.py::test_on_reply_middleware_swallow_reply_end``).
-        The budget middleware pops its counter when the ``ReplyEndEvent``
-        passes through it, and the redo round emits no new
-        ``ReplyStartEvent``, so the accumulation on ``ModelCallEndEvent``
-        must re-create the counter instead of raising ``KeyError``.
-        """
+    async def test_swallowed_reply_end_keeps_counting(self) -> None:
+        """A redo round forced by swallowing the ReplyEndEvent spends the
+        budget of the same reply."""
 
         class SwallowOnceMiddleware(MiddlewareBase):
             """Swallow the first ReplyEndEvent to force a redo round."""
@@ -409,24 +406,17 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             system_prompt="you are helpful",
             model=model,
             toolkit=self.toolkit,
-            middlewares=[
-                # Outer: swallows the first ReplyEndEvent
-                SwallowOnceMiddleware(),
-                # Inner: sees the ReplyEndEvent first and pops its counter
-                middleware,
-            ],
+            middlewares=[SwallowOnceMiddleware(), middleware],
         )
 
-        # Before the fix this raised KeyError from the budget middleware's
-        # ModelCallEndEvent branch during the redo round.
         msg = await agent.reply(UserMsg("user", "hello"))
 
         self.assertEqual(msg.get_text_content(), "second answer")
-
-        # The final (non-swallowed) ReplyEndEvent must clean the state up.
         middleware_key = await middleware.get_middleware_key()
-        bucket = agent.state.middle_context.get(middleware_key, {})
-        self.assertEqual(len(bucket), 0)
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {agent.state.reply_id: 43},
+        )
 
     async def test_token_accumulation_persists_across_hitl(self) -> None:
         """Token accumulation in middle_context persists across HITL boundary.
@@ -540,6 +530,8 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         ]
         self.assertGreater(len(hint_msgs), 0)
 
-        # middle_context must be cleaned up after reply ends
-        bucket = agent.state.middle_context.get(middleware_key, {})
-        self.assertNotIn(reply_id, bucket)
+        # Both model calls are counted on the same reply
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {reply_id: 370},
+        )
