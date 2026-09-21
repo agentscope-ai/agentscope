@@ -748,6 +748,50 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         self.assertIsNone(fetched.processing_node)
         self.assertIsNone(fetched.lease_expires_at)
 
+    async def test_upsert_document_round_trips_a_live_lease(self) -> None:
+        """A leased document can be written back exactly as it was read.
+
+        The promoted ``lease_expires_at`` column is a ``DateTime`` while the
+        mapper dumps records with ``mode="json"``, so the document the lease
+        helpers had just claimed could not be re-upserted: the index worker's
+        progress write died on its own timestamp.
+        """
+        kb = _kb_record("user-1")
+        await self.storage.upsert_knowledge_base("user-1", kb)
+        doc = _kd_record("user-1", kb.id)
+        await self.storage.upsert_knowledge_document("user-1", doc)
+
+        self.assertTrue(
+            await self.storage.acquire_knowledge_document_lease(
+                "user-1",
+                kb.id,
+                doc.id,
+                "worker-A",
+                timedelta(minutes=5),
+                datetime.now(),
+            ),
+        )
+        leased = await self.storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            doc.id,
+        )
+        self.assertEqual(leased.processing_node, "worker-A")
+
+        progressed = leased.model_copy(
+            update={
+                "data": leased.data.model_copy(update={"chunk_count": 3}),
+            },
+        )
+        await self.storage.upsert_knowledge_document("user-1", progressed)
+
+        stored = await self.storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            doc.id,
+        )
+        self.assertEqual(stored.model_dump(), progressed.model_dump())
+
     async def test_expired_lease_and_pending_sweep(self) -> None:
         """``list_..._with_expired_lease`` + ``..._pending_since`` filters."""
         kb = _kb_record("user-1")

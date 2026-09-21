@@ -24,6 +24,7 @@ its own. They exist to be queried and indexed, never to be read back.
 Both functions are dialect-agnostic — they only touch pydantic and
 plain Python dicts.  All dialect specifics live in :mod:`_storage`.
 """
+from datetime import datetime
 from typing import TYPE_CHECKING, TypeVar
 
 from .._model._base import _RecordBase
@@ -77,7 +78,18 @@ def _from_record(
         dump.pop(field, None)
     column_values: dict = {}
     for field in row_cls.get_indexed_fields():
-        column_values[field] = dump.pop(field, None)
+        value = dump.pop(field, None)
+        # ``mode="json"`` renders a datetime as an ISO string, and a
+        # ``DateTime`` column rejects that — which would make a record
+        # that carries a value for such a column (a leased knowledge
+        # document, say) impossible to write back after reading it.  Keep
+        # the native value there; every other field stays exactly as
+        # dumped, so enums and ``None`` keep the shapes the read path
+        # already absorbs.
+        original = getattr(record, field, None)
+        column_values[field] = (
+            original if isinstance(original, datetime) else value
+        )
     for column, path in row_cls.get_index_paths().items():
         column_values[column] = _walk(dump, path)
     return row_cls(
