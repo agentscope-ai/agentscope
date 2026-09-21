@@ -898,6 +898,36 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn(expected_substring, result)
 
+    async def test_denylist_applies_to_every_e_expression(self) -> None:
+        """Test denylist: ``-e`` checks each expression, not just the first.
+
+        ``-e`` was consumed by the combined-short-flag branch, so from the
+        second one on the expression was classified as a file argument and
+        never reached the write/execute checks — while ``--expression`` was
+        caught, since only that branch handles the long form.
+        """
+        test_cases = [
+            (
+                "sed -e 's/a/b/' -e 's/x/y/w out.txt' file.txt",
+                "write operation",
+            ),
+            ("sed -e 's/a/b/' -e '/x/W out.txt' file.txt", "write operation"),
+            ("sed -e 's/a/b/' -e '1e id' file.txt", "not in allowlist"),
+            ("sed -e 's/a/b/' -e 's/x/y/' file.txt", None),
+            ("sed -e 's/a/b/' file.txt", None),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                if expected_substring is None:
+                    self.assertIsNone(result)
+                    continue
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""
         test_cases = [
