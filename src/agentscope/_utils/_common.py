@@ -92,6 +92,36 @@ def _normalize_local_path(path: str) -> str:
     return os.path.abspath(os.path.expanduser(path))
 
 
+def _revert_dropped_entries(original: Any, repaired: Any) -> Any:
+    """Undo entries the schema-guided repair dropped, at any depth.
+
+    Under ``additionalProperties: false`` json_repair deletes unknown keys
+    instead of fixing their types. Dropping an argument is a rewrite, not a
+    type repair, and the caller's schema validation gives the agent a better
+    error for it. So wherever a key or a list element went missing, restore
+    the original container; everywhere else keep the type repairs.
+    """
+    if isinstance(original, dict) and isinstance(repaired, dict):
+        if original.keys() - repaired.keys():
+            return original
+        return {
+            key: (
+                _revert_dropped_entries(original[key], value)
+                if key in original
+                else value
+            )
+            for key, value in repaired.items()
+        }
+    if isinstance(original, list) and isinstance(repaired, list):
+        if len(original) != len(repaired):
+            return original
+        return [
+            _revert_dropped_entries(item, fixed)
+            for item, fixed in zip(original, repaired)
+        ]
+    return repaired
+
+
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,
@@ -160,10 +190,12 @@ def _json_loads_with_repair(
             res = parsed
 
         if isinstance(res, dict):
-            if isinstance(parsed, dict) and parsed.keys() - res.keys():
+            if isinstance(parsed, dict):
                 # Dropping arguments, e.g. under `additionalProperties:
-                # false`, is a rewrite rather than a type repair.
-                res = parsed
+                # false`, is a rewrite rather than a type repair. The check
+                # has to recurse: nested objects get the same treatment from
+                # json_repair as the top level does.
+                res = _revert_dropped_entries(parsed, res)
 
             try:
                 # NaN and Infinity are accepted as numbers by jsonschema, but

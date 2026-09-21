@@ -113,6 +113,40 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             ),
             {"count": "42", "verbse": True},
         )
+        # ...and the same holds one level down: the check has to recurse,
+        # because json_repair applies additionalProperties at every depth
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"opts": {"unit": "C", "verbse": true}}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "opts": {
+                            "type": "object",
+                            "properties": {"unit": {"type": "string"}},
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            ),
+            {"opts": {"unit": "C", "verbse": True}},
+        )
+        # Type repairs inside a nested object still happen
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"opts": {"unit": 123}}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "opts": {
+                            "type": "object",
+                            "properties": {"unit": {"type": "string"}},
+                        },
+                    },
+                },
+            ),
+            {"opts": {"unit": "123"}},
+        )
 
     def test_reject_invalid_arguments(self) -> None:
         """Test the arguments that cannot be loaded into a valid dict."""
