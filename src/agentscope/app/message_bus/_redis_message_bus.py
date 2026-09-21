@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 from ._base import MessageBus
 
@@ -42,6 +43,14 @@ _REGISTRY_POP_LUA = """
 local value = redis.call('HGET', KEYS[1], ARGV[1])
 if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return value
+"""
+
+
+# Release a non-blocking lease only while its ownership token still matches.
+# A plain DEL lets an expired holder erase a successor's lease.
+_TRY_LOCK_RELEASE_LUA = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+return redis.call('DEL', KEYS[1])
 """
 
 
@@ -114,6 +123,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         # Populated in __aenter__; None until the context is entered.
         self._client: Redis | None = None
         self._owned_pool: ConnectionPool | None = None
+        self._try_lock_tokens: WeakKeyDictionary[
+            asyncio.Task[Any],
+            dict[str, str],
+        ] = WeakKeyDictionary()
 
     async def __aenter__(self) -> Self:
         """Create the connection pool and Redis client.
@@ -715,10 +728,24 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim via ``SET key NX EX``. See base."""
-        return bool(
-            await self._client.set(key, "1", nx=True, ex=ttl_secs),
+        token = uuid.uuid4().hex
+        acquired = bool(
+            await self._client.set(key, token, nx=True, ex=ttl_secs),
         )
+        if acquired:
+            owner = asyncio.current_task()
+            assert owner is not None
+            self._try_lock_tokens.setdefault(owner, {})[key] = token
+        return acquired
 
     async def unlock(self, key: str) -> None:
-        """Release a ``try_lock`` claim (best-effort ``DEL``)."""
-        await self._client.delete(key)
+        """Release this task's ``try_lock`` claim, if it still owns it."""
+        owner = asyncio.current_task()
+        assert owner is not None
+        tokens = self._try_lock_tokens.get(owner)
+        token = tokens.pop(key, None) if tokens is not None else None
+        if not token:
+            return
+        if not tokens:
+            self._try_lock_tokens.pop(owner, None)
+        await self._client.eval(_TRY_LOCK_RELEASE_LUA, 1, key, token)

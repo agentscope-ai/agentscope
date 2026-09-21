@@ -296,6 +296,31 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             ["first-in", "first-out", "second-in"],
         )
 
+    async def test_expired_holder_cannot_unlock_successor(self) -> None:
+        """A late cleanup from an expired owner preserves a new lease."""
+        acquired = asyncio.Event()
+        release = asyncio.Event()
+
+        async def old_holder() -> None:
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+            acquired.set()
+            await release.wait()
+            await self.bus.unlock("k")
+
+        task = asyncio.create_task(old_holder())
+        await acquired.wait()
+
+        # Simulate expiry without waiting, then acquire the replacement lease.
+        await self.fr.delete("k")
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+        replacement = await self.fr.get("k")
+        release.set()
+        await task
+
+        self.assertEqual(await self.fr.get("k"), replacement)
+        await self.bus.unlock("k")
+        self.assertFalse(await self.bus.is_locked("k"))
+
 
 class TestSessionRunAutoTrimsLog(IsolatedAsyncioTestCase):
     """``session_run.__aexit__`` must trim the session's replay log
