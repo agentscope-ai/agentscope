@@ -572,5 +572,82 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             expected_offload,
         )
 
+    async def test_split_keeps_metadata_and_timestamps(self) -> None:
+        """Both halves of a truncated tool result keep the fields the split
+        does not truncate: the tool's metadata and the block timestamps."""
+        tool_result = ToolResultBlock(
+            id="test_9",
+            name="Write",
+            output=[
+                TextBlock(text="A" * 20, id="block1"),
+                TextBlock(text="B" * 400, id="block2"),
+            ],
+            state="success",
+            metadata={"diff": "--- a/x\n+++ b/x", "file_path": "/tmp/x.py"},
+            created_at="2026-09-21T10:00:00",
+            finished_at="2026-09-21T10:00:05",
+        )
+
+        async def mock_count_tokens(
+            messages: list,
+            tools: list | None = None,
+        ) -> int:
+            """Mock token counting function based on content length."""
+            content = messages[0].content
+            if isinstance(content, list):
+                return sum(len(b.text) for b in content if hasattr(b, "text"))
+            return 0
+
+        self.mock_model.count_tokens = mock_count_tokens
+        (
+            reserved,
+            offload,
+        ) = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+
+        # The split happened, so both halves are freshly built blocks.
+        self.assertIsNot(reserved, tool_result)
+        self.assertIsNotNone(offload)
+
+        carried = (
+            "id",
+            "name",
+            "state",
+            "metadata",
+            "created_at",
+            "finished_at",
+        )
+        self.assertDictEqual(
+            {
+                "reserved": {k: getattr(reserved, k) for k in carried},
+                "offload": {k: getattr(offload, k) for k in carried},
+            },
+            {
+                "reserved": {
+                    "id": "test_9",
+                    "name": "Write",
+                    "state": "success",
+                    "metadata": {
+                        "diff": "--- a/x\n+++ b/x",
+                        "file_path": "/tmp/x.py",
+                    },
+                    "created_at": "2026-09-21T10:00:00",
+                    "finished_at": "2026-09-21T10:00:05",
+                },
+                "offload": {
+                    "id": "test_9",
+                    "name": "Write",
+                    "state": "success",
+                    "metadata": {
+                        "diff": "--- a/x\n+++ b/x",
+                        "file_path": "/tmp/x.py",
+                    },
+                    "created_at": "2026-09-21T10:00:00",
+                    "finished_at": "2026-09-21T10:00:05",
+                },
+            },
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
