@@ -289,6 +289,39 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         ).json()
         self.assertIsNone(listed["sessions"][0]["session"]["config"]["cwd"])
 
+    def test_name_null_is_refused_rather_than_crashing(self) -> None:
+        """A field that cannot hold ``None`` costs a 422, not a 500.
+
+        ``exclude_unset`` cannot tell "clear this" from "this has no
+        meaning here": every other nullable-in-the-request column is
+        clearable, but a session always has a display name. The merged
+        config used to raise straight through the handler.
+        """
+        name = self.client.get(
+            "/sessions/",
+            headers=HEADERS,
+            params={"agent_id": self.agent_id},
+        ).json()["sessions"][0]["session"]["config"]["name"]
+
+        response = self._patch({"name": None})
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(
+            [
+                (error["type"], error["loc"])
+                for error in response.json()["detail"]
+            ],
+            [("string_type", ["name"])],
+        )
+        self.assertEqual(
+            self.client.get(
+                "/sessions/",
+                headers=HEADERS,
+                params={"agent_id": self.agent_id},
+            ).json()["sessions"][0]["session"]["config"]["name"],
+            name,
+        )
+
     def test_cwd_is_not_confined_to_the_workspace_root(self) -> None:
         """Absolute paths and ``..`` are ordinary values, not attacks.
 
