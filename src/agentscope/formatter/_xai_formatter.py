@@ -10,6 +10,8 @@ other formatter, the ``format()`` method returns a list of
 import asyncio
 import base64
 from typing import Any, List
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -67,7 +69,7 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url_str.removeprefix("file://")
+                    local_path = url2pathname(urlsplit(url_str).path)
                     with open(local_path, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode(
                             "utf-8",

@@ -441,7 +441,7 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                 content=[
                     DataBlock(
                         source=URLSource(
-                            url=f"file://{image_path}",
+                            url=image_path.as_uri(),
                             media_type="image/png",
                         ),
                     ),
