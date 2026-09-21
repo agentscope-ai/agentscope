@@ -361,6 +361,12 @@ class IndexWorker:
                 document_id,
             )
             return
+        if record.status == "deleting":
+            logger.debug(
+                "Skipping %s — deletion is already in progress.",
+                document_id,
+            )
+            return
 
         kb_record = await self._manager.get_knowledge_base(
             user_id,
@@ -399,6 +405,17 @@ class IndexWorker:
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
 
+        # A delete can arrive while parsing is in progress. Re-read the
+        # record before doing more work so a stale parser result never
+        # reaches the vector store.
+        record = await self._storage.get_knowledge_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        if record is None or record.status == "deleting":
+            return
+
         # ---- chunking ----
         await self._storage.update_knowledge_document_status(
             user_id,
@@ -415,6 +432,13 @@ class IndexWorker:
             document_id,
             "indexing",
         )
+        record = await self._storage.get_knowledge_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        if record is None or record.status == "deleting":
+            return
         knowledge = await self._manager.get_knowledge(
             user_id,
             knowledge_base_id,
@@ -441,6 +465,18 @@ class IndexWorker:
                 "size_bytes": data.size,
             },
         )
+
+        # The delete path removes vectors before deleting the storage
+        # record. If it crossed the insert above, clean up the stale
+        # write before allowing the worker to finish.
+        record = await self._storage.get_knowledge_document(
+            user_id,
+            knowledge_base_id,
+            document_id,
+        )
+        if record is None or record.status == "deleting":
+            await knowledge.delete_document(document_id)
+            return
 
         # ---- ready ----
         await self._storage.update_knowledge_document_status(
