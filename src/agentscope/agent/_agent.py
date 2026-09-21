@@ -1200,9 +1200,7 @@ class Agent:
                             yield evt
 
                         if interrupted:
-                            # ChatModelBase normalizes cancellation into an
-                            # interrupted response. Route it through the common
-                            # cancellation handler below.
+                            # Handled by the CancelledError branch below
                             raise asyncio.CancelledError()
 
                     case Acting(tool_calls=tool_calls):
@@ -1249,9 +1247,7 @@ class Agent:
                                     break_execution_for_interruption = True
 
                             if break_execution_for_interruption:
-                                # Toolkit normalizes cancellation into an
-                                # interrupted result. Route it through the
-                                # common cancellation handler below.
+                                # Handled by the CancelledError branch below
                                 raise asyncio.CancelledError()
 
                             if break_execution_for_hitl:

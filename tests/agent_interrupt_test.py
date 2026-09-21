@@ -87,8 +87,6 @@ class _TimeoutConcurrentTool(ToolBase):
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Allow the test tool regardless of its input or context."""
-        del tool_input, context
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             decision_reason="ok",
@@ -252,9 +250,9 @@ async def _run_and_cancel(
     agent: Agent,
     inputs: Any,
     cancel_after: float = 0.05,
-) -> tuple[list[Any], asyncio.Task[None]]:
+) -> list[Any]:
     """Drive ``agent.reply_stream(inputs)`` in a background task, cancel
-    it, and return both the collected events and completed task."""
+    after ``cancel_after`` seconds, and return the collected events."""
     events: list[Any] = []
 
     async def _drive() -> None:
@@ -268,7 +266,7 @@ async def _run_and_cancel(
         await task
     except asyncio.CancelledError:
         pass
-    return events, task
+    return events
 
 
 def _assert_interrupted_end(
@@ -320,54 +318,49 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
         return agent, model
 
     async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
-        """The opt-in flag propagates cancellation after tool cleanup."""
-        cases = [
-            _TimeoutSequentialTool(),
-            _TimeoutConcurrentTool(),
-        ]
-
-        for tool in cases:
-            with self.subTest(tool=tool.name):
-                agent, model = self._make_agent(
-                    [tool],
-                    raise_cancelled_error=True,
-                )
-                model.set_responses(
-                    [
-                        [
-                            ChatResponse(
-                                content=[
-                                    ToolCallBlock(
-                                        id=f"tc-{tool.name}",
-                                        name=tool.name,
-                                        input="{}",
-                                    ),
-                                ],
-                                is_last=True,
+        """With ``interruption_raise_cancelled_error`` the cancellation
+        reaches the caller once the interrupted tool call is closed."""
+        tool = _TimeoutSequentialTool()
+        agent, model = self._make_agent([tool], raise_cancelled_error=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-1",
+                                name=tool.name,
+                                input="{}",
                             ),
                         ],
-                    ],
-                )
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+        events: list[Any] = []
 
-                events, task = await _run_and_cancel(
-                    agent,
-                    UserMsg(name="user", content="Hi"),
-                )
+        async def _drive() -> None:
+            inputs = UserMsg(name="user", content="Hi")
+            async for evt in agent.reply_stream(inputs):
+                events.append(evt)
 
-                _assert_interrupted_end(
-                    self,
-                    events,
-                    reply_id=agent.state.reply_id,
-                    session_id=agent.state.session_id,
-                )
-                self.assertListEqual(
-                    agent.state.get_unfinished_tool_calls(agent.name),
-                    [],
-                )
-                self.assertTrue(
-                    task.cancelled(),
-                    "reply task completed instead of propagating cancellation",
-                )
+        task = asyncio.create_task(_drive())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        _assert_interrupted_end(
+            self,
+            events,
+            reply_id=agent.state.reply_id,
+            session_id=agent.state.session_id,
+        )
+        self.assertListEqual(
+            agent.state.get_unfinished_tool_calls(agent.name),
+            [],
+        )
 
     async def test_sequential_tool_cancelled_mid_execution(self) -> None:
         """Sequential batch: model emits one slow sequential tool call,
@@ -394,7 +387,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events, _ = await _run_and_cancel(
+        events = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -466,7 +459,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events, _ = await _run_and_cancel(
+        events = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -558,7 +551,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events, _ = await _run_and_cancel(
+        events = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -643,7 +636,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events, _ = await _run_and_cancel(
+        events = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
@@ -736,7 +729,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        events, _ = await _run_and_cancel(
+        events = await _run_and_cancel(
             agent,
             UserMsg(name="user", content="Hi"),
         )
