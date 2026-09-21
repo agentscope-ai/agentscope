@@ -369,9 +369,14 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        response = dashscope.embeddings.TextEmbedding.call(
-            api_key=self.api_key,
-            **api_kwargs,
+        # ``TextEmbedding.call`` is a blocking SDK call. Run it in a worker
+        # thread so the batches dispatched with ``asyncio.gather`` keep the
+        # event loop free instead of serialising on the wait.
+        response = await asyncio.to_thread(
+            lambda: dashscope.embeddings.TextEmbedding.call(
+                api_key=self.api_key,
+                **api_kwargs,
+            ),
         )
         time = (datetime.now() - start_time).total_seconds()
 
@@ -454,7 +459,12 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        res = dashscope.MultiModalEmbedding.call(**api_kwargs)
+        # ``MultiModalEmbedding.call`` is a blocking SDK call. Offload it to a
+        # worker thread so it does not stall the event loop (see the text
+        # path above).
+        res = await asyncio.to_thread(
+            lambda: dashscope.MultiModalEmbedding.call(**api_kwargs),
+        )
         time = (datetime.now() - start_time).total_seconds()
 
         if res.status_code != 200:

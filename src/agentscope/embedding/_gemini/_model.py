@@ -351,10 +351,15 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 )
 
         start_time = datetime.now()
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=texts,
-            config=config,
+        # ``embed_content`` is a blocking SDK call. Offload it to a worker
+        # thread so the batches dispatched with ``asyncio.gather`` keep the
+        # event loop free instead of serialising on the wait.
+        response = await asyncio.to_thread(
+            lambda: self.client.models.embed_content(
+                model=self.model,
+                contents=texts,
+                config=config,
+            ),
         )
         time = (datetime.now() - start_time).total_seconds()
 
@@ -423,10 +428,13 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         )
 
         start_time = datetime.now()
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=contents,
-            config=config,
+        # Blocking SDK call — see the text path above.
+        response = await asyncio.to_thread(
+            lambda: self.client.models.embed_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            ),
         )
         time = (datetime.now() - start_time).total_seconds()
 
