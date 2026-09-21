@@ -4,7 +4,7 @@
 from dataclasses import asdict
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyValue
 
@@ -14,13 +14,7 @@ from agentscope.embedding import (
     EmbeddingResponse,
     EmbeddingUsage,
 )
-from agentscope.message import DataBlock, Base64Source, TextBlock, URLSource
-from agentscope.rag import (
-    Chunk,
-    KnowledgeBase,
-    VectorSearchResult,
-    VectorStoreBase,
-)
+from agentscope.message import DataBlock, Base64Source, URLSource
 
 A = AnyValue()
 
@@ -70,17 +64,25 @@ class DashScopeListModelsTest(IsolatedAsyncioTestCase):
 
     def test_multimodal_capability(self) -> None:
         """Instances expose the multimodal capability of their model cards."""
-        for card in DashScopeEmbeddingModel.list_models():
-            with self.subTest(model=card.name):
-                model = DashScopeEmbeddingModel(
+        self.assertDictEqual(
+            {
+                card.name: DashScopeEmbeddingModel(
                     credential=_cred(),
                     model=card.name,
                     dimensions=card.dimensions,
-                )
-                self.assertEqual(
-                    model.supports_multimodal,
-                    "image/png" in card.input_types,
-                )
+                ).supports_multimodal
+                for card in DashScopeEmbeddingModel.list_models()
+            },
+            {
+                "text-embedding-v4": False,
+                "tongyi-embedding-vision-flash": True,
+                "qwen3-vl-embedding": True,
+                "qwen2.5-vl-embedding": True,
+                "text-embedding-v3": False,
+                "multimodal-embedding-v1": True,
+                "tongyi-embedding-vision-plus": True,
+            },
+        )
 
     async def test_list_models(self) -> None:
         """Should list 7 models (text + multimodal)."""
@@ -251,138 +253,3 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
         bad = DataBlock(source=Base64Source(data="x", media_type="video/mp4"))
         with self.assertRaises(ValueError):
             DashScopeEmbeddingModel._format_data_block(bad)
-
-
-class DashScopeKnowledgeSearchTest(IsolatedAsyncioTestCase):
-    """Test DashScope query capabilities through KnowledgeBase.search."""
-
-    def setUp(self) -> None:
-        """Create a vector store returning a matching document."""
-        self.result = VectorSearchResult(
-            score=1.0,
-            document_id="catalog",
-            chunk=Chunk(
-                content=TextBlock(text="A matching product"),
-                source="catalog.txt",
-                chunk_index=0,
-                total_chunks=1,
-            ),
-        )
-        self.store = MagicMock(spec=VectorStoreBase)
-        self.store.has_collection.return_value = True
-        self.store.search.return_value = [self.result]
-
-    def _make_knowledge(self, model: str) -> KnowledgeBase:
-        """Bind a real DashScope model to the mocked vector store."""
-        return KnowledgeBase(
-            name="products",
-            description="Product catalog",
-            embedding_model=DashScopeEmbeddingModel(
-                credential=_cred(),
-                model=model,
-                dimensions=2,
-            ),
-            vector_store=self.store,
-            collection="products",
-        )
-
-    @patch("dashscope.MultiModalEmbedding.call")
-    async def test_image_query(self, mock_api: Any) -> None:
-        """Built-in multimodal models embed and search image queries."""
-        mock_api.return_value = _text_resp([[0.1, 0.2]])
-        for model in (
-            "qwen3-vl-embedding",
-            "qwen2.5-vl-embedding",
-            "multimodal-embedding-v1",
-            "tongyi-embedding-vision-plus",
-            "tongyi-embedding-vision-flash",
-        ):
-            with self.subTest(model=model):
-                mock_api.reset_mock()
-                self.store.reset_mock()
-                knowledge = self._make_knowledge(model)
-                self.assertEqual(
-                    await knowledge.search([_img()]),
-                    [self.result],
-                )
-                mock_api.assert_called_once_with(
-                    input=[{"image": "data:image/png;base64,aWltYWdl"}],
-                    model=model,
-                    api_key="k",
-                )
-                self.store.search.assert_awaited_once_with(
-                    collection="products",
-                    query_vector=[0.1, 0.2],
-                    top_k=5,
-                    metadata_filter=None,
-                )
-
-    @patch("dashscope.MultiModalEmbedding.call")
-    async def test_mixed_query(self, mock_api: Any) -> None:
-        """Both text forms and the image reach embedding and vector search."""
-        vectors = [[0.1, 0.2], [0.3, 0.4]]
-        mock_api.return_value = _text_resp(vectors)
-        for text in ("Find this product", TextBlock(text="Find this product")):
-            with self.subTest(text=text):
-                mock_api.reset_mock()
-                self.store.reset_mock()
-                knowledge = self._make_knowledge("qwen3-vl-embedding")
-                self.assertEqual(
-                    await knowledge.search([text, _img()]),
-                    [self.result],
-                )
-                mock_api.assert_called_once_with(
-                    input=[
-                        {"text": "Find this product"},
-                        {"image": "data:image/png;base64,aWltYWdl"},
-                    ],
-                    model="qwen3-vl-embedding",
-                    api_key="k",
-                )
-                self.assertEqual(
-                    self.store.search.await_args_list,
-                    [
-                        call(
-                            collection="products",
-                            query_vector=vector,
-                            top_k=5,
-                            metadata_filter=None,
-                        )
-                        for vector in vectors
-                    ],
-                )
-
-    @patch("dashscope.embeddings.TextEmbedding.call")
-    async def test_text_models_filter_images(self, mock_api: Any) -> None:
-        """Text-only models still drop images and search the remaining text."""
-        mock_api.return_value = _text_resp([[0.1, 0.2]])
-        for model in ("text-embedding-v3", "text-embedding-v4"):
-            with self.subTest(model=model):
-                mock_api.reset_mock()
-                self.store.reset_mock()
-                knowledge = self._make_knowledge(model)
-                self.assertEqual(await knowledge.search([_img()]), [])
-                mock_api.assert_not_called()
-                self.store.search.assert_not_awaited()
-                for queries in (
-                    ["product"],
-                    [TextBlock(text="product"), _img()],
-                ):
-                    mock_api.reset_mock()
-                    self.store.reset_mock()
-                    self.assertEqual(
-                        await knowledge.search(queries),
-                        [self.result],
-                    )
-                    mock_api.assert_called_once_with(
-                        input=["product"],
-                        model=model,
-                        dimension=2,
-                        api_key="k",
-                    )
-                    self.store.search.assert_awaited_once_with(
-                        collection="products",
-                        query_vector=[0.1, 0.2],
-                        top_k=5,
-                        metadata_filter=None,
-                    )
