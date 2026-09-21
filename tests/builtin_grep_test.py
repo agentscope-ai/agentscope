@@ -109,6 +109,31 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         self.assertIn("def hello", content)
         self.assertIn("def goodbye", content)
 
+    async def test_pagination_is_stable(self) -> None:
+        """Pages taken with offset/head_limit follow the path order."""
+        pages = []
+        for offset in range(3):
+            chunk = await self.grep_tool(
+                pattern="def",
+                path=self.temp_dir,
+                output_mode="files_with_matches",
+                head_limit=1,
+                offset=offset,
+            )
+            pages.append(chunk.content[0].text)
+
+        self.assertListEqual(
+            pages,
+            [
+                os.path.join(self.temp_dir, "subdir", "nested.py")
+                + "\n\n[Showing results with pagination = limit: 1]",
+                os.path.join(self.temp_dir, "test1.py")
+                + "\n\n[Showing results with pagination = limit: 1, "
+                "offset: 1]",
+                os.path.join(self.temp_dir, "test2.py"),
+            ],
+        )
+
     async def test_case_insensitive(self) -> None:
         """Test case-insensitive search."""
         chunk = await self.grep_tool(
