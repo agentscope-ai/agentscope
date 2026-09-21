@@ -5,13 +5,11 @@ transport — no network, no sound card."""
 import asyncio
 from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
 from utils import AnyString
 
 from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
-    ModelCallEndEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
@@ -216,6 +214,15 @@ class FakeTransport(TransportBase):
         )
 
 
+class InterruptingTransport(FakeTransport):
+    """Sends one INTERRUPT frame once the reply is playing."""
+
+    async def incoming(self) -> AsyncIterator[ControlFrame]:
+        """Emit the interrupt after the scripted reply has streamed."""
+        await asyncio.sleep(0.02)
+        yield ControlFrame(type=ControlFrameType.INTERRUPT)
+
+
 class EndOnSecondFrameVAD(VADBase):
     """Reports the user starting on the first chunk and stopping on the
     second."""
@@ -325,83 +332,52 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
 
-    async def test_interrupt_entrypoints_stop_active_reply(self) -> None:
-        """Both stop inputs cut the reply once and keep the stream usable."""
-        for source in ("public", "transport"):
-            with self.subTest(source=source):
-                model = ScriptedModel([[]])
-                agent = RealtimeAgent("Friday", "be brief", model)
-                transport = FakeTransport(frames=0)
+    async def test_interrupt_stops_active_reply(self) -> None:
+        """``interrupt()`` cuts the reply in flight to what was heard."""
+        model = ScriptedModel([REPLY_R1])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3)
 
-                async def incoming(
-                    agent: RealtimeAgent = agent,
-                    source: str = source,
-                ) -> AsyncIterator[AudioFrame | ControlFrame]:
-                    """Interrupt after the reply has queued its audio."""
-                    for event in REPLY_R1:
-                        await agent._on_model_event(event)
-                    for _ in range(2):
-                        if source == "public":
-                            await agent.interrupt()
-                        else:
-                            yield ControlFrame(type=ControlFrameType.INTERRUPT)
-                    self.assertIsNone(agent._reply)
-                    self.assertEqual(agent._reply_id, "")
-                    yield AudioFrame(pcm=b"\x00" * 3200)
-
-                with patch.object(transport, "incoming", incoming):
-                    async with agent, transport:
-                        events = [
-                            event
-                            async for event in agent.reply_stream(transport)
-                        ]
-
-                self.assertEqual(transport.cleared, 1)
-                self.assertListEqual(
-                    model.calls,
-                    [
-                        "connect(session=1,td_off=False)",
-                        "truncate(r1,320ms,'从前有座山山里有座庙')",
-                        "cancel",
-                        "push_audio",
-                        "close",
-                    ],
-                )
-                self.assertListEqual(
-                    [
-                        (event.reply_id, event.finished_reason)
-                        for event in events
-                        if isinstance(event, ReplyEndEvent)
-                        and event.reply_id == "r1"
-                    ],
-                    [("r1", "interrupted")],
-                )
-                self.assertEqual(
-                    sum(
-                        isinstance(event, ModelCallEndEvent)
-                        for event in events
-                    ),
-                    1,
-                )
-
-    async def test_interrupt_entrypoints_without_active_reply(self) -> None:
-        """Idle interrupts neither contact the model nor emit events."""
-        for source in ("public", "transport"):
-            with self.subTest(source=source):
-                model = ScriptedModel([[]])
-                agent = RealtimeAgent("Friday", "be brief", model)
-                transport = FakeTransport(frames=0)
-                agent._transport = transport
-                for _ in range(2):
-                    if source == "public":
+        reply_ends = []
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if isinstance(event, TextBlockDeltaEvent):
+                    if event.delta == "老和尚":
                         await agent.interrupt()
-                    else:
-                        await agent._on_control(
-                            ControlFrame(type=ControlFrameType.INTERRUPT),
-                        )
-                self.assertEqual(transport.cleared, 0)
-                self.assertListEqual(model.calls, [])
-                self.assertTrue(agent._out.empty())
+                elif isinstance(event, ReplyEndEvent):
+                    reply_ends.append((event.reply_id, event.finished_reason))
+
+        self.assertListEqual(
+            reply_ends,
+            [("u1", "completed"), ("r1", "interrupted")],
+        )
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [(m.role, m.get_text_content()) for m in agent.state.context],
+            [("user", "讲个故事"), ("assistant", "从前有座山山里有座庙")],
+        )
+
+    async def test_interrupt_frame_stops_active_reply(self) -> None:
+        """An INTERRUPT control frame cuts the reply in flight."""
+        model = ScriptedModel([REPLY_R1])
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            summary = await self._collect(agent, InterruptingTransport(0))
+
+        self.assertListEqual(
+            summary,
+            [("user", "讲个故事"), ("reply_end", "interrupted")],
+        )
+        self.assertListEqual(
+            model.calls,
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,320ms,'从前有座山山里有座庙')",
+                "cancel",
+                "close",
+            ],
+        )
 
     async def test_provider_timeout_reconnects_on_next_audio(self) -> None:
         """When the provider closes the session, nothing reconnects until
