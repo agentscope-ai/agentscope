@@ -105,18 +105,18 @@ class FunctionTool(ToolBase):
         self.description = description or _extract_func_description(
             func.__doc__ or "",
         )
-        if isinstance(input_schema, type) and issubclass(
+        if input_schema is None:
+            normalized_input_schema = _extract_input_schema(func)
+        elif isinstance(input_schema, type) and issubclass(
             input_schema,
             BaseModel,
         ):
-            input_schema = _remove_title_field(
+            normalized_input_schema = _remove_title_field(
                 input_schema.model_json_schema(),
             )
-        self.input_schema = (
-            deepcopy(input_schema)
-            if input_schema is not None
-            else _extract_input_schema(func)
-        )
+        else:
+            normalized_input_schema = input_schema
+        self.input_schema = deepcopy(normalized_input_schema)
         self._preset_kwargs = dict(preset_kwargs or {})
         for arg_name in self._preset_kwargs:
             self.input_schema["properties"].pop(arg_name, None)

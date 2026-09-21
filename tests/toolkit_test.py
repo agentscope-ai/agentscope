@@ -667,8 +667,10 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_dynamic_preset_kwargs_are_hidden_and_protected(self) -> None:
-        """Preset values should be resolved per call and override model input."""
+    async def test_dynamic_preset_kwargs_are_hidden_and_protected(
+        self,
+    ) -> None:
+        """Preset values resolve per call and override model input."""
         current_project = ["project-a"]
 
         def search_project(query: str, project_name: str) -> str:
