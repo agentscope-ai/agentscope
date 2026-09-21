@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { formatChunkerParameterValue } from '@/utils/chunker.ts';
 
 interface Props {
 	open: boolean;
@@ -81,7 +82,7 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 				const paramLabel = t(`chunker-types.${cfg.type}.params.${k}.label`, {
 					defaultValue: k,
 				});
-				return `${paramLabel}=${v}`;
+				return `${paramLabel}=${formatChunkerParameterValue(v)}`;
 			})
 			.join(', ');
 		return paramStr ? `${typeLabel} (${paramStr})` : typeLabel;
@@ -89,7 +90,7 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-2rem)] !max-w-[500px] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-knowledge-base-edit.title')}</DialogTitle>
 					<DialogDescription>
@@ -131,9 +132,9 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 					{chunkerLabel && (
 						<Field orientation="horizontal">
 							<FieldLabel>{t('dialog-knowledge-base-edit.chunker.label')}</FieldLabel>
-							<Badge variant="secondary" className="font-mono">
+							<div className="bg-secondary text-secondary-foreground min-w-0 max-w-[70%] rounded-lg px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-normal">
 								{chunkerLabel}
-							</Badge>
+							</div>
 						</Field>
 					)}
 					{errorKey && <p className="text-destructive text-sm">{t(errorKey)}</p>}
