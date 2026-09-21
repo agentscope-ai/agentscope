@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from ._task_tool_base import _TaskToolBase
 from .._response import ToolChunk
-from ...state import AgentState
+from ...state import AgentState, Task
 from ...exception import DeveloperOrientedException
 from ...message import TextBlock, ToolResultState
 
@@ -179,13 +179,26 @@ Set up task dependencies:
             updated_fields.append("description")
             _agent_state.tasks_context.tasks[index].description = description
 
-        existed_ids = [_.id for _ in _agent_state.tasks_context.tasks]
+        tasks = _agent_state.tasks_context.tasks
+        existed_ids = {task.id for task in tasks}
+        completed_ids = {
+            task.id for task in tasks if task.state == "completed"
+        }
+        if status == "completed":
+            completed_ids.add(task_id)
         if add_blocks:
-            current_blocks = _agent_state.tasks_context.tasks[index].blocks
+            current_blocks = tasks[index].blocks
             new_blocks = [
                 _
                 for _ in add_blocks
-                if _ not in current_blocks and _ in existed_ids
+                if _ not in current_blocks
+                and _ in existed_ids
+                and self._can_add_block_relation(
+                    task_id,
+                    _,
+                    tasks,
+                    completed_ids,
+                )
             ]
             if new_blocks:
                 updated_fields.append("add_blocks")
@@ -197,13 +210,18 @@ Set up task dependencies:
                     )
 
         if add_blocked_by is not None:
-            current_blocked_by = _agent_state.tasks_context.tasks[
-                index
-            ].blocked_by
+            current_blocked_by = tasks[index].blocked_by
             new_blocked_by = [
                 _
                 for _ in add_blocked_by
-                if _ not in current_blocked_by and _ in existed_ids
+                if _ not in current_blocked_by
+                and _ in existed_ids
+                and self._can_add_block_relation(
+                    _,
+                    task_id,
+                    tasks,
+                    completed_ids,
+                )
             ]
             if new_blocked_by:
                 updated_fields.append("add_blocked_by")
@@ -272,6 +290,35 @@ Set up task dependencies:
             )
 
         return ToolChunk(content=[TextBlock(text=res)])
+
+    @staticmethod
+    def _can_add_block_relation(
+        block_id: str,
+        blocked_by_id: str,
+        tasks: list[Task],
+        completed_ids: set[str],
+    ) -> bool:
+        """Check whether a dependency can be added without blocking forever."""
+        if (
+            block_id == blocked_by_id
+            or block_id in completed_ids
+            or blocked_by_id in completed_ids
+        ):
+            return False
+
+        tasks_by_id = {task.id: task for task in tasks}
+        pending = [blocked_by_id]
+        visited: set[str] = set()
+        while pending:
+            current_id = pending.pop()
+            if current_id == block_id:
+                return False
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            pending.extend(tasks_by_id[current_id].blocks)
+
+        return True
 
     @staticmethod
     def _update_block_relation(

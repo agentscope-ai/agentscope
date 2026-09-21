@@ -1112,3 +1112,91 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             "id": AnyString(),
         }
         self.assertDictEqual(result_dump, expected_result)
+
+    async def test_update_rejects_self_blocking_dependency(self) -> None:
+        """A task cannot become its own prerequisite."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        task = self.agent_state.tasks_context.tasks[0]
+
+        await self.task_update(
+            task_id=task.id,
+            add_blocked_by=[task.id],
+            _agent_state=self.agent_state,
+        )
+
+        self.assertEqual(task.blocks, [])
+        self.assertEqual(task.blocked_by, [])
+
+    async def test_update_rejects_cyclic_dependency(self) -> None:
+        """Adding an edge cannot turn an existing task chain into a cycle."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 3",
+            description="Third task",
+            _agent_state=self.agent_state,
+        )
+        task1, task2, task3 = self.agent_state.tasks_context.tasks
+
+        await self.task_update(
+            task_id=task1.id,
+            add_blocks=[task2.id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task2.id,
+            add_blocks=[task3.id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task3.id,
+            add_blocks=[task1.id],
+            _agent_state=self.agent_state,
+        )
+
+        self.assertEqual(task1.blocks, [task2.id])
+        self.assertEqual(task1.blocked_by, [])
+        self.assertEqual(task2.blocks, [task3.id])
+        self.assertEqual(task2.blocked_by, [task1.id])
+        self.assertEqual(task3.blocks, [])
+        self.assertEqual(task3.blocked_by, [task2.id])
+
+    async def test_update_skips_completed_prerequisite(self) -> None:
+        """A completed task cannot be added as a new blocker."""
+        await self.task_create(
+            subject="Task 1",
+            description="Completed task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Ready task",
+            _agent_state=self.agent_state,
+        )
+        completed_task, ready_task = self.agent_state.tasks_context.tasks
+
+        await self.task_update(
+            task_id=completed_task.id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=ready_task.id,
+            add_blocked_by=[completed_task.id],
+            _agent_state=self.agent_state,
+        )
+
+        self.assertEqual(completed_task.blocks, [])
+        self.assertEqual(ready_task.blocked_by, [])
