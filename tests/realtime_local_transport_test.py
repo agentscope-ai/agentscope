@@ -140,16 +140,21 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
         """Restarting a transport starts with fresh capture and playout."""
 
         class FakeStream:
+            """Minimal sounddevice stream used by the lifecycle test."""
+
             def __init__(self, **_kwargs: object) -> None:
                 pass
 
             def start(self) -> None:
+                """Start the fake stream."""
                 pass
 
             def stop(self) -> None:
+                """Stop the fake stream."""
                 pass
 
             def close(self) -> None:
+                """Close the fake stream."""
                 pass
 
         transport = LocalAudioTransport()
