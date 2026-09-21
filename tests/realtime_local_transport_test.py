@@ -147,15 +147,15 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
 
             def start(self) -> None:
                 """Start the fake stream."""
-                pass
+                return None
 
             def stop(self) -> None:
                 """Stop the fake stream."""
-                pass
+                return None
 
             def close(self) -> None:
                 """Close the fake stream."""
-                pass
+                return None
 
         transport = LocalAudioTransport()
         transport._enqueue(AudioFrame(pcm=b"stale-input"))
