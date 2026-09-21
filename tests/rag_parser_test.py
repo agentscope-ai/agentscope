@@ -6,7 +6,6 @@ PDF / PPTX fixtures are produced in-memory via :mod:`reportlab` and
 run anywhere ``agentscope[rag]`` is installed.
 """
 import base64
-import importlib.util
 import io
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -882,111 +881,75 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
 
-    async def asyncSetUp(self) -> None:
-        """Skip Excel coverage when its optional readers are absent."""
-        for dependency in ("pandas", "openpyxl"):
-            if importlib.util.find_spec(dependency) is None:
-                self.skipTest(f"{dependency} is not installed")
-
     async def test_header_only_sheet(self) -> None:
-        """A single populated row is preserved, even without data rows."""
+        """A sheet with only a header row is kept as a table."""
         xlsx_bytes = _make_xlsx_simple({"Data": [["Revenue", "Year"]]})
-        expected_tables = {
-            ("markdown", False): "| Revenue | Year |\n| --- | --- |\n",
-            ("markdown", True): (
-                "| [A1] Revenue | [B1] Year |\n| --- | --- |\n"
-            ),
-            ("json", False): '["Revenue", "Year"]',
-            ("json", True): '{"A1": "Revenue", "B1": "Year"}',
-        }
-        for (table_format, coordinates), table in expected_tables.items():
-            if table_format == "json":
-                table = (
-                    "<system-info>A table loaded as a JSON "
-                    "array:</system-info>\n" + table
-                )
-            for separate in (False, True):
-                with self.subTest(
-                    table_format=table_format,
-                    coordinates=coordinates,
-                    separate=separate,
-                ):
-                    sections = await ExcelParser(
-                        table_format=table_format,
-                        include_cell_coordinates=coordinates,
-                        separate_sheet=separate,
-                    ).parse(xlsx_bytes, "header.xlsx")
-                    self.assertEqual(len(sections), 1)
-                    self.assertEqual(sections[0].content.type, "text")
-                    self.assertEqual(
-                        sections[0].content.text,
-                        "Sheet: Data\n" + table,
-                    )
-                    self.assertEqual(sections[0].source, "header.xlsx")
-                    self.assertEqual(
-                        sections[0].metadata,
-                        {"sheet": "Data"} if separate else {},
-                    )
+        sections = await ExcelParser().parse(xlsx_bytes, "header.xlsx")
+
+        self.assertListEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Sheet: Data\n"
+                            "| Revenue | Year |\n"
+                            "| --- | --- |\n"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "header.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
 
     async def test_blank_sheet_has_no_sections(self) -> None:
-        """A genuinely blank sheet produces neither a table nor images."""
+        """A blank sheet produces neither a table nor images."""
         xlsx_bytes = _make_xlsx_simple({"Blank": []})
-        for table_format in ("markdown", "json"):
-            for separate in (False, True):
-                with self.subTest(format=table_format, separate=separate):
-                    sections = await ExcelParser(
-                        table_format=table_format,
-                        separate_sheet=separate,
-                        include_image=True,
-                    ).parse(xlsx_bytes, "blank.xlsx")
-                    self.assertEqual(sections, [])
+        sections = await ExcelParser().parse(xlsx_bytes, "blank.xlsx")
+
+        self.assertListEqual(sections, [])
 
     async def test_image_only_sheet(self) -> None:
-        """Images do not require a table and still honor include_image."""
-        if importlib.util.find_spec("PIL") is None:
-            self.skipTest("Pillow is not installed")
+        """Images on a sheet without cell values are still extracted."""
         from openpyxl import Workbook
         from openpyxl.drawing.image import Image
 
         workbook = Workbook()
-        worksheet = workbook.active
-        worksheet.title = "Images"
-        worksheet.add_image(Image(io.BytesIO(_PNG_PIXEL)), "A3")
+        workbook.active.title = "Images"
+        workbook.active.add_image(Image(io.BytesIO(_PNG_PIXEL)), "A3")
         buffer = io.BytesIO()
         workbook.save(buffer)
         workbook.close()
 
-        for table_format in ("markdown", "json"):
-            for separate in (False, True):
-                for include_image in (False, True):
-                    with self.subTest(
-                        format=table_format,
-                        separate=separate,
-                        include_image=include_image,
-                    ):
-                        sections = await ExcelParser(
-                            table_format=table_format,
-                            separate_sheet=separate,
-                            include_image=include_image,
-                        ).parse(buffer.getvalue(), "images.xlsx")
-                        if not include_image:
-                            self.assertEqual(sections, [])
-                            continue
-                        self.assertEqual(len(sections), 1)
-                        self.assertEqual(sections[0].content.type, "data")
-                        self.assertEqual(
-                            sections[0].content.source.data,
-                            _PNG_PIXEL_B64,
-                        )
-                        self.assertEqual(
-                            sections[0].content.source.media_type,
-                            "image/png",
-                        )
-                        self.assertEqual(sections[0].source, "images.xlsx")
-                        self.assertEqual(
-                            sections[0].metadata,
-                            {"sheet": "Images", "media_type": "image/png"},
-                        )
+        parser = ExcelParser(include_image=True)
+        sections = await parser.parse(buffer.getvalue(), "images.xlsx")
+
+        self.assertListEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "images.xlsx",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "images.xlsx",
+                    "metadata": {"sheet": "Images", "media_type": "image/png"},
+                },
+            ],
+        )
 
     async def test_single_sheet_markdown(self) -> None:
         """A single-sheet workbook produces one text Section with

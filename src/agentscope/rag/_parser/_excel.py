@@ -311,9 +311,7 @@ class ExcelParser(ParserBase):
             logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
             return sheet_sections
 
-        # pandas considers header-only tables empty, but their columns
-        # still contain worksheet content. Images need neither rows nor
-        # columns, so only table rendering is conditional here.
+        # A header-only sheet is "empty" to pandas but still has columns
         if len(df.columns) > 0:
             table_data = _extract_table_data(df)
 
