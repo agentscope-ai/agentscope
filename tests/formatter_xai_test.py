@@ -7,6 +7,9 @@ dicts), a lightweight xai_sdk stub is built at module load so that tests run
 without the real package.  The stub objects support __eq__ and __repr__ so
 full assertListEqual comparisons work.
 """
+import base64
+import os
+import re
 import sys
 from typing import Any
 from types import ModuleType
@@ -21,6 +24,7 @@ from agentscope.message import (
     TextBlock,
     DataBlock,
     Base64Source,
+    URLSource,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
@@ -310,6 +314,87 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_chat_formatter_tool_result_with_unsupported_media(
+        self,
+    ) -> None:
+        """A media block in a tool result becomes the textual placeholder.
+
+        ``_extract_result_text`` used to fall through to ``str(item)``, so
+        the prompt received the block's repr — internal id, media type,
+        ``created_at`` and the whole base64 payload — instead of the
+        placeholder every other formatter emits for media the API cannot
+        carry in a tool result.
+        """
+        fmt = XAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="done"),
+                            DataBlock(
+                                id="blk_1",
+                                source=URLSource(
+                                    url="https://example.com/a.png",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [m for m in res if m.role == "tool"],
+            [
+                tool_result(
+                    "done\n<system-reminder>A(n) image file is returned "
+                    "and can be accessed at the URL: "
+                    "https://example.com/a.png.</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_tool_result_base64_keeps_payload_out(
+        self,
+    ) -> None:
+        """Inline media is referenced by path, never dumped into the text."""
+        payload = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"ABC" * 40).decode()
+        result = ToolResultBlock(
+            id="call_1",
+            name="shot",
+            output=[
+                DataBlock(
+                    id="blk_1",
+                    source=Base64Source(
+                        data=payload,
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+            state=ToolResultState.SUCCESS,
+        )
+
+        # pylint: disable=protected-access
+        text = XAIChatFormatter()._extract_result_text(result.output)
+
+        saved = re.search(r"saved locally at: (.+?)\.</system-reminder>", text)
+        self.assertIsNotNone(saved, text)
+        try:
+            self.assertNotIn(payload, text)
+            self.assertNotIn("Base64Source(", text)
+            self.assertIn("A(n) image file is returned", text)
+        finally:
+            os.unlink(saved.group(1))
 
     async def test_chat_formatter_thinking_dropped(self) -> None:
         """ThinkingBlock is silently ignored in user/assistant xAI
