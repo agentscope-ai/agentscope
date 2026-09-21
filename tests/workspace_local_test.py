@@ -1862,26 +1862,20 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
             self._make_stateful_mcp("b"),
         ]
 
-        capped = await self._workspace(
-            default_mcps=defaults,
-            max_live_stateful_mcps=0,
-        )
-        self.assertEqual(capped.max_live_stateful_mcps, 0)
+        effective = {}
+        for cap in (0, 1, None):
+            ws = await self._workspace(
+                default_mcps=defaults,
+                max_live_stateful_mcps=cap,
+            )
+            effective[f"cap={cap}"] = ws.max_live_stateful_mcps
 
-        # Control: only an unset cap derives the ``max(40, 2 * n)``
-        # default.
-        derived = await self._workspace(
-            default_mcps=defaults,
-            max_live_stateful_mcps=None,
+        # Only ``None`` derives the ``max(40, 2 * n)`` default; every
+        # explicit value, 0 included, is used as given.
+        self.assertEqual(
+            effective,
+            {"cap=0": 0, "cap=1": 1, "cap=None": 40},
         )
-        self.assertEqual(derived.max_live_stateful_mcps, 40)
-
-        # Control: a non-zero explicit cap was never affected.
-        strict = await self._workspace(
-            default_mcps=defaults,
-            max_live_stateful_mcps=1,
-        )
-        self.assertEqual(strict.max_live_stateful_mcps, 1)
 
 
 class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
