@@ -24,7 +24,9 @@ from agentscope.message import (
 )
 
 
-class TestAnthropicFormatter(IsolatedAsyncioTestCase):
+class TestAnthropicFormatter(
+    IsolatedAsyncioTestCase,
+):  # pylint: disable=too-many-public-methods
     """Comprehensive tests for Anthropic Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -1004,6 +1006,49 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                                 "media_type": "image/png",
                                 "data": self.image_b64,
                             },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are forwarded to Anthropic image block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this screenshot:"),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                        cache_control={"type": "ephemeral"},
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Inspect this screenshot:",
+                        },
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                            "cache_control": {"type": "ephemeral"},
                         },
                     ],
                 },
