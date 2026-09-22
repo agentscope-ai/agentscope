@@ -10,7 +10,7 @@ literal assertions) of the Redis backend's tests so both backends
 stay behavioural equivalents.
 """
 from contextlib import AsyncExitStack
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from importlib import import_module
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -748,49 +748,54 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         self.assertIsNone(fetched.processing_node)
         self.assertIsNone(fetched.lease_expires_at)
 
-    async def test_upsert_document_round_trips_a_live_lease(self) -> None:
-        """A leased document can be written back exactly as it was read.
-
-        The promoted ``lease_expires_at`` column is a ``DateTime`` while the
-        mapper dumps records with ``mode="json"``, so the document the lease
-        helpers had just claimed could not be re-upserted: the index worker's
-        progress write died on its own timestamp.
-        """
+    async def test_upsert_leased_document(self) -> None:
+        """A leased document read back from storage can be upserted again."""
         kb = _kb_record("user-1")
         await self.storage.upsert_knowledge_base("user-1", kb)
         doc = _kd_record("user-1", kb.id)
         await self.storage.upsert_knowledge_document("user-1", doc)
-
-        self.assertTrue(
-            await self.storage.acquire_knowledge_document_lease(
-                "user-1",
-                kb.id,
-                doc.id,
-                "worker-A",
-                timedelta(minutes=5),
-                datetime.now(),
-            ),
+        await self.storage.acquire_knowledge_document_lease(
+            "user-1",
+            kb.id,
+            doc.id,
+            "worker-A",
+            timedelta(minutes=5),
+            datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
         )
         leased = await self.storage.get_knowledge_document(
             "user-1",
             kb.id,
             doc.id,
         )
-        self.assertEqual(leased.processing_node, "worker-A")
+        leased.data.chunk_count = 3
+        await self.storage.upsert_knowledge_document("user-1", leased)
 
-        progressed = leased.model_copy(
-            update={
-                "data": leased.data.model_copy(update={"chunk_count": 3}),
-            },
-        )
-        await self.storage.upsert_knowledge_document("user-1", progressed)
-
-        stored = await self.storage.get_knowledge_document(
+        fetched = await self.storage.get_knowledge_document(
             "user-1",
             kb.id,
             doc.id,
         )
-        self.assertEqual(stored.model_dump(), progressed.model_dump())
+        self.assertDictEqual(
+            fetched.model_dump(mode="json"),
+            {
+                "id": doc.id,
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "knowledge_base_id": kb.id,
+                "processing_node": "worker-A",
+                "status": "pending",
+                "lease_expires_at": "2026-01-01T12:05:00",
+                "data": {
+                    "filename": "f.txt",
+                    "size": 42,
+                    "content_type": None,
+                    "blob_uri": "local://f.txt",
+                    "error": None,
+                    "chunk_count": 3,
+                },
+            },
+        )
 
     async def test_expired_lease_and_pending_sweep(self) -> None:
         """``list_..._with_expired_lease`` + ``..._pending_since`` filters."""

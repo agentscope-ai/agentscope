@@ -79,13 +79,7 @@ def _from_record(
     column_values: dict = {}
     for field in row_cls.get_indexed_fields():
         value = dump.pop(field, None)
-        # ``mode="json"`` renders a datetime as an ISO string, and a
-        # ``DateTime`` column rejects that — which would make a record
-        # that carries a value for such a column (a leased knowledge
-        # document, say) impossible to write back after reading it.  Keep
-        # the native value there; every other field stays exactly as
-        # dumped, so enums and ``None`` keep the shapes the read path
-        # already absorbs.
+        # A ``DateTime`` column rejects the ISO string ``mode="json"`` dumps.
         original = getattr(record, field, None)
         column_values[field] = (
             original if isinstance(original, datetime) else value
