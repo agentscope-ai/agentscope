@@ -573,8 +573,7 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
         )
 
     async def test_split_keeps_metadata_and_timestamps(self) -> None:
-        """Both halves of a truncated tool result keep the fields the split
-        does not truncate: the tool's metadata and the block timestamps."""
+        """Both halves of a split tool result keep metadata and timestamps."""
         tool_result = ToolResultBlock(
             id="test_9",
             name="Write",
@@ -606,46 +605,52 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             tool_result,
         )
 
-        # The split happened, so both halves are freshly built blocks.
-        self.assertIsNot(reserved, tool_result)
-        self.assertIsNotNone(offload)
-
-        carried = (
-            "id",
-            "name",
-            "state",
-            "metadata",
-            "created_at",
-            "finished_at",
+        self.assertDictEqual(
+            reserved.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "test_9",
+                "name": "Write",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": "A" * 20 + "B" * 80,
+                        "id": "block1",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "success",
+                "metadata": {
+                    "diff": "--- a/x\n+++ b/x",
+                    "file_path": "/tmp/x.py",
+                },
+                "created_at": "2026-09-21T10:00:00",
+                "finished_at": "2026-09-21T10:00:05",
+            },
         )
         self.assertDictEqual(
+            offload.model_dump(),
             {
-                "reserved": {k: getattr(reserved, k) for k in carried},
-                "offload": {k: getattr(offload, k) for k in carried},
-            },
-            {
-                "reserved": {
-                    "id": "test_9",
-                    "name": "Write",
-                    "state": "success",
-                    "metadata": {
-                        "diff": "--- a/x\n+++ b/x",
-                        "file_path": "/tmp/x.py",
+                "type": "tool_result",
+                "id": "test_9",
+                "name": "Write",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": "B" * 320,
+                        "id": "block2",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
-                    "created_at": "2026-09-21T10:00:00",
-                    "finished_at": "2026-09-21T10:00:05",
+                ],
+                "state": "success",
+                "metadata": {
+                    "diff": "--- a/x\n+++ b/x",
+                    "file_path": "/tmp/x.py",
                 },
-                "offload": {
-                    "id": "test_9",
-                    "name": "Write",
-                    "state": "success",
-                    "metadata": {
-                        "diff": "--- a/x\n+++ b/x",
-                        "file_path": "/tmp/x.py",
-                    },
-                    "created_at": "2026-09-21T10:00:00",
-                    "finished_at": "2026-09-21T10:00:05",
-                },
+                "created_at": "2026-09-21T10:00:00",
+                "finished_at": "2026-09-21T10:00:05",
             },
         )
 
