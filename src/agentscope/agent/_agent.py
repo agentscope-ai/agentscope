@@ -2204,11 +2204,10 @@ class Agent:
         tasks are cancelled explicitly (to avoid orphan tasks), any events
         already queued by the workers (including interruption chunks emitted
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
-        flushed to the caller, and the generator returns normally. The
-        caller is expected to detect the interruption via the flushed
-        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
-        event-based propagation used by
-        :meth:`_execute_sequential_tool_calls`.
+        flushed to the caller before re-raising ``CancelledError``. The
+        reply loop then closes any unfinished tool calls, including those
+        cancelled in middleware before reaching ``toolkit.call_tool`` and
+        therefore unable to emit their own interruption events.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -2224,6 +2223,9 @@ class Agent:
                 The events generated during the execution of the tool calls.
 
         Raises:
+            `asyncio.CancelledError`:
+                Re-raised after cancelling workers and draining queued events
+                when the caller task is cancelled.
             `ExceptionGroup`:
                 Raised after all tool calls finish when one or more of them
                 raised an exception. Each individual exception is included in
@@ -2290,13 +2292,10 @@ class Agent:
                 if event is sentinel:
                     continue
                 yield event
-            # Consume the cancel so this generator returns normally. The
-            # caller relies on the flushed ``ToolResultEndEvent(state=
-            # INTERRUPTED)`` events, not on the exception, to detect the
-            # interruption — mirroring the event-based propagation used by
-            # :meth:`_execute_sequential_tool_calls`.
-            asyncio.current_task().uncancel()
-            return
+            # Middleware may be cancelled before the toolkit can emit an
+            # interrupted result. Always propagate cancellation so the reply
+            # loop closes unfinished calls instead of executing them again.
+            raise
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
