@@ -15,6 +15,7 @@ from agentscope.classifier import (
 )
 from agentscope.credential import CredentialBase
 from agentscope.event import ModelCallStartEvent, ReplyStartEvent
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import (
     Base64Source,
     DataBlock,
@@ -220,6 +221,62 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
         # The resumed reply keeps the route, a new one is routed again
         self.assertListEqual(active, [self.reasoning, self.primary])
         self.assertIs(agent.model, self.primary)
+
+    async def test_new_reply_is_gated_by_its_own_routing(self) -> None:
+        """An attachment is judged against the models of *its* reply, not
+        against the candidate the previous reply was routed to."""
+        # The cheap candidate carries no media at all; the roomy context
+        # keeps the recording from being compressed out of the turn.
+        self.fast.formatter = OpenAIChatFormatter(input_types=["text/plain"])
+        for model in (self.primary, self.fast, self.reasoning):
+            model.context_size = 100000
+        middleware = ModelRouterMiddleware(
+            _MockClassifier(["fast", "reasoning"]),
+            self.candidates,
+        )
+
+        agent, called = await self._reply(
+            middleware,
+            [TextBlock(text="Say hello.")],
+            [
+                TextBlock(text="What is in this recording?"),
+                DataBlock(
+                    source=Base64Source(data="AA==", media_type="audio/wav"),
+                ),
+            ],
+        )
+
+        self.assertListEqual(called, ["fast-model", "reasoning-model"])
+        self.assertDictEqual(
+            agent.state.middle_context,
+            {"ModelRouterMiddleware": {agent.state.reply_id: "reasoning"}},
+        )
+
+        def kinds(msg: Msg) -> list[tuple[str, str]]:
+            """The content blocks of *msg*, by type and payload."""
+            return [
+                (
+                    block.type,
+                    block.text
+                    if block.type == "text"
+                    else block.source.media_type,
+                )
+                for block in msg.content
+            ]
+
+        # The recording reaches the model that was asked about it: while the
+        # route is still unknown the agent's own model gates the media, and
+        # that one accepts audio.
+        self.assertListEqual(
+            [kinds(_) for _ in agent.state.context if _.role == "user"],
+            [
+                [("text", "Say hello.")],
+                [
+                    ("text", "What is in this recording?"),
+                    ("data", "audio/wav"),
+                ],
+            ],
+        )
 
     async def test_chat_model_routes_with_structured_output(self) -> None:
         """A chat model routes through a structured choice."""
