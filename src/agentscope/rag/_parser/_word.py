@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
@@ -71,6 +71,49 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     return text.strip()
 
 
+def _extract_cell_text(tc: Any) -> str:
+    """Flatten one ``w:tc`` into its text, line breaks preserved.
+
+    Children are walked in document order rather than only the direct ``w:p``
+    children, because a cell may legally contain a nested ``w:tbl``. Those
+    paragraphs are not direct children of this cell, so a ``findall`` over
+    ``w:p`` alone silently drops the nested table's content.
+    """
+    from docx.oxml.ns import qn
+
+    text_tag = qn("w:t")
+    break_tags = {qn("w:br"), qn("w:cr")}
+    paragraphs: list[str] = []
+    for child in tc:
+        if child.tag == qn("w:p"):
+            text_parts: list[str] = []
+            for element in child.iter():
+                if element.tag == text_tag and element.text:
+                    text_parts.append(element.text)
+                elif element.tag in break_tags:
+                    text_parts.append("\n")
+            para_text = "".join(text_parts)
+            if para_text:
+                paragraphs.append(para_text)
+        elif child.tag == qn("w:tbl"):
+            nested_rows = _extract_nested_table_rows(child)
+            if nested_rows:
+                paragraphs.append(nested_rows)
+    return "\n".join(paragraphs)
+
+
+def _extract_nested_table_rows(tbl: Any) -> str:
+    """Render a nested ``w:tbl`` as newline-joined cell text, in row order."""
+    from docx.oxml.ns import qn
+
+    rows: list[str] = []
+    for tr in tbl.findall(qn("w:tr")):
+        cells = [_extract_cell_text(tc) for tc in tr.findall(qn("w:tc"))]
+        if any(cells):
+            rows.append(" ".join(cell for cell in cells if cell))
+    return "\n".join(rows)
+
+
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """Extract table data from a python-docx Table, preserving line breaks
     within cells.
@@ -83,24 +126,11 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """
     from docx.oxml.ns import qn
 
-    text_tag = qn("w:t")
-    break_tags = {qn("w:br"), qn("w:cr")}
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
         row_data: list[str] = []
         for tc in tr.findall(qn("w:tc")):
-            paragraphs: list[str] = []
-            for p_elem in tc.findall(qn("w:p")):
-                text_parts: list[str] = []
-                for element in p_elem.iter():
-                    if element.tag == text_tag and element.text:
-                        text_parts.append(element.text)
-                    elif element.tag in break_tags:
-                        text_parts.append("\n")
-                para_text = "".join(text_parts)
-                if para_text:
-                    paragraphs.append(para_text)
-            row_data.append("\n".join(paragraphs))
+            row_data.append(_extract_cell_text(tc))
 
             tc_pr = tc.find(qn("w:tcPr"))
             if tc_pr is not None:
