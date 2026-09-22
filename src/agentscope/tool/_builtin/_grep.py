@@ -160,8 +160,6 @@ class Grep(ToolBase):
         self,
         middlewares: List[ToolMiddlewareBase] | None = None,
         backend: BackendBase | None = None,
-        *,
-        cwd: str | None = None,
     ) -> None:
         """Initialize the grep tool.
 
@@ -174,29 +172,11 @@ class Grep(ToolBase):
                 Ripgrep is always invoked via ``exec_shell`` so that
                 the same code path works for local, Docker, and E2B
                 backends.
-            cwd (`str | None`, optional):
-                Default search directory, also used to resolve relative
-                search paths. When ``None``, preserve the backend's
-                current-directory behavior. Relative ``cwd`` values are
-                resolved against the backend's current directory.
         """
         from ._backend import LocalBackend
 
         super().__init__(middlewares=middlewares)
         self._backend = backend or LocalBackend()
-        self._cwd = cwd
-
-    async def _resolve_path(self, path: str | None) -> str:
-        """Resolve a search path using this tool's configured directory."""
-        if self._cwd is None:
-            return path or await self._backend.getcwd()
-        cwd = self._cwd
-        if not self._backend.isabs(cwd):
-            cwd = self._backend.abspath(
-                cwd,
-                cwd=await self._backend.getcwd(),
-            )
-        return self._backend.abspath(path or ".", cwd=cwd)
 
     async def check_permissions(
         self,
@@ -238,9 +218,8 @@ class Grep(ToolBase):
             return True
 
         path = tool_input.get("path", "")
-        if path and fnmatch.fnmatch(path, rule_content):
-            return True
-        path = await self._resolve_path(path)
+        if not path:
+            path = await self._backend.getcwd()
         return fnmatch.fnmatch(path, rule_content)
 
     async def generate_suggestions(
@@ -260,12 +239,10 @@ class Grep(ToolBase):
             `List[PermissionRule]`:
                 A single suggested rule covering the search directory
         """
-        path = await self._resolve_path(tool_input.get("path"))
+        backend_cwd = await self._backend.getcwd()
+        path = tool_input.get("path") or backend_cwd
 
-        abs_path = self._backend.abspath(
-            path,
-            cwd=await self._backend.getcwd(),
-        )
+        abs_path = self._backend.abspath(path, cwd=backend_cwd)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
         pattern = abs_path.rstrip("/\\") + "/**"
@@ -378,7 +355,10 @@ class Grep(ToolBase):
             n: Show line numbers (content mode only, default True)
             **kwargs: Additional parameters (-A, -B, -C)
         """
-        search_path = await self._resolve_path(path)
+        search_path = self._backend.abspath(
+            path or ".",
+            cwd=await self._backend.getcwd(),
+        )
 
         if head_limit is not None and head_limit < 0:
             return ToolChunk(

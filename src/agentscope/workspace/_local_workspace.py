@@ -124,7 +124,7 @@ class LocalWorkspace(WorkspaceBase):
         )
 
         # ── runtime state ───────────────────────────────────────
-        self._backend = LocalBackend()
+        self._backend = LocalBackend(workdir=self.workdir)
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
@@ -143,7 +143,7 @@ class LocalWorkspace(WorkspaceBase):
         from ..tool import Bash, Edit, Glob, Grep, PowerShell, Read, Write
 
         backend = self.get_backend()
-        glob_kwargs: dict = {"backend": backend, "cwd": self.workdir}
+        glob_kwargs: dict = {"backend": backend}
         if self._glob_helper_path is not None:
             glob_kwargs["glob_helper_path"] = self._glob_helper_path
 
@@ -156,7 +156,7 @@ class LocalWorkspace(WorkspaceBase):
             shell,
             Edit(backend=backend),
             Glob(**glob_kwargs),
-            Grep(backend=backend, cwd=self.workdir),
+            Grep(backend=backend),
             Read(backend=backend),
             Write(backend=backend),
         ]

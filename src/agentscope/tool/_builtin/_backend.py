@@ -761,6 +761,19 @@ class LocalBackend(BackendBase):
     # OS is the host OS.
     os_name = os.name
 
+    def __init__(self, workdir: str | None = None) -> None:
+        """Initialize the local backend.
+
+        Args:
+            workdir (`str | None`, optional):
+                Directory returned by :meth:`getcwd`, resolved to an
+                absolute path. When ``None``, use the host process's
+                current working directory at call time.
+        """
+        self._workdir = (
+            os.path.abspath(workdir) if workdir is not None else None
+        )
+
     async def exec_shell(
         self,
         command: list[str],
@@ -900,13 +913,13 @@ class LocalBackend(BackendBase):
                 yield chunk
 
     async def getcwd(self) -> str:
-        """Return the host process's current working directory.
+        """Return the configured directory or the host process's current one.
 
         Returns:
             `str`:
-                ``os.getcwd()`` — avoids spawning a ``pwd`` subprocess.
+                The configured workdir, or ``os.getcwd()`` when unset.
         """
-        return os.getcwd()
+        return self._workdir if self._workdir is not None else os.getcwd()
 
     async def expanduser(self, path: str) -> str:
         """Expand ``~`` using the host process's ``$HOME``.
