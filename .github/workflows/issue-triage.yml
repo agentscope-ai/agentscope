@@ -4,18 +4,74 @@ name: Issue Triage
 # claim holds on current main. It only ever writes a verdict to a file: the
 # labelling and commenting below are what touch the issue, so the agent — which
 # reads attacker-controlled text — never holds a token that could.
+#
+# Before any of that, one account may hold at most MAX_OPEN_ISSUES open issues,
+# so a burst of reports from one person cannot crowd everyone else out.
 
 on:
   issues:
-    types: [opened]
+    types: [opened, reopened]
 
 permissions: {}
 
 env:
   TRIAGE_MODEL: qwen3.8-max
+  MAX_OPEN_ISSUES: '5'
+  MAINTAINERS: DavdGao qbc2016
 
 jobs:
+  quota:
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      closed: ${{ steps.check.outputs.closed }}
+    steps:
+      - id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const author = context.payload.issue.user.login;
+            const limit = Number(process.env.MAX_OPEN_ISSUES);
+            const maintainers = process.env.MAINTAINERS.split(/\s+/);
+
+            // A maintainer's own issues, and a reopen a maintainer decided
+            // on, are never subject to the cap.
+            if ([author, context.actor].some((u) => maintainers.includes(u))) {
+              return;
+            }
+
+            // The REST listing is live; the search index lags behind and
+            // would miss an issue opened seconds ago.
+            const open = await github.paginate(
+              github.rest.issues.listForRepo,
+              { owner, repo, creator: author, state: 'open', per_page: 100 },
+            );
+            const others = open.filter(
+              (i) => !i.pull_request && i.number !== issue_number,
+            );
+            if (others.length < limit) return;
+
+            await github.rest.issues.createComment({
+              owner, repo, issue_number,
+              body:
+                `Thanks for the report, @${author}. To keep the tracker ` +
+                `focused, each account can have at most ${limit} open ` +
+                'issues at a time, so this one is closed for now. Once your ' +
+                'open issues are resolved, feel free to reopen it.',
+            });
+            await github.rest.issues.update({
+              owner, repo, issue_number, state: 'closed',
+              state_reason: 'not_planned',
+            });
+            core.setOutput('closed', 'true');
+            core.notice(`Closed: ${author} already has ${others.length} open.`);
+
   triage:
+    needs: quota
     # Read the code, label and comment on the issue. Never contents:write — a
     # run that reads an untrusted issue must not be able to push.
     permissions:
@@ -25,6 +81,8 @@ jobs:
     # blank issues are disabled and the bug form is the only template, so every
     # issue arrives here and stage 1 decides what it really is.
     if: >-
+      github.event.action == 'opened' &&
+      needs.quota.outputs.closed != 'true' &&
       github.event.issue.user.login != 'DavdGao' &&
       github.event.issue.user.login != 'qbc2016'
     runs-on: ubuntu-latest

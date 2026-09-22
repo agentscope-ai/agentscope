@@ -49,6 +49,7 @@ AgentScope 欢迎使用 AI 编码助手的贡献者——Claude Code、Cursor、
 
 - **基于已有任务**：浏览 [Projects](https://github.com/orgs/agentscope-ai/projects/2) 与 [Issues](https://github.com/agentscope-ai/agentscope/issues) 中标有 `help wanted` 的条目(参见 [§1](#1-开发路线图与参与方式))，在 issue 下评论认领后再开始。
 - **提出新想法**：新建 issue 描述问题、方案与设计上的取舍。等待核心开发团队反馈后再开始实现，避免事后大规模返工。
+- **数量限制**：每位贡献者同时最多有 5 个 open 状态的 issue，最多同时认领 5 个 issue。超出后新提的 issue 会被自动关闭、新的认领会被拒绝，请先聚焦手头已有的。
 
 ### 第 2 步：Fork 仓库并创建开发分支
 
