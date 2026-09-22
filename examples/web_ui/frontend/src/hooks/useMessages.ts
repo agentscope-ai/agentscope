@@ -16,6 +16,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import { findPendingReply, latestMessageVersions } from '@/hooks/pendingReply';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -33,23 +34,6 @@ export type SubagentHitlEntry = {
 	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
 	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
 	created_at: string;
-};
-
-/**
- * Return true if ``msg`` is an assistant reply currently parked on a
- * pending tool_call (awaiting user confirmation or an external
- * execution result). Used both to detect the "in-flight reply on page
- * load" case and as the SDK-gap workaround that hides the confirm
- * card once the paired tool_result lands.
- */
-const hasPendingToolCall = (msg: Msg | undefined): boolean => {
-	if (!msg || msg.role !== 'assistant') return false;
-	for (const block of msg.content) {
-		if (block.type !== 'tool_call') continue;
-		const state = (block as ToolCallBlock).state;
-		if (state === 'asking' || state === 'submitted') return true;
-	}
-	return false;
 };
 
 const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
@@ -242,8 +226,9 @@ export function useMessages(
 				}
 				if (event.type === EventType.REPLY_END) {
 					clearInterruptTimer();
-					setPhase('idle');
-					currentReplyRef.current = null;
+					const pendingReply = findPendingReply(msgsRef.current);
+					setPhase(pendingReply ? 'streaming' : 'idle');
+					currentReplyRef.current = pendingReply ?? null;
 				}
 			}
 
@@ -302,22 +287,22 @@ export function useMessages(
 				try {
 					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
 					if (cancelled) return;
-					msgsRef.current = messages;
 					// If a reply is in flight (running on a worker) OR the
-					// tail msg is parked on a pending tool_call (awaiting
+					// a reply is parked on a pending tool_call (awaiting
 					// user confirmation / external execution), initialise the
 					// phase to ``streaming`` so the interrupt button is
 					// available immediately — otherwise a fresh page load
 					// while parked leaves the UI stuck on ``idle`` with no
 					// way to abort.
-					const tail = messages[messages.length - 1];
-					if (is_running || hasPendingToolCall(tail)) {
+					msgsRef.current = latestMessageVersions(messages);
+					const pendingReply = findPendingReply(msgsRef.current);
+					if (is_running || pendingReply) {
 						setPhase('streaming');
-						if (hasPendingToolCall(tail)) {
+						if (pendingReply) {
 							// Prime the ref so continuation events (which
 							// arrive without a fresh REPLY_START) apply to
 							// the right msg.
-							currentReplyRef.current = tail ?? null;
+							currentReplyRef.current = pendingReply;
 						}
 					}
 					// Published synchronously, not through `scheduleUpdate`:
@@ -387,6 +372,8 @@ export function useMessages(
 					input: userMsg,
 				});
 			} catch (e) {
+				msgsRef.current = msgsRef.current.filter((msg) => msg.id !== userMsg.id);
+				scheduleUpdate();
 				setError(e as Error);
 			}
 		},

@@ -28,6 +28,7 @@ import {
 	MessageScrollerViewport,
 } from '@/components/ui/message-scroller.tsx';
 import { Spinner } from '@/components/ui/spinner';
+import { findPendingReply } from '@/hooks/pendingReply';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
@@ -152,12 +153,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	}, [loading]);
 
 	const toConfirmedToolCalls = useMemo(() => {
-		if (msgs.length === 0) return [];
-
-		const lastMsg = msgs[msgs.length - 1];
-		return getContentBlocks(lastMsg, 'tool_call')
+		const pendingReply = findPendingReply(msgs);
+		if (!pendingReply) return [];
+		return getContentBlocks(pendingReply, 'tool_call')
 			.filter((tc) => tc.state === 'asking')
-			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
+			.map((tc) => ({ replyId: pendingReply.id, toolCall: tc }));
 	}, [msgs]);
 
 	// On an empty session the prompt and the input centre together, so every box
