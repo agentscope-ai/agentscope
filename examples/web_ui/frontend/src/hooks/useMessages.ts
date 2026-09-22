@@ -16,7 +16,11 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
-import { findPendingReply, latestMessageVersions } from '@/hooks/pendingReply';
+import {
+	findPendingReply,
+	latestMessageVersions,
+	sessionStatusHasActiveReply,
+} from '@/hooks/pendingReply';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -58,6 +62,8 @@ export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 
 /** Safety fallback: force phase back to idle if REPLY_END is not seen. */
 const INTERRUPT_TIMEOUT_MS = 10_000;
+/** Reconcile the UI when a terminal SSE event was missed. */
+const SESSION_STATUS_RECONCILE_MS = 1_000;
 
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
@@ -285,7 +291,10 @@ export function useMessages(
 				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
 			} else {
 				try {
-					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+					const [{ messages, is_running }, statusResult] = await Promise.all([
+						sessionApi.messages(sessionId, agentId),
+						sessionApi.status(sessionId, agentId).catch(() => null),
+					]);
 					if (cancelled) return;
 					// If a reply is in flight (running on a worker) OR the
 					// a reply is parked on a pending tool_call (awaiting
@@ -296,7 +305,10 @@ export function useMessages(
 					// way to abort.
 					msgsRef.current = latestMessageVersions(messages);
 					const pendingReply = findPendingReply(msgsRef.current);
-					if (is_running || pendingReply) {
+					const sessionActive = statusResult
+						? sessionStatusHasActiveReply(statusResult.status)
+						: is_running || pendingReply !== undefined;
+					if (sessionActive) {
 						setPhase('streaming');
 						if (pendingReply) {
 							// Prime the ref so continuation events (which
@@ -349,6 +361,41 @@ export function useMessages(
 			clearInterruptTimer();
 		};
 	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+
+	// The SSE stream is live-first but intentionally best-effort: a reply can
+	// finish between its replay read and live subscription, leaving the UI in
+	// ``streaming`` even though the server has released the session lock. Probe
+	// the authoritative status while streaming so that missed terminal events
+	// cannot permanently replace the Send button with Stop.
+	useEffect(() => {
+		if (!agentId || !sessionId || phase !== 'streaming') return;
+
+		let cancelled = false;
+		let probing = false;
+		const reconcile = async () => {
+			if (cancelled || probing) return;
+			probing = true;
+			try {
+				const { status } = await sessionApi.status(sessionId, agentId);
+				if (!cancelled && !sessionStatusHasActiveReply(status)) {
+					currentReplyRef.current = null;
+					setPhase('idle');
+				}
+			} catch {
+				// The SSE stream remains the primary signal; a transient probe
+				// failure must not hide an active reply or show a toast.
+			} finally {
+				probing = false;
+			}
+		};
+
+		void reconcile();
+		const timer = setInterval(() => void reconcile(), SESSION_STATUS_RECONCILE_MS);
+		return () => {
+			cancelled = true;
+			clearInterval(timer);
+		};
+	}, [agentId, sessionId, phase]);
 
 	/**
 	 * Send a user message. Appends the message to the local list

@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { findPendingReply, latestMessageVersions } from './pendingReply.ts';
+import {
+	findPendingReply,
+	latestMessageVersions,
+	sessionStatusHasActiveReply,
+} from './pendingReply.ts';
+
+test('only non-idle server statuses keep a reply active', () => {
+	assert.equal(sessionStatusHasActiveReply('idle'), false);
+	assert.equal(sessionStatusHasActiveReply('running'), true);
+	assert.equal(sessionStatusHasActiveReply('awaiting_permission'), true);
+	assert.equal(sessionStatusHasActiveReply('awaiting_external_result'), true);
+});
 
 test('finds a parked reply even after a rejected user turn and setup error', () => {
 	const parked = {

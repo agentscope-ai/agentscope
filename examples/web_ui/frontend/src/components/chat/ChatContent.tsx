@@ -153,12 +153,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	}, [loading]);
 
 	const toConfirmedToolCalls = useMemo(() => {
+		// A stale asking block can remain in persisted history after the server
+		// has already settled the run. The reply phase is reconciled from the
+		// authoritative session status, so do not render an old confirmation
+		// card while the session is idle.
+		if (phase !== 'streaming') return [];
 		const pendingReply = findPendingReply(msgs);
 		if (!pendingReply) return [];
 		return getContentBlocks(pendingReply, 'tool_call')
 			.filter((tc) => tc.state === 'asking')
 			.map((tc) => ({ replyId: pendingReply.id, toolCall: tc }));
-	}, [msgs]);
+	}, [msgs, phase]);
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.

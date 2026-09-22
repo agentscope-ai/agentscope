@@ -1,5 +1,10 @@
 import type { Msg, ToolCallBlock } from '@agentscope-ai/agentscope/message';
 
+/** Whether the server says this session still owns an active reply. */
+export function sessionStatusHasActiveReply(status: string): boolean {
+	return status !== 'idle';
+}
+
 /** Replace older copies of a reply while preserving its original position. */
 export function latestMessageVersions(messages: Msg[]): Msg[] {
 	const result: Msg[] = [];
