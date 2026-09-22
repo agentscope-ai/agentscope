@@ -84,9 +84,10 @@ const SESSION_STATUS_RECONCILE_MS = 1_000;
  *
  * ``phase`` is driven by event content, not HTTP lifecycle: it moves
  * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
- * ``ReplyEndEvent``. Calling ``interrupt()`` moves it to
- * ``interrupting`` until the terminating ``ReplyEndEvent`` arrives (or
- * a 10s safety timeout fires).
+ * ``ReplyEndEvent``. A silent session-status probe also reconciles it
+ * to ``idle`` when a terminal event was missed. Calling ``interrupt()``
+ * moves it to ``interrupting`` until the terminating ``ReplyEndEvent``
+ * arrives (or a 10s safety timeout fires).
  *
  * @param agentId - The agent whose session to subscribe. ``null`` to
  *   skip.
