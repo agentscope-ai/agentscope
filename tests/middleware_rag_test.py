@@ -244,7 +244,9 @@ async def _drain(generator: AsyncGenerator) -> list:
     return [item async for item in generator]
 
 
-class RAGMiddlewareTest(IsolatedAsyncioTestCase):
+class RAGMiddlewareTest(
+    IsolatedAsyncioTestCase,
+):  # pylint: disable=too-many-public-methods
     """The test cases for the :class:`RAGMiddleware` class."""
 
     async def asyncSetUp(self) -> None:
