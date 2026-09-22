@@ -28,6 +28,13 @@ async def list_models(
 
     Returns:
         `ListModelsResponse`: The response body.
+
+    Raises:
+        `HTTPException`:
+            404 if ``provider`` is not a registered credential type; 400 if
+            it is registered but serves no chat model, as a credential that
+            only backs classifier or embedding models has no model list to
+            return.
     """
     credential_cls = CredentialFactory.get_credential_class(body.provider)
     if credential_cls is None:
@@ -36,5 +43,13 @@ async def list_models(
             detail=f"Provider '{body.provider}' not found.",
         )
 
-    models = credential_cls.get_chat_model_class().list_models()
+    try:
+        model_cls = credential_cls.get_chat_model_class()
+    except NotImplementedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provider '{body.provider}' serves no chat model.",
+        ) from e
+
+    models = model_cls.list_models()
     return ListModelsResponse(models=models, total=len(models))

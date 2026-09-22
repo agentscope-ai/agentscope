@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Model service: builds a ChatModelBase from stored credential + config."""
+from fastapi import HTTPException, status
+
 from ._access import ResourceAccessService
 from ..storage import ChatModelConfig
 from ...credential import CredentialFactory
@@ -37,7 +39,9 @@ async def get_model(
     Raises:
         `HTTPException`:
             404 when the credential is neither owned by ``user_id`` nor
-            shared to them.
+            shared to them; 400 when the stored credential belongs to a
+            provider that serves no chat model, such as a classifier-only
+            credential.
     """
     credential_record = await access.resolve_credential(
         user_id,
@@ -45,7 +49,16 @@ async def get_model(
     )
 
     credential = CredentialFactory.from_dict(credential_record.data)
-    model_cls = credential.get_chat_model_class()
+    try:
+        model_cls = credential.get_chat_model_class()
+    except NotImplementedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Credential {config.credential_id!r} is a "
+                f"{type(credential).__name__} and serves no chat model."
+            ),
+        ) from e
     parameters = (
         model_cls.Parameters(**config.parameters)
         if config.parameters
