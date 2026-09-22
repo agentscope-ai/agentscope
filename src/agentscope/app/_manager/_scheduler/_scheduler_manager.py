@@ -2,6 +2,7 @@
 """The cron scheduler manager class."""
 import asyncio
 import json
+import re
 from collections.abc import Callable, Coroutine
 from datetime import datetime
 from zoneinfo import ZoneInfoNotFoundError
@@ -28,6 +29,67 @@ from ...storage import (
 
 if TYPE_CHECKING:
     from apscheduler.triggers.cron import CronTrigger
+
+
+def _normalize_cron_weekdays(value: str) -> str:
+    """Translate standard cron weekdays to APScheduler weekday names.
+
+    Expand ranges and steps before mapping Sunday (0 or 7), since moving
+    their endpoints would change their meaning. Parse named and numeric
+    terms alike, including their full range and step syntax.
+
+    Args:
+        value (`str`):
+            The fifth field of a standard five-field cron expression.
+
+    Returns:
+        `str`:
+            An equivalent comma-separated expression for APScheduler.
+
+    Raises:
+        `ValueError`:
+            A weekday term is malformed, outside 0 through 7, names an
+            unknown weekday, has a reversed range, or has a zero step.
+    """
+    weekdays = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+    normalized = []
+    for expression in value.split(","):
+        match = re.fullmatch(
+            r"(\*|(?:[0-9]+|[a-z]{3})"
+            r"(?:-(?:[0-9]+|[a-z]{3}))?)(?:/([0-9]+))?",
+            expression.lower(),
+        )
+        if match is None:
+            raise ValueError(
+                f"Invalid cron weekday expression: {expression!r}",
+            )
+        if expression == "*":
+            normalized.append(expression)
+            continue
+        bounds, step_text = match.groups()
+        step = int(step_text) if step_text is not None else 1
+        if bounds == "*":
+            first, last = 0, 7
+        else:
+            endpoints = [
+                int(part) if part.isdecimal() else weekdays.index(part)
+                for part in bounds.split("-")
+            ]
+            first, last = endpoints[0], endpoints[-1]
+            if len(endpoints) == 1 and step_text is not None:
+                last = 7
+            elif bounds.endswith("-sun") and first > 0:
+                # Keep ranges such as mon-sun and sat-sun valid: Sunday
+                # at the end of a range uses its upper-bound alias.
+                last = 7
+        if not 0 <= first <= last <= 7 or step < 1:
+            raise ValueError(
+                f"Invalid cron weekday expression: {expression!r}",
+            )
+        normalized.extend(
+            weekdays[day % 7] for day in range(first, last + 1, step)
+        )
+    return ",".join(normalized)
 
 
 class SchedulerManager:
@@ -341,6 +403,11 @@ class SchedulerManager:
         ``start_date`` / ``end_date``, so the configured activation
         window would be dropped.
 
+        Numeric weekdays follow standard cron (0 or 7 is Sunday, 1 is
+        Monday), including ranges and steps. Only the trigger is normalized;
+        the stored expression is unchanged. Existing numeric schedules are
+        therefore interpreted using this convention when registered again.
+
         Args:
             record (`ScheduleRecord`):
                 The schedule to check.
@@ -375,7 +442,7 @@ class SchedulerManager:
                 hour=hour,
                 day=day,
                 month=month,
-                day_of_week=day_of_week,
+                day_of_week=_normalize_cron_weekdays(day_of_week),
                 timezone=record.data.timezone,
                 start_date=record.data.started_at,
                 end_date=record.data.ended_at,

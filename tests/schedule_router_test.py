@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for schedule validation before persistence and registration."""
-from datetime import datetime
-from unittest import IsolatedAsyncioTestCase
+from datetime import datetime, timedelta
+from unittest import IsolatedAsyncioTestCase, TestCase
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -119,6 +120,127 @@ def _record() -> ScheduleRecord:
             permission_mode=PermissionMode.DONT_ASK,
         ),
     )
+
+
+class ScheduleWeekdayTest(TestCase):
+    """The shared trigger boundary accepts standard cron weekdays."""
+
+    def test_standard_weekdays_fire_on_expected_dates(self) -> None:
+        """Compare two-week fire sequences, including Sunday aliases."""
+        cases = {
+            "0": [0, 7],
+            "7": [0, 7],
+            "1": [1, 8],
+            "6": [6, 13],
+            "1-5": [1, 2, 3, 4, 5, 8, 9, 10, 11, 12],
+            "0,6": [0, 6, 7, 13],
+            "0,7": [0, 7],
+            "5-7": [0, 5, 6, 7, 12, 13],
+            "*/2": [0, 2, 4, 6, 7, 9, 11, 13],
+            "1-5/2": [1, 3, 5, 8, 10, 12],
+            "1/2": [0, 1, 3, 5, 7, 8, 10, 12],
+            "0-7/3": [0, 3, 6, 7, 10, 13],
+            "*": list(range(14)),
+            "*/1": list(range(14)),
+            "SUN": [0, 7],
+            "mon-fri": [1, 2, 3, 4, 5, 8, 9, 10, 11, 12],
+            "mon-fri/2": [1, 3, 5, 8, 10, 12],
+            "MoN-FrI/2": [1, 3, 5, 8, 10, 12],
+            "sun-sat": list(range(14)),
+            "sun-mon": [0, 1, 7, 8],
+            "sun-sun": [0, 7],
+            "sun-sat/2": [0, 2, 4, 6, 7, 9, 11, 13],
+            "mon/2": [0, 1, 3, 5, 7, 8, 10, 12],
+            "sun/2": [0, 2, 4, 6, 7, 9, 11, 13],
+            "mon-sun": list(range(14)),
+            "mon-sun/2": [0, 1, 3, 5, 7, 8, 10, 12],
+            "sat-sun": [0, 6, 7, 13],
+            "fri-sun": [0, 5, 6, 7, 12, 13],
+            "sun-6/2": [0, 2, 4, 6, 7, 9, 11, 13],
+            "1-fri/2": [1, 3, 5, 8, 10, 12],
+            "mon,wed,fri": [1, 3, 5, 8, 10, 12],
+            "1,wed,5-6": [1, 3, 5, 6, 8, 10, 12, 13],
+        }
+        start = datetime(2026, 9, 20, tzinfo=ZoneInfo("UTC"))
+        end = start + timedelta(days=14)
+        for expression, offsets in cases.items():
+            with self.subTest(expression=expression):
+                record = _record()
+                record.data.cron_expression = f"0 9 * * {expression}"
+                record.data.started_at = start
+                before = record.model_dump()
+                trigger = SchedulerManager.validate_schedule(record)
+                actual = []
+                fire = trigger.get_next_fire_time(None, start)
+                while fire is not None and fire < end:
+                    actual.append(fire)
+                    fire = trigger.get_next_fire_time(
+                        fire,
+                        fire + timedelta(seconds=1),
+                    )
+                self.assertEqual(
+                    actual,
+                    [start + timedelta(days=d, hours=9) for d in offsets],
+                )
+                self.assertEqual(record.model_dump(), before)
+
+    def test_weekday_normalization_preserves_timezone_and_window(self) -> None:
+        """The other fields and activation window keep their semantics."""
+        zone = ZoneInfo("Asia/Shanghai")
+        record = _record()
+        record.data.cron_expression = "15,45 9-10 * jan,sep 1"
+        record.data.timezone = "Asia/Shanghai"
+        record.data.started_at = datetime(2026, 9, 21, 9, 30, tzinfo=zone)
+        record.data.ended_at = datetime(2026, 9, 21, 10, 30, tzinfo=zone)
+        trigger = SchedulerManager.validate_schedule(record)
+        actual = []
+        fire = trigger.get_next_fire_time(None, record.data.started_at)
+        for _ in range(3):
+            actual.append(fire)
+            if fire is None:
+                break
+            fire = trigger.get_next_fire_time(
+                fire,
+                fire + timedelta(seconds=1),
+            )
+        self.assertEqual(
+            actual,
+            [
+                datetime(2026, 9, 21, 9, 45, tzinfo=zone),
+                datetime(2026, 9, 21, 10, 15, tzinfo=zone),
+                None,
+            ],
+        )
+
+    def test_invalid_weekdays_are_rejected(self) -> None:
+        """Normalization must not accept invalid weekday expressions."""
+        for expression in (
+            "8",
+            "-1",
+            "1-8",
+            "7-1",
+            "*/0",
+            "1-5/0",
+            "1,,2",
+            "1/abc",
+            "1-2-3",
+            "1/2/3",
+            "mon-fri/0",
+            "mon/0",
+            "mon-fri/abc",
+            "mon!",
+            "mon-fri!",
+            "mon-fri/2tail",
+            "sun-sat/2/3",
+            "mon-fri-sat",
+            "noday",
+            "fri-mon",
+        ):
+            with self.subTest(expression=expression):
+                record = _record()
+                record.data.cron_expression = f"0 9 * * {expression}"
+                with self.assertRaises(ValueError):
+                    SchedulerManager.validate_schedule(record)
 
 
 class ScheduleValidationTest(IsolatedAsyncioTestCase):
