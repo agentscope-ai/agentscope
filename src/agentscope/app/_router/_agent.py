@@ -248,17 +248,25 @@ async def update_agent(
         agent_id,
     )
 
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(exclude_none=True, exclude_unset=True)
+    current_data = existing.data.model_dump()
+    chat_updates = updates.pop("chat_config", None)
+    if chat_updates is not None:
+        updates["chat_config"] = {
+            **current_data["chat_config"],
+            **chat_updates,
+        }
     # ``model_copy(update=...)`` skips validators; re-run
     # ``AgentData.model_validate`` on the merged shape so the
     # ``invite_config`` sub-model's ``invitable ⇒ non-empty description``
     # invariant enforced by ``@model_validator(mode="after")`` produces
-    # an HTTP 422 instead of a stored-but-invalid record. A body still
-    # using the pre-``chat_config`` field names is folded in there too,
-    # on top of the stored block rather than over it.
+    # an HTTP 422 instead of a stored-but-invalid record. Nested updates
+    # replace only the supplied sub-configs. A body still using the
+    # pre-``chat_config`` field names is folded in there too, on top of
+    # the stored block rather than over it.
     try:
         updated_data = AgentData.model_validate(
-            {**existing.data.model_dump(), **updates},
+            {**current_data, **updates},
         )
     except ValidationError as exc:
         raise HTTPException(

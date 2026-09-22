@@ -61,8 +61,8 @@ class UpdateAgentRequest(BaseModel):
     chat_config: ChatConfig | None = Field(
         default=None,
         description=(
-            "New text-conversation settings. Replaces the block as a "
-            "whole, so pass every sub-config that should survive."
+            "New text-conversation settings. Only supplied sub-configs "
+            "are replaced; omitted sub-configs keep their current values."
         ),
     )
     context_config: ContextConfig | None = Field(

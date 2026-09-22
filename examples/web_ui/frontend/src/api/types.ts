@@ -47,6 +47,9 @@ export interface ChatConfig {
 	invite_config: InviteConfig;
 }
 
+/** Partial text-mode settings accepted by create and update requests. */
+export type ChatConfigInput = Partial<ChatConfig>;
+
 export interface AgentData {
 	id: string;
 	name: string;
@@ -67,7 +70,13 @@ export interface AgentView extends RecordBase {
 export interface CreateAgentRequest {
 	name: string;
 	system_prompt?: string;
-	chat_config?: ChatConfig;
+	chat_config?: ChatConfigInput;
+	/** @deprecated Use `chat_config.context_config`. */
+	context_config?: ContextConfig;
+	/** @deprecated Use `chat_config.react_config`. */
+	react_config?: ReActConfig;
+	/** @deprecated Use `chat_config.invite_config`. */
+	invite_config?: InviteConfig;
 }
 
 export interface CreateAgentResponse {
@@ -77,7 +86,13 @@ export interface CreateAgentResponse {
 export interface UpdateAgentRequest {
 	name?: string;
 	system_prompt?: string;
-	chat_config?: ChatConfig;
+	chat_config?: ChatConfigInput;
+	/** @deprecated Use `chat_config.context_config`. */
+	context_config?: ContextConfig;
+	/** @deprecated Use `chat_config.react_config`. */
+	react_config?: ReActConfig;
+	/** @deprecated Use `chat_config.invite_config`. */
+	invite_config?: InviteConfig;
 }
 
 export interface AgentListResponse {

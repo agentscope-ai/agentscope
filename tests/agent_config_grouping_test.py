@@ -7,6 +7,7 @@ beside them. Nothing migrates the stored rows and nothing rewrites the
 request bodies clients already send, so both the old and the new shape
 have to land in the same place — that is what these cases pin down.
 """
+import json
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
@@ -27,6 +28,7 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Start an app backed by fakeredis."""
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.redis = redis
 
         class _Storage(RedisStorage):
             async def __aenter__(self) -> Any:
@@ -70,19 +72,23 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertListEqual(
-            sorted(data.model_dump()),
-            ["chat_config", "id", "name", "system_prompt"],
-        )
-        self.assertListEqual(
-            sorted(data.model_dump()["chat_config"]),
-            ["context_config", "invite_config", "react_config"],
-        )
-        self.assertEqual(data.chat_config.context_config.max_image_num, 3)
-        self.assertEqual(data.chat_config.react_config.max_iters, 7)
         self.assertEqual(
-            data.chat_config.invite_config.invite_description,
-            "an old agent",
+            data.model_dump(),
+            AgentData.model_validate(
+                {
+                    "id": "a1",
+                    "name": "ann",
+                    "system_prompt": "You are ann.",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 7},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "an old agent",
+                        },
+                    },
+                },
+            ).model_dump(),
         )
 
     def test_create_accepts_both_shapes(self) -> None:
@@ -105,17 +111,20 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
 
         agents = self.client.get("/agent/", headers=HEADERS).json()["agents"]
         by_name = {a["data"]["name"]: a["data"] for a in agents}
-        self.assertListEqual(
-            sorted(by_name["nested"]["chat_config"]),
-            ["context_config", "invite_config", "react_config"],
+        self.assertEqual(
+            by_name["nested"]["chat_config"],
+            by_name["legacy"]["chat_config"],
         )
         self.assertEqual(
-            by_name["nested"]["chat_config"]["react_config"]["max_iters"],
-            5,
-        )
-        self.assertEqual(
-            by_name["legacy"]["chat_config"]["react_config"]["max_iters"],
-            5,
+            by_name["nested"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "react_config": {"max_iters": 5},
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
         )
 
     def test_update_keeps_untouched_sub_configs(self) -> None:
@@ -142,12 +151,100 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated.status_code, 200)
-        chat_config = updated.json()["data"]["chat_config"]
-        self.assertEqual(chat_config["context_config"]["max_image_num"], 9)
-        self.assertEqual(chat_config["react_config"]["max_iters"], 5)
         self.assertEqual(
-            chat_config["invite_config"]["invite_description"],
-            "keep me",
+            updated.json()["data"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 9},
+                        "react_config": {"max_iters": 5},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "keep me",
+                        },
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
+        )
+
+    def test_nested_update_keeps_untouched_sub_configs(self) -> None:
+        """A nested PATCH replaces only the supplied sub-config."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={
+                "name": "ann",
+                "chat_config": {
+                    "context_config": {"max_image_num": 9},
+                    "react_config": {
+                        "max_iters": 5,
+                        "stop_on_reject": True,
+                    },
+                    "invite_config": {
+                        "invitable": True,
+                        "invite_description": "keep me",
+                    },
+                },
+            },
+        ).json()["agent_id"]
+
+        updated = self.client.patch(
+            f"/agent/{agent_id}",
+            headers=HEADERS,
+            json={"chat_config": {"react_config": {"max_iters": 7}}},
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.json()["data"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 9},
+                        "react_config": {"max_iters": 7},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "keep me",
+                        },
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
+        )
+
+    def test_legacy_update_overrides_nested_update(self) -> None:
+        """Flat compatibility fields win over the nested equivalent."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "ann"},
+        ).json()["agent_id"]
+
+        updated = self.client.patch(
+            f"/agent/{agent_id}",
+            headers=HEADERS,
+            json={
+                "chat_config": {
+                    "context_config": {"max_image_num": 7},
+                    "react_config": {"max_iters": 11},
+                },
+                "context_config": {"max_image_num": 3},
+            },
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.json()["data"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 11},
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
         )
 
     def test_schema_exposes_the_grouped_sections(self) -> None:
@@ -169,22 +266,57 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
         )
 
     async def test_stored_agent_survives_a_round_trip(self) -> None:
-        """A legacy row in storage is readable and rewritten grouped."""
-        record = AgentRecord(
-            user_id="alice",
-            data=AgentData.model_validate(
-                {
-                    "name": "ann",
-                    "react_config": {"max_iters": 7},
+        """A raw legacy Redis record is read and rewritten grouped."""
+        record_id = "record-1"
+        raw_record = {
+            "id": record_id,
+            "created_at": "2026-09-01T01:02:03",
+            "updated_at": "2026-09-02T04:05:06",
+            "user_id": "alice",
+            "source": "user",
+            "data": {
+                "id": "agent-1",
+                "name": "ann",
+                "system_prompt": "You are ann.",
+                "context_config": {"max_image_num": 3},
+                "react_config": {"max_iters": 7},
+                "invite_config": {
+                    "invitable": True,
+                    "invite_description": "an old agent",
                 },
-            ),
+            },
+        }
+        key = self.storage.key_config.agent.format(
+            user_id="alice",
+            agent_id=record_id,
         )
-        agent_id = await self.storage.upsert_agent("alice", record)
+        await self.redis.set(key, json.dumps(raw_record))
 
-        stored = await self.storage.get_agent("alice", agent_id)
+        stored = await self.storage.get_agent("alice", record_id)
+        expected = AgentRecord.model_validate(
+            {
+                **raw_record,
+                "data": {
+                    "id": "agent-1",
+                    "name": "ann",
+                    "system_prompt": "You are ann.",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 7},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "an old agent",
+                        },
+                    },
+                },
+            },
+        )
 
-        self.assertEqual(stored.data.chat_config.react_config.max_iters, 7)
-        self.assertListEqual(
-            sorted(stored.data.model_dump()),
-            ["chat_config", "id", "name", "system_prompt"],
+        self.assertEqual(stored.model_dump(), expected.model_dump())
+
+        await self.storage.upsert_agent("alice", stored)
+        rewritten = json.loads(await self.redis.get(key))
+        self.assertEqual(
+            rewritten["data"],
+            expected.data.model_dump(mode="json"),
         )
