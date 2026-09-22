@@ -729,22 +729,15 @@ class BashCommandParser:
         while i < len(args):
             arg = args[i]
 
-            # ``-e``/``--expression`` consume the next token as an
-            # expression. This has to be tested before the combined-short-
-            # flag branch below: ``-e`` starts with a single dash, so that
-            # branch otherwise swallows it as the flag ``e`` and the
-            # expression behind it is judged as a positional argument —
-            # which means every second ``-e`` never reaches the denylist.
+            # -e/--expression takes the next token as an expression, so it
+            # must be matched before the combined short flags below
             if arg in ("-e", "--expression"):
                 if i + 1 < len(args):
                     expressions.append(args[i + 1])
                     found_first_expr = True
                     i += 1
-                i += 1
-                continue
-
             # Handle flags
-            if arg.startswith("-") and not arg.startswith("--"):
+            elif arg.startswith("-") and not arg.startswith("--"):
                 # Combined flags like -nE
                 flag_chars = arg[1:]
                 for char in flag_chars:
