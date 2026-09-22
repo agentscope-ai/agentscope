@@ -304,9 +304,7 @@ Usage:
             content.encode("utf-8"),
         )
 
-        # Count lines in content. ``splitlines`` matches the numbering the
-        # ``Read`` tool reports and the diff below, so content ending in a
-        # newline is not counted as one line more than it has.
+        # Count lines the way the ``Read`` tool numbers them
         line_count = len(content.splitlines())
 
         # Build the unified diff between previous and new content. When the

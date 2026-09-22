@@ -129,11 +129,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(content, "")
 
     async def test_written_line_count_matches_read_numbering(self) -> None:
-        """Report the line count the ``Read`` tool would number.
-
-        Content ending in a newline was counted as one line more than it
-        has, and empty content as one line.
-        """
+        """The reported line count matches the ``Read`` tool numbering."""
         cases = [
             ("alpha\nbeta\n", 2),
             ("alpha\nbeta", 2),
@@ -149,7 +145,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
                 content=content,
             )
 
-            self.assertEqual(
+            self.assertListEqual(
                 [block.model_dump() for block in chunk.content],
                 [
                     {
