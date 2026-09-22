@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._openai_formatter import _OpenAIFormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
@@ -17,7 +17,15 @@ from ..message import (
 )
 
 
-class DeepSeekChatFormatter(FormatterBase):
+_DEEPSEEK_IMAGE_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+}
+
+
+class DeepSeekChatFormatter(_OpenAIFormatterBase):
     """The DeepSeek formatter class for chatbot scenario, where only a user
     and an agent are involved. We use the `role` field to identify different
     entities in the conversation.
@@ -27,9 +35,16 @@ class DeepSeekChatFormatter(FormatterBase):
         default_factory=lambda: ["text/plain"],
         description=(
             'The supported input types. Defaults to ``["text/plain"]`` '
-            "(DeepSeek does not support multimodal input)."
+            "(image types must be enabled for image-capable models)."
         ),
     )
+
+    @staticmethod
+    def _content_from_blocks(blocks: list[dict[str, Any]]) -> str | list:
+        """Keep text-only content as a string and image content as blocks."""
+        if any(block["type"] == "image_url" for block in blocks):
+            return blocks
+        return "\n".join(block.get("text", "") for block in blocks)
 
     async def format(
         self,
@@ -57,6 +72,15 @@ class DeepSeekChatFormatter(FormatterBase):
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
+                elif (
+                    isinstance(block, DataBlock)
+                    and msg.role == "user"
+                    and block.source.media_type in _DEEPSEEK_IMAGE_TYPES
+                ):
+                    image = self._format_openai_data_block(block)
+                    if image is not None:
+                        content_blocks.append(image)
+
                 elif isinstance(block, ThinkingBlock):
                     reasoning_content_blocks.append(block.thinking)
 
@@ -66,13 +90,10 @@ class DeepSeekChatFormatter(FormatterBase):
                         or tool_calls
                         or reasoning_content_blocks
                     ):
-                        content_text = "\n".join(
-                            b.get("text", "") for b in content_blocks
-                        )
+                        content = self._content_from_blocks(content_blocks)
                         msg_flush_hint: dict[str, Any] = {
                             "role": msg.role,
-                            "content": content_text
-                            or (None if tool_calls else ""),
+                            "content": content or (None if tool_calls else ""),
                         }
                         if msg.role == "assistant":
                             msg_flush_hint["reasoning_content"] = (
@@ -127,13 +148,10 @@ class DeepSeekChatFormatter(FormatterBase):
                         or tool_calls
                         or reasoning_content_blocks
                     ):
-                        content_text = "\n".join(
-                            b.get("text", "") for b in content_blocks
-                        )
+                        content = self._content_from_blocks(content_blocks)
                         msg_flush: dict[str, Any] = {
                             "role": msg.role,
-                            "content": content_text
-                            or (None if tool_calls else ""),
+                            "content": content or (None if tool_calls else ""),
                         }
                         if msg.role == "assistant":
                             msg_flush["reasoning_content"] = (
@@ -166,7 +184,7 @@ class DeepSeekChatFormatter(FormatterBase):
                         type(block),
                     )
 
-            content_msg = "\n".join(b.get("text", "") for b in content_blocks)
+            content_msg = self._content_from_blocks(content_blocks)
 
             msg_deepseek: dict[str, Any] = {
                 "role": msg.role,
@@ -198,7 +216,7 @@ class DeepSeekChatFormatter(FormatterBase):
         return messages
 
 
-class DeepSeekMultiAgentFormatter(FormatterBase):
+class DeepSeekMultiAgentFormatter(_OpenAIFormatterBase):
     """
     DeepSeek formatter for multi-agent conversations, where more than
     a user and an agent are involved.
@@ -217,7 +235,7 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
         default_factory=lambda: ["text/plain"],
         description=(
             'The supported input types. Defaults to ``["text/plain"]`` '
-            "(DeepSeek does not support multimodal input)."
+            "(image types must be enabled for image-capable models)."
         ),
     )
 
@@ -276,27 +294,43 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
             conversation_history_prompt = ""
 
         formatted_msgs: list[dict] = []
-        accumulated_text = []
+        content_blocks: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": conversation_history_prompt + "<history>\n",
+            },
+        ]
+        has_history = False
+        has_image = False
 
         for msg in msgs:
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
-                    accumulated_text.append(f"{msg.name}: {block.text}")
+                    content_blocks[-1]["text"] += f"{msg.name}: {block.text}\n"
+                    has_history = True
+                elif (
+                    isinstance(block, DataBlock)
+                    and msg.role == "user"
+                    and block.source.media_type in _DEEPSEEK_IMAGE_TYPES
+                ):
+                    image = self._format_openai_data_block(block)
+                    if image is not None:
+                        content_blocks[-1]["text"] += f"{msg.name}: "
+                        content_blocks.extend(
+                            [image, {"type": "text", "text": "\n"}],
+                        )
+                        has_history = has_image = True
 
-        conversation_blocks_text = ""
-        if accumulated_text:
-            conversation_blocks_text = (
-                conversation_history_prompt
-                + "<history>\n"
-                + "\n".join(accumulated_text)
-                + "\n</history>"
-            )
-
-        if conversation_blocks_text:
+        if has_history:
+            content_blocks[-1]["text"] += "</history>"
             formatted_msgs.append(
                 {
                     "role": "user",
-                    "content": conversation_blocks_text,
+                    "content": (
+                        content_blocks
+                        if has_image
+                        else content_blocks[0]["text"]
+                    ),
                 },
             )
 

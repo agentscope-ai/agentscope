@@ -124,7 +124,21 @@ class DeepSeekChatModel(ChatModelBase):
             retry_delay=retry_delay,
             context_size=context_size,
         )
-        self.formatter = formatter or DeepSeekChatFormatter()
+        if formatter is None:
+            input_types = ["text/plain"]
+            if model == "deepseek-flash":
+                flash_card = next(
+                    (
+                        card
+                        for card in self.list_models()
+                        if card.name == model
+                    ),
+                    None,
+                )
+                if flash_card is not None:
+                    input_types = flash_card.input_types
+            formatter = DeepSeekChatFormatter(input_types=input_types)
+        self.formatter = formatter
         self.client_kwargs = client_kwargs or {}
 
         import openai

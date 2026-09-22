@@ -15,6 +15,7 @@ from agentscope.message import (
     TextBlock,
     DataBlock,
     Base64Source,
+    URLSource,
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
@@ -212,6 +213,99 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
+
+    async def test_chat_formatter_preserves_user_images(self) -> None:
+        """Keep mixed and image-only user messages in API format."""
+        image = DataBlock(
+            source=URLSource(
+                url="https://example.com/image.png",
+                media_type="image/png",
+            ),
+        )
+        image_block = {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/image.png"},
+        }
+        result = await DeepSeekChatFormatter(
+            input_types=["text/plain", "image/png"],
+        ).format(
+            [
+                UserMsg(name="user", content=[TextBlock(text="Look"), image]),
+                UserMsg(name="user", content=[image]),
+            ],
+        )
+        self.assertEqual(
+            result,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Look"},
+                        image_block,
+                    ],
+                },
+                {"role": "user", "content": [image_block]},
+            ],
+        )
+
+    async def test_chat_formatter_image_boundaries(self) -> None:
+        """Reject images for text-only models, other roles and formats."""
+        png = DataBlock(
+            source=URLSource(
+                url="https://example.com/image.png",
+                media_type="image/png",
+            ),
+        )
+        svg = DataBlock(
+            source=URLSource(
+                url="https://example.com/image.svg",
+                media_type="image/svg+xml",
+            ),
+        )
+        msg = UserMsg(name="user", content=[TextBlock(text="Look"), png])
+        self.assertEqual(
+            await DeepSeekChatFormatter().format([msg]),
+            [{"role": "user", "content": "Look"}],
+        )
+        self.assertEqual(
+            await DeepSeekChatFormatter(
+                input_types=["text/plain", "image/*"],
+            ).format(
+                [
+                    AssistantMsg(name="assistant", content=[png]),
+                    UserMsg(
+                        name="user",
+                        content=[TextBlock(text="Look"), svg],
+                    ),
+                ],
+            ),
+            [{"role": "user", "content": "Look"}],
+        )
+
+    async def test_multiagent_formatter_preserves_user_image(self) -> None:
+        """Keep user images and later turns in conversation history."""
+        image = DataBlock(
+            source=Base64Source(data="ZmFrZQ==", media_type="image/png"),
+        )
+        result = await DeepSeekMultiAgentFormatter(
+            input_types=["text/plain", "image/png"],
+        ).format(
+            [
+                UserMsg(name="user", content=[TextBlock(text="Look"), image]),
+                AssistantMsg(name="assistant", content="I see it"),
+            ],
+        )
+        content = result[0]["content"]
+        self.assertEqual(result[0]["role"], "user")
+        self.assertIn("user: Look", content[0]["text"])
+        self.assertEqual(
+            content[1],
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,ZmFrZQ=="},
+            },
+        )
+        self.assertIn("assistant: I see it", content[2]["text"])
 
     async def test_chat_formatter_reasoning_content_always_present(
         self,

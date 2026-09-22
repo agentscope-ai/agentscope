@@ -613,6 +613,22 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
 class TestDeepSeekModelParameters(unittest.TestCase):
     """Tests for DeepSeekChatModel.Parameters."""
 
+    def test_default_formatter_uses_flash_image_capabilities(self) -> None:
+        """Only models with image-capable cards enable image input."""
+        flash = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-flash",
+        )
+        text_only = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-chat",
+        )
+        self.assertIn("image/png", flash.formatter.supported_input_media_types)
+        self.assertNotIn(
+            "image/png",
+            text_only.formatter.supported_input_media_types,
+        )
+
     def test_thinking_enable_stored_on_model(self) -> None:
         """thinking_enable is accessible through model.parameters."""
         model = DeepSeekChatModel(
