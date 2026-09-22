@@ -170,6 +170,7 @@ Set up task dependencies:
             )
 
         updated_fields = []
+        dependency_errors = []
 
         if subject:
             updated_fields.append("subject")
@@ -179,58 +180,42 @@ Set up task dependencies:
             updated_fields.append("description")
             _agent_state.tasks_context.tasks[index].description = description
 
-        tasks = _agent_state.tasks_context.tasks
-        existed_ids = {task.id for task in tasks}
+        existed_ids = [_.id for _ in _agent_state.tasks_context.tasks]
         completed_ids = {
-            task.id for task in tasks if task.state == "completed"
+            task.id
+            for task in _agent_state.tasks_context.tasks
+            if task.state == "completed"
         }
         if status == "completed":
             completed_ids.add(task_id)
         if add_blocks:
-            current_blocks = tasks[index].blocks
-            new_blocks = [
-                _
-                for _ in add_blocks
-                if _ not in current_blocks
-                and _ in existed_ids
-                and self._can_add_block_relation(
-                    task_id,
-                    _,
-                    tasks,
-                    completed_ids,
-                )
-            ]
+            new_blocks, errors = self._add_block_relations(
+                [(block_id, task_id, block_id) for block_id in add_blocks],
+                _agent_state.tasks_context.tasks[index].blocks,
+                existed_ids,
+                _agent_state.tasks_context.tasks,
+                completed_ids,
+                _agent_state,
+            )
+            dependency_errors.extend(errors)
             if new_blocks:
                 updated_fields.append("add_blocks")
-                for block_id in new_blocks:
-                    self._update_block_relation(
-                        task_id,
-                        block_id,
-                        _agent_state,
-                    )
 
         if add_blocked_by is not None:
-            current_blocked_by = tasks[index].blocked_by
-            new_blocked_by = [
-                _
-                for _ in add_blocked_by
-                if _ not in current_blocked_by
-                and _ in existed_ids
-                and self._can_add_block_relation(
-                    _,
-                    task_id,
-                    tasks,
-                    completed_ids,
-                )
-            ]
+            new_blocked_by, errors = self._add_block_relations(
+                [
+                    (blocked_by_id, blocked_by_id, task_id)
+                    for blocked_by_id in add_blocked_by
+                ],
+                _agent_state.tasks_context.tasks[index].blocked_by,
+                existed_ids,
+                _agent_state.tasks_context.tasks,
+                completed_ids,
+                _agent_state,
+            )
+            dependency_errors.extend(errors)
             if new_blocked_by:
                 updated_fields.append("add_blocked_by")
-                for blocked_by_id in new_blocked_by:
-                    self._update_block_relation(
-                        blocked_by_id,
-                        task_id,
-                        _agent_state,
-                    )
 
         if status:
             if status == "deleted":
@@ -274,6 +259,19 @@ Set up task dependencies:
                 else:
                     _agent_state.tasks_context.tasks[index].metadata[k] = v
 
+        if dependency_errors:
+            res = "\n".join(dependency_errors)
+            if updated_fields:
+                res += (
+                    "\n\n"
+                    f"Update task (id={task_id}) "
+                    f'{", ".join(updated_fields)}.'
+                )
+            return ToolChunk(
+                content=[TextBlock(text=res)],
+                state=ToolResultState.ERROR,
+            )
+
         if updated_fields:
             res = f'Update task (id={task_id}) {", ".join(updated_fields)}.'
         else:
@@ -291,20 +289,68 @@ Set up task dependencies:
 
         return ToolChunk(content=[TextBlock(text=res)])
 
+    def _add_block_relations(
+        self,
+        relations: list[tuple[str, str, str]],
+        current_relation_ids: list[str],
+        existed_ids: list[str],
+        tasks: list[Task],
+        completed_ids: set[str],
+        _agent_state: AgentState,
+    ) -> tuple[list[str], list[str]]:
+        """Validate and add task dependency relations."""
+        new_relation_ids = []
+        errors = []
+        for candidate_id, block_id, blocked_by_id in relations:
+            if candidate_id in current_relation_ids:
+                continue
+            if candidate_id not in existed_ids:
+                errors.append(
+                    f"TaskDependencyError: Task (id={candidate_id}) does "
+                    "not exist.",
+                )
+                continue
+            error = self._get_block_relation_error(
+                block_id,
+                blocked_by_id,
+                tasks,
+                completed_ids,
+            )
+            if error:
+                errors.append(error)
+                continue
+            new_relation_ids.append(candidate_id)
+            self._update_block_relation(
+                block_id,
+                blocked_by_id,
+                _agent_state,
+            )
+
+        return new_relation_ids, errors
+
     @staticmethod
-    def _can_add_block_relation(
+    def _get_block_relation_error(
         block_id: str,
         blocked_by_id: str,
         tasks: list[Task],
         completed_ids: set[str],
-    ) -> bool:
-        """Check whether a dependency can be added without blocking forever."""
-        if (
-            block_id == blocked_by_id
-            or block_id in completed_ids
-            or blocked_by_id in completed_ids
-        ):
-            return False
+    ) -> str | None:
+        """Return why a dependency cannot be added, if applicable."""
+        if block_id == blocked_by_id:
+            return (
+                "TaskDependencyError: Task "
+                f"(id={block_id}) cannot block itself."
+            )
+        if block_id in completed_ids:
+            return (
+                "TaskDependencyError: Completed task "
+                f"(id={block_id}) cannot be added as a dependency."
+            )
+        if blocked_by_id in completed_ids:
+            return (
+                "TaskDependencyError: Completed task "
+                f"(id={blocked_by_id}) cannot be added as a dependency."
+            )
 
         tasks_by_id = {task.id: task for task in tasks}
         pending = [blocked_by_id]
@@ -312,13 +358,18 @@ Set up task dependencies:
         while pending:
             current_id = pending.pop()
             if current_id == block_id:
-                return False
+                return (
+                    "TaskDependencyError: Adding a dependency from task "
+                    f"(id={block_id}) to task (id={blocked_by_id}) would "
+                    "create a cycle."
+                )
             if current_id in visited:
                 continue
             visited.add(current_id)
-            pending.extend(tasks_by_id[current_id].blocks)
+            if current_id not in completed_ids:
+                pending.extend(tasks_by_id[current_id].blocks)
 
-        return True
+        return None
 
     @staticmethod
     def _update_block_relation(

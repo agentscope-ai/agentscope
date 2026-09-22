@@ -1113,7 +1113,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         }
         self.assertDictEqual(result_dump, expected_result)
 
-    async def test_update_rejects_self_blocking_dependency(self) -> None:
+    async def test_update_reports_self_dependency_error(self) -> None:
         """A task cannot become its own prerequisite."""
         await self.task_create(
             subject="Task 1",
@@ -1121,17 +1121,30 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             _agent_state=self.agent_state,
         )
         task = self.agent_state.tasks_context.tasks[0]
+        tasks_before = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
 
-        await self.task_update(
+        result = await self.task_update(
             task_id=task.id,
             add_blocked_by=[task.id],
             _agent_state=self.agent_state,
         )
 
-        self.assertEqual(task.blocks, [])
-        self.assertEqual(task.blocked_by, [])
+        self.assertEqual(result.state, "error")
+        self.assertEqual(
+            result.content[0].text,
+            f"TaskDependencyError: Task (id={task.id}) cannot block itself.",
+        )
+        self.assertListEqual(
+            [
+                task.model_dump()
+                for task in self.agent_state.tasks_context.tasks
+            ],
+            tasks_before,
+        )
 
-    async def test_update_rejects_cyclic_dependency(self) -> None:
+    async def test_update_reports_cyclic_dependency_error(self) -> None:
         """Adding an edge cannot turn an existing task chain into a cycle."""
         await self.task_create(
             subject="Task 1",
@@ -1160,20 +1173,30 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             add_blocks=[task3.id],
             _agent_state=self.agent_state,
         )
-        await self.task_update(
+        tasks_before = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        result = await self.task_update(
             task_id=task3.id,
             add_blocks=[task1.id],
             _agent_state=self.agent_state,
         )
 
-        self.assertEqual(task1.blocks, [task2.id])
-        self.assertEqual(task1.blocked_by, [])
-        self.assertEqual(task2.blocks, [task3.id])
-        self.assertEqual(task2.blocked_by, [task1.id])
-        self.assertEqual(task3.blocks, [])
-        self.assertEqual(task3.blocked_by, [task2.id])
+        self.assertEqual(result.state, "error")
+        self.assertEqual(
+            result.content[0].text,
+            "TaskDependencyError: Adding a dependency from task "
+            f"(id={task3.id}) to task (id={task1.id}) would create a cycle.",
+        )
+        self.assertListEqual(
+            [
+                task.model_dump()
+                for task in self.agent_state.tasks_context.tasks
+            ],
+            tasks_before,
+        )
 
-    async def test_update_skips_completed_prerequisite(self) -> None:
+    async def test_update_reports_completed_dependency_error(self) -> None:
         """A completed task cannot be added as a new blocker."""
         await self.task_create(
             subject="Task 1",
@@ -1192,11 +1215,112 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             status="completed",
             _agent_state=self.agent_state,
         )
-        await self.task_update(
+        tasks_before = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        result = await self.task_update(
             task_id=ready_task.id,
             add_blocked_by=[completed_task.id],
             _agent_state=self.agent_state,
         )
 
-        self.assertEqual(completed_task.blocks, [])
-        self.assertEqual(ready_task.blocked_by, [])
+        self.assertEqual(result.state, "error")
+        self.assertEqual(
+            result.content[0].text,
+            "TaskDependencyError: Completed task "
+            f"(id={completed_task.id}) cannot be added as a dependency.",
+        )
+        self.assertListEqual(
+            [
+                task.model_dump()
+                for task in self.agent_state.tasks_context.tasks
+            ],
+            tasks_before,
+        )
+
+    async def test_update_ignores_completed_tasks_when_checking_cycles(
+        self,
+    ) -> None:
+        """Completed tasks do not keep later dependency additions blocked."""
+        await self.task_create(
+            subject="Task 1",
+            description="Prerequisite task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Completed task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 3",
+            description="Ready task",
+            _agent_state=self.agent_state,
+        )
+        task1, task2, task3 = self.agent_state.tasks_context.tasks
+
+        await self.task_update(
+            task_id=task1.id,
+            add_blocks=[task2.id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task2.id,
+            add_blocks=[task3.id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task2.id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+
+        result = await self.task_update(
+            task_id=task3.id,
+            add_blocks=[task1.id],
+            _agent_state=self.agent_state,
+        )
+
+        self.assertEqual(
+            result.content[0].text,
+            f"Update task (id={task3.id}) add_blocks.",
+        )
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "Task 1",
+                "description": "Prerequisite task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task1.id,
+                "owner": None,
+                "blocks": [task2.id],
+                "blocked_by": [task3.id],
+            },
+            {
+                "subject": "Task 2",
+                "description": "Completed task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "completed",
+                "id": task2.id,
+                "owner": None,
+                "blocks": [task3.id],
+                "blocked_by": [task1.id],
+            },
+            {
+                "subject": "Task 3",
+                "description": "Ready task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task3.id,
+                "owner": None,
+                "blocks": [task1.id],
+                "blocked_by": [],
+            },
+        ]
+        self.assertListEqual(tasks_dump, expected)
