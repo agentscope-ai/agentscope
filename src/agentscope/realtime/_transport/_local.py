@@ -75,10 +75,8 @@ class LocalAudioTransport(TransportBase):
         """Open both streams."""
         import sounddevice as sd
 
-        # ``close`` terminates the previous ``incoming`` iterator with a
-        # sentinel.  A reused transport needs a fresh queue so that sentinel
-        # (and any capture buffered before it) cannot terminate or leak into
-        # the next session.
+        # A fresh queue: the previous session's sentinel and capture must
+        # not leak into this one.
         self._in_queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
         self._in_stream = sd.InputStream(
@@ -101,8 +99,7 @@ class LocalAudioTransport(TransportBase):
 
     async def close(self) -> None:
         """Stop both streams and end :meth:`incoming`."""
-        # Prevent a late PortAudio callback from enqueueing behind the
-        # terminal sentinel while the streams are being torn down.
+        # Detach first so a late callback cannot enqueue behind the sentinel.
         self._loop = None
         for stream in (self._in_stream, self._out_stream):
             if stream is not None:

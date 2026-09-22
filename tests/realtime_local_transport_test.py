@@ -4,8 +4,7 @@ directly — no sound card is opened."""
 # pylint: disable=protected-access
 import asyncio
 import sys
-from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import numpy as np
@@ -137,46 +136,29 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
         )
 
     async def test_restart_drops_previous_session_audio(self) -> None:
-        """Restarting a transport starts with fresh capture and playout."""
-
-        class FakeStream:
-            """Minimal sounddevice stream used by the lifecycle test."""
-
-            def __init__(self, **_kwargs: object) -> None:
-                pass
-
-            def start(self) -> None:
-                """Start the fake stream."""
-                return None
-
-            def stop(self) -> None:
-                """Stop the fake stream."""
-                return None
-
-            def close(self) -> None:
-                """Close the fake stream."""
-                return None
-
+        """A reused transport starts with fresh capture and playout state."""
         transport = LocalAudioTransport()
         transport._enqueue(AudioFrame(pcm=b"stale-input"))
         await transport.send_audio(b"\x01\x00" * 10, "stale-output")
         await transport.close()
 
-        sounddevice = SimpleNamespace(
-            InputStream=FakeStream,
-            OutputStream=FakeStream,
-        )
-        with patch.dict(sys.modules, {"sounddevice": sounddevice}):
+        with patch.dict(sys.modules, {"sounddevice": MagicMock()}):
             await transport.start()
-
         transport._enqueue(AudioFrame(pcm=b"fresh-input"))
         incoming = transport.incoming()
-        self.assertEqual((await anext(incoming)).pcm, b"fresh-input")
+
         self.assertEqual(
-            transport.playout().model_dump(),
-            {"item_id": "", "played_ms": 0, "first_played_at": None},
+            (
+                (await anext(incoming)).pcm,
+                transport.playout().model_dump(),
+                bytes(transport._pending),
+            ),
+            (
+                b"fresh-input",
+                {"item_id": "", "played_ms": 0, "first_played_at": None},
+                b"",
+            ),
         )
-        self.assertEqual(bytes(transport._pending), b"")
         await incoming.aclose()
         await transport.close()
 
