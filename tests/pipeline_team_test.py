@@ -159,7 +159,8 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         self.leader.model.set_responses(
             [
                 _tool_call(
-                    "call-1", '{"member": "researcher", "prompt": "Find A"}'
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
                 ),
                 _text("A is 42."),
             ],
@@ -208,7 +209,8 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                             "finished_at": None,
                             "id": "call-1",
                             "name": "TeamAssign",
-                            "input": '{"member": "researcher", "prompt": "Find A"}',
+                            "input": '{"member": "researcher", '
+                            '"prompt": "Find A"}',
                             "state": "finished",
                             "suggested_rules": [],
                         },
@@ -251,7 +253,8 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         self.leader.model.set_responses(
             [
                 _tool_call(
-                    "call-1", '{"member": "researcher", "prompt": "Find A"}'
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
                 ),
                 _text("A is 42."),
             ],
@@ -455,8 +458,9 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         self.leader.model.set_responses(
             [
                 _tool_call(
-                    "call-1", '{"member": "researcher", "prompt": "Find A"}'
-                )
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
             ],
         )
         self.researcher.model.set_responses(

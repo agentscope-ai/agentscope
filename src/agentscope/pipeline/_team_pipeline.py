@@ -280,7 +280,8 @@ class TeamPipeline:
         """
         final_msg: Msg | None = None
         async for evt_or_msg in self.reply_stream(
-            inputs, yield_final_msg=True
+            inputs,
+            yield_final_msg=True,
         ):
             if isinstance(evt_or_msg, Msg):
                 final_msg = evt_or_msg
