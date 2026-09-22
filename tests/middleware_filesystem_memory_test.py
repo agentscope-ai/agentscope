@@ -566,6 +566,87 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_agent_injects_distinct_selected_memories(self) -> None:
+        """Duplicate selections must not repeat or crowd out other memories."""
+
+        class _WaitingModel(_RecordingMockModel):
+            """Let filesystem retrieval finish before reasoning."""
+
+            def __init__(self, middleware: AgenticMemoryMiddleware) -> None:
+                """Keep the middleware whose retrieval must finish."""
+                super().__init__()
+                self.middleware = middleware
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                """Wait deterministically, then return the response."""
+                # Synchronize the real background task without timing sleeps.
+                # pylint: disable-next=protected-access
+                task = self.middleware._retrieval_task
+                if task is not None:
+                    await task
+                return await super()._call_api(*args, **kwargs)
+
+        memory_dir = os.path.join(self.temp_dir, "Memory")
+        os.makedirs(memory_dir)
+        for name in "abcdef":
+            _write_memory_file(
+                memory_dir,
+                f"{name}.md",
+                f"Memory {name}",
+                "project",
+                f"Fact {name}.",
+            )
+
+        selections = [
+            (["a.md", "a.md", "b.md"], ["a", "b"]),
+            (["a.md"] * 5 + ["b.md"], ["a", "b"]),
+            (
+                [
+                    "missing.md",
+                    "b.md",
+                    "a.md",
+                    "b.md",
+                    "c.md",
+                    "d.md",
+                    "e.md",
+                    "f.md",
+                ],
+                ["b", "a", "c", "d", "e"],
+            ),
+            (["missing.md", "missing.md"], []),
+        ]
+        for selected, expected in selections:
+            with self.subTest(selected=selected):
+                middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+
+                model = _WaitingModel(middleware)
+                model.set_structured_response(_structured_response(selected))
+                model.set_responses(
+                    [_tool_response(), _text_response("done")],
+                )
+                agent = self._make_agent(
+                    model,
+                    middleware,
+                    toolkit=Toolkit(tools=[_DummyTool()]),
+                )
+
+                await agent.reply(UserMsg("user", "recall my project"))
+
+                facts = [
+                    line
+                    for hint in _hint_texts(agent)
+                    for line in hint.splitlines()
+                    if line.startswith("Fact ")
+                ]
+                self.assertListEqual(
+                    facts,
+                    [f"Fact {name}." for name in expected],
+                )
+
     async def test_agent_does_not_inject_hint_when_no_file_selected(
         self,
     ) -> None:
