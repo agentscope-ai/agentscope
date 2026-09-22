@@ -905,7 +905,12 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
                 {
                     "text": "No updates were made to the task "
                     f"(id={task1_id}). Make sure you provided at least one "
-                    "field to update and the values are correct.",
+                    "field to update and the values are correct.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocks {task1_id} -> {task1_id}: "
+                    "self-dependency\n"
+                    f"- add_blocked_by {task1_id} -> {task1_id}: "
+                    "self-dependency",
                     "type": "text",
                     "id": AnyString(),
                     "created_at": AnyString(),
@@ -972,7 +977,10 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
                 {
                     "text": "No updates were made to the task "
                     f"(id={task2_id}). Make sure you provided at least one "
-                    "field to update and the values are correct.",
+                    "field to update and the values are correct.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocks {task2_id} -> {task1_id}: would create a "
+                    "dependency cycle",
                     "type": "text",
                     "id": AnyString(),
                     "created_at": AnyString(),
@@ -986,13 +994,34 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         }
         self.assertDictEqual(result_dump, expected_result)
 
-        # Task 2 cannot add Task 1 as a blocker either
+        # Task 2 cannot add Task 1 as a blocker either, but the edge
+        # already exists, so nothing is reported
         result = await self.task_update(
             task_id=task2_id,
             add_blocked_by=[task1_id],
             _agent_state=self.agent_state,
         )
-        self.assertDictEqual(result.model_dump(mode="json"), expected_result)
+        expected_noop_result = {
+            "content": [
+                {
+                    "text": "No updates were made to the task "
+                    f"(id={task2_id}). Make sure you provided at least one "
+                    "field to update and the values are correct.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(
+            result.model_dump(mode="json"),
+            expected_noop_result,
+        )
 
         # The graph still only has the original edge
         tasks_dump = [
@@ -1069,7 +1098,10 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
                 {
                     "text": "No updates were made to the task "
                     f"(id={task3_id}). Make sure you provided at least one "
-                    "field to update and the values are correct.",
+                    "field to update and the values are correct.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocks {task3_id} -> {task1_id}: would create a "
+                    "dependency cycle",
                     "type": "text",
                     "id": AnyString(),
                     "created_at": AnyString(),
@@ -1127,7 +1159,10 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
                 {
                     "text": "No updates were made to the task "
                     f"(id={task2_id}). Make sure you provided at least one "
-                    "field to update and the values are correct.",
+                    "field to update and the values are correct.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocked_by {task1_id} -> {task2_id}: "
+                    f"task '{task1_id}' is completed",
                     "type": "text",
                     "id": AnyString(),
                     "created_at": AnyString(),
@@ -1154,6 +1189,9 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
                     "text": "No updates were made to the task "
                     f"(id={task1_id}). Make sure you provided at least one "
                     "field to update and the values are correct.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocks {task1_id} -> {task2_id}: "
+                    f"task '{task1_id}' is completed\n\n"
                     f"Task completed. "
                     f"Call TaskList now to find your next available "
                     f"task or see if your work unblocked others.",
@@ -1215,7 +1253,10 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task (id={task1_id}) add_blocks.",
+                    "text": f"Update task (id={task1_id}) add_blocks.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocks {task1_id} -> {task3_id}: "
+                    f"task '{task3_id}' is completed",
                     "type": "text",
                     "id": AnyString(),
                     "created_at": AnyString(),
@@ -1264,7 +1305,10 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task (id={task1_id}) add_blocks.",
+                    "text": f"Update task (id={task1_id}) add_blocks.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocked_by {task2_id} -> {task1_id}: would create "
+                    "a dependency cycle",
                     "type": "text",
                     "id": AnyString(),
                     "created_at": AnyString(),
@@ -1313,6 +1357,9 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             "content": [
                 {
                     "text": f"Update task (id={task1_id}) status.\n\n"
+                    "Rejected dependency updates:\n"
+                    f"- add_blocks {task1_id} -> {task2_id}: "
+                    "the task is completed in this request\n\n"
                     f"Task completed. "
                     f"Call TaskList now to find your next available "
                     f"task or see if your work unblocked others.",

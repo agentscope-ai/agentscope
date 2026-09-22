@@ -138,7 +138,7 @@ Set up task dependencies:
 
     input_schema: dict = _TaskUpdateParams.model_json_schema()
 
-    async def call(
+    async def call(  # pylint: disable=too-many-branches
         self,
         _agent_state: AgentState,
         task_id: str,
@@ -192,7 +192,9 @@ Set up task dependencies:
         # Validate each candidate edge against the live graph before
         # applying it: edges accepted earlier in the same request are
         # visible to later validations, and invalid candidates are skipped
-        # without affecting the valid ones.
+        # without affecting the valid ones. Each rejected candidate is
+        # reported with its reason so the agent can correct its plan.
+        rejected_edges: list[str] = []
         if add_blocks:
             current_blocks = _agent_state.tasks_context.tasks[index].blocks
             new_blocks = [
@@ -202,17 +204,25 @@ Set up task dependencies:
             ]
             applied_blocks = False
             for block_id in new_blocks:
-                if not completing and self._is_valid_block_edge(
-                    task_id,
-                    block_id,
-                    _agent_state,
-                ):
+                if completing:
+                    reason = "the task is completed in this request"
+                else:
+                    reason = self._is_valid_block_edge(
+                        task_id,
+                        block_id,
+                        _agent_state,
+                    )
+                if reason is None:
                     self._update_block_relation(
                         task_id,
                         block_id,
                         _agent_state,
                     )
                     applied_blocks = True
+                else:
+                    rejected_edges.append(
+                        f"add_blocks {task_id} -> {block_id}: {reason}",
+                    )
             # Only report the field when at least one edge was applied.
             if applied_blocks:
                 updated_fields.append("add_blocks")
@@ -228,17 +238,26 @@ Set up task dependencies:
             ]
             applied_blocked_by = False
             for blocked_by_id in new_blocked_by:
-                if not completing and self._is_valid_block_edge(
-                    blocked_by_id,
-                    task_id,
-                    _agent_state,
-                ):
+                if completing:
+                    reason = "the task is completed in this request"
+                else:
+                    reason = self._is_valid_block_edge(
+                        blocked_by_id,
+                        task_id,
+                        _agent_state,
+                    )
+                if reason is None:
                     self._update_block_relation(
                         blocked_by_id,
                         task_id,
                         _agent_state,
                     )
                     applied_blocked_by = True
+                else:
+                    rejected_edges.append(
+                        f"add_blocked_by {blocked_by_id} -> {task_id}: "
+                        f"{reason}",
+                    )
             if applied_blocked_by:
                 updated_fields.append("add_blocked_by")
 
@@ -293,6 +312,11 @@ Set up task dependencies:
                 f"the values are correct."
             )
 
+        if rejected_edges:
+            res += "\n\nRejected dependency updates:\n" + "\n".join(
+                f"- {edge}" for edge in rejected_edges
+            )
+
         if _agent_state.tasks_context.tasks[index].state == "completed":
             res += (
                 "\n\nTask completed. Call TaskList now to find your next "
@@ -330,7 +354,7 @@ Set up task dependencies:
         block_id: str,
         blocked_by_id: str,
         _agent_state: AgentState,
-    ) -> bool:
+    ) -> str | None:
         """Check whether a new block relation may be added.
 
         A candidate edge ``block_id -> blocked_by_id`` is rejected when it
@@ -347,11 +371,12 @@ Set up task dependencies:
                 The agent state to update.
 
         Returns:
-            `bool`: `True` if the edge is valid and may be applied.
+            `str | None`: `None` if the edge is valid and may be applied,
+            otherwise a human-readable rejection reason.
         """
         if block_id == blocked_by_id:
             # A task cannot be its own prerequisite.
-            return False
+            return "self-dependency"
 
         blocks: dict[str, list[str]] = {}
         for task in _agent_state.tasks_context.tasks:
@@ -364,7 +389,7 @@ Set up task dependencies:
                 task.id in (block_id, blocked_by_id)
                 and task.state == "completed"
             ):
-                return False
+                return f"task '{task.id}' is completed"
 
         # The edge closes a cycle when `block_id` is already reachable from
         # `blocked_by_id` through existing blocks relations.
@@ -377,7 +402,7 @@ Set up task dependencies:
             visited.add(current)
             for blocked in blocks[current]:
                 if blocked == block_id:
-                    return False
+                    return "would create a dependency cycle"
                 pending.append(blocked)
 
-        return True
+        return None
