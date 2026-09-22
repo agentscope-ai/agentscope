@@ -37,55 +37,66 @@ from ..types import ReplyFinishedReason
 
 class TeamMember(BaseModel):
     """A member of the team: an existing agent plus the description the
-    leader reads to decide when to delegate to it."""
+    leader reads to decide when to assign a task to it."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     agent: Agent
-    """The member agent. Its name is the tool name the leader calls, so it
+    """The member agent. Its name is how the leader refers to it, so it
     must be unique within the team."""
     description: str
-    """What the member is good at, when to delegate to it and what it
-    returns. Presented to the leader as the tool description."""
+    """What the member is good at, when to assign to it and what it
+    returns. Presented to the leader in the tool description."""
 
 
-class _MemberTool(ToolBase):
-    """The external tool the leader calls to delegate a task. The pipeline
-    executes it by running the member, so it never runs by itself."""
+class _TeamAssign(ToolBase):
+    """The external tool the leader calls to assign a task to a member.
+    The pipeline executes it by running the member, so it never runs by
+    itself."""
 
+    name: str = "TeamAssign"
     is_external_tool: bool = True
     is_concurrency_safe: bool = True
     is_read_only: bool = False
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "prompt": {
-                "type": "string",
-                "description": (
-                    "The complete task for the member. It cannot see your "
-                    "context, so include everything it needs."
-                ),
-            },
-        },
-        "required": ["prompt"],
-    }
 
-    def __init__(self, member: TeamMember) -> None:
-        """Build the tool from a member."""
+    def __init__(self, members: list[TeamMember]) -> None:
+        """Build the tool from the members, listing them in the description
+        and offering their names as the choices of ``member``."""
         super().__init__()
-        self.name = member.agent.name
-        self.description = member.description
+        self.description = (
+            "Assign a task to a team member and get its reply back as the "
+            "result. The members are:\n"
+            + "\n".join(f"- {_.agent.name}: {_.description}" for _ in members)
+        )
+        self.input_schema = {
+            "type": "object",
+            "properties": {
+                "member": {
+                    "type": "string",
+                    "enum": [_.agent.name for _ in members],
+                    "description": "The name of the member to assign to.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "The complete task for the member. It cannot see "
+                        "your context, so include everything it needs."
+                    ),
+                },
+            },
+            "required": ["member", "prompt"],
+        }
 
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Delegation itself is always allowed; the member's own tools go
+        """Assigning itself is always allowed; the member's own tools go
         through their own permission checks."""
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
-            message="Delegating to a team member is always allowed.",
+            message="Assigning a task to a team member is always allowed.",
         )
 
 
@@ -98,21 +109,20 @@ _RESULT_STATES = {
 
 
 class TeamPipeline:
-    """A leader agent that delegates tasks to team members through tool
-    calls.
+    """A leader agent that assigns tasks to team members through tool calls.
 
-    Each member is registered on the leader as an external tool. When the
-    leader calls one, the pipeline runs that member in its own context and
-    feeds its final reply back as the tool result, so the leader only ever
-    sees the summary, never the member's intermediate steps. Members called
-    in the same round run concurrently, except that calls to the same
-    member run one after another. Members do not talk to each other; a
-    member's result always returns to the leader.
+    The leader gets one external tool, ``TeamAssign``, that names a member
+    and a task. When the leader calls it, the pipeline runs that member in
+    its own context and feeds its final reply back as the tool result, so
+    the leader only ever sees the summary, never the member's intermediate
+    steps. Members assigned in the same round run concurrently, except that
+    assignments to the same member run one after another. Members do not
+    talk to each other; a member's result always returns to the leader.
 
     HITL works per participant: a member that needs user confirmation parks
     like any agent, its request is streamed out unchanged, and the result
     sent back to the pipeline is routed to it by ``reply_id``. Meanwhile
-    the leader stays parked on the delegation and resumes once the member
+    the leader stays parked on the assignment and resumes once the member
     finishes.
     """
 
@@ -126,10 +136,9 @@ class TeamPipeline:
 
         Args:
             leader (`Agent`):
-                The leader agent that delegates.
+                The leader agent that assigns tasks.
             members (`list[TeamMember]`):
-                The members, registered on the leader as tools named after
-                them.
+                The members the leader can assign tasks to.
             reset_members (`bool`, optional):
                 Whether to clear every member's context after the leader's
                 reply ends. Within one reply the leader can follow up with
@@ -145,7 +154,7 @@ class TeamPipeline:
         self.leader = leader
         self.members = {_.agent.name: _ for _ in members}
         self.reset_members = reset_members
-        self._tools_registered = False
+        self._tool_registered = False
 
     async def reply_stream(
         self,
@@ -172,15 +181,15 @@ class TeamPipeline:
 
         Yields:
             `AgentEvent | Msg`:
-                The events of the leader and the members it delegates to.
-                The stream ends when every participant has either finished
-                or parked on a HITL request.
+                The events of the leader and the members it assigns to. The
+                stream ends when every participant has either finished or
+                parked on a HITL request.
         """
-        if not self._tools_registered:
+        if not self._tool_registered:
             await self.leader.toolkit.add_tool(
-                [_MemberTool(_) for _ in self.members.values()],
+                _TeamAssign(list(self.members.values())),
             )
-            self._tools_registered = True
+            self._tool_registered = True
 
         if isinstance(inputs, UserInterruptEvent):
             for member in self._parked_members():
@@ -211,17 +220,17 @@ class TeamPipeline:
             )
 
         while True:
-            delegations: list[ToolCallBlock] = []
+            assignments: list[ToolCallBlock] = []
             async for evt in self.leader.reply_stream(
                 inputs,
                 yield_final_msg=yield_final_msg,
             ):
-                # Delegations are executed by the pipeline itself, so their
+                # Assignments are executed by the pipeline itself, so their
                 # require events are not the caller's business
                 if isinstance(evt, RequireExternalExecutionEvent) and all(
-                    _.name in self.members for _ in evt.tool_calls
+                    _.name == _TeamAssign.name for _ in evt.tool_calls
                 ):
-                    delegations.extend(evt.tool_calls)
+                    assignments.extend(evt.tool_calls)
                     continue
                 yield evt
                 if isinstance(evt, ReplyEndEvent) and self.reset_members:
@@ -229,11 +238,11 @@ class TeamPipeline:
                         member.agent.state.context.clear()
                         member.agent.state.summary = ""
 
-            if not delegations:
+            if not assignments:
                 return
 
             results = []
-            async for evt in self._run_delegations(delegations, results):
+            async for evt in self._run_assignments(assignments, results):
                 yield evt
 
             # Feed what has finished; with a member parked on HITL the
@@ -242,7 +251,7 @@ class TeamPipeline:
                 reply_id=self.leader.state.reply_id,
                 execution_results=results,
             )
-            if len(results) < len(delegations):
+            if len(results) < len(assignments):
                 if results:
                     async for evt in self.leader.reply_stream(inputs):
                         yield evt
@@ -271,8 +280,7 @@ class TeamPipeline:
         """
         final_msg: Msg | None = None
         async for evt_or_msg in self.reply_stream(
-            inputs,
-            yield_final_msg=True,
+            inputs, yield_final_msg=True
         ):
             if isinstance(evt_or_msg, Msg):
                 final_msg = evt_or_msg
@@ -280,30 +288,30 @@ class TeamPipeline:
             raise RuntimeError("Agent did not produce a final message.")
         return final_msg
 
-    async def _run_delegations(
+    async def _run_assignments(
         self,
         tool_calls: list[ToolCallBlock],
         results: list[ToolResultBlock],
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Run one round of delegations, concurrently across members and
+        """Run one round of assignments, concurrently across members and
         sequentially within one, collecting the tool results of those that
         finish."""
         groups: dict[str, list[ToolCallBlock]] = {}
         for tool_call in tool_calls:
-            groups.setdefault(tool_call.name, []).append(tool_call)
+            member = json.loads(tool_call.input)["member"]
+            groups.setdefault(member, []).append(tool_call)
 
         sentinel = object()
         queue: Queue = Queue()
 
         async def run_group(name: str, calls: list[ToolCallBlock]) -> None:
-            """Run the calls to one member one after another."""
+            """Run the assignments to one member one after another."""
             member = self.members[name]
             for tool_call in calls:
                 if self._is_parked(member):
                     results.append(
                         self._to_tool_result(
                             tool_call.id,
-                            name,
                             f"The member {name!r} is waiting for the user on "
                             "a previous task, try again later.",
                             ToolResultState.ERROR,
@@ -345,9 +353,9 @@ class TeamPipeline:
         tool_call_id: str | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Run one member reply, streaming its events and turning its final
-        message into the tool result of the delegating call. Nothing is
+        message into the tool result of the assigning call. Nothing is
         appended when the member parks on a HITL request."""
-        tool_call_id = tool_call_id or self._delegating_call(member).id
+        tool_call_id = tool_call_id or self._assigning_call(member).id
         async for evt in member.agent.reply_stream(
             inputs,
             yield_final_msg=True,
@@ -358,7 +366,6 @@ class TeamPipeline:
                 results.append(
                     self._to_tool_result(
                         tool_call_id,
-                        member.agent.name,
                         [
                             _
                             for _ in evt.content
@@ -371,14 +378,13 @@ class TeamPipeline:
     @staticmethod
     def _to_tool_result(
         tool_call_id: str,
-        name: str,
         output: str | list[TextBlock | DataBlock],
         state: ToolResultState,
     ) -> ToolResultBlock:
-        """Build the tool result the leader receives for a delegation."""
+        """Build the tool result the leader receives for an assignment."""
         return ToolResultBlock(
             id=tool_call_id,
-            name=name,
+            name=_TeamAssign.name,
             output=output or "The member finished without a reply.",
             state=state,
         )
@@ -401,18 +407,19 @@ class TeamPipeline:
             f"No participant is waiting on the reply {reply_id!r}.",
         )
 
-    def _delegating_call(self, member: TeamMember) -> ToolCallBlock:
-        """The leader's submitted tool call that delegates to the member.
-        Calls to one member run one after another, so at most one is in
-        flight."""
+    def _assigning_call(self, member: TeamMember) -> ToolCallBlock:
+        """The leader's submitted tool call that assigns to the member.
+        Assignments to one member run one after another, so at most one is
+        in flight."""
         for tool_call in self.leader.state.get_awaiting_tool_calls(
             self.leader.name,
         ):
             if (
-                tool_call.name == member.agent.name
+                tool_call.name == _TeamAssign.name
                 and tool_call.state == ToolCallState.SUBMITTED
+                and json.loads(tool_call.input)["member"] == member.agent.name
             ):
                 return tool_call
         raise RuntimeError(
-            f"The leader is not delegating to {member.agent.name!r}.",
+            f"The leader is not assigning to {member.agent.name!r}.",
         )

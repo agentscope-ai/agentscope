@@ -52,7 +52,11 @@ class AskTool(ToolBase):
         return ToolChunk(content=[TextBlock(text=f"ask result: {input}")])
 
 
-def _tool_call(id: str, name: str, input: str) -> list[ChatResponse]:
+def _tool_call(
+    id: str,
+    input: str,
+    name: str = "TeamAssign",
+) -> list[ChatResponse]:
     """A streamed model reply that calls one tool."""
     block = ToolCallBlock(id=id, name=name, input=input)
     return [
@@ -154,7 +158,9 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         the leader's reply ends."""
         self.leader.model.set_responses(
             [
-                _tool_call("call-1", "researcher", '{"prompt": "Find A"}'),
+                _tool_call(
+                    "call-1", '{"member": "researcher", "prompt": "Find A"}'
+                ),
                 _text("A is 42."),
             ],
         )
@@ -201,8 +207,8 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                             "created_at": AnyString(),
                             "finished_at": None,
                             "id": "call-1",
-                            "name": "researcher",
-                            "input": '{"prompt": "Find A"}',
+                            "name": "TeamAssign",
+                            "input": '{"member": "researcher", "prompt": "Find A"}',
                             "state": "finished",
                             "suggested_rules": [],
                         },
@@ -211,7 +217,7 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                             "created_at": AnyString(),
                             "finished_at": None,
                             "id": "call-1",
-                            "name": "researcher",
+                            "name": "TeamAssign",
                             "output": [
                                 {
                                     "type": "text",
@@ -244,13 +250,15 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         self.pipeline.reset_members = False
         self.leader.model.set_responses(
             [
-                _tool_call("call-1", "researcher", '{"prompt": "Find A"}'),
+                _tool_call(
+                    "call-1", '{"member": "researcher", "prompt": "Find A"}'
+                ),
                 _text("A is 42."),
             ],
         )
         self.researcher.model.set_responses(
             [
-                _tool_call("call-r1", "ask_tool", '{"input": "A"}'),
+                _tool_call("call-r1", '{"input": "A"}', name="ask_tool"),
                 _text("Found: A = 42"),
             ],
         )
@@ -275,7 +283,7 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 (_.name, _.state)
                 for _ in self.leader.state.get_awaiting_tool_calls("leader")
             ],
-            [("researcher", "submitted")],
+            [("TeamAssign", "submitted")],
         )
         self.assertListEqual(
             [
@@ -397,13 +405,15 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                         content=[
                             ToolCallBlock(
                                 id="call-1",
-                                name="researcher",
-                                input='{"prompt": "Find A"}',
+                                name="TeamAssign",
+                                input='{"member": "researcher", '
+                                '"prompt": "Find A"}',
                             ),
                             ToolCallBlock(
                                 id="call-2",
-                                name="coder",
-                                input='{"prompt": "Write A"}',
+                                name="TeamAssign",
+                                input='{"member": "coder", '
+                                '"prompt": "Write A"}',
                             ),
                         ],
                         is_last=True,
@@ -430,8 +440,8 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 )
             ],
             [
-                ("call-1", "researcher", "Found: A = 42", "success"),
-                ("call-2", "coder", "Wrote a.py", "success"),
+                ("call-1", "TeamAssign", "Found: A = 42", "success"),
+                ("call-2", "TeamAssign", "Wrote a.py", "success"),
             ],
         )
         self.assertEqual(
@@ -443,10 +453,14 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         """An interrupt closes the parked researcher and the leader's
         delegation alike, and resets the researcher afterwards."""
         self.leader.model.set_responses(
-            [_tool_call("call-1", "researcher", '{"prompt": "Find A"}')],
+            [
+                _tool_call(
+                    "call-1", '{"member": "researcher", "prompt": "Find A"}'
+                )
+            ],
         )
         self.researcher.model.set_responses(
-            [_tool_call("call-r1", "ask_tool", '{"input": "A"}')],
+            [_tool_call("call-r1", '{"input": "A"}', name="ask_tool")],
         )
         await self._run(self.query)
 
