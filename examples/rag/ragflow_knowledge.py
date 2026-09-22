@@ -8,10 +8,10 @@ bring your own parser, chunker, embedding model, or vector store:
 RAGFlow parses, chunks, indexes, and retrieves on the server side using
 the model and parsing strategy configured on its dataset.
 
-This example walks through the knowledge operations — :meth:`insert_document`,
+This example walks through the knowledge operations — :meth:`upload_document`,
 :meth:`search`, :meth:`list_documents`, :meth:`delete_document` — against a
 RAGFlow dataset you have already created in the RAGFlow console.  Note that
-``insert_document`` uploads and requests server-side *indexing* asynchronously,
+``upload_document`` uploads and requests server-side *indexing* asynchronously,
 so the example polls the document's parse status before searching.
 
 Run with::
@@ -40,7 +40,7 @@ async def wait_until_indexed(
 ) -> None:
     """Poll a just-uploaded RAGFlow document until RAGFlow has parsed it.
 
-    RAGFlow indexing is asynchronous: ``insert_document`` returns as soon as
+    RAGFlow indexing is asynchronous: ``upload_document`` returns as soon as
     the upload is accepted.  ``search`` only sees a document once RAGFlow has
     finished parsing/chunking it, so callers that want to search right away
     should wait for the parse to complete.
@@ -127,7 +127,7 @@ async def main() -> None:
     # RAGFlow parses/chunks/indexes the uploaded bytes on the server,
     # *asynchronously*.  The returned document id is yours to keep for
     # delete_document.
-    document_id = await knowledge.insert_document(
+    document_id = await knowledge.upload_document(
         b"# Cats\n\nCats are small carnivorous mammals. They are popular "
         b"as pets for their playful and affectionate nature.\n",
         filename="cats.md",

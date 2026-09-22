@@ -8,7 +8,7 @@ Library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no manage
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
 | [`ragflow_knowledge.py`](./ragflow_knowledge.py) | Uses `RAGFlowKnowledgeBase` — a knowledge-layer integration that delegates parsing/chunking/indexing/retrieval to a RAGFlow server instead of running the pipeline locally. |
 
-Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
+The first two examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
 
 ## Install
 
@@ -261,11 +261,11 @@ python examples/rag/ragflow_knowledge.py
 
 **Notes**
 
-- `insert_document` uploads raw document bytes; RAGFlow parses, chunks,
+- `upload_document` uploads raw document bytes; RAGFlow parses, chunks,
   and indexes them server-side.  This deliberately differs from
   `KnowledgeBase.insert_document`, which takes pre-embedded `Chunk`
   objects because AgentScope runs the pipeline locally.
-- RAGFlow indexing is **asynchronous** — `insert_document` returns once
+- RAGFlow indexing is **asynchronous** — `upload_document` returns once
   the upload is accepted, but a document becomes searchable only after
   RAGFlow finishes parsing it.  The example polls the document's parse
   status before searching (see `wait_until_indexed`).

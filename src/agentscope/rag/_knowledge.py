@@ -43,14 +43,7 @@ from ._vdb import DocumentSummary
 
 
 class KnowledgeBaseBase(ABC):
-    """Shared agent-facing contract for knowledge backends.
-
-    Backends only need to expose descriptive metadata and text retrieval to
-    participate in :class:`~agentscope.middleware.RAGMiddleware`.  Document
-    ingestion and storage management deliberately stay backend-specific:
-    AgentScope vector stores accept pre-built chunks, while managed services
-    such as RAGFlow accept source files.
-    """
+    """Shared agent-facing contract for knowledge backends."""
 
     name: str
     """Agent-oriented knowledge base name."""
@@ -71,6 +64,24 @@ class KnowledgeBaseBase(ABC):
         score_threshold: float | None = None,
     ) -> list[VectorSearchResult]:
         """Search the backend and return ranked chunks."""
+
+    @abstractmethod
+    async def delete_document(self, document_id: str) -> None:
+        """Delete one document from the backend."""
+
+    @abstractmethod
+    async def list_documents(self) -> list[DocumentSummary]:
+        """List documents stored in the backend."""
+
+    @abstractmethod
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list[Chunk]:
+        """List a page of chunks for one document."""
 
 
 class KnowledgeBase(KnowledgeBaseBase):

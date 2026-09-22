@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the :class:`RAGMiddleware` class."""
+import json
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
+import httpx
 from utils import AnyString, MockModel
 
 from agentscope.embedding import EmbeddingResponse
@@ -22,7 +25,10 @@ from agentscope.model import StructuredResponse
 from agentscope.rag import (
     Chunk,
     KnowledgeBase,
+    KnowledgeBaseBase,
     QdrantStore,
+    RAGFlowConfig,
+    RAGFlowKnowledgeBase,
     VectorRecord,
     VectorSearchResult,
 )
@@ -274,7 +280,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
 
     def _middleware(
         self,
-        knowledges: list[KnowledgeBase] | None = None,
+        knowledges: list[KnowledgeBaseBase] | None = None,
         rerank_model: MockModel | None = None,
         **kwargs: Any,
     ) -> RAGMiddleware:
@@ -406,6 +412,82 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         post = [msg.model_dump() for msg in agent.state.context]
         self.assertEqual(len(post), 1)
         self.assertEqual(post[0]["content"], [])
+
+    async def test_static_injection_with_ragflow_backend(self) -> None:
+        """RAG middleware accepts a RAGFlow backend through the base API."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.method, "POST")
+            self.assertEqual(request.url.path, "/api/v1/retrieval")
+            self.assertEqual(request.headers["Authorization"], "Bearer secret")
+            self.assertDictEqual(
+                json.loads(request.content),
+                {
+                    "question": "user: Where is Paris?",
+                    "dataset_ids": ["dataset-1"],
+                    "page": 1,
+                    "page_size": 1,
+                    "similarity_threshold": 0.2,
+                    "vector_similarity_weight": 0.3,
+                    "knn_top_k": 1024,
+                    "keyword": False,
+                    "highlight": True,
+                },
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "chunks": [
+                            {
+                                "id": "chunk-1",
+                                "document_id": "doc-1",
+                                "document_keyword": "doc-1.txt",
+                                "content": "Paris is in France.",
+                                "similarity": 0.95,
+                            },
+                        ],
+                    },
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("httpx.AsyncClient", return_value=client):
+            knowledge = RAGFlowKnowledgeBase(
+                name="paris-kb",
+                description="Trivia about Paris.",
+                config=RAGFlowConfig(
+                    api_key="secret",
+                    base_url="https://ragflow.example",
+                    dataset_id="dataset-1",
+                ),
+            )
+        try:
+            middleware = self._middleware(
+                knowledges=[knowledge],
+                mode="static",
+                top_k=1,
+                emit_hint_event=False,
+            )
+            agent = _make_agent()
+            seen_context: list[dict] = []
+
+            events = await self._run_with_inputs(
+                middleware,
+                agent,
+                UserMsg(name="user", content="Where is Paris?"),
+                context_during_reasoning=seen_context,
+            )
+        finally:
+            await knowledge.aclose()
+
+        self.assertListEqual(events, ["reasoning-evt"])
+        self.assertEqual(
+            seen_context[0]["content"][0]["hint"],
+            _EXPECTED_HINT,
+        )
+        self.assertTrue(client.is_closed)
 
     async def test_static_persistent_injection(self) -> None:
         """``persist_hint=True`` keeps the hint in the context."""

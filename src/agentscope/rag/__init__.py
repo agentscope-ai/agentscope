@@ -28,7 +28,6 @@ from ._vdb import (
 from ._knowledge import KnowledgeBase, KnowledgeBaseBase
 from ._ragflow import (
     RAGFlowConfig,
-    RAGFlowError,
     RAGFlowKnowledgeBase,
 )
 
@@ -55,6 +54,5 @@ __all__ = [
     "KnowledgeBaseBase",
     "MongoDBStore",
     "RAGFlowConfig",
-    "RAGFlowError",
     "RAGFlowKnowledgeBase",
 ]
