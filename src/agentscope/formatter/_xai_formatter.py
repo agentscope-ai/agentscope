@@ -366,11 +366,7 @@ class XAIChatFormatter(FormatterBase):
                 elif isinstance(item, str):
                     parts.append(item)
                 elif isinstance(item, DataBlock):
-                    # A tool result is text-only for this API, so media
-                    # falls back to the shared textual placeholder.
-                    # ``str(item)`` used to dump the block's whole repr
-                    # here — internal id, media type and the entire base64
-                    # payload — into the prompt.
+                    # Tool results are text-only here; media becomes a hint.
                     parts.append(
                         self._convert_unsupported_data_block_to_string(item),
                     )
