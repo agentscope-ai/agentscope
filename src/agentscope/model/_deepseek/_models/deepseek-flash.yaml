@@ -5,10 +5,6 @@ status: active
 input_types:
   - text/plain
   - application/x-thinking
-  - image/jpeg
-  - image/png
-  - image/gif
-  - image/webp
 
 output_types:
   - text/plain
