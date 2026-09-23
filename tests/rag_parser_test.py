@@ -304,6 +304,62 @@ def _make_docx_with_image() -> bytes:
     return buffer.getvalue()
 
 
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _make_docx_content_control(*, wrapped: bool) -> bytes:
+    """Build a DOCX whose middle content is in ``w:sdt``, or is plain.
+
+    ``wrapped=True`` puts a paragraph, a table and a nested control
+    inside a block-level content control, which is how Word writes an
+    automatic table of contents; ``wrapped=False`` writes the same
+    content directly under the body.
+
+    Args:
+        wrapped (`bool`):
+            Whether the middle content is wrapped in ``w:sdt``.
+
+    Returns:
+        `bytes`:
+            The DOCX bytes.
+    """
+    from docx import Document as DocxDocument
+    from docx.oxml import parse_xml
+
+    ns = f'xmlns:w="{_W_NS}"'
+    heading = f"<w:p {ns}><w:r><w:t>Controlled heading</w:t></w:r></w:p>"
+    table = (
+        f"<w:tbl {ns}><w:tr>"
+        "<w:tc><w:p><w:r><w:t>cell-a</w:t></w:r></w:p></w:tc>"
+        "<w:tc><w:p><w:r><w:t>cell-b</w:t></w:r></w:p></w:tc>"
+        "</w:tr></w:tbl>"
+    )
+    nested = f"<w:p {ns}><w:r><w:t>Nested control</w:t></w:r></w:p>"
+    if wrapped:
+        fragments = [
+            f"<w:sdt {ns}><w:sdtContent>"
+            f"{heading}{table}"
+            f"<w:sdt><w:sdtContent>{nested}</w:sdtContent></w:sdt>"
+            f"</w:sdtContent></w:sdt>",
+        ]
+    else:
+        fragments = [heading, table, nested]
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before.")
+    after = doc.add_paragraph("After.")
+    for fragment in fragments:
+        # ``w:sectPr`` has to stay the last body child, so insert rather
+        # than append.
+        after._element.addprevious(  # pylint: disable=protected-access
+            parse_xml(fragment),
+        )
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -1770,3 +1826,52 @@ class WordParserTest(IsolatedAsyncioTestCase):
         """Unknown ``table_format`` raises :class:`ValueError`."""
         with self.assertRaises(ValueError):
             WordParser(table_format="csv")  # type: ignore[arg-type]
+
+    async def test_block_content_control_text_is_kept(self) -> None:
+        """A block-level ``w:sdt`` does not hide what it contains."""
+        sections = await WordParser(include_image=False).parse(
+            _make_docx_content_control(wrapped=True),
+            "toc.docx",
+        )
+
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Before.\n"
+                            "Controlled heading\n"
+                            "| cell-a | cell-b |\n"
+                            "| --- | --- |\n"
+                            "\n"
+                            "Nested control\n"
+                            "After."
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "toc.docx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_content_control_is_transparent(self) -> None:
+        """The same content parses the same wrapped or unwrapped."""
+        parser = WordParser(include_image=False)
+        wrapped = await parser.parse(
+            _make_docx_content_control(wrapped=True),
+            "d.docx",
+        )
+        plain = await parser.parse(
+            _make_docx_content_control(wrapped=False),
+            "d.docx",
+        )
+
+        self.assertEqual(
+            [(s.content.text, s.source, s.metadata) for s in wrapped],
+            [(s.content.text, s.source, s.metadata) for s in plain],
+        )
