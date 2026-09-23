@@ -216,6 +216,7 @@ class MCPTool(ToolBase):
         middlewares: list[ToolMiddlewareBase] | None = None,
         call_tracker: Callable[[], AbstractAsyncContextManager[None]]
         | None = None,
+        connection_gen: int = 0,
     ) -> None:
         """Initialize the MCPTool.
 
@@ -242,6 +243,12 @@ class MCPTool(ToolBase):
                 session call so that ``MCPClient.close()`` can wait for
                 in-flight calls instead of tearing down the session
                 mid-call.
+            connection_gen (`int`, optional):
+                The connection generation of the :class:`MCPClient` at the
+                time this tool was vended. Passed back to the tracker so
+                that a tool obtained from connection N is rejected after
+                the client is closed and reconnected (connection N+1).
+                Defaults to ``0`` (no generation check).
         """
         super().__init__(middlewares=middlewares)
         self.mcp_name = mcp_name
@@ -287,6 +294,7 @@ class MCPTool(ToolBase):
         self._client_gen = client_gen
         self._session = session
         self._call_tracker = call_tracker
+        self._connection_gen = connection_gen
 
         if timeout:
             self._timeout = timedelta(seconds=timeout)
@@ -353,9 +361,11 @@ class MCPTool(ToolBase):
             # Stateful client: use the existing session. The optional
             # tracker is owned by the vending MCPClient; entering it around
             # the call lets MCPClient.close() wait for this call to finish
-            # instead of tearing down the session underneath it.
+            # instead of tearing down the session underneath it. The
+            # connection generation is passed so the tracker can reject calls
+            # from tools vended under a previous (now closed) connection.
             tracker = (
-                self._call_tracker()
+                self._call_tracker(expected_gen=self._connection_gen)
                 if self._call_tracker is not None
                 else nullcontext()
             )

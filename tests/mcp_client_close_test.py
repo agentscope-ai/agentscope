@@ -15,9 +15,11 @@ class _RecordingTransport:
     """Minimal transport context manager that records its exit."""
 
     def __init__(self, order: list[str]) -> None:
+        """Initialize with the shared ordering list."""
         self.order = order
 
     async def __aenter__(self) -> tuple[object, object]:
+        """Enter the transport context, returning dummy stream pair."""
         return object(), object()
 
     async def __aexit__(
@@ -26,6 +28,7 @@ class _RecordingTransport:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
+        """Record transport exit and suppress no exceptions."""
         self.order.append("transport_exited")
         return False
 
@@ -41,11 +44,13 @@ class _BlockingSession:
         call_started: asyncio.Event,
         release_call: asyncio.Event,
     ) -> None:
+        """Initialize with shared state for coordinating test flow."""
         self.order = order
         self.call_started = call_started
         self.release_call = release_call
 
     async def __aenter__(self) -> "_BlockingSession":
+        """Enter the session context."""
         return self
 
     async def __aexit__(
@@ -54,12 +59,15 @@ class _BlockingSession:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
+        """Exit the session context, suppressing no exceptions."""
         return False
 
     async def initialize(self) -> None:
+        """No-op session initializer."""
         return None
 
     async def list_tools(self) -> Any:
+        """Return a fixed one-tool list without hitting the network."""
         return SimpleNamespace(
             tools=[
                 mcp.types.Tool(
@@ -76,6 +84,7 @@ class _BlockingSession:
         arguments: dict | None = None,
         read_timeout_seconds: Any = None,
     ) -> Any:
+        """Signal that the call started, block until released, then return."""
         self.call_started.set()
         await self.release_call.wait()
         self.order.append("call_done")
@@ -90,6 +99,7 @@ def _session_factory(
     """Create a ClientSession factory bound to the per-test state."""
 
     def factory(read_stream: object, write_stream: object) -> _BlockingSession:
+        """Instantiate a _BlockingSession with the captured test state."""
         return _BlockingSession(
             read_stream,
             write_stream,
@@ -283,3 +293,103 @@ class MCPClientCloseTest(IsolatedAsyncioTestCase):
             await asyncio.wait_for(close_task, 1)
 
         self.assertEqual(order, ["call_done", "transport_exited"])
+
+    async def test_close_is_cancellation_safe(self) -> None:
+        """Cancelling the close() task must not leave the client broken.
+
+        If the outer task is cancelled while close() is waiting for
+        in-flight calls to drain, the cleanup (stack teardown + state
+        reset) must still complete so the client is not left with
+        _is_connected=True and _is_closing=True permanently.
+        """
+        order: list[str] = []
+        call_started = asyncio.Event()
+        release_call = asyncio.Event()
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=_RecordingTransport(order),
+        ), patch(
+            "agentscope.mcp._mcp_client.ClientSession",
+            _session_factory(order, call_started, release_call),
+        ):
+            client = MCPClient(
+                name="cancel_safe_close",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+            await client.connect()
+
+            tool = await client.get_tool("demo")
+            call_task = asyncio.create_task(tool.call())
+            await call_started.wait()
+
+            close_task = asyncio.create_task(client.close())
+            # Let close() reach the _calls_idle.wait() drain point.
+            await asyncio.sleep(0.05)
+            self.assertFalse(close_task.done())
+
+            # Cancel the outer close() task while the tool call is still
+            # in flight. The shield inside close() must ensure _do_close()
+            # finishes even though the outer task was cancelled.
+            close_task.cancel()
+
+            # Release the blocked tool call so _do_close() can proceed.
+            release_call.set()
+            await asyncio.wait_for(call_task, 1)
+
+            # Wait for _do_close() to finish in the background (shield).
+            await asyncio.sleep(0.1)
+
+            # The client must be fully closed: not connected, not closing.
+            self.assertFalse(client.is_connected)
+            self.assertFalse(client._is_closing)
+            # Transport must have been torn down exactly once.
+            self.assertIn("transport_exited", order)
+
+    async def test_stale_tool_rejected_after_reconnect(self) -> None:
+        """A tool vended from connection #1 must fail after close+reconnect.
+
+        After close() + connect(), the client is on generation N+1. Any
+        MCPTool that captured generation N must raise RuntimeError rather
+        than silently calling through the old (now-closed) session.
+        """
+        order: list[str] = []
+        call_started = asyncio.Event()
+        release_call = asyncio.Event()
+        release_call.set()  # not blocking for this test
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=_RecordingTransport(order),
+        ), patch(
+            "agentscope.mcp._mcp_client.ClientSession",
+            _session_factory(order, call_started, release_call),
+        ):
+            client = MCPClient(
+                name="stale_tool",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+
+            # Connection #1 — vend a tool.
+            await client.connect()
+            stale_tool = await client.get_tool("demo")
+            gen_after_first_connect = client._connection_gen
+
+            # Close and reconnect (connection #2).
+            await client.close()
+            await client.connect()
+            self.assertGreater(
+                client._connection_gen,
+                gen_after_first_connect,
+                "connection_gen must increase after reconnect",
+            )
+
+            # The tool from connection #1 must now be rejected.
+            with self.assertRaisesRegex(RuntimeError, "stale"):
+                await stale_tool.call()
+
+            # A freshly vended tool must work.
+            fresh_tool = await client.get_tool("demo")
+            await asyncio.wait_for(fresh_tool.call(), 1)
+
+            await client.close()

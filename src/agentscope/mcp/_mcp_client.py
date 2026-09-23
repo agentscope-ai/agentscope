@@ -51,6 +51,8 @@ class MCPClient(BaseModel):
     - _inflight_calls: Number of session calls currently in flight
     - _is_closing: Whether :meth:`close` has started
     - _calls_idle: Set when no session call is in flight
+    - _connection_gen: Incremented on every :meth:`connect`; tools vended
+      from an earlier generation are rejected to prevent stale-session calls
 
     Example:
 
@@ -137,6 +139,7 @@ class MCPClient(BaseModel):
     _inflight_calls: int = PrivateAttr(default=0)
     _is_closing: bool = PrivateAttr(default=False)
     _calls_idle: asyncio.Event | None = PrivateAttr(default=None)
+    _connection_gen: int = PrivateAttr(default=0)
 
     @property
     def is_connected(self) -> bool:
@@ -367,6 +370,9 @@ class MCPClient(BaseModel):
             self._is_closing = False
             self._calls_idle = asyncio.Event()
             self._calls_idle.set()
+            # Increment generation so tools from a previous connection are
+            # rejected instead of silently operating on a closed session.
+            self._connection_gen += 1
             logger.info("MCP connected: %s", self.name)
         except BaseException:
             # asyncio.CancelledError inherits BaseException, so a cancelled
@@ -381,6 +387,7 @@ class MCPClient(BaseModel):
                 self._stack = None
                 self._session = None
                 self._is_connected = False
+                self._connection_gen = 0
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
@@ -390,6 +397,12 @@ class MCPClient(BaseModel):
         flight (through tools vended by :meth:`get_tool` or this client's
         own session calls) to finish before tearing down the transport.
         Session calls that start while closing are rejected.
+
+        The drain-and-teardown is wrapped in :func:`asyncio.shield` so that
+        if the outer task is cancelled while waiting for in-flight calls to
+        finish, the cleanup still runs to completion. This prevents the
+        client from being left in a permanently broken state where
+        ``_is_closing=True`` but the transport is never torn down.
 
         For stateless connections, this method does nothing.
 
@@ -412,9 +425,25 @@ class MCPClient(BaseModel):
                 "Call connect() first.",
             )
 
-        # Reject calls that start from now on, and let the calls that are
-        # already in flight finish before the transport is torn down.
+        # Reject calls that start from now on, then delegate the drain and
+        # teardown to _do_close(). Shield the delegate so that a
+        # CancelledError on this coroutine cannot interrupt cleanup midway,
+        # which would leave _is_connected=True and _is_closing=True.
         self._is_closing = True
+        try:
+            await asyncio.shield(self._do_close(ignore_errors))
+        except asyncio.CancelledError:
+            # _do_close() has already finished cleanup (shield ensured it
+            # ran to completion). Re-raise to propagate the cancellation.
+            raise
+
+    async def _do_close(self, ignore_errors: bool) -> None:
+        """Drain in-flight calls then tear down the transport.
+
+        Must only be called from :meth:`close`. Runs to completion even
+        when the outer task is cancelled (caller wraps it in
+        :func:`asyncio.shield`).
+        """
         assert self._calls_idle is not None
         await self._calls_idle.wait()
 
@@ -433,7 +462,13 @@ class MCPClient(BaseModel):
             self._stack = None
             self._session = None
             self._is_connected = False
+            self._is_closing = False
+            # _connection_gen is intentionally not reset here. It is a
+            # monotonically increasing counter, so that a tool obtained from
+            # generation N is still rejected after close() + connect() (now
+            # at generation N+1) even if _connection_gen had been zeroed.
             logger.info("MCP closed: %s", self.name)
+
 
     def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:
         """Get client generator for stateless connections."""
@@ -554,7 +589,8 @@ class MCPClient(BaseModel):
                 timeout=self.execution_timeout,
             )
         else:
-            # Stateful: pass session
+            # Stateful: pass session and the current connection generation
+            # so the tool can be invalidated when the client reconnects.
             self._validate_connection()
             return MCPTool(
                 mcp_name=self.name,
@@ -562,6 +598,7 @@ class MCPClient(BaseModel):
                 session=self._session,
                 timeout=self.execution_timeout,
                 call_tracker=self._track_call,
+                connection_gen=self._connection_gen,
             )
 
     def _validate_connection(self) -> None:
@@ -582,20 +619,39 @@ class MCPClient(BaseModel):
             )
 
     @asynccontextmanager
-    async def _track_call(self) -> AsyncGenerator[None, None]:
+    async def _track_call(
+        self,
+        expected_gen: int = 0,
+    ) -> AsyncGenerator[None, None]:
         """Track an in-flight session call so :meth:`close` can wait for it.
 
         Used around the session calls made by this client and, through the
         ``call_tracker`` argument, around the calls made by the tools vended
         by :meth:`get_tool`.
 
+        Args:
+            expected_gen (`int`, optional):
+                The connection generation the caller was vended under.
+                Defaults to ``0`` for direct client calls (which always
+                use the current session). Tool callers pass the generation
+                recorded at construction time so that tools from a closed
+                connection are rejected after reconnect.
+
         Raises:
-            RuntimeError: If the client is closed or already closing.
+            RuntimeError: If the client is closed, closing, or the caller
+                belongs to a stale connection generation.
         """
         if self._is_closing or not self._is_connected:
             raise RuntimeError(
                 f"MCP '{self.name}' is closed or closing, "
                 "so the session call is rejected.",
+            )
+        if expected_gen != 0 and expected_gen != self._connection_gen:
+            raise RuntimeError(
+                f"MCP '{self.name}': tool is stale (vended from connection "
+                f"generation {expected_gen}, current is "
+                f"{self._connection_gen}). Call get_tool() again after "
+                "reconnecting.",
             )
         assert self._calls_idle is not None
         self._calls_idle.clear()
