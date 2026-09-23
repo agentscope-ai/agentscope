@@ -1,9 +1,25 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field, field_validator
+from string import Formatter
+from typing import Self
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..model import ChatModelBase
+
+
+def _summary_template_fields(template: str) -> set[str]:
+    """Return the named fields referenced by a format template."""
+    fields: set[str] = set()
+    for _, field_name, format_spec, _ in Formatter().parse(template):
+        if field_name is not None:
+            if not field_name:
+                raise ValueError("summary_template must use named placeholders")
+            fields.add(field_name.split(".", 1)[0].split("[", 1)[0])
+        if format_spec:
+            fields.update(_summary_template_fields(format_spec))
+    return fields
 
 
 class SummarySchema(BaseModel):
@@ -142,6 +158,26 @@ class ContextConfig(BaseModel):
     )
     """The structured model used to guide the agent to generate the
     structured compressed summary."""
+
+    @model_validator(mode="after")
+    def _validate_summary_template_schema(self) -> Self:
+        """Reject template fields missing from a directly declared schema."""
+        properties = self.summary_schema.get("properties")
+        if properties is None:
+            return self
+        if not isinstance(properties, dict):
+            raise ValueError("summary_schema.properties must be an object")
+
+        missing_fields = sorted(
+            _summary_template_fields(self.summary_template) - properties.keys(),
+        )
+        if missing_fields:
+            raise ValueError(
+                "summary_template references fields missing from "
+                "summary_schema.properties: "
+                f"{', '.join(missing_fields)}",
+            )
+        return self
 
     tool_result_limit: int = Field(
         title="Tool Result Limit",
