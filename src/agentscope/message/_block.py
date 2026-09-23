@@ -2,8 +2,16 @@
 """The content blocks of messages."""
 from enum import StrEnum
 from typing import Literal, List, TypeAlias, Any
-from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
+from pydantic import (
+    BaseModel,
+    Field,
+    AnyUrl,
+    PrivateAttr,
+    field_serializer,
+    ConfigDict,
+)
 
+from .._utils._base64 import _append_base64_chunk, _Base64MergeState
 from .._utils._common import _generate_id, _generate_timestamp
 from ..permission import PermissionRule
 
@@ -62,6 +70,30 @@ class Base64Source(BaseModel):
     """The base64-encoded data."""
     media_type: str
     """The media type of the data, e.g., 'image/png', 'audio/mpeg', etc."""
+
+    _merge_state: _Base64MergeState = PrivateAttr(
+        default_factory=_Base64MergeState,
+    )
+    """Incremental bookkeeping for ``append_base64_chunk``, not serialized."""
+
+    def append_base64_chunk(
+        self,
+        chunk: str,
+        *,
+        validate: bool = False,
+    ) -> None:
+        """Append an independently encoded Base64 ``chunk`` to ``data``.
+
+        Only the incoming chunk (plus at most one quantum of the accumulated
+        value) is decoded, so streaming ``n`` chunks stays linear instead of
+        re-processing the whole payload every time.
+        """
+        self.data = _append_base64_chunk(
+            self.data,
+            chunk,
+            validate=validate,
+            state=self._merge_state,
+        )
 
 
 class URLSource(BaseModel):

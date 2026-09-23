@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
-import base64
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -345,18 +344,8 @@ class Msg(BaseModel):
                         media_type=event.media_type,
                     )
                 elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
-                    # Each delta is an independently base64-encoded chunk
-                    # (with its own padding); naive string concat would
-                    # corrupt the byte stream. Decode, concat bytes, re-encode.
-                    existing = (
-                        base64.b64decode(block.source.data)
-                        if block.source.data
-                        else b""
-                    )
-                    incoming = base64.b64decode(event.data)
-                    block.source.data = base64.b64encode(
-                        existing + incoming,
-                    ).decode("ascii")
+                    # Each delta is independently Base64-encoded.
+                    block.source.append_base64_chunk(event.data)
                 elif event.type == EventType.DATA_BLOCK_END:
                     block.finished_at = event.created_at
 
@@ -471,11 +460,8 @@ class Msg(BaseModel):
                         src,
                         Base64Source,
                     ):
-                        existing = base64.b64decode(merge_target.source.data)
-                        incoming = base64.b64decode(src.data)
-                        merge_target.source.data = base64.b64encode(
-                            existing + incoming,
-                        ).decode("ascii")
+                        # Each delta is independently Base64-encoded.
+                        merge_target.source.append_base64_chunk(src.data)
                         merge_target.source.media_type = (
                             src.media_type or merge_target.source.media_type
                         )
