@@ -3,7 +3,7 @@
 import inspect
 import json
 import re
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
 
@@ -214,6 +214,8 @@ class MCPTool(ToolBase):
         session: Any | None = None,
         timeout: float | None = None,
         middlewares: list[ToolMiddlewareBase] | None = None,
+        call_tracker: Callable[[], AbstractAsyncContextManager[None]]
+        | None = None,
     ) -> None:
         """Initialize the MCPTool.
 
@@ -233,6 +235,13 @@ class MCPTool(ToolBase):
                 The timeout in seconds for tool execution.
             middlewares (`list[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            call_tracker (`Callable[[], AbstractAsyncContextManager[None]] \
+            | None`, optional):
+                An optional tracker owned by the vending
+                :class:`~agentscope.mcp.MCPClient`, entered around the
+                session call so that ``MCPClient.close()`` can wait for
+                in-flight calls instead of tearing down the session
+                mid-call.
         """
         super().__init__(middlewares=middlewares)
         self.mcp_name = mcp_name
@@ -277,6 +286,7 @@ class MCPTool(ToolBase):
         self._tool = tool
         self._client_gen = client_gen
         self._session = session
+        self._call_tracker = call_tracker
 
         if timeout:
             self._timeout = timedelta(seconds=timeout)
@@ -340,12 +350,21 @@ class MCPTool(ToolBase):
                         read_timeout_seconds=self._timeout,
                     )
         else:
-            # Stateful client: use existing session
-            result = await self._session.call_tool(
-                self._tool.name,
-                arguments=kwargs,
-                read_timeout_seconds=self._timeout,
+            # Stateful client: use the existing session. The optional
+            # tracker is owned by the vending MCPClient; entering it around
+            # the call lets MCPClient.close() wait for this call to finish
+            # instead of tearing down the session underneath it.
+            tracker = (
+                self._call_tracker()
+                if self._call_tracker is not None
+                else nullcontext()
             )
+            async with tracker:
+                result = await self._session.call_tool(
+                    self._tool.name,
+                    arguments=kwargs,
+                    read_timeout_seconds=self._timeout,
+                )
 
         # Convert MCP result to AgentScope blocks
         return ToolChunk(

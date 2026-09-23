@@ -48,6 +48,9 @@ class MCPClient(BaseModel):
     - _http_client: The live HTTP client, while one is open
     - _static_headers: Its headers before any runtime override
     - _runtime_headers: See :meth:`set_runtime_headers`
+    - _inflight_calls: Number of session calls currently in flight
+    - _is_closing: Whether :meth:`close` has started
+    - _calls_idle: Set when no session call is in flight
 
     Example:
 
@@ -131,6 +134,9 @@ class MCPClient(BaseModel):
     _http_client: httpx.AsyncClient | None = PrivateAttr(default=None)
     _static_headers: httpx.Headers | None = PrivateAttr(default=None)
     _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
+    _inflight_calls: int = PrivateAttr(default=0)
+    _is_closing: bool = PrivateAttr(default=False)
+    _calls_idle: asyncio.Event | None = PrivateAttr(default=None)
 
     @property
     def is_connected(self) -> bool:
@@ -355,6 +361,12 @@ class MCPClient(BaseModel):
             await self._session.initialize()
 
             self._is_connected = True
+            # In-flight call tracking, so that close() can wait for calls
+            # through the vended tools and this client before tearing down.
+            self._inflight_calls = 0
+            self._is_closing = False
+            self._calls_idle = asyncio.Event()
+            self._calls_idle.set()
             logger.info("MCP connected: %s", self.name)
         except BaseException:
             # asyncio.CancelledError inherits BaseException, so a cancelled
@@ -373,6 +385,11 @@ class MCPClient(BaseModel):
 
     async def close(self, ignore_errors: bool = True) -> None:
         """Close the MCP connection (for stateful connections only).
+
+        This method waits for the session calls that are currently in
+        flight (through tools vended by :meth:`get_tool` or this client's
+        own session calls) to finish before tearing down the transport.
+        Session calls that start while closing are rejected.
 
         For stateless connections, this method does nothing.
 
@@ -394,6 +411,12 @@ class MCPClient(BaseModel):
                 f"MCP '{self.name}' is not connected. "
                 "Call connect() first.",
             )
+
+        # Reject calls that start from now on, and let the calls that are
+        # already in flight finish before the transport is torn down.
+        self._is_closing = True
+        assert self._calls_idle is not None
+        await self._calls_idle.wait()
 
         try:
             await self._stack.aclose()
@@ -448,7 +471,8 @@ class MCPClient(BaseModel):
         else:
             # Stateful: use existing session
             self._validate_connection()
-            res = await self._session.list_tools()
+            async with self._track_call():
+                res = await self._session.list_tools()
             self._cached_tools = res.tools
 
         available_tools: list = self._cached_tools
@@ -537,6 +561,7 @@ class MCPClient(BaseModel):
                 tool=target_tool,
                 session=self._session,
                 timeout=self.execution_timeout,
+                call_tracker=self._track_call,
             )
 
     def _validate_connection(self) -> None:
@@ -555,3 +580,29 @@ class MCPClient(BaseModel):
                 f"MCP '{self.name}' session is not initialized. "
                 "Call connect() first.",
             )
+
+    @asynccontextmanager
+    async def _track_call(self) -> AsyncGenerator[None, None]:
+        """Track an in-flight session call so :meth:`close` can wait for it.
+
+        Used around the session calls made by this client and, through the
+        ``call_tracker`` argument, around the calls made by the tools vended
+        by :meth:`get_tool`.
+
+        Raises:
+            RuntimeError: If the client is closed or already closing.
+        """
+        if self._is_closing or not self._is_connected:
+            raise RuntimeError(
+                f"MCP '{self.name}' is closed or closing, "
+                "so the session call is rejected.",
+            )
+        assert self._calls_idle is not None
+        self._calls_idle.clear()
+        self._inflight_calls += 1
+        try:
+            yield
+        finally:
+            self._inflight_calls -= 1
+            if self._inflight_calls == 0:
+                self._calls_idle.set()
