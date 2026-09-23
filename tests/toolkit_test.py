@@ -6,6 +6,7 @@ import json
 from typing import Any, AsyncGenerator, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 
 from pydantic import BaseModel, Field
@@ -489,6 +490,41 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             base64.b64decode(merged.source.data),
             b"helloworld",
         )
+
+    def test_tool_response_avoids_redecoding_accumulated_base64(self) -> None:
+        """Only an incoming chunk or one Base64 quantum is decoded."""
+        encoded = base64.b64encode(b"ab").decode("ascii")
+        decoded_lengths = []
+        original_decode = base64.b64decode
+        response = ToolResponse()
+
+        def track_decode(value: str, *args: Any, **kwargs: Any) -> bytes:
+            decoded_lengths.append(len(value))
+            return original_decode(value, *args, **kwargs)
+
+        with patch("base64.b64decode", side_effect=track_decode):
+            for _ in range(4):
+                response.append_chunk(
+                    ToolChunk(
+                        content=[
+                            DataBlock(
+                                id="streamed-data",
+                                source=Base64Source(
+                                    data=encoded,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+
+        self.assertLessEqual(
+            max(decoded_lengths, default=0),
+            len(encoded),
+        )
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        self.assertEqual(base64.b64decode(merged.source.data), b"ab" * 4)
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):

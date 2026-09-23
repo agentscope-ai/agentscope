@@ -22,8 +22,10 @@ Coverage
 * Wrong reply_id → event silently skipped
 * Missing block  → warning, no crash
 """
+import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString
 
@@ -54,6 +56,7 @@ from agentscope.event import (
     UserConfirmResultEvent,
 )
 from agentscope.message import (
+    DataBlock,
     Msg,
     ToolCallBlock,
     ToolResultBlock,
@@ -988,6 +991,45 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 expected,
                 msg=f"Mismatch after event[{idx}] ({event.type})",
             )
+
+    async def test_data_deltas_avoid_redecoding_accumulated_base64(
+        self,
+    ) -> None:
+        """Only an incoming delta or one Base64 quantum is decoded."""
+        encoded = base64.b64encode(b"ab").decode("ascii")
+        decoded_lengths = []
+        original_decode = base64.b64decode
+        block_id = "streamed-data"
+
+        def track_decode(value: str, *args: Any, **kwargs: Any) -> bytes:
+            decoded_lengths.append(len(value))
+            return original_decode(value, *args, **kwargs)
+
+        self.msg.append_event(
+            DataBlockStartEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                media_type="image/png",
+            ),
+        )
+        with patch("base64.b64decode", side_effect=track_decode):
+            for _ in range(4):
+                self.msg.append_event(
+                    DataBlockDeltaEvent(
+                        reply_id=_REPLY_ID,
+                        block_id=block_id,
+                        data=encoded,
+                        media_type="image/png",
+                    ),
+                )
+
+        self.assertLessEqual(
+            max(decoded_lengths, default=0),
+            len(encoded),
+        )
+        block = self.msg.content[-1]
+        self.assertIsInstance(block, DataBlock)
+        self.assertEqual(base64.b64decode(block.source.data), b"ab" * 4)
 
     async def test_wrong_reply_id_is_skipped(self) -> None:
         """An event whose reply_id does not match msg.id must be ignored."""

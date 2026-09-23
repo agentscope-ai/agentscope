@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
-import base64
-from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from .._utils._common import _generate_id
+from .._utils._base64 import _append_base64_chunk
+from .._utils._common import _generate_id, _generate_timestamp
 from ._block import (
     TextBlock,
     ThinkingBlock,
@@ -92,7 +91,7 @@ class Msg(BaseModel):
 
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """The creation time of the message"""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
@@ -338,18 +337,11 @@ class Msg(BaseModel):
                         media_type=event.media_type,
                     )
                 elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
-                    # Each delta is an independently base64-encoded chunk
-                    # (with its own padding); naive string concat would
-                    # corrupt the byte stream. Decode, concat bytes, re-encode.
-                    existing = (
-                        base64.b64decode(block.source.data)
-                        if block.source.data
-                        else b""
+                    # Each delta is independently Base64-encoded.
+                    block.source.data = _append_base64_chunk(
+                        block.source.data,
+                        event.data,
                     )
-                    incoming = base64.b64decode(event.data)
-                    block.source.data = base64.b64encode(
-                        existing + incoming,
-                    ).decode("ascii")
                 elif event.type == EventType.DATA_BLOCK_END:
                     block.finished_at = event.created_at
 
@@ -574,7 +566,7 @@ def UserMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="user"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(
@@ -637,7 +629,7 @@ def AssistantMsg(
         content=_to_blocks(content),
         role="assistant",
         metadata=metadata or {},
-        created_at=created_at or datetime.now().isoformat(),
+        created_at=created_at or _generate_timestamp(),
         finished_at=finished_at,
         finished_reason=finished_reason,
         structured_output=structured_output,
@@ -683,7 +675,7 @@ def SystemMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="system"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(
