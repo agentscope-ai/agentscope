@@ -17,6 +17,8 @@ from agentscope.event import (
 from agentscope.message import Msg
 from agentscope.realtime import (
     AudioFrame,
+    ControlFrame,
+    ControlFrameType,
     ModelDisconnectedError,
     PlayoutPosition,
     RealtimeModelBase,
@@ -89,6 +91,8 @@ class ScriptedModel(RealtimeModelBase):
         self.calls: list[str] = []
         self.sessions = 0
         self.instructions = ""
+        self.connect_error: Exception | None = None
+        self.push_text_error: Exception | None = None
         self._open = asyncio.Event()
         self._requested = asyncio.Event()
 
@@ -100,6 +104,8 @@ class ScriptedModel(RealtimeModelBase):
     ) -> None:
         """Record a session open, its instructions and the turn-detection
         request."""
+        if self.connect_error is not None:
+            raise self.connect_error
         self.sessions += 1
         self._open.clear()
         self.instructions = instructions
@@ -132,6 +138,8 @@ class ScriptedModel(RealtimeModelBase):
     async def push_text(self, text: str) -> None:
         """Record a text turn; the agent gates on ``supports_text_input``
         before ever calling this."""
+        if self.push_text_error is not None:
+            raise self.push_text_error
         self.calls.append(f"push_text({text!r})")
 
     async def push_tool_result(self, block: ToolResultBlock) -> None:
@@ -204,6 +212,22 @@ class FakeTransport(TransportBase):
             played_ms=320,
             first_played_at=1.0,
         )
+
+
+class GatedTransport(FakeTransport):
+    """Stays open until ``gate`` is set, then sends its control frames, so
+    a test decides when the user acts instead of a clock."""
+
+    def __init__(self, control_frames: list[ControlFrame]) -> None:
+        super().__init__(frames=0)
+        self.control_frames = control_frames
+        self.gate = asyncio.Event()
+
+    async def incoming(self) -> AsyncIterator[ControlFrame]:
+        """Emit the control frames once the gate opens, then end."""
+        await self.gate.wait()
+        for frame in self.control_frames:
+            yield frame
 
 
 class EndOnSecondFrameVAD(VADBase):
@@ -315,6 +339,63 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
 
+    async def test_interrupt_stops_active_reply(self) -> None:
+        """``interrupt()`` cuts the reply in flight to what was heard."""
+        model = ScriptedModel([REPLY_R1])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = GatedTransport([])
+
+        reply_ends = []
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if isinstance(event, TextBlockDeltaEvent):
+                    if event.delta == "老和尚":
+                        await agent.interrupt()
+                        transport.gate.set()
+                elif isinstance(event, ReplyEndEvent):
+                    reply_ends.append((event.reply_id, event.finished_reason))
+
+        self.assertListEqual(
+            reply_ends,
+            [("u1", "completed"), ("r1", "interrupted")],
+        )
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [(m.role, m.get_text_content()) for m in agent.state.context],
+            [("user", "讲个故事"), ("assistant", "从前有座山山里有座庙")],
+        )
+
+    async def test_interrupt_frame_stops_active_reply(self) -> None:
+        """An INTERRUPT control frame cuts the reply in flight."""
+        model = ScriptedModel([REPLY_R1])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = GatedTransport(
+            [ControlFrame(type=ControlFrameType.INTERRUPT)],
+        )
+
+        reply_ends = []
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if isinstance(event, TextBlockDeltaEvent):
+                    if event.delta == "老和尚":
+                        transport.gate.set()
+                elif isinstance(event, ReplyEndEvent):
+                    reply_ends.append((event.reply_id, event.finished_reason))
+
+        self.assertListEqual(
+            reply_ends,
+            [("u1", "completed"), ("r1", "interrupted")],
+        )
+        self.assertListEqual(
+            model.calls,
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,320ms,'从前有座山山里有座庙')",
+                "cancel",
+                "close",
+            ],
+        )
+
     async def test_provider_timeout_reconnects_on_next_audio(self) -> None:
         """When the provider closes the session, nothing reconnects until
         the next user audio, which reconnects with the current context."""
@@ -363,6 +444,80 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [(m.role, m.get_text_content()) for m in agent.state.context],
             [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
         )
+
+    async def test_provider_timeout_reconnects_on_text(self) -> None:
+        """Text reconnects a timed-out provider without duplicating the
+        new turn in the reconnect instructions."""
+        model = ScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            self.assertFalse(agent._connected)  # pylint: disable=W0212
+            await agent.send("hello")
+
+        self.assertEqual(model.instructions, "be brief")
+        self.assertListEqual(
+            model.calls,
+            [
+                "connect(session=1,td_off=False)",
+                "connect(session=2,td_off=False)",
+                "push_text('hello')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [(m.role, m.get_text_content()) for m in agent.state.context],
+            [("user", "hello")],
+        )
+
+    async def test_failed_text_delivery_does_not_change_context(self) -> None:
+        """A disconnect while sending text leaves no undelivered turn."""
+        model = ScriptedModel([[]])
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+        error = ModelDisconnectedError("Not connected.")
+
+        async with agent:
+            model.push_text_error = error
+            with self.assertRaisesRegex(
+                ModelDisconnectedError,
+                "Not connected",
+            ):
+                await agent._on_control(  # pylint: disable=W0212
+                    ControlFrame(
+                        type=ControlFrameType.TEXT,
+                        data={"text": "hello"},
+                    ),
+                )
+            self.assertFalse(agent._connected)  # pylint: disable=W0212
+
+        self.assertListEqual(agent.state.context, [])
+
+    async def test_failed_text_reconnect_does_not_change_context(self) -> None:
+        """A failed reconnect leaves no undelivered text turn."""
+        model = ScriptedModel(
+            [[me.SessionEndedEvent(reason="idle")]],
+        )
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            model.connect_error = RuntimeError("reconnect failed")
+            with self.assertRaisesRegex(
+                ModelDisconnectedError,
+                "Provider unreachable",
+            ):
+                await agent.send("hello")
+
+        self.assertListEqual(agent.state.context, [])
 
     async def test_local_vad_owns_turns(self) -> None:
         """Passing a VAD disables provider turn detection, reports the
@@ -1200,4 +1355,28 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
         self.assertTrue(
             any("keep talking" in line for line in logs.output),
             logs.output,
+        )
+
+    async def test_text_reconnect_delivers_the_kept_audio(self) -> None:
+        """A typed turn reconnects, and the frame kept by the failed push
+        rides along with that reconnect instead of being stranded."""
+        model = DropsSocketModel()
+        model.supports_text_input = True
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await agent._on_audio(  # pylint: disable=W0212
+                AudioFrame(pcm=b"\x00" * 3200),
+            )
+            await agent.send("hello")
+
+        self.assertListEqual(
+            model.calls,
+            [
+                "connect(session=1,td_off=False)",
+                "connect(session=2,td_off=False)",
+                "push_audio",
+                "push_text('hello')",
+                "close",
+            ],
         )

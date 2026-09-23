@@ -111,6 +111,85 @@ def _make_pptx_rich() -> bytes:
     return buffer.getvalue()
 
 
+def _make_pptx_with_group() -> bytes:
+    """Build a PPTX whose slide holds a text box and a group of two boxes.
+
+    A group carries no text frame of its own, so a loop over ``slide.shapes``
+    that only looks at text frames, tables and pictures never reaches it.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    standalone = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(0.2),
+        Inches(4),
+        Inches(0.5),
+    )
+    standalone.text_frame.text = "Standalone"
+
+    first = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    first.text_frame.text = "Grouped one"
+    second = slide.shapes.add_textbox(
+        Inches(3.0),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    second.text_frame.text = "Grouped two"
+    slide.shapes.add_group_shape([first, second])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_pptx_with_nested_group() -> bytes:
+    """Build a PPTX whose slide holds a group inside a group."""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    inner_a = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(0.5),
+        Inches(2),
+        Inches(0.5),
+    )
+    inner_a.text_frame.text = "Innermost"
+    inner_b = slide.shapes.add_textbox(
+        Inches(3.0),
+        Inches(0.5),
+        Inches(2),
+        Inches(0.5),
+    )
+    inner_b.text_frame.text = "Sibling"
+    inner_group = slide.shapes.add_group_shape([inner_a, inner_b])
+
+    outer = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    outer.text_frame.text = "Outer"
+    slide.shapes.add_group_shape([inner_group, outer])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_pptx_with_special_table_cells() -> bytes:
     """Build a PPTX table with pipes and a multi-line cell."""
     from pptx import Presentation
@@ -877,9 +956,141 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(FileNotFoundError):
             await parser.parse("/no/such/file.pptx", "x.pptx")
 
+    async def test_group_shape_text_is_read(self) -> None:
+        """Text inside a group reaches the Sections, in shape-tree order."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(_make_pptx_with_group(), "demo.pptx")
+
+        # Only "Standalone" was read before; the group held the other two.
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "<slide index=1>\n"
+                            "Standalone\n"
+                            "Grouped one\n"
+                            "Grouped two\n"
+                            "</slide>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
+    async def test_nested_group_shape_text_is_read(self) -> None:
+        """A group can hold a group, so the descent has to recurse."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            _make_pptx_with_nested_group(),
+            "demo.pptx",
+        )
+
+        # Depth first: the inner group is emptied before its sibling, and
+        # both come before the shape that follows the outer group.
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "<slide index=1>\n"
+                            "Innermost\n"
+                            "Sibling\n"
+                            "Outer\n"
+                            "</slide>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
+
+    async def test_header_only_sheet(self) -> None:
+        """A sheet with only a header row is kept as a table."""
+        xlsx_bytes = _make_xlsx_simple({"Data": [["Revenue", "Year"]]})
+        sections = await ExcelParser().parse(xlsx_bytes, "header.xlsx")
+
+        self.assertListEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Sheet: Data\n"
+                            "| Revenue | Year |\n"
+                            "| --- | --- |\n"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "header.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_blank_sheet_has_no_sections(self) -> None:
+        """A blank sheet produces neither a table nor images."""
+        xlsx_bytes = _make_xlsx_simple({"Blank": []})
+        sections = await ExcelParser().parse(xlsx_bytes, "blank.xlsx")
+
+        self.assertListEqual(sections, [])
+
+    async def test_image_only_sheet(self) -> None:
+        """Images on a sheet without cell values are still extracted."""
+        from openpyxl import Workbook
+        from openpyxl.drawing.image import Image
+
+        workbook = Workbook()
+        workbook.active.title = "Images"
+        workbook.active.add_image(Image(io.BytesIO(_PNG_PIXEL)), "A3")
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+
+        parser = ExcelParser(include_image=True)
+        sections = await parser.parse(buffer.getvalue(), "images.xlsx")
+
+        self.assertListEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "images.xlsx",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "images.xlsx",
+                    "metadata": {"sheet": "Images", "media_type": "image/png"},
+                },
+            ],
+        )
 
     async def test_single_sheet_markdown(self) -> None:
         """A single-sheet workbook produces one text Section with

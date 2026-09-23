@@ -69,6 +69,36 @@ class AskUserTest(IsolatedAsyncioTestCase):
                 },
             )
 
+    async def test_question_texts_must_be_unique(self) -> None:
+        """Answers use the question text as their correlation key."""
+        question = {
+            "question": "Which?",
+            "header": "Pick",
+            "options": [
+                {"label": "a", "description": "first"},
+                {"label": "b", "description": "second"},
+            ],
+        }
+        with self.assertRaises(ValidationError):
+            AskUserParams.model_validate({"questions": [question, question]})
+
+    async def test_option_labels_must_be_unique(self) -> None:
+        """A selected label must identify exactly one option."""
+        payload = {
+            "questions": [
+                {
+                    "question": "Which?",
+                    "header": "Pick",
+                    "options": [
+                        {"label": "same", "description": "first"},
+                        {"label": "same", "description": "second"},
+                    ],
+                },
+            ],
+        }
+        with self.assertRaises(ValidationError):
+            AskUserParams.model_validate(payload)
+
     async def test_a_result_that_breaks_its_promise_is_refused(self) -> None:
         """The shape is the caller's to keep; prose alone is not enough."""
         result = ToolResultBlock(
@@ -85,6 +115,16 @@ class AskUserTest(IsolatedAsyncioTestCase):
                 {"question": "批准吗？", "selected": ["通过"], "other": None},
             ],
         ).model_dump()
+        await self.tool.check_external_result(result)
+
+    async def test_a_failed_result_owes_no_metadata(self) -> None:
+        """The schema describes a successful run, not an error."""
+        result = ToolResultBlock(
+            id="call-1",
+            name="AskUser",
+            output="Invalid AskUser input",
+            state=ToolResultState.ERROR,
+        )
         await self.tool.check_external_result(result)
 
     async def test_the_schema_reaches_the_model_whole(self) -> None:

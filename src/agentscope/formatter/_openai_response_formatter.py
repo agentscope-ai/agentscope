@@ -447,13 +447,13 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                     await self._format_tool_sequence(group),
                 )
             elif typ == "agent_message":
-                formatted_msgs.extend(
-                    await self._format_agent_message(
-                        group,
-                        is_first_agent_message,
-                    ),
+                formatted_group = await self._format_agent_message(
+                    group,
+                    is_first_agent_message,
                 )
-                is_first_agent_message = False
+                formatted_msgs.extend(formatted_group)
+                if formatted_group:
+                    is_first_agent_message = False
 
         return formatted_msgs
 

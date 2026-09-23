@@ -365,6 +365,11 @@ class XAIChatFormatter(FormatterBase):
                     parts.append(item.text)
                 elif isinstance(item, str):
                     parts.append(item)
+                elif isinstance(item, DataBlock):
+                    # Tool results are text-only here; media becomes a hint.
+                    parts.append(
+                        self._convert_unsupported_data_block_to_string(item),
+                    )
                 else:
                     parts.append(str(item))
             return "\n".join(parts)
@@ -448,7 +453,7 @@ class XAIMultiAgentFormatter(FormatterBase):
                 )
                 if history_text:
                     xai_messages.append(user(history_text))
-                is_first_agent_message = False
+                    is_first_agent_message = False
 
         return xai_messages
 

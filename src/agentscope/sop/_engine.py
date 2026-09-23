@@ -65,7 +65,12 @@ class SOPEngine:
 
     @property
     def phase(self) -> SOPPhase:
-        """Where the run stands overall."""
+        """Where the run stands overall.
+
+        Returns:
+            `SOPPhase`:
+                The run state's phase, worked out from its steps.
+        """
         return self.state.phase
 
     async def reply_stream(

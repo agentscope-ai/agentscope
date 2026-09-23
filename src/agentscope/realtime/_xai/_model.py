@@ -100,6 +100,11 @@ class XAIRealtimeModel(RealtimeModelBase):
         """Open the WebSocket and send the session config."""
         import websockets
 
+        # Stop the previous session and drop its terminal events.
+        await self.close()
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
                 update={"turn_detection": "none"},

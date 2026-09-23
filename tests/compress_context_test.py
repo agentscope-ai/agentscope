@@ -2666,6 +2666,81 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_context_compression_preserves_current_reply_usage(
+        self,
+    ) -> None:
+        """Compression preserves usage from a fully compressed reply."""
+        model = MockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="hi",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.5,
+                reserve_ratio=0.4,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        agent.state.reply_id = "current-reply"
+        agent.state.context = [
+            AssistantMsg(
+                "Friday",
+                [TextBlock(text="x" * 1000)],
+                id="current-reply",
+                usage=Usage(
+                    input_tokens=80,
+                    output_tokens=40,
+                    cache_input_tokens=5,
+                    cache_creation_input_tokens=2,
+                ),
+            ),
+        ]
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+                usage=ChatUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    time=0.1,
+                    cache_input_tokens=1,
+                    cache_creation_input_tokens=1,
+                ),
+            ),
+        )
+
+        await agent.compress_context()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": "current-reply",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 90,
+                        "output_tokens": 45,
+                        "cache_input_tokens": 6,
+                        "cache_creation_input_tokens": 3,
+                    },
+                },
+            ],
+        )
+
     async def test_summary_failure_truncates_context(self) -> None:
         """Summary failures fall back to lossy context truncation."""
         agent, _ = _make_failing_compression_agent()
