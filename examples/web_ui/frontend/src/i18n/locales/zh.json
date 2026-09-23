@@ -119,7 +119,8 @@
 			"team_message": "团队消息",
 			"schedule": "定时任务",
 			"system": "系统消息",
-			"channel": "频道"
+			"channel": "频道",
+			"runtime_state": "运行状态"
 		},
 		"error": {
 			"title": "回复失败",
@@ -132,7 +133,8 @@
 			"internal": "发生了未预期的内部错误。",
 			"setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
-		}
+		},
+		"copy": "复制"
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",
@@ -194,6 +196,9 @@
 			},
 			"summary-template": {
 				"label": "摘要模板"
+			},
+			"max-image-num": {
+				"label": "最大图片数"
 			}
 		},
 		"react-config": {
@@ -204,6 +209,18 @@
 			},
 			"stop-on-reject": {
 				"label": "拒绝时停止"
+			},
+			"structured-output-grace-iters": {
+				"label": "结构化输出宽限轮数",
+				"description": "超过最大迭代次数后额外允许的轮数，让已经到达上限的回复仍能产出要求的结构化输出。"
+			},
+			"interruption-message": {
+				"label": "中断回复",
+				"description": "用户中断回复时，智能体给出的回复内容。"
+			},
+			"interruption-raise-cancelled-error": {
+				"label": "抛出 CancelledError",
+				"description": "处理完中断后重新抛出 asyncio.CancelledError，而不是将其吞掉。"
 			}
 		},
 		"invite-config": {

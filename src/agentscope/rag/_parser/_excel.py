@@ -21,7 +21,7 @@ from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
 from .._document import Section
 from ._base import ParserBase
-from ._utils import _guess_image_media_type
+from ._utils import _format_markdown_table_cell, _guess_image_media_type
 
 
 def _get_excel_column_name(col_index: int) -> str:
@@ -134,7 +134,8 @@ class ExcelParser(ParserBase):
 
     Each sheet is scanned for tabular data and (optionally) images.
     Tables are rendered as Markdown pipe-tables or JSON arrays; images
-    are emitted as standalone :class:`DataBlock` sections.
+    are emitted as standalone :class:`DataBlock` sections, including on
+    sheets without cell values. Header-only tables are preserved.
 
     When ``separate_sheet=True`` each sheet becomes a batch of
     sections that never intermix with other sheets, making it possible
@@ -310,24 +311,23 @@ class ExcelParser(ParserBase):
             logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
             return sheet_sections
 
-        if df.empty:
-            return sheet_sections
+        # A header-only sheet is "empty" to pandas but still has columns
+        if len(df.columns) > 0:
+            table_data = _extract_table_data(df)
 
-        table_data = _extract_table_data(df)
+            if self.table_format == "markdown":
+                table_text = self._table_to_markdown(table_data, sheet_name)
+            else:
+                table_text = self._table_to_json(table_data, sheet_name)
 
-        if self.table_format == "markdown":
-            table_text = self._table_to_markdown(table_data, sheet_name)
-        else:
-            table_text = self._table_to_json(table_data, sheet_name)
-
-        if table_text:
-            sheet_sections.append(
-                Section(
-                    content=TextBlock(text=table_text),
-                    source=filename,
-                    metadata={"sheet": sheet_name},
-                ),
-            )
+            if table_text:
+                sheet_sections.append(
+                    Section(
+                        content=TextBlock(text=table_text),
+                        source=filename,
+                        metadata={"sheet": sheet_name},
+                    ),
+                )
 
         if self.include_image and workbook is not None:
             try:
@@ -416,7 +416,7 @@ class ExcelParser(ParserBase):
         num_cols = len(table_data[0])
 
         def _fmt(cell: str, row_idx: int, col_idx: int) -> str:
-            escaped = cell.replace("|", "\\|")
+            escaped = _format_markdown_table_cell(cell)
             if self.include_cell_coordinates:
                 coord = f"{_get_excel_column_name(col_idx)}{row_idx + 1}"
                 return f"[{coord}] {escaped}"

@@ -1,0 +1,21 @@
+name: PR Review Relay
+
+# pull_request_review runs with a read-only GITHUB_TOKEN on fork PRs, so it
+# can't edit labels. Hand the review to pr-state-labels.yml via workflow_run.
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          EVENT: ${{ toJson(github.event) }}
+        run: |
+          jq '{number: .pull_request.number, author: .pull_request.user.login,
+               reviewer: .review.user.login, state: .review.state}' <<< "$EVENT" > review.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review
+          path: review.json

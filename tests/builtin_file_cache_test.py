@@ -248,6 +248,31 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         self.assertIn(files[2], cached_paths)
         self.assertIn(files[3], cached_paths)
 
+    async def test_oversized_file_is_not_cached(self) -> None:
+        """An oversized entry must not exceed the cache byte limit."""
+        context = ToolContext()
+        context.max_cache_bytes = 1.0
+
+        await context.cache_file(
+            file_path="small.txt",
+            lines=["a" * 512],
+            mtime=1.0,
+        )
+        await context.cache_file(
+            file_path="oversized.txt",
+            lines=["b" * 2048],
+            mtime=1.0,
+        )
+
+        self.assertEqual(
+            [entry.file_path for entry in context.read_file_cache],
+            ["small.txt"],
+        )
+        self.assertLessEqual(
+            sum(entry.bytes for entry in context.read_file_cache),
+            context.max_cache_bytes,
+        )
+
     async def test_cache_hit_refreshes_lru_recency(self) -> None:
         """Test cache hits keep recently used files from being evicted."""
         self.state.tool_context.max_cache_files = 3

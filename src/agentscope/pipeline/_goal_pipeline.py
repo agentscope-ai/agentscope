@@ -36,7 +36,7 @@ class _VerificationResult(BaseModel):
 
     result: Literal["pass", "fail", "impossible"] = Field(
         description=(
-            "The verfication result, which can be 'pass', 'fail', or "
+            "The verification result, which can be 'pass', 'fail', or "
             "'impossible'. 'impossible' means the given goal is impossible to "
             "achieve, and the executor should stop trying."
         ),
@@ -92,6 +92,15 @@ class GoalPipeline:
         self._executor_retries = 0
         self._verifier_retries = 0
         self._goal: None | list[TextBlock | DataBlock] = None
+
+    def _next_retry_count(self, retries: int, agent_name: str) -> int:
+        """Consume a retry or stop the malformed-output loop."""
+        if retries >= self.max_retries:
+            raise RuntimeError(
+                f"{agent_name} failed to generate valid structured output "
+                f"after {retries + 1} attempts.",
+            )
+        return retries + 1
 
     async def reply_stream(
         self,
@@ -210,13 +219,10 @@ class GoalPipeline:
                         break
 
                     if execution_report is None:
-                        if self._executor_retries >= self.max_retries:
-                            raise RuntimeError(
-                                "executor failed to generate valid structured "
-                                "output after "
-                                f"{self._executor_retries + 1} attempts.",
-                            )
-                        self._executor_retries += 1
+                        self._executor_retries = self._next_retry_count(
+                            self._executor_retries,
+                            "executor",
+                        )
                         # Update the instruction
                         executor_inputs = UserMsg(
                             name="system",
@@ -285,13 +291,10 @@ class GoalPipeline:
                     # Escape the loop for hitl events
                     break
                 if final_msg is None or final_msg.structured_output is None:
-                    if self._verifier_retries >= self.max_retries:
-                        raise RuntimeError(
-                            "verifier failed to generate valid structured "
-                            "output after "
-                            f"{self._verifier_retries + 1} attempts.",
-                        )
-                    self._verifier_retries += 1
+                    self._verifier_retries = self._next_retry_count(
+                        self._verifier_retries,
+                        "verifier",
+                    )
                     # Update the instruction for valid verification result
                     # TODO: support multimodal verification instruction
                     final_msg = None
@@ -324,6 +327,10 @@ class GoalPipeline:
                     break_loop = True
                 else:
                     self._iters += 1
+                    if self.verifier_reset_context:
+                        # Only the conversation, tool/task state stays
+                        self.verifier.state.context.clear()
+                        self.verifier.state.summary = ""
                     if self._iters >= self.max_iters:
                         # Out of attempts; the work never passed
                         break_loop = True

@@ -21,7 +21,8 @@ from tree_sitter import Language, Parser, Node
 from .._constants import DANGEROUS_NODE_TYPES, DANGEROUS_COMMANDS
 
 
-# Commands that are considered safe and don't require permission rules
+# Commands that are considered safe and don't require permission rules,
+# so any command that writes must not be listed here
 SAFE_COMMANDS: Set[str] = {
     "echo",
     "cat",
@@ -32,7 +33,6 @@ SAFE_COMMANDS: Set[str] = {
     "false",
     "printf",
     "grep",
-    "tee",
 }
 
 # Safe environment variables that can be skipped when extracting command prefix
@@ -729,8 +729,15 @@ class BashCommandParser:
         while i < len(args):
             arg = args[i]
 
+            # -e/--expression takes the next token as an expression, so it
+            # must be matched before the combined short flags below
+            if arg in ("-e", "--expression"):
+                if i + 1 < len(args):
+                    expressions.append(args[i + 1])
+                    found_first_expr = True
+                    i += 1
             # Handle flags
-            if arg.startswith("-") and not arg.startswith("--"):
+            elif arg.startswith("-") and not arg.startswith("--"):
                 # Combined flags like -nE
                 flag_chars = arg[1:]
                 for char in flag_chars:
@@ -757,10 +764,6 @@ class BashCommandParser:
                         and "." not in next_arg
                     ):
                         i += 1
-            elif arg in ["-e", "--expression"]:
-                if i + 1 < len(args):
-                    expressions.append(args[i + 1])
-                    i += 1
             elif not arg.startswith("-"):
                 # First non-flag, non-option arg is expression (if no -e used)
                 if not found_first_expr:

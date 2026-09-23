@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 from .._bus_ops import (
     abandon_inbox_consumer,
@@ -30,7 +31,13 @@ from .._bus_ops import (
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
-from ..storage import StorageBase, AgentRecord, SessionRecord, SessionSource
+from ..storage import (
+    StorageBase,
+    AgentRecord,
+    SessionNaming,
+    SessionRecord,
+    ChannelOrigin,
+)
 from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
@@ -57,8 +64,10 @@ from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
+from ...model import ChatModelBase
 from ...event import (
     AgentEvent,
+    CustomEvent,
     ReplyStartEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
@@ -68,7 +77,7 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, HintBlock, Msg, ToolCallState
+from ...message import AssistantMsg, HintBlock, Msg, ToolCallState, UserMsg
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
@@ -93,6 +102,30 @@ class _WorkerContext:
 
 
 _TeamContext = _LeaderContext | _WorkerContext
+
+
+class _SessionTitle(BaseModel):
+    """Structured output of the session auto-naming call."""
+
+    title: str = Field(
+        description=(
+            "A short title for the conversation, written in the same "
+            "language as the user's message, at most eight words, with "
+            "no quotes and no trailing punctuation."
+        ),
+    )
+
+
+_NAMING_PROMPT = (
+    "Give the conversation that opens with the following message a "
+    "short title.\n\n{text}"
+)
+
+# How much of the opening message the naming model sees, and how long
+# the resulting name may be. A name is a sidebar label, not a summary,
+# and a pasted wall of text must not become either.
+_NAMING_INPUT_LIMIT = 2000
+_NAMING_NAME_LIMIT = 60
 
 
 class ChatService:
@@ -285,6 +318,100 @@ class ChatService:
                 session_id,
                 agent_id,
                 str(e),
+            )
+
+    async def _auto_name_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_record: SessionRecord,
+        model: ChatModelBase,
+        trigger_text: str,
+    ) -> None:
+        """Replace a session's placeholder name with a real title.
+
+        A session created from the UI is named after its creation
+        timestamp, which says nothing about what it holds. Once its
+        first reply is on disk, the opening user message is handed to
+        the session's own model for a short title.
+
+        Best-effort by construction. When the model call fails — a
+        misconfigured credential being the usual reason, in which case
+        the reply itself has already failed and been reported — an
+        excerpt of that same message is used, which still beats a
+        timestamp. Nothing is retried and nothing is surfaced to the
+        user: the same broken credential must not be reported twice.
+
+        Either way the name is settled (``naming.auto`` is cleared) so
+        this runs at most once per session, and the session's event
+        stream is told to re-read the session list.
+
+        Args:
+            user_id (`str`):
+                Owner of the session.
+            agent_id (`str`):
+                The agent the session belongs to.
+            session_record (`SessionRecord`):
+                The session to name, as loaded at the start of the run.
+            model (`ChatModelBase`):
+                The session's own chat model, reused for the title.
+            trigger_text (`str`):
+                Text of the user turn that opened the run. Empty when
+                the turn carried no text (an image-only message, or a
+                background wakeup), in which case naming is skipped and
+                left for a later turn.
+        """
+        if not session_record.config.naming.auto or not trigger_text:
+            return
+
+        name = trigger_text[:_NAMING_NAME_LIMIT]
+        try:
+            res = await model.generate_structured_output(
+                messages=[
+                    UserMsg(
+                        name="user",
+                        content=_NAMING_PROMPT.format(
+                            text=trigger_text[:_NAMING_INPUT_LIMIT],
+                        ),
+                    ),
+                ],
+                structured_model=_SessionTitle,
+            )
+            title = str(res.content.get("title") or "").strip()
+            if title:
+                name = title[:_NAMING_NAME_LIMIT]
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Auto-naming session %r failed, keeping an excerpt of "
+                "the first message instead: %s",
+                session_record.id,
+                e,
+            )
+
+        try:
+            await self._storage.upsert_session(
+                user_id=user_id,
+                agent_id=agent_id,
+                config=session_record.config.model_copy(
+                    update={"name": name, "naming": SessionNaming(auto=False)},
+                ),
+                session_id=session_record.id,
+            )
+            await publish_session_event(
+                self._message_bus,
+                session_record.id,
+                CustomEvent(name="session_updated", value={}).model_dump(
+                    mode="json",
+                ),
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            # This runs from the run's ``finally``, where a raise would
+            # replace whatever exception is already on its way out. A
+            # session left on its timestamp is not worth that.
+            logger.warning(
+                "Recording the name of session %r failed: %s",
+                session_record.id,
+                e,
             )
 
     async def _close_failed_reply(
@@ -769,17 +896,36 @@ class ChatService:
                 # 1c. Resolve the channel binding ONCE; the toolkit and the
                 # system-prompt attachment share it.
                 # -------------------------------------------------------------
+                channel_origin = (
+                    session_record.origin
+                    if isinstance(session_record.origin, ChannelOrigin)
+                    else None
+                )
                 channel = (
                     await self._channel_clients.get(
-                        session_record.source_channel_id,
+                        channel_origin.channel_id,
                     )
-                    if session_record.source_channel_id
+                    if channel_origin is not None
                     and self._channel_clients is not None
                     else None
                 )
+                chat_kind = (
+                    await channel.chat_kind(channel_origin.chat_id)
+                    if channel is not None and channel_origin is not None
+                    else None
+                )
+                # Channel tools that read as the session's user are only
+                # safe in a 1:1 chat. A group session is shared, so one
+                # member's turn would otherwise read with another's
+                # permissions.
                 channel_tools = (
-                    await channel.list_tools(workspace)
-                    if channel is not None
+                    await channel.list_tools(
+                        workspace,
+                        channel_origin.channel_user_id
+                        if chat_kind is ChatKind.PRIVATE
+                        else None,
+                    )
+                    if channel is not None and channel_origin is not None
                     else []
                 )
 
@@ -937,13 +1083,11 @@ class ChatService:
                 attachment = f"You're within a session (id={session_id})."
 
                 # Channel-bound sessions: tell the agent which chat it serves.
-                if channel is not None:
+                if channel is not None and channel_origin is not None:
                     tools = ", ".join(t.name for t in channel_tools)
-                    chat_id = session_record.source_chat_id or ""
-                    kind = await channel.chat_kind(chat_id)
-                    name = (
-                        session_record.source_chat_name
-                        or await channel.chat_name(chat_id)
+                    chat_id = channel_origin.chat_id
+                    name = channel_origin.chat_name or await channel.chat_name(
+                        chat_id,
                     )
                     where = f' named "{name}"' if name else ""
                     attachment += (
@@ -953,13 +1097,13 @@ class ChatService:
                         f"send there are relayed to you here, and your "
                         f"replies are delivered back to that same chat."
                     )
-                    if kind is ChatKind.GROUP:
+                    if chat_kind is ChatKind.GROUP:
                         attachment += (
                             " It is a group chat, so messages may come "
                             "from several different people; each incoming "
                             "user turn is labelled with its sender."
                         )
-                    elif kind is ChatKind.PRIVATE:
+                    elif chat_kind is ChatKind.PRIVATE:
                         attachment += (
                             " It is a one-to-one private chat with a "
                             "single user."
@@ -1020,20 +1164,30 @@ class ChatService:
             # channel's connection. Covers scheduled / background wakes,
             # not just inbound channel messages.
             if (
-                session_record.source == SessionSource.CHANNEL
-                and session_record.source_channel_id
-                and session_record.source_chat_id
+                isinstance(session_record.origin, ChannelOrigin)
                 and self._channel_clients is not None
             ):
                 await self._channel_clients.deliver(
                     session_id=session_id,
-                    channel_id=session_record.source_channel_id,
-                    chat_id=session_record.source_chat_id,
+                    channel_id=session_record.origin.channel_id,
+                    chat_id=session_record.origin.chat_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None
             reply_msgs: list[Msg] = []
             released = False
+
+            # Text of the user turn that opened this run, captured
+            # before the loop reassigns ``input_msg``; auto-naming
+            # reads it once the reply is persisted.
+            trigger_msgs: list[Msg] = []
+            if isinstance(input_msg, Msg):
+                trigger_msgs = [input_msg]
+            elif isinstance(input_msg, list):
+                trigger_msgs = input_msg
+            trigger_text = "\n".join(
+                msg.get_text_content() or "" for msg in trigger_msgs
+            ).strip()
             await register_inbox_consumer(self._message_bus, session_id)
             try:
                 while True:
@@ -1304,6 +1458,18 @@ class ChatService:
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+                # Still under the session lock, so this config write
+                # cannot race the next turn's snapshot of it. Skipped on
+                # the cancellation path above — a run being torn down
+                # has no business renaming anything.
+                await self._auto_name_session(
+                    user_id,
+                    agent_id,
+                    session_record,
+                    model,
+                    trigger_text,
+                )
 
     async def _project_event(
         self,

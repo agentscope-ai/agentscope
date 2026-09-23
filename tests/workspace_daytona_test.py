@@ -1208,6 +1208,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             await self.workspace.add_skill(skill_dir)
 
+    @unittest.skipIf(
+        shutil.which("test") is None,
+        "host-backed Daytona fake relies on POSIX sandbox commands",
+    )
     async def test_offload_context_tool_result_and_reset(self) -> None:
         """Offload writes sessions/data and reset clears persistent state."""
         data_block = DataBlock(

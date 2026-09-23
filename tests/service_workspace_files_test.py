@@ -26,7 +26,7 @@ from agentscope.app.storage import (
     AgentRecord,
     SessionConfig,
     SessionRecord,
-    SessionSource,
+    UserOrigin,
 )
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.state import AgentState
@@ -213,7 +213,7 @@ def _make_session(
         user_id=user_id,
         agent_id=agent_id,
         id=session_id,
-        source=SessionSource.USER,
+        origin=UserOrigin(),
         state=AgentState(),
         config=SessionConfig(
             workspace_id=workspace_id,

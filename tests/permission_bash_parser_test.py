@@ -123,7 +123,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("cat file.txt | grep error", []),
             ("docker ps | grep nginx", ["docker ps"]),
-            ("npm run build | tee output.log", ["npm run"]),
+            ("npm run build | tee output.log", ["npm run", "tee output.log"]),
         ]
 
         for command, expected in test_cases:
@@ -140,7 +140,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
             ),
             (
                 "npm install && npm run build | tee log.txt",
-                ["npm install", "npm run"],
+                ["npm install", "npm run", "tee log.txt"],
             ),
         ]
 
@@ -276,6 +276,22 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "find . -okdir rm {} \\;",
         ]
         for cmd in mutating_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_tee_writes_through_are_not_read_only(self) -> None:
+        """Test commands writing through ``tee`` are not read-only."""
+        writing_commands = [
+            "echo x | tee out.txt",
+            "echo x | tee -a out.txt",
+            "echo x | tee /tmp/out.txt",
+            "cat README.md | tee /tmp/out.txt",
+            "printf hi | tee /tmp/out.txt",
+        ]
+        for cmd in writing_commands:
             with self.subTest(cmd=cmd):
                 self.assertFalse(
                     self.parser.is_read_only_command(cmd),
@@ -881,6 +897,29 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 )
                 self.assertIsNotNone(result)
                 self.assertIn(expected_substring, result)
+
+    async def test_denylist_every_e_expression(self) -> None:
+        """Test denylist: every -e expression is checked, not only the 1st."""
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '/x/w /tmp/out' f",
+                self.dangerous_files,
+            ),
+            "sed write operation (w/W) not allowed",
+        )
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '1e id' f",
+                self.dangerous_files,
+            ),
+            "sed expression '1e id' not in allowlist",
+        )
+        self.assertIsNone(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e 's/x/y/g' f",
+                self.dangerous_files,
+            ),
+        )
 
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""

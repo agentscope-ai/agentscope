@@ -75,8 +75,13 @@ class StubAgent:
         self.name = name
         self.script = script
         self.max_calls = max_calls
-        self.state = SimpleNamespace(reply_id=f"{name}-reply")
+        self.state = SimpleNamespace(
+            reply_id=f"{name}-reply",
+            context=[],
+            summary="",
+        )
         self.received: list[Any] = []
+        self.conversation_before_calls: list[tuple[list[Any], Any]] = []
 
     # pylint: disable=unused-argument
     async def reply_stream(
@@ -90,6 +95,9 @@ class StubAgent:
         if self.max_calls is not None and len(self.received) >= self.max_calls:
             raise AssertionError(f"{self.name} exceeded its call limit")
         self.received.append(inputs)
+        self.conversation_before_calls.append(
+            (list(self.state.context), self.state.summary),
+        )
         batch = self.script[min(len(self.received) - 1, len(self.script) - 1)]
         for chunk in batch:
             if isinstance(chunk, Msg) and not yield_final_msg:
@@ -140,6 +148,48 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         self.assertIn(
             "缺 requirements.txt",
             executor.received[1].get_text_content(),
+        )
+
+    async def test_resets_verifier_conversation_between_refused_rounds(
+        self,
+    ) -> None:
+        """The default keeps a refused verdict out of the next check."""
+        executor = StubAgent("executor", [[_report()], [_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_verdict("fail", "try again")], [_verdict("pass")]],
+        )
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
+        verifier.state.summary = "prior summary"
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        self.assertListEqual(
+            verifier.conversation_before_calls,
+            [([prior], "prior summary"), ([], "")],
+        )
+
+    async def test_can_keep_verifier_conversation_between_refused_rounds(
+        self,
+    ) -> None:
+        """Opting out preserves the verifier's existing conversation."""
+        executor = StubAgent("executor", [[_report()], [_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_verdict("fail", "try again")], [_verdict("pass")]],
+        )
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
+        verifier.state.summary = "prior summary"
+        pipe = GoalPipeline(executor, verifier, verifier_reset_context=False)
+
+        await self._run(pipe, self.query)
+
+        self.assertListEqual(
+            verifier.conversation_before_calls,
+            [([prior], "prior summary"), ([prior], "prior summary")],
         )
 
     async def test_stops_at_max_iters(self) -> None:
