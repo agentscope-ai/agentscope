@@ -2,9 +2,12 @@
 """Unit tests for the DashScope realtime adapters: cards, session config
 and frame parsing. Nothing here opens a connection."""
 # pylint: disable=protected-access
+import asyncio
 import base64
+import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from agentscope.credential import DashScopeCredential
 from agentscope.realtime import (
@@ -14,6 +17,14 @@ from agentscope.realtime import (
     TruncationSupport,
 )
 from agentscope.realtime import _events as me
+from agentscope.message import (
+    AssistantMsg,
+    SystemMsg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    UserMsg,
+)
 
 CRED = DashScopeCredential(api_key="sk-x")
 TRANSCRIPTION_DONE = "conversation.item.input_audio_transcription.completed"
@@ -196,12 +207,20 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
         )
         self.assertListEqual(
             [
-                (omni.truncation, omni.supports_text_input),
-                (audio.truncation, audio.supports_text_input),
+                (
+                    omni.truncation,
+                    omni.supports_text_input,
+                    omni.supports_history_replay,
+                ),
+                (
+                    audio.truncation,
+                    audio.supports_text_input,
+                    audio.supports_history_replay,
+                ),
             ],
             [
-                (TruncationSupport.NONE, False),
-                (TruncationSupport.NONE, True),
+                (TruncationSupport.NONE, False, False),
+                (TruncationSupport.NONE, True, True),
             ],
         )
 
@@ -374,6 +393,196 @@ class DashScopeAudioTextInputTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_history_replay_preserves_roles_and_tool_order(self) -> None:
+        """History items are inserted silently and incomplete tools drop."""
+        model = DashScopeAudioRealtimeModel(
+            "qwen-audio-3.0-realtime-plus",
+            CRED,
+        )
+        sent: list[dict] = []
+
+        async def capture(payload: dict) -> None:
+            sent.append(payload)
+
+        model._send = capture  # type: ignore[method-assign]
+        model._session_ready.set()
+        await model.replay_history(
+            [
+                SystemMsg(name="summary", content="Earlier summary"),
+                UserMsg(name="user", content="Weather?"),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text="Let me check."),
+                        ToolCallBlock(
+                            id="call-1",
+                            name="weather",
+                            input='{"city":"Shanghai"}',
+                        ),
+                        ToolResultBlock(
+                            id="call-1",
+                            name="weather",
+                            output="sunny",
+                            state="success",
+                        ),
+                        TextBlock(text="It is sunny."),
+                        ToolCallBlock(
+                            id="call-unfinished",
+                            name="other",
+                            input="{}",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            sent,
+            [
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "Earlier summary",
+                            },
+                        ],
+                    },
+                },
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Weather?"},
+                        ],
+                    },
+                },
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "Let me check.",
+                            },
+                        ],
+                    },
+                },
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "weather",
+                        "arguments": '{"city":"Shanghai"}',
+                    },
+                },
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": "call-1",
+                        "output": "sunny",
+                    },
+                },
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "It is sunny.",
+                            },
+                        ],
+                    },
+                },
+            ],
+        )
+
+    async def test_history_replay_waits_for_session_update(self) -> None:
+        """No history item is sent before the session config is active."""
+        model = DashScopeAudioRealtimeModel(
+            "qwen-audio-3.0-realtime-plus",
+            CRED,
+        )
+        sent: list[dict] = []
+
+        async def capture(payload: dict) -> None:
+            sent.append(payload)
+
+        model._send = capture  # type: ignore[method-assign]
+        replay = asyncio.create_task(
+            model.replay_history([UserMsg(name="user", content="hello")]),
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(replay.done())
+        self.assertListEqual(sent, [])
+
+        self.assertIsNone(model._parse({"type": "session.updated"}))
+        await replay
+        self.assertListEqual(
+            sent,
+            [
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "hello"},
+                        ],
+                    },
+                },
+            ],
+        )
+
+    async def test_history_replay_surfaces_session_setup_error(self) -> None:
+        """A rejected session update fails replay without a timeout."""
+        model = DashScopeAudioRealtimeModel(
+            "qwen-audio-3.0-realtime-plus",
+            CRED,
+        )
+        sent: list[dict] = []
+
+        async def capture(payload: dict) -> None:
+            sent.append(payload)
+
+        model._send = capture  # type: ignore[method-assign]
+        replay = asyncio.create_task(
+            model.replay_history([UserMsg(name="user", content="hello")]),
+        )
+        await asyncio.sleep(0)
+
+        event = model._parse(
+            {
+                "type": "error",
+                "error": {
+                    "code": "invalid_request",
+                    "message": "bad session config",
+                },
+            },
+        )
+
+        self.assertEqual(
+            event,
+            me.ModelErrorEvent(
+                code="invalid_request",
+                message="bad session config",
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "bad session config"):
+            await asyncio.wait_for(replay, timeout=0.1)
+        self.assertListEqual(sent, [])
+
 
 class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
     """A closed WebSocket surfaces as ModelDisconnectedError."""
@@ -410,3 +619,103 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
         model = DashScopeRealtimeModel("qwen3.5-omni-flash-realtime", CRED)
         with self.assertRaises(ModelDisconnectedError):
             await model.commit_turn()
+
+    async def test_reconnect_replaces_the_previous_event_queue(self) -> None:
+        """Termination markers from an old socket cannot end a new one."""
+
+        class LiveSocket:
+            """A socket that remains open until its reader is cancelled."""
+
+            def __init__(self) -> None:
+                self.closed = False
+                self.sent: list[str] = []
+
+            def __aiter__(self) -> "LiveSocket":
+                """Return the socket as its own frame iterator."""
+                return self
+
+            async def __anext__(self) -> str:
+                """Wait until the reader task is cancelled."""
+                await asyncio.Future()
+                raise StopAsyncIteration
+
+            async def send(self, payload: str) -> None:
+                """Capture an outgoing WebSocket frame."""
+                self.sent.append(payload)
+
+            async def close(self) -> None:
+                """Record that the socket was closed."""
+                self.closed = True
+
+        model = DashScopeRealtimeModel(
+            "qwen3.5-omni-flash-realtime",
+            CRED,
+        )
+        old_queue = model._queue
+        old_queue.put_nowait(me.SessionEndedEvent(reason="closed"))
+        old_queue.put_nowait(None)
+        socket = LiveSocket()
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            await model.connect(instructions="test")
+
+        connection_state = {
+            "queue_replaced": model._queue is not old_queue,
+            "new_queue_size": model._queue.qsize(),
+            "old_queue": [
+                old_queue.get_nowait(),
+                old_queue.get_nowait(),
+            ],
+            "sent": [json.loads(payload) for payload in socket.sent],
+        }
+        await asyncio.sleep(0)
+        await model.close()
+
+        self.assertDictEqual(
+            {
+                "connected": connection_state,
+                "closed": {
+                    "socket": socket.closed,
+                    "reader": model._reader,
+                    "websocket": model._ws,
+                },
+            },
+            {
+                "connected": {
+                    "queue_replaced": True,
+                    "new_queue_size": 0,
+                    "old_queue": [
+                        me.SessionEndedEvent(reason="closed"),
+                        None,
+                    ],
+                    "sent": [
+                        {
+                            "type": "session.update",
+                            "session": {
+                                "instructions": "test",
+                                "modalities": ["audio", "text"],
+                                "voice": "Cherry",
+                                "input_audio_format": "pcm16",
+                                "output_audio_format": "pcm24",
+                                "turn_detection": {
+                                    "type": "server_vad",
+                                    "threshold": 0.5,
+                                    "silence_duration_ms": 800,
+                                },
+                                "input_audio_transcription": {
+                                    "model": "gummy-realtime-v1",
+                                },
+                            },
+                        },
+                    ],
+                },
+                "closed": {
+                    "socket": True,
+                    "reader": None,
+                    "websocket": None,
+                },
+            },
+        )

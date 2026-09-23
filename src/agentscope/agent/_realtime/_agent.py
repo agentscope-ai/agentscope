@@ -44,6 +44,7 @@ from ...event import (
 )
 from ...message import (
     Msg,
+    SystemMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
@@ -58,6 +59,8 @@ from ...types import ReplyFinishedReason
 
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
+_HISTORY_MAX_MESSAGES = 100
+_HISTORY_MAX_TEXT_CHARS = 32_000
 
 
 @dataclass
@@ -209,6 +212,7 @@ class RealtimeAgent:
         # any transport, and reconnect bookkeeping.
         self._connected = False
         self._connected_event = asyncio.Event()
+        self._connection_generation = 0
         self._downlink: asyncio.Task | None = None
         self._backlog: list[bytes] = []
         self._retry_at = 0.0
@@ -233,6 +237,8 @@ class RealtimeAgent:
         if self._connected:
             return
 
+        self._connection_generation += 1
+
         instructions = self.system_prompt
         tools = None
         if self.toolkit is not None:
@@ -256,23 +262,24 @@ class RealtimeAgent:
         # context. No provider documents whether the update applies
         # retroactively, so treat it as affecting future turns only. Do
         # not let it change `voice`: OpenAI locks it after first audio.
-        # Providers differ in whether prior turns can be seeded, so the
-        # transcript so far rides along in the instructions, which every
-        # provider takes. Only matters on reconnect; first connect is empty.
-        history = "\n".join(
-            f"{m.name}: {text}"
-            for m in self.state.context
-            if (text := m.get_text_content())
-        )
-        if history:
-            instructions = (
-                f"{instructions}\n\n## Conversation so far\n{history}"
+        history = self._replayable_history()
+        if history and not self.model.supports_history_replay:
+            fallback = self._format_history_fallback(history)
+            if fallback:
+                instructions = (
+                    f"{instructions}\n\n## Conversation so far\n{fallback}"
+                )
+        try:
+            await self.model.connect(
+                instructions=instructions,
+                tools=tools,
+                turn_detection_disabled=self.vad is not None,
             )
-        await self.model.connect(
-            instructions=instructions,
-            tools=tools,
-            turn_detection_disabled=self.vad is not None,
-        )
+            if history and self.model.supports_history_replay:
+                await self.model.replay_history(history)
+        except Exception:
+            await self.model.close()
+            raise
         if self.vad is not None:
             self.vad.reset()
         self.aggregator.reset()
@@ -285,6 +292,61 @@ class RealtimeAgent:
                 name="rt-downlink",
             )
             self._downlink.add_done_callback(self._on_downlink_done)
+
+    def _replayable_history(self) -> list[Msg]:
+        """Return bounded, settled messages for a fresh model session."""
+        messages = [
+            message
+            for message in self.state.context
+            if message.id != self._reply_id
+            and self._is_replayable_message(message)
+        ][-_HISTORY_MAX_MESSAGES:]
+
+        summary = self.state.summary
+        if isinstance(summary, str):
+            summary_text = summary
+        else:
+            summary_text = "\n".join(
+                block.text for block in summary if isinstance(block, TextBlock)
+            )
+        if summary_text.strip():
+            messages.insert(
+                0,
+                SystemMsg(name="summary", content=summary_text),
+            )
+        return messages
+
+    @staticmethod
+    def _is_replayable_message(message: Msg) -> bool:
+        """Return whether a persisted message is safe to replay."""
+        if message.role != "assistant":
+            return True
+        if message.finished_reason in (
+            ReplyFinishedReason.ERROR,
+            ReplyFinishedReason.INTERRUPTED,
+        ):
+            return False
+        return (
+            message.finished_reason
+            in (
+                ReplyFinishedReason.COMPLETED,
+                ReplyFinishedReason.EXCEED_MAX_ITERS,
+            )
+            or message.finished_at is not None
+        )
+
+    @staticmethod
+    def _format_history_fallback(messages: list[Msg]) -> str:
+        """Render a bounded text fallback for providers without replay."""
+        lines = [
+            f"{message.name}: {text}"
+            for message in messages
+            if (text := message.get_text_content())
+        ]
+        history = "\n".join(lines)
+        if len(history) <= _HISTORY_MAX_TEXT_CHARS:
+            return history
+        return history[-_HISTORY_MAX_TEXT_CHARS:]
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""
@@ -622,8 +684,11 @@ class RealtimeAgent:
         """
         while True:
             await self._connected_event.wait()
+            generation = self._connection_generation
             async for event in self.model.events():
                 await self._on_model_event(event)
+            if generation != self._connection_generation:
+                continue
             self._mark_disconnected()
             self._finish_reply(ReplyFinishedReason.ERROR)
             logger.info(
@@ -874,13 +939,16 @@ class RealtimeAgent:
         self._finish_response()
         if not self._reply_id:
             return
-        self._emit(
-            ReplyEndEvent(
-                session_id=self.state.session_id,
-                reply_id=self._reply_id,
-                finished_reason=reason,
-            ),
+        event = ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self._reply_id,
+            finished_reason=reason,
         )
+        for message in reversed(self.state.context):
+            if message.id == self._reply_id:
+                message.append_event(event)
+                break
+        self._emit(event)
         self._reply_id = ""
         self._continuing = False
 

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The DashScope Qwen-Audio realtime model."""
+import asyncio
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from pydantic import Field
 
@@ -10,6 +11,9 @@ from .. import _events as me
 from .._base import RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
+from ...message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
+
+_SESSION_READY_TIMEOUT_S = 15.0
 
 
 class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
@@ -40,6 +44,7 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
 
     type = "dashscope_audio_realtime"
     supports_text_input = True
+    supports_history_replay = True
 
     parameters: "DashScopeAudioRealtimeModel.Parameters"
 
@@ -66,6 +71,121 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
             },
         )
         await self.request_response()
+
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Insert completed history without asking the model to respond."""
+        await asyncio.wait_for(
+            self._session_ready.wait(),
+            timeout=_SESSION_READY_TIMEOUT_S,
+        )
+        if self._session_setup_error is not None:
+            raise self._session_setup_error
+        for payload in self._history_payloads(messages):
+            await self._send(payload)
+
+    @staticmethod
+    def _history_payloads(messages: Sequence[Msg]) -> list[dict]:
+        """Convert AgentScope messages to ordered DashScope items."""
+        call_ids = {
+            block.id
+            for message in messages
+            for block in message.content
+            if isinstance(block, ToolCallBlock)
+        }
+        result_ids = {
+            block.id
+            for message in messages
+            for block in message.content
+            if isinstance(block, ToolResultBlock) and block.state != "running"
+        }
+        paired_ids = call_ids & result_ids
+        payloads: list[dict] = []
+
+        for message in messages:
+            text_parts: list[str] = []
+
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    if block.text:
+                        text_parts.append(block.text)
+                    continue
+
+                DashScopeAudioRealtimeModel._flush_history_text(
+                    payloads,
+                    message.role,
+                    text_parts,
+                )
+                if isinstance(block, ToolCallBlock):
+                    if block.id not in paired_ids:
+                        continue
+                    payloads.append(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call",
+                                "call_id": block.id,
+                                "name": block.name,
+                                "arguments": block.input,
+                            },
+                        },
+                    )
+                elif isinstance(block, ToolResultBlock):
+                    if block.id not in paired_ids or block.state == "running":
+                        continue
+                    output = (
+                        block.output
+                        if isinstance(block.output, str)
+                        else "".join(
+                            part.text
+                            for part in block.output
+                            if isinstance(part, TextBlock)
+                        )
+                    )
+                    payloads.append(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": block.id,
+                                "output": output,
+                            },
+                        },
+                    )
+
+            DashScopeAudioRealtimeModel._flush_history_text(
+                payloads,
+                message.role,
+                text_parts,
+            )
+
+        return payloads
+
+    @staticmethod
+    def _flush_history_text(
+        payloads: list[dict],
+        role: str,
+        text_parts: list[str],
+    ) -> None:
+        """Append buffered history text as one conversation item."""
+        if not text_parts:
+            return
+        content_type = "output_text" if role == "assistant" else "input_text"
+        payloads.append(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": role,
+                    "content": [
+                        {
+                            "type": content_type,
+                            "text": "\n".join(text_parts),
+                        },
+                    ],
+                },
+            },
+        )
+        text_parts.clear()
 
     def _session_update(
         self,

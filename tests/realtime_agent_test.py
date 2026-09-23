@@ -3,7 +3,7 @@
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
 import asyncio
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
@@ -14,7 +14,7 @@ from agentscope.event import (
     ReplyStartEvent,
     TextBlockDeltaEvent,
 )
-from agentscope.message import Msg
+from agentscope.message import AssistantMsg, Msg, UserMsg
 from agentscope.realtime import (
     AudioFrame,
     ModelDisconnectedError,
@@ -42,8 +42,10 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
+from agentscope.state import AgentState
 from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
 from agentscope.realtime import _events as me
+from agentscope.types import ReplyFinishedReason
 
 PCM_100MS = b"\x01\x00" * 2400
 
@@ -159,6 +161,58 @@ class ScriptedModel(RealtimeModelBase):
     ) -> None:
         """Record what the agent thinks the user heard."""
         self.calls.append(f"truncate({item_id},{played_ms}ms,{played_text!r})")
+
+
+class HistoryScriptedModel(ScriptedModel):
+    """Records structured history supplied for each new model session."""
+
+    supports_history_replay = True
+
+    def __init__(self, scripts: list[list[Any]]) -> None:
+        super().__init__(scripts)
+        self.replayed: list[list[Msg]] = []
+
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Keep a deep copy so later context changes cannot affect it."""
+        replay = [message.model_copy(deep=True) for message in messages]
+        self.replayed.append(replay)
+        self.calls.append("replay_history")
+
+
+class QueueSessionModel(ScriptedModel):
+    """Keeps each session's event iterator alive on its own queue."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.event_queues: list[asyncio.Queue[me.ModelEvent | None]] = []
+        self.iterator_started: list[asyncio.Event] = []
+        self.iterator_finished: list[asyncio.Event] = []
+
+    async def connect(
+        self,
+        instructions: str,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Open a session with a distinct event queue."""
+        await super().connect(instructions, tools, **kwargs)
+        self.event_queues.append(asyncio.Queue())
+        self.iterator_started.append(asyncio.Event())
+        self.iterator_finished.append(asyncio.Event())
+
+    async def events(self) -> AsyncIterator[me.ModelEvent]:
+        """Yield only events belonging to the current session."""
+        index = self.sessions - 1
+        queue = self.event_queues[index]
+        self.iterator_started[index].set()
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    return
+                yield event
+        finally:
+            self.iterator_finished[index].set()
 
 
 class FakeTransport(TransportBase):
@@ -362,6 +416,218 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
             [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
+        )
+
+    async def test_structured_history_is_replayed_on_reconnect(self) -> None:
+        """A replay-capable provider gets roles, summary, and no fallback."""
+        state = AgentState(
+            summary="Earlier summary",
+            context=[
+                UserMsg(name="user", content="hello"),
+                AssistantMsg(
+                    name="Friday",
+                    content="hi",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="partial",
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="legacy complete",
+                    finished_at="2026-01-01T00:00:00",
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="unfinished",
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+        model = HistoryScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        agent = RealtimeAgent("Friday", "be brief", model, state=state)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            disconnected_before_reconnect = not agent._connected
+            await self._collect(agent, FakeTransport(frames=1))
+
+        expected_replay = [
+            {
+                "name": "summary",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Earlier summary",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "system",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hi",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": None,
+                "finished_reason": "completed",
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "legacy complete",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": "2026-01-01T00:00:00",
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+        ]
+        self.assertDictEqual(
+            {
+                "disconnected_before_reconnect": (
+                    disconnected_before_reconnect
+                ),
+                "instructions": model.instructions,
+                "sessions": model.sessions,
+                "calls": model.calls,
+                "replayed": [
+                    [message.model_dump(mode="json") for message in replay]
+                    for replay in model.replayed
+                ],
+            },
+            {
+                "disconnected_before_reconnect": True,
+                "instructions": "be brief",
+                "sessions": 2,
+                "calls": [
+                    "connect(session=1,td_off=False)",
+                    "replay_history",
+                    "connect(session=2,td_off=False)",
+                    "replay_history",
+                    "push_audio",
+                    "close",
+                ],
+                "replayed": [expected_replay, expected_replay],
+            },
+        )
+
+    async def test_old_downlink_cannot_disconnect_new_session(self) -> None:
+        """Late completion of an old iterator leaves reconnection active."""
+        model = QueueSessionModel()
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await model.iterator_started[0].wait()
+            old_queue = model.event_queues[0]
+            agent._mark_disconnected()  # pylint: disable=protected-access
+            await agent.connect()
+            old_queue.put_nowait(None)
+            await model.iterator_finished[0].wait()
+            await model.iterator_started[1].wait()
+
+            active_state = {
+                "connected": agent._connected,  # pylint: disable=W0212
+                "connection_generation": agent._connection_generation,
+                "sessions": model.sessions,
+                "iterator_started": [
+                    event.is_set() for event in model.iterator_started
+                ],
+                "iterator_finished": [
+                    event.is_set() for event in model.iterator_finished
+                ],
+            }
+
+        self.assertDictEqual(
+            {
+                "active": active_state,
+                "closed": {
+                    "connected": agent._connected,
+                    "iterator_finished": [
+                        event.is_set() for event in model.iterator_finished
+                    ],
+                    "calls": model.calls,
+                },
+            },
+            {
+                "active": {
+                    "connected": True,
+                    "connection_generation": 2,
+                    "sessions": 2,
+                    "iterator_started": [True, True],
+                    "iterator_finished": [True, False],
+                },
+                "closed": {
+                    "connected": False,
+                    "iterator_finished": [True, True],
+                    "calls": [
+                        "connect(session=1,td_off=False)",
+                        "connect(session=2,td_off=False)",
+                        "close",
+                    ],
+                },
+            },
         )
 
     async def test_local_vad_owns_turns(self) -> None:
@@ -1072,8 +1338,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },
-                    "finished_at": None,
-                    "finished_reason": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": "completed",
                     "structured_output": None,
                     "error": None,
                 },

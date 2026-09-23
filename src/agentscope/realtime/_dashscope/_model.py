@@ -75,6 +75,8 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
+        self._session_ready = asyncio.Event()
+        self._session_setup_error: Exception | None = None
         self._item_id = ""
         self._tool_args: dict[str, str] = {}
         self._tool_names: dict[str, str] = {}
@@ -97,6 +99,11 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 update={"turn_detection": "none"},
             )
 
+        await self._stop_connection()
+        self._queue = asyncio.Queue()
+        self._session_ready.clear()
+        self._session_setup_error = None
+
         credential: DashScopeCredential = self.credential  # type: ignore
         self._ws = await websockets.connect(
             f"{_REALTIME_URL}?model={self.model}",
@@ -106,23 +113,38 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 "X-DashScope-DataInspection": "disable",
             },
         )
-        self._reader = asyncio.create_task(self._read(), name="dashscope-rt")
+        queue = self._queue
+        websocket = self._ws
+        self._reader = asyncio.create_task(
+            self._read(websocket, queue),
+            name="dashscope-rt",
+        )
         await self._send(self._session_update(instructions, tools))
 
     async def close(self) -> None:
         """Stop reading and close the WebSocket."""
-        if self._reader is not None:
-            self._reader.cancel()
-            await asyncio.gather(self._reader, return_exceptions=True)
-            self._reader = None
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
+        self._fail_session_setup("Session closed before setup completed.")
+        await self._stop_connection()
+
+    async def _stop_connection(self) -> None:
+        """Stop the current reader and socket without reusing its queue."""
+        websocket = self._ws
+        self._ws = None
+
+        reader = self._reader
+        self._reader = None
+        if reader is not None and reader is not asyncio.current_task():
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+
+        if websocket is not None:
+            await websocket.close()
 
     async def events(self) -> AsyncIterator[me.ModelEvent]:
         """Yield events until the session ends."""
+        queue = self._queue
         while True:
-            event = await self._queue.get()
+            event = await queue.get()
             if event is None:
                 return
             yield event
@@ -248,10 +270,14 @@ class DashScopeRealtimeModel(RealtimeModelBase):
             self._ws = None
             raise ModelDisconnectedError(str(exc.rcvd or exc)) from exc
 
-    async def _read(self) -> None:
+    async def _read(
+        self,
+        websocket: Any,
+        queue: asyncio.Queue[me.ModelEvent | None],
+    ) -> None:
         """Drain the WebSocket into the event queue until it closes."""
         try:
-            async for raw in self._ws:
+            async for raw in websocket:
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
                 try:
@@ -260,12 +286,24 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                     logger.exception("DashScopeRealtimeModel: bad frame")
                     continue
                 if event is not None:
-                    self._queue.put_nowait(event)
+                    queue.put_nowait(event)
         except Exception as exc:  # noqa: BLE001
             logger.error("DashScopeRealtimeModel: connection lost: %s", exc)
         finally:
-            self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
-            self._queue.put_nowait(None)
+            if self._ws is websocket:
+                self._ws = None
+            self._fail_session_setup(
+                "Connection closed before session setup completed.",
+            )
+            queue.put_nowait(me.SessionEndedEvent(reason="closed"))
+            queue.put_nowait(None)
+
+    def _fail_session_setup(self, message: str) -> None:
+        """Release setup waiters with a provider connection error."""
+        if self._session_ready.is_set():
+            return
+        self._session_setup_error = ModelDisconnectedError(message)
+        self._session_ready.set()
 
     # pylint: disable=too-many-return-statements
     def _parse(self, data: dict) -> me.ModelEvent | None:
@@ -274,6 +312,10 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         item_id = data.get("item_id", "")
 
         match kind:
+            case "session.updated":
+                self._session_ready.set()
+                return None
+
             case "response.created":
                 self._item_id = data.get("response", {}).get("id", "")
                 return me.ResponseCreatedEvent(item_id=self._item_id)
@@ -360,9 +402,15 @@ class DashScopeRealtimeModel(RealtimeModelBase):
 
             case "error":
                 err = data.get("error", {})
+                message = err.get("message", "")
+                if not self._session_ready.is_set():
+                    self._session_setup_error = RuntimeError(
+                        f"DashScope session setup failed: {message}",
+                    )
+                    self._session_ready.set()
                 return me.ModelErrorEvent(
                     code=err.get("code", ""),
-                    message=err.get("message", ""),
+                    message=message,
                 )
 
             case _:
