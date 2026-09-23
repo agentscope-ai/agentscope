@@ -16,6 +16,7 @@ from ._service import (
     ChannelService,
     CredentialBindingService,
     ChatService,
+    SOPService,
     KnowledgeBaseService,
     ResourceAccessService,
     SessionService,
@@ -170,6 +171,18 @@ async def get_background_task_manager(
         ``app.state``.
     """
     return request.app.state.background_task_manager
+
+
+async def get_sop_service(request: Request) -> SOPService:
+    """Return the application-wide SOP service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `SOPService`: The SOP service instance stored in ``app.state``.
+    """
+    return request.app.state.sop_service
 
 
 async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:

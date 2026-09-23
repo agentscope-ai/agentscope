@@ -11,6 +11,8 @@ from typing import Any, Literal
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
 from .._tool import (
+    SubmitHandover,
+    SubmitVerdict,
     AgentCreate,
     AgentInvite,
     TeamCreate,
@@ -52,6 +54,7 @@ async def get_toolkit(
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     team_role: Literal["leader", "worker"] | None = None,
     channel_tools: list[ToolBase] | None = None,
+    sop_dispatch: str | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -120,6 +123,11 @@ optional):
         team_role (`Literal["leader", "worker"] | None`, optional):
             The session's team role, resolved once by the caller.
             ``None`` means not in any team.
+        sop_dispatch (`str | None`, optional):
+            ``"<run id>:<step index>"`` when this turn is one a
+            procedure asked for, which is what gives it a submit
+            tool. Resolved by the caller so the same answer decides
+            the tool and the middleware that enforces it.
         channel_tools (`list[ToolBase] | None`, optional):
             Platform tools of the originating channel, resolved once
             by the caller. ``None`` / empty when channel-less.
@@ -217,6 +225,34 @@ time or interval"
                     **team_tool_kwargs,
                     invitable_pool=invitable_pool,
                     resource_access_service=resource_access_service,
+                ),
+            )
+
+    # SOP submission tool — a step's agent reports through storage
+    # rather than through its reply, so it carries exactly one of the
+    # two. Only on the turn a run asked for, which the caller has
+    # already established: a person who opens the same session and
+    # types into it is having a conversation, not filing a deliverable.
+    # Which of the two is the half of the step being played — a step is
+    # worked on until it has handed something over, and judged
+    # afterwards, the same rule the SDK's own step uses.
+    if sop_dispatch is not None:
+        sop_run_id, _, step_index = sop_dispatch.rpartition(":")
+        run = await storage.get_sop_run(user_id, sop_run_id)
+        index = int(step_index)
+        if run is not None and index < len(run.state.steps):
+            submit_kwargs: dict[str, Any] = {
+                "storage": storage,
+                "user_id": user_id,
+                "sop_run_id": sop_run_id,
+                "step_index": index,
+            }
+            tools.append(
+                SubmitHandover(**submit_kwargs)
+                if run.state.steps[index].submission is None
+                else SubmitVerdict(
+                    **submit_kwargs,
+                    verifier=agent_record.data.name,
                 ),
             )
 

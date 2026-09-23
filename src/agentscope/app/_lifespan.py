@@ -22,6 +22,7 @@ from ._service import (
     KnowledgeBaseService,
     ResourceAccessService,
     SessionService,
+    SOPService,
     WorkspaceService,
 )
 
@@ -182,6 +183,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             message_bus=message_bus,
             workspace_manager=workspace_manager,
         )
+
+        # On the stack so its advances are stopped on the way out —
+        # they outlive the requests that set them going, and would
+        # otherwise keep writing to a closed storage.
+        sop_service = await stack.enter_async_context(
+            SOPService(
+                storage=storage,
+                workspace_manager=workspace_manager,
+                message_bus=message_bus,
+                chat=chat_service,
+            ),
+        )
+        app.state.sop_service = sop_service
+        # Handed back so a reply that finishes on a procedure's session
+        # carries that run on through the same service — one per app, so
+        # its advances are the ones this stack stops on the way out.
+        chat_service.sop_service = sop_service
 
         app.state.workspace_service = WorkspaceService(
             storage=storage,
