@@ -5,7 +5,11 @@ from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import FastMCP
-from mcp.types import EmbeddedResource, TextResourceContents
+from mcp.types import (
+    EmbeddedResource,
+    ResourceLink,
+    TextResourceContents,
+)
 
 from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.tool import ToolChunk
@@ -39,6 +43,26 @@ async def tool_2() -> list:
     ]
 
 
+async def tool_3() -> list:
+    """
+    A test tool function return the ResourceLink type
+    """
+    return [
+        ResourceLink(
+            type="resource_link",
+            uri="https://example.com/report.pdf",
+            name="quarterly report",
+            mimeType="application/pdf",
+            size=20480,
+        ),
+        ResourceLink(
+            type="resource_link",
+            uri="https://example.com/notes",
+            name="notes",
+        ),
+    ]
+
+
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("StreamableHTTP", port=8002)
@@ -46,6 +70,9 @@ def setup_server() -> None:
     sse_server.tool(
         description="A test tool function with embedded resource.",
     )(tool_2)
+    sse_server.tool(
+        description="A test tool function with resource links.",
+    )(tool_3)
     sse_server.run(transport="streamable-http")
 
 
@@ -145,3 +172,28 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
   "text": "test content"
 }""",
         )
+
+    async def test_resource_link(self) -> None:
+        """Test the ResourceLink functionality."""
+        client = MCPClient(
+            name="test_resource_link",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/mcp",
+            ),
+        )
+
+        my_tool_3 = await client.get_tool("tool_3")
+        res: ToolChunk = await my_tool_3()
+
+        self.assertEqual(len(res.content), 2)
+        pdf, notes = res.content
+        self.assertEqual(pdf.type, "data")
+        self.assertEqual(str(pdf.source.url), "https://example.com/report.pdf")
+        self.assertEqual(pdf.source.media_type, "application/pdf")
+        self.assertEqual(pdf.name, "quarterly report")
+        # A link without mimeType still keeps its URI with a generic type
+        self.assertEqual(str(notes.source.url), "https://example.com/notes")
+        self.assertEqual(notes.source.media_type, "application/octet-stream")
+        self.assertEqual(notes.name, "notes")
