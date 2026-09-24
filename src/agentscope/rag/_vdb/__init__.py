@@ -7,18 +7,20 @@ from ._vector_store import (
     VectorSearchResult,
     VectorStoreBase,
 )
-from ._qdrant import QdrantStore
-from ._mongodb import MongoDBStore
-from ._milvus_lite import MilvusLiteStore
 from ._elasticsearch import ElasticsearchStore
+from ._milvus_lite import MilvusLiteStore
+from ._mongodb import MongoDBStore
+from ._qdrant import QdrantStore
+from ._valkey import ValkeyStore
 
 __all__ = [
     "DocumentSummary",
     "ElasticsearchStore",
     "MilvusLiteStore",
+    "MongoDBStore",
+    "QdrantStore",
+    "ValkeyStore",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",
-    "QdrantStore",
-    "MongoDBStore",
 ]
