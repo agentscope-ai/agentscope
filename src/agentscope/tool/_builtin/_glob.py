@@ -156,8 +156,10 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
 
         Matches rule_content as a glob pattern against the "pattern" or "path"
         parameters. This allows rules to match either the search pattern itself
-        or the directory being searched. If rule_content is None, matches all
-        invocations (tool-name-level rule).
+        or the directory being searched. If no path is given, falls back to the
+        current working directory, which is the directory the search actually
+        runs in. If rule_content is None, matches all invocations
+        (tool-name-level rule).
 
         Args:
             rule_content (`str | None`):
@@ -174,8 +176,10 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         if rule_content is None:
             return True
 
-        # Try matching against the search path first
-        path = tool_input.get("path", "")
+        # Try matching against the search path first. An omitted path means
+        # the search runs in the working directory, which is also the
+        # directory :meth:`generate_suggestions` derives the rule from.
+        path = tool_input.get("path") or await self._backend.getcwd()
         if path and fnmatch.fnmatch(path, rule_content):
             return True
 
@@ -192,8 +196,8 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
     ) -> List[PermissionRule]:
         """Generate suggested permission rules for the glob search.
 
-        Suggests a rule based on the search path. If no path is provided,
-        suggests a rule for the current directory.
+        Suggests rules based on the search path. If no path is provided, the
+        rules cover the current directory.
 
         Args:
             tool_input (`dict[str, Any]`):
@@ -201,7 +205,8 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
 
         Returns:
             `List[PermissionRule]`:
-                A single suggested rule covering the search directory
+                Two suggested rules covering the search directory itself and
+                everything below it
         """
         backend_cwd = await self._backend.getcwd()
         path = tool_input.get("path") or backend_cwd
@@ -210,12 +215,21 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         # POSIX-style strings (matched by fnmatch), not real filesystem
         # paths — do NOT use backend.join_path here.
         abs_path = self._backend.abspath(path, cwd=backend_cwd)
-        pattern = abs_path.rstrip("/\\") + "/**"
+        # The search root is a directory, so "<root>/**" alone never matches
+        # a search rooted exactly at <root>: approving the suggestion would
+        # leave the very same invocation unmatched.
+        root = abs_path.rstrip("/\\") or "/"
 
         return [
             PermissionRule(
                 tool_name=self.name,
-                rule_content=pattern,
+                rule_content=root,
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            ),
+            PermissionRule(
+                tool_name=self.name,
+                rule_content=f"{root}/**",
                 behavior=PermissionBehavior.ALLOW,
                 source="suggested",
             ),

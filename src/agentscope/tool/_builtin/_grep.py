@@ -228,8 +228,8 @@ class Grep(ToolBase):
     ) -> List[PermissionRule]:
         """Generate suggested permission rules for the grep search path.
 
-        Suggests a rule based on the search path. If no path is provided,
-        suggests a rule for the current directory.
+        Suggests rules based on the search path. If no path is provided, the
+        rules cover the current directory.
 
         Args:
             tool_input (`dict[str, Any]`):
@@ -237,7 +237,8 @@ class Grep(ToolBase):
 
         Returns:
             `List[PermissionRule]`:
-                A single suggested rule covering the search directory
+                Two suggested rules covering the search directory itself and
+                everything below it
         """
         backend_cwd = await self._backend.getcwd()
         path = tool_input.get("path") or backend_cwd
@@ -245,12 +246,21 @@ class Grep(ToolBase):
         abs_path = self._backend.abspath(path, cwd=backend_cwd)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = abs_path.rstrip("/\\") + "/**"
+        # The search root is a directory, so "<root>/**" alone never matches
+        # a search rooted exactly at <root>: approving the suggestion would
+        # leave the very same invocation unmatched.
+        root = abs_path.rstrip("/\\") or "/"
 
         return [
             PermissionRule(
                 tool_name=self.name,
-                rule_content=pattern,
+                rule_content=root,
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            ),
+            PermissionRule(
+                tool_name=self.name,
+                rule_content=f"{root}/**",
                 behavior=PermissionBehavior.ALLOW,
                 source="suggested",
             ),
