@@ -41,6 +41,7 @@ from agentscope.app.access import (
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     TeamOrigin,
+    TeamRecord,
     UserOrigin,
     AgentData,
     AgentRecord,
@@ -1952,7 +1953,7 @@ class TestEnsureTeamMembersMigration(_TeamToolsTestBase):
         ``ensure_team_members``: each id becomes a
         ``TeamMember(role="created", ...)`` entry, and the writeback
         means later reads hit the fast path."""
-        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._model import TeamData
         from agentscope.app.storage._utils import _ensure_team_members
 
         # Fabricate a legacy worker agent + session (no ``members``
@@ -2004,7 +2005,7 @@ class TestResolveTeamLeader(_TeamToolsTestBase):
     async def test_legacy_team_resolves_via_leader_session(self) -> None:
         """A record without ``leader_agent_id`` still resolves, via the
         leader session, and is left untouched on disk."""
-        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._model import TeamData
         from agentscope.app.storage._utils import _resolve_team_leader
 
         team = TeamRecord(
@@ -2033,7 +2034,7 @@ class TestResolveTeamLeader(_TeamToolsTestBase):
 
     async def test_missing_leader_agent_resolves_to_none(self) -> None:
         """A team pointing at a deleted leader agent yields ``None``."""
-        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._model import TeamData
         from agentscope.app.storage._utils import _resolve_team_leader
 
         team = TeamRecord(
@@ -2046,3 +2047,300 @@ class TestResolveTeamLeader(_TeamToolsTestBase):
         self.assertIsNone(
             await _resolve_team_leader(self.storage, self.user_id, team),
         )
+
+
+class _ViewerScopedAgentPolicy(ResourceAccessPolicyBase):
+    """Sharing policy granting a fixed set of agents to fixed viewers.
+
+    Unlike the module-level :class:`_SharedAgentPolicy` this one is
+    viewer-scoped, so a test can assert that a *different* viewer sees
+    nothing, and can revoke the grant by emptying ``allowed_viewers``.
+    """
+
+    def __init__(
+        self,
+        allowed_viewers: set[str],
+        grants: list[tuple[str, str]],
+    ) -> None:
+        self.allowed_viewers = set(allowed_viewers)
+        self.grants = list(grants)
+
+    async def list_accessible(
+        self,
+        viewer_id: str,
+        kind: ResourceKind,
+        storage: StorageBase,
+    ) -> list[ResourceRef]:
+        """Return the grants, but only for the allowed viewers."""
+        if kind != ResourceKind.AGENT:
+            return []
+        if viewer_id not in self.allowed_viewers:
+            return []
+        return [
+            ResourceRef(
+                kind=ResourceKind.AGENT,
+                owner_id=owner_id,
+                resource_id=agent_id,
+            )
+            for owner_id, agent_id in self.grants
+        ]
+
+
+class TestSharedLeaderCrossOwner(_TeamToolsTestBase):
+    """A team led by a session on a cross-owner shared agent.
+
+    ``publisher`` owns the leader agent definition; the team owner
+    (``self.user_id``) holds a session on it — session creation accepts
+    shared agents through ``ResourceAccessService.resolve_agent`` — and
+    creates a team through that session. Leader resolution must follow
+    the same access grants as session creation; when it was owner-scoped
+    instead, every leader read (``TeamSay``, ``AgentCreate``, team
+    detail, worker run context) treated the legitimately-created team as
+    leader-less.
+    """
+
+    publisher_id = "publisher"
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.shared_leader = _make_agent_record(
+            self.publisher_id,
+            "Shared Leader",
+        )
+        await self.storage.upsert_agent(self.publisher_id, self.shared_leader)
+        self.shared_leader_session = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=self.shared_leader.id,
+            config=SessionConfig(workspace_id="ws-shared-leader"),
+        )
+        self.policy = _ViewerScopedAgentPolicy(
+            allowed_viewers={self.user_id},
+            grants=[(self.publisher_id, self.shared_leader.id)],
+        )
+        self.access = ResourceAccessService(self.storage, self.policy)
+        await TeamCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.shared_leader_session.id,
+            agent_id=self.shared_leader.id,
+        )(name="shared-leader team", description="d")
+
+    async def _team(self) -> "TeamRecord":
+        """Load the team created in ``asyncSetUp``."""
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.shared_leader.id,
+            self.shared_leader_session.id,
+        )
+        return await self.storage.get_team(self.user_id, sess.team_id)
+
+    def _make_agent_create(self) -> AgentCreate:
+        """Build ``AgentCreate`` bound to the shared-leader session."""
+        return AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.shared_leader_session.id,
+            agent_id=self.shared_leader.id,
+            resource_access_service=self.access,
+        )
+
+    def _make_team_say(self, role: str = "leader") -> TeamSay:
+        """Build ``TeamSay`` bound to the shared-leader session."""
+        return TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.shared_leader_session.id,
+            agent_id=self.shared_leader.id,
+            role=role,
+            resource_access_service=self.access,
+        )
+
+    async def test_shared_leader_resolves_with_access(self) -> None:
+        """With a live grant, the leader resolves to the publisher's
+        agent while the session stays in the team owner's namespace."""
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = await self._team()
+        leader = await _resolve_team_leader(
+            self.storage,
+            self.user_id,
+            team,
+            access=self.access,
+        )
+        self.assertIsNotNone(leader)
+        self.assertDictEqual(
+            {
+                "session_id": leader.session_id,
+                "agent_id": leader.agent.id,
+                "name": leader.name,
+                "agent_owner": leader.agent.user_id,
+            },
+            {
+                "session_id": self.shared_leader_session.id,
+                "agent_id": self.shared_leader.id,
+                "name": "Shared Leader",
+                "agent_owner": self.publisher_id,
+            },
+        )
+
+    async def test_without_access_shared_leader_stays_hidden(self) -> None:
+        """Without an access service the helper stays owner-scoped —
+        a cross-owner leader is not visible."""
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = await self._team()
+        self.assertIsNone(
+            await _resolve_team_leader(self.storage, self.user_id, team),
+        )
+
+    async def test_other_viewer_without_grant_gets_no_leader(self) -> None:
+        """A viewer outside the grant sees no leader — caller isolation
+        is preserved by resolving against *that* viewer's grants."""
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = await self._team()
+        bob_access = ResourceAccessService(
+            self.storage,
+            _ViewerScopedAgentPolicy(
+                # The grant exists, but not for bob.
+                allowed_viewers={"somebody-else"},
+                grants=[(self.publisher_id, self.shared_leader.id)],
+            ),
+        )
+        self.assertIsNone(
+            await _resolve_team_leader(
+                self.storage,
+                "bob",
+                team,
+                access=bob_access,
+            ),
+        )
+
+    async def test_revoked_grant_restores_missing_leader(self) -> None:
+        """Revoking the grant makes the shared leader unresolvable
+        again — resolution reads the grants live, not a snapshot."""
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = await self._team()
+        self.policy.allowed_viewers.clear()
+        self.assertIsNone(
+            await _resolve_team_leader(
+                self.storage,
+                self.user_id,
+                team,
+                access=self.access,
+            ),
+        )
+
+    async def test_legacy_shared_leader_resolves_via_session(self) -> None:
+        """A pre-``leader_agent_id`` record with a shared leader resolves
+        through the leader session's agent id, policy-aware too."""
+        from agentscope.app.storage._utils import _resolve_team_leader
+
+        team = await self._team()
+        team.leader_agent_id = None
+        leader = await _resolve_team_leader(
+            self.storage,
+            self.user_id,
+            team,
+            access=self.access,
+        )
+        self.assertIsNotNone(leader)
+        self.assertEqual(leader.agent.id, self.shared_leader.id)
+
+    async def test_team_say_reaches_workers_with_shared_leader(self) -> None:
+        """End-to-end: the shared leader spawns a worker whose prompt
+        carries the leader's real name, and ``TeamSay`` routes to it."""
+        create = self._make_agent_create()
+        chunk = await create(name="w1", description="d", prompt="p")
+        self.assertNotEqual(chunk.state, ToolResultState.ERROR)
+
+        team = await self._team()
+        member = team.data.members[0]
+        worker = await self.storage.get_agent(self.user_id, member.agent_id)
+        self.assertIn("Shared Leader", worker.data.system_prompt)
+
+        # Drain the wakeups / initial-prompt hints so the assertions
+        # below only see what TeamSay enqueues.
+        await self.bus.dequeue_wakeups(max_count=100)
+        await self.bus.inbox_drain(member.session_id, max_count=100)
+
+        say = self._make_team_say()
+        chunk = await say(content="go", to="w1")
+        self.assertNotEqual(chunk.state, ToolResultState.ERROR)
+        inbox = await self.bus.inbox_drain(member.session_id, max_count=10)
+        self.assertEqual(len(inbox), 1)
+
+    async def test_team_say_reports_missing_leader_when_revoked(self) -> None:
+        """After revocation ``TeamSay`` degrades to the existing
+        "leader records missing" error instead of bypassing access."""
+        create = self._make_agent_create()
+        chunk = await create(name="w1", description="d", prompt="p")
+        self.assertNotEqual(chunk.state, ToolResultState.ERROR)
+        await self.bus.dequeue_wakeups(max_count=100)
+
+        self.policy.allowed_viewers.clear()
+        say = self._make_team_say()
+        chunk = await say(content="go", to="w1")
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertIn("leader records missing", chunk.content[0].text)
+
+    async def test_team_detail_includes_shared_leader(self) -> None:
+        """The session-list team detail resolves the shared leader and
+        marks it read-only for the non-owner viewer."""
+        team = await self._team()
+        detail = await _build_team_detail(
+            self.storage,
+            self.access,
+            self.user_id,
+            team,
+        )
+        self.assertIsNotNone(detail.leader_agent)
+        self.assertEqual(detail.leader_agent.data.name, "Shared Leader")
+        self.assertFalse(detail.leader_agent.editable)
+
+    async def test_invite_hint_names_shared_leader(self) -> None:
+        """``AgentInvite`` under a shared leader names the real leader
+        in the borrowed session's first team-message hint."""
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        invited = _make_agent_record(self.publisher_id, "Monday")
+        invited.data.invite_config = InviteConfig(
+            invitable=True,
+            invite_description="Shared expert.",
+        )
+        await self.storage.upsert_agent(self.publisher_id, invited)
+        self.policy.grants.append((self.publisher_id, invited.id))
+
+        pool = await self.access.list_resource(
+            self.user_id,
+            ResourceKind.AGENT,
+        )
+        invite = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.shared_leader_session.id,
+            agent_id=self.shared_leader.id,
+            invitable_pool=pool,
+            resource_access_service=self.access,
+        )
+        chunk = await invite(
+            target=f"Monday@{invited.id[:8]}",
+            prompt="handle this",
+        )
+        self.assertNotEqual(chunk.state, ToolResultState.ERROR)
+
+        team = await self._team()
+        member = team.data.members[0]
+        self.assertEqual(member.owner_id, self.publisher_id)
+        inbox = await self.bus.inbox_drain(member.session_id, max_count=10)
+        self.assertEqual(len(inbox), 1)
+        self.assertIn("Shared Leader", inbox[0][1]["hint"])
