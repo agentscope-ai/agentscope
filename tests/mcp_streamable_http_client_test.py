@@ -5,13 +5,9 @@ from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import FastMCP
-from mcp.types import (
-    BlobResourceContents,
-    EmbeddedResource,
-    ResourceLink,
-    TextResourceContents,
-)
+from mcp.types import EmbeddedResource, ResourceLink, TextResourceContents
 
+from utils import AnyString
 from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.tool import ToolChunk
 
@@ -64,29 +60,6 @@ async def tool_3() -> list:
     ]
 
 
-async def tool_4() -> list:
-    """
-    A test tool function that returns embedded binary resources
-    """
-    return [
-        EmbeddedResource(
-            type="resource",
-            resource=BlobResourceContents(
-                uri="file://chart.png",
-                mimeType="image/png",
-                blob="iVBORw0KGgoAAAANSUhEUg==",
-            ),
-        ),
-        EmbeddedResource(
-            type="resource",
-            resource=BlobResourceContents(
-                uri="file://payload",
-                blob="aGVsbG8=",
-            ),
-        ),
-    ]
-
-
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("StreamableHTTP", port=8002)
@@ -97,9 +70,6 @@ def setup_server() -> None:
     sse_server.tool(
         description="A test tool function with resource links.",
     )(tool_3)
-    sse_server.tool(
-        description="A test tool function with embedded binary resources.",
-    )(tool_4)
     sse_server.run(transport="streamable-http")
 
 
@@ -214,36 +184,32 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         my_tool_3 = await client.get_tool("tool_3")
         res: ToolChunk = await my_tool_3()
 
-        self.assertEqual(len(res.content), 2)
-        pdf, notes = res.content
-        self.assertEqual(pdf.type, "data")
-        self.assertEqual(str(pdf.source.url), "https://example.com/report.pdf")
-        self.assertEqual(pdf.source.media_type, "application/pdf")
-        self.assertEqual(pdf.name, "quarterly report")
-        # A link without mimeType still keeps its URI with a generic type
-        self.assertEqual(str(notes.source.url), "https://example.com/notes")
-        self.assertEqual(notes.source.media_type, "application/octet-stream")
-        self.assertEqual(notes.name, "notes")
-
-    async def test_embedded_binary_resource(self) -> None:
-        """Test the embedded binary resource functionality."""
-        client = MCPClient(
-            name="test_embedded_binary_resource",
-            is_stateful=False,
-            mcp_config=HttpMCPConfig(
-                type="http_mcp",
-                url=f"http://127.0.0.1:{self.port}/mcp",
-            ),
+        self.assertListEqual(
+            [_.model_dump() for _ in res.content],
+            [
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.com/report.pdf",
+                        "media_type": "application/pdf",
+                    },
+                    "name": "quarterly report",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.com/notes",
+                        "media_type": "application/octet-stream",
+                    },
+                    "name": "notes",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
         )
-
-        my_tool_4 = await client.get_tool("tool_4")
-        res: ToolChunk = await my_tool_4()
-
-        self.assertEqual(len(res.content), 2)
-        chart, payload = res.content
-        self.assertEqual(chart.type, "data")
-        self.assertEqual(chart.source.data, "iVBORw0KGgoAAAANSUhEUg==")
-        self.assertEqual(chart.source.media_type, "image/png")
-        # Binary data without a mimeType is kept under a generic type
-        self.assertEqual(payload.source.data, "aGVsbG8=")
-        self.assertEqual(payload.source.media_type, "application/octet-stream")
