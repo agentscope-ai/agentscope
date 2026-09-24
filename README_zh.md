@@ -72,6 +72,8 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-09] `功能`:** 支持模型路由 —— 使用 `ModelRouterMiddleware` 为每次回复选择合适的聊天模型。
+- **[2026-09] `集成`:** 通过 TypeSafe SDK 集成 Jev 分类模型 `JevClassifierModel`。
 - **[2026-09] `功能`:** [agentscope-skill](https://github.com/agentscope-ai/skills/tree/main/skills/agentscope-skill) 已适配 AgentScope v2。
 - **[2026-09] `集成`:** `RealtimeAgent` 支持 DashScope、OpenAI、Gemini 与 xAI 的实时语音 API。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/speech-to-speech)
 - **[2026-09] `功能` `实验性`:** 支持实时语音智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/overview)
@@ -80,8 +82,6 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 - **[2026-08] `集成`:** 支持钉钉（DingTalk）频道。[文档](https://docs.agentscope.io/latest/zh/deploy/channel/dingtalk)
 - **[2026-08] `功能`:** 支持 Console —— 在终端中测试与调试智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/console)
 - **[2026-08] `集成`:** 支持飞书（Lark）与 Discord 频道。[飞书](https://docs.agentscope.io/latest/zh/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/zh/deploy/channel/discord)
-- **[2026-08] `功能`:** 支持消息频道 —— 将智能体接入即时通讯平台。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/channel/overview)
-- **[2026-08] `集成`:** 内置集成 GitHub MCP Registry 与 ClawHub。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [文档](https://docs.agentscope.io/latest/zh/deploy/hub)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
