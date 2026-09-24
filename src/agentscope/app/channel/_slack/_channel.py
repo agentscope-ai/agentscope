@@ -47,8 +47,8 @@ from ._card_templates import (
 if TYPE_CHECKING:
     from slack_sdk.socket_mode.aiohttp import SocketModeClient
     from slack_sdk.socket_mode.request import SocketModeRequest
-    from .....tool import ToolBase
-    from .....workspace import WorkspaceBase
+    from ....tool import ToolBase
+    from ....workspace import WorkspaceBase
 
 # Slack truncates well before this, and splitting keeps edits cheap.
 _MAX_LEN = 4000
