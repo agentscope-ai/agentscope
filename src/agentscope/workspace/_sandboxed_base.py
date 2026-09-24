@@ -318,7 +318,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Register a new MCP server through the in-sandbox gateway.
 
         Args:
@@ -328,6 +328,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 The owning agent. ``None`` means the legacy ``""``.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The connected gateway proxy stored by the workspace.
 
         Raises:
             `ValueError`:
@@ -362,6 +366,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             # persisted copy is self-contained.
             self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
+            return client
 
     async def remove_mcp(
         self,

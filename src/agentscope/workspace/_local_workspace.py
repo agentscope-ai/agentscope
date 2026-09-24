@@ -683,7 +683,7 @@ class LocalWorkspace(WorkspaceBase):
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Add an MCP client for one agent/session and persist it.
 
         Args:
@@ -693,6 +693,10 @@ class LocalWorkspace(WorkspaceBase):
                 The owning agent. ``None`` means the legacy ``""``.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The input client, which is stored and used directly.
 
         Raises:
             `ValueError`:
@@ -720,6 +724,7 @@ class LocalWorkspace(WorkspaceBase):
             # persisted copy is self-contained.
             self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
+            return mcp_client
 
     async def remove_mcp(
         self,
