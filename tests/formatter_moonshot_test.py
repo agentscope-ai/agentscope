@@ -419,6 +419,50 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_base64_video(self) -> None:
+        """Base64-encoded video is emitted as a video URL block."""
+        fmt = MoonshotChatFormatter(
+            input_types=["text/plain", "video/mp4"],
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="What happens in this video?"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZSB2aWRlbw==",
+                            media_type="video/mp4",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What happens in this video?",
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": (
+                                    "data:video/mp4;base64," "ZmFrZSB2aWRlbw=="
+                                ),
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
     ) -> None:

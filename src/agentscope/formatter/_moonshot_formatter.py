@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The Moonshot AI formatter for agentscope."""
 import base64
+from abc import ABC
+from fnmatch import fnmatch
 from typing import Any
 
 import requests
@@ -21,56 +23,66 @@ from ..message import (
 )
 
 
-def _moonshot_format_image_source(
+def _moonshot_media_url(
     source: URLSource | Base64Source,
-) -> dict[str, Any]:
-    """Convert an image source to Moonshot ``image_url`` format.
+) -> str:
+    """Convert a media source to a Moonshot-compatible URL.
 
-    Moonshot's vision API only accepts base64 data URIs or file IDs — raw
-    remote URLs are rejected. This helper downloads remote ``http(s)://``
-    URLs and converts them to base64 data URIs, while ``file://`` URLs and
-    ``Base64Source`` go through the same conversion as the OpenAI base.
+    Moonshot accepts base64 data URIs. Raw remote URLs are downloaded and
+    converted to data URIs.
     """
     if isinstance(source, Base64Source):
-        url = f"data:{source.media_type};base64,{source.data}"
+        return f"data:{source.media_type};base64,{source.data}"
 
-    elif isinstance(source, URLSource):
+    if isinstance(source, URLSource):
         url_str = str(source.url)
         if url_str.startswith("file://"):
             local_path = url_str.removeprefix("file://")
             with open(local_path, "rb") as f:
                 encoded = base64.b64encode(f.read()).decode("utf-8")
-            url = f"data:{source.media_type};base64,{encoded}"
-        else:
-            response = requests.get(url_str, timeout=30)
-            response.raise_for_status()
-            encoded = base64.b64encode(response.content).decode("utf-8")
-            url = f"data:{source.media_type};base64,{encoded}"
+            return f"data:{source.media_type};base64,{encoded}"
 
-    else:
-        raise ValueError(f"Unsupported image source type: {type(source)}")
+        response = requests.get(url_str, timeout=30)
+        response.raise_for_status()
+        encoded = base64.b64encode(response.content).decode("utf-8")
+        return f"data:{source.media_type};base64,{encoded}"
 
+    raise ValueError(f"Unsupported media source type: {type(source)}")
+
+
+def _moonshot_format_image_source(
+    source: URLSource | Base64Source,
+) -> dict[str, Any]:
+    """Convert an image source to Moonshot ``image_url`` format."""
     return {
         "type": "image_url",
-        "image_url": {"url": url},
+        "image_url": {"url": _moonshot_media_url(source)},
     }
 
 
-class MoonshotChatFormatter(_OpenAIFormatterBase):
-    """The Moonshot AI formatter for chatbot scenario.
+def _moonshot_format_video_source(
+    source: URLSource | Base64Source,
+) -> dict[str, Any]:
+    """Convert a video source to Moonshot ``video_url`` format."""
+    return {
+        "type": "video_url",
+        "video_url": {"url": _moonshot_media_url(source)},
+    }
 
-    Moonshot's API is OpenAI-compatible, but thinking models (``kimi-k2.6``,
-    ``kimi-k2-thinking``) return a ``reasoning_content`` field alongside
-    ``content`` in assistant messages.  This formatter preserves that field
-    when re-sending assistant messages back to the API so that the
-    *Preserved Thinking* feature works correctly in multi-turn conversations.
-    """
+
+class _MoonshotFormatterBase(_OpenAIFormatterBase, ABC):
+    """Shared multimodal formatting for Moonshot APIs."""
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
         ),
     )
 
@@ -79,6 +91,40 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         source: URLSource | Base64Source,
     ) -> dict[str, Any]:
         return _moonshot_format_image_source(source)
+
+    def _format_moonshot_data_block(
+        self,
+        block: DataBlock,
+    ) -> dict[str, Any] | None:
+        """Format a media block supported by the Moonshot API."""
+        media_type = block.source.media_type
+        if not any(
+            fnmatch(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            logger.warning(
+                "Unsupported media type %s for Moonshot API. Supported "
+                "types: %s. This block will be skipped.",
+                media_type,
+                ", ".join(self.supported_input_media_types),
+            )
+            return None
+
+        if media_type.startswith("video/"):
+            return _moonshot_format_video_source(block.source)
+
+        return self._format_openai_data_block(block)
+
+
+class MoonshotChatFormatter(_MoonshotFormatterBase):
+    """The Moonshot AI formatter for chatbot scenario.
+
+    Moonshot's API is OpenAI-compatible, but thinking models (``kimi-k2.6``,
+    ``kimi-k2-thinking``) return a ``reasoning_content`` field alongside
+    ``content`` in assistant messages.  This formatter preserves that field
+    when re-sending assistant messages back to the API so that the
+    *Preserved Thinking* feature works correctly in multi-turn conversations.
+    """
 
     # pylint: disable=too-many-branches
     async def format(
@@ -126,7 +172,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(block)
+                    formatted = self._format_moonshot_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
 
@@ -167,8 +213,10 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": sub.text},
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_openai_data_block(
-                                    sub,
+                                formatted_sub = (
+                                    self._format_moonshot_data_block(
+                                        sub,
+                                    )
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -231,7 +279,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_openai_data_block(
+                                fmt_item = self._format_moonshot_data_block(
                                     item,
                                 )
                                 if fmt_item is not None:
@@ -283,7 +331,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         return messages
 
 
-class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
+class MoonshotMultiAgentFormatter(_MoonshotFormatterBase):
     """Formatter for the Moonshot AI API in multi-agent conversations.
 
     Moonshot's API is OpenAI-compatible, so the multi-agent history collapsing
@@ -305,20 +353,6 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         ),
         description="The prompt to use for the conversation history section.",
     )
-
-    input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
-        description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
-        ),
-    )
-
-    def _format_image_source(
-        self,
-        source: URLSource | Base64Source,
-    ) -> dict[str, Any]:
-        return _moonshot_format_image_source(source)
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the Moonshot AI API format for
@@ -394,7 +428,7 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(block)
+                    formatted = self._format_moonshot_data_block(block)
                     if formatted is not None:
                         media_blocks.append(formatted)
 
