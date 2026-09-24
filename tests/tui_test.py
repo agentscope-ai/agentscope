@@ -9,6 +9,8 @@
 import asyncio
 from collections.abc import AsyncGenerator
 import json
+import os
+import tempfile
 from types import SimpleNamespace
 from typing import Any
 import unittest
@@ -55,12 +57,13 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.permission import PermissionBehavior, PermissionRule
-from agentscope.tool import AskUser
+from agentscope.tool import AskUser, Edit
 from agentscope.tui import ChatUI, MessagesUI
 from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
 from agentscope.tui._launcher import _AgentScopeTUI, _RealtimeTUI
 from agentscope.tui._messages import (
+    _diff_stats,
     MessageUI,
     TextBlockUI,
     ThinkingUI,
@@ -1785,6 +1788,42 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 24)):
             self.assertFalse(app.query_one(ChatUI).input_enabled)
             self.assertTrue(app.query_one(_ComposerTextArea).disabled)
+
+
+class DiffStatsTest(unittest.IsolatedAsyncioTestCase):
+    """The +added -removed counter rendered on a tool row title."""
+
+    async def asyncSetUp(self) -> None:
+        self.edit_tool = Edit()
+        self.temp_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            delete=False,
+            suffix=".md",
+        )
+        self.temp_file.close()
+
+    async def asyncTearDown(self) -> None:
+        if os.path.exists(self.temp_file.name):
+            os.unlink(self.temp_file.name)
+
+    async def _edit(self, initial: str, new_string: str) -> tuple[int, int]:
+        """Edit a one-line file and count the diff the tool recorded."""
+        with open(self.temp_file.name, "w", encoding="utf-8") as f:
+            f.write(initial)
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string=initial.rstrip("\n"),
+            new_string=new_string,
+        )
+        return _diff_stats(chunk.metadata["diff"])
+
+    async def test_counts_changes_that_start_with_a_marker(self) -> None:
+        """A removed ``---`` rule and an added ``++counter;`` still count."""
+        self.assertEqual(await self._edit("---\n", "++counter;"), (1, 1))
+
+    async def test_counts_a_plain_change_once(self) -> None:
+        """The ``--- a/`` / ``+++ b/`` header pair is not a change."""
+        self.assertEqual(await self._edit("first\n", "second"), (1, 1))
 
 
 if __name__ == "__main__":
