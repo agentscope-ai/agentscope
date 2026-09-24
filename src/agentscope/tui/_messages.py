@@ -296,14 +296,25 @@ def _group_tool_calls(content: Iterable[ContentBlock]) -> list[_DisplayBlock]:
 
 
 def _diff_stats(diff: str) -> tuple[int, int]:
-    insertions = 0
-    deletions = 0
-    for line in diff.splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
-            insertions += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            deletions += 1
-    return insertions, deletions
+    """Count the changed lines in a unified diff.
+
+    Args:
+        diff (`str`):
+            The unified diff recorded in a tool result's ``metadata``.
+
+    Returns:
+        `tuple[int, int]`: The added and removed line counts.
+    """
+    lines = diff.splitlines()
+    # Only the leading ``--- a/...`` / ``+++ b/...`` pair are file headers.
+    # A changed line whose own text starts with the marker — an added
+    # ``++counter;`` or a removed ``---`` rule — collides with them, so
+    # prefix-testing every line drops those changes.
+    body = lines[2:] if lines[:1] and lines[0].startswith("--- ") else lines
+    return (
+        sum(_.startswith("+") for _ in body),
+        sum(_.startswith("-") for _ in body),
+    )
 
 
 def _file_path(call: ToolCallBlock) -> str | None:
