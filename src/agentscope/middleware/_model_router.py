@@ -47,6 +47,7 @@ class ModelRouterMiddleware(MiddlewareBase):
         classifier_model: ClassifierModelBase | ChatModelBase,
         candidates: Sequence[ChatModelCandidate],
         instructions: str = _DEFAULT_INSTRUCTIONS,
+        min_confidence: float | None = None,
     ) -> None:
         """Initialize the model router.
 
@@ -57,12 +58,27 @@ class ModelRouterMiddleware(MiddlewareBase):
                 The uniquely named chat model candidates.
             instructions (`str`):
                 The instructions of the routing question.
+            min_confidence (`float | None`, defaults to `None`):
+                The minimum confidence required to use a classifier model's
+                choice. A lower-confidence choice keeps the agent's model.
+                This option is only supported by classifier models.
         """
         names = [candidate.name for candidate in candidates]
         if len(set(names)) != len(names):
             raise ValueError(f"Duplicate chat model candidates: {names}")
+        if min_confidence is not None and not 0 <= min_confidence <= 1:
+            raise ValueError("min_confidence must be between 0 and 1.")
+        if min_confidence is not None and not isinstance(
+            classifier_model,
+            ClassifierModelBase,
+        ):
+            raise ValueError(
+                "min_confidence requires a classifier model that reports "
+                "confidence.",
+            )
 
         self.classifier_model = classifier_model
+        self.min_confidence = min_confidence
         self._models = {_.name: _.model for _ in candidates}
         criteria = {_.name: _.description for _ in candidates}
         self._question = ChoiceQuestion(
@@ -119,9 +135,21 @@ class ModelRouterMiddleware(MiddlewareBase):
                     questions={"chat_model": self._question},
                 )
                 answer = res.content["chat_model"]
-                name = (
-                    answer.choice if isinstance(answer, ChoiceAnswer) else None
-                )
+                if not isinstance(answer, ChoiceAnswer):
+                    name = None
+                elif (
+                    self.min_confidence is not None
+                    and answer.confidence < self.min_confidence
+                ):
+                    logger.debug(
+                        "Routing confidence %.3f is below the minimum %.3f; "
+                        "keeping the agent's model",
+                        answer.confidence,
+                        self.min_confidence,
+                    )
+                    return None
+                else:
+                    name = answer.choice
             else:
                 res = await self.classifier_model.generate_structured_output(
                     messages=[

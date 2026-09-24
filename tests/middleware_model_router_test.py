@@ -29,7 +29,10 @@ from agentscope.model import ChatResponse, StructuredResponse
 class _MockClassifier(ClassifierModelBase):
     """A classifier that returns the configured choices in turn."""
 
-    def __init__(self, outcomes: list[str | Exception]) -> None:
+    def __init__(
+        self,
+        outcomes: list[str | tuple[str, float] | Exception],
+    ) -> None:
         """Initialize the classifier with choices or exceptions."""
         super().__init__(CredentialBase(), "mock-classifier")
         self.outcomes = outcomes
@@ -51,13 +54,17 @@ class _MockClassifier(ClassifierModelBase):
         outcome = self.outcomes[len(self.calls) - 1]
         if isinstance(outcome, Exception):
             raise outcome
+        if isinstance(outcome, tuple):
+            choice, confidence = outcome
+        else:
+            choice, confidence = outcome, 0.9
         return ClassifierResponse(
             model=self.model,
             content={
                 "chat_model": ChoiceAnswer(
-                    choice=outcome,
-                    confidence=0.9,
-                    probabilities={outcome: 0.9},
+                    choice=choice,
+                    confidence=confidence,
+                    probabilities={choice: confidence},
                 ),
             },
         )
@@ -262,6 +269,25 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_low_classifier_confidence_keeps_agents_model(self) -> None:
+        """A choice below the configured confidence threshold is ignored."""
+        classifier = _MockClassifier(
+            [("reasoning", 0.69), ("reasoning", 0.7)],
+        )
+        middleware = ModelRouterMiddleware(
+            classifier,
+            self.candidates,
+            min_confidence=0.7,
+        )
+
+        _, called = await self._reply(
+            middleware,
+            [TextBlock(text="Ambiguous request.")],
+            [TextBlock(text="Clear request.")],
+        )
+
+        self.assertListEqual(called, ["primary", "reasoning-model"])
+
     async def test_failures_keep_the_agents_model(self) -> None:
         """A routing error, an unknown candidate and an input without text
         all keep the agent's own model."""
@@ -297,4 +323,24 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
             ModelRouterMiddleware(
                 _MockClassifier([]),
                 self.candidates + self.candidates[:1],
+            )
+
+    def test_invalid_min_confidence_is_rejected(self) -> None:
+        """The confidence threshold must be a probability."""
+        for value in (-0.1, 1.1):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "between 0 and 1"):
+                    ModelRouterMiddleware(
+                        _MockClassifier([]),
+                        self.candidates,
+                        min_confidence=value,
+                    )
+
+    def test_chat_model_cannot_use_min_confidence(self) -> None:
+        """Chat-model routing does not return classifier confidence."""
+        with self.assertRaisesRegex(ValueError, "requires a classifier"):
+            ModelRouterMiddleware(
+                _MockRoutingChatModel("fast"),
+                self.candidates,
+                min_confidence=0.7,
             )
