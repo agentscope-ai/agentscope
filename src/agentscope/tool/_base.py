@@ -5,10 +5,13 @@ import inspect
 import os
 from abc import abstractmethod, ABC
 from pathlib import Path
-from typing import AsyncGenerator, Any, Callable, List
+from typing import AsyncGenerator, Any, Callable, List, TYPE_CHECKING
+
+import jsonschema
 
 from pydantic import BaseModel
 
+from ..message import ToolResultState
 from ._constants import DEFAULT_DANGEROUS_FILES, DEFAULT_DANGEROUS_DIRECTORIES
 from ..permission import (
     PermissionContext,
@@ -18,6 +21,9 @@ from ..permission import (
 )
 from ._response import ToolChunk
 from ._utils import _remove_title_field
+
+if TYPE_CHECKING:
+    from ..message import ToolResultBlock
 
 
 class ParamsBase(BaseModel):
@@ -113,6 +119,15 @@ class ToolBase(ABC):
     the state will be injected by an argument named `_agent_state`. Note your
     tool should be able to accept such argument.
     """
+    metadata_schema: dict[str, Any] | None = None
+    """What an external executor must put in
+    :attr:`~..message.ToolResultBlock.metadata`, as a JSON schema.
+
+    The counterpart of :attr:`input_schema`: that one tells the model how
+    to call the tool, this one tells whoever executes it how to answer.
+    ``output`` stays whatever reads well to the model — this is the half
+    a caller may depend on. ``None`` means nothing is promised."""
+
     is_mcp: bool = False
     """If this tool is an MCP tool, which will be used in the permission"""
     mcp_name: str | None = None
@@ -254,6 +269,31 @@ class ToolBase(ABC):
         context: PermissionContext,
     ) -> PermissionDecision:
         """Check permissions for the tool usage."""
+
+    async def check_external_result(
+        self,
+        result: "ToolResultBlock",
+    ) -> None:
+        """Reject a result an external executor sent back.
+
+        Called only for externally executed calls — a tool that produced
+        its own result has nothing to check. Shape only, against
+        :attr:`metadata_schema`; whether the content is any good is the
+        caller's judgement, not this tool's, since a user who answers
+        "no idea" has produced a perfectly valid result. Only successful
+        results are checked, since the schema describes a successful run.
+
+        Raises:
+            `jsonschema.ValidationError`:
+                If the metadata does not match what the tool promised its
+                caller. The reply stays parked, so the executor can fix
+                what it sent and try again.
+        """
+        if (
+            self.metadata_schema is not None
+            and result.state == ToolResultState.SUCCESS
+        ):
+            jsonschema.validate(result.metadata, self.metadata_schema)
 
     async def check_read_only(
         self,

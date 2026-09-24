@@ -90,7 +90,8 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
         row_data: list[str] = []
         for tc in tr.findall(qn("w:tc")):
             paragraphs: list[str] = []
-            for p_elem in tc.findall(qn("w:p")):
+            # Include paragraphs of tables nested in this cell.
+            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
                     if element.tag == text_tag and element.text:
@@ -280,6 +281,8 @@ class WordParser(ParserBase):
         text_buffer: list[str] = []
 
         def flush_text() -> None:
+            while text_buffer and text_buffer[-1] == "":
+                text_buffer.pop()
             if not text_buffer:
                 return
             sections.append(
@@ -298,6 +301,11 @@ class WordParser(ParserBase):
                 text = _extract_text_from_paragraph(para)
                 if text:
                     text_buffer.append(text)
+                elif text_buffer and not para._element.findall(
+                    ".//" + qn("w:r"),
+                ):
+                    # No runs at all, i.e. a blank line in Word
+                    text_buffer.append("")
 
                 if self.include_image:
                     has_drawing = bool(

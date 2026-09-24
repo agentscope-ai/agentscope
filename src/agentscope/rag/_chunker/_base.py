@@ -41,6 +41,9 @@ class ChunkerBase(ABC):
     - **DataBlock pass-through**: a Section whose content is a
       :class:`~agentscope.message.DataBlock` becomes a single Chunk
       with the same content; multimodal data is never sliced.
+    - **No empty-text chunks**: a Section whose text content is
+      empty or whitespace-only produces no Chunk, so blank pages
+      never reach the embedding step.
     - **Continuous indexing**: ``chunk_index`` runs from ``0`` to
       ``total_chunks - 1`` across the entire output list, even
       when the input contains many Sections.

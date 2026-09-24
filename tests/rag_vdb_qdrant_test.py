@@ -163,6 +163,67 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_search_negates_distance_metric_scores(self) -> None:
+        """A distance metric yields higher-is-better scores too."""
+        store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:", distance="Euclid"),
+        )
+        await store.create_collection("kb-1", dimensions=3)
+        await store.insert(
+            "kb-1",
+            [
+                _make_record("Near!", [1.0, 0.0, 0.0], document_id="doc-1"),
+                _make_record("Far!", [10.0, 0.0, 0.0], document_id="doc-2"),
+            ],
+        )
+
+        results = await store.search(
+            "kb-1",
+            query_vector=[0.0, 0.0, 0.0],
+            top_k=2,
+        )
+
+        # Negated distances, so the nearest record still ranks first
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": -1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Near!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+                {
+                    "score": -10.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Far!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+            ],
+        )
+
     async def test_search_top_k(self) -> None:
         """top_k limits the number of returned results."""
         await self.store.create_collection("kb-1", dimensions=3)
@@ -382,6 +443,103 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             metadata_filter={"kb_scope": "kb-b"},
         )
         self.assertEqual([r.document_id for r in results], ["doc-2"])
+
+    async def test_float_metadata_filters(self) -> None:
+        """Every read operation matches finite floats without rounding."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        values = [-0.75, 0.0, 0.75]
+        records = []
+        for index, value in enumerate(values):
+            record = _make_record(
+                f"note-{index}",
+                [1.0, 0.0, 0.0],
+                "doc-1",
+                chunk_index=index,
+                total_chunks=len(values),
+            )
+            record.chunk.metadata["confidence"] = value
+            records.append(record)
+        await self.store.insert("kb-1", records)
+
+        for index, value in enumerate(values):
+            metadata_filter = {"confidence": value}
+            with self.subTest(operation="search", value=value):
+                results = await self.store.search(
+                    "kb-1",
+                    [1.0, 0.0, 0.0],
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [result.chunk.chunk_index for result in results],
+                    [index],
+                )
+            with self.subTest(operation="list_documents", value=value):
+                documents = await self.store.list_documents(
+                    "kb-1",
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [(doc.document_id, doc.chunk_count) for doc in documents],
+                    [("doc-1", 1)],
+                )
+                self.assertEqual(documents[0].metadata, metadata_filter)
+            with self.subTest(operation="list_chunks", value=value):
+                chunks = await self.store.list_chunks(
+                    "kb-1",
+                    "doc-1",
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [chunk.chunk_index for chunk in chunks],
+                    [index],
+                )
+
+    async def test_mixed_scalar_metadata_filter(self) -> None:
+        """Combine float equality with the existing scalar match types."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        metadata_filter = {
+            "confidence": 0.75,
+            "category": "notes",
+            "version": 2,
+            "active": True,
+        }
+        records = []
+        for index, metadata in enumerate(
+            [
+                metadata_filter,
+                {**metadata_filter, "confidence": 0.5},
+                {**metadata_filter, "category": "other"},
+                {**metadata_filter, "version": 3},
+                {**metadata_filter, "active": False},
+            ],
+        ):
+            record = _make_record(
+                f"note-{index}",
+                [1.0, 0.0, 0.0],
+                f"doc-{index}",
+            )
+            record.chunk.metadata.update(metadata)
+            records.append(record)
+        await self.store.insert("kb-1", records)
+
+        results = await self.store.search(
+            "kb-1",
+            [1.0, 0.0, 0.0],
+            metadata_filter=metadata_filter,
+        )
+        self.assertEqual([result.document_id for result in results], ["doc-0"])
+
+    async def test_nonfinite_metadata_filter(self) -> None:
+        """Reject non-finite floats instead of widening a query."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        for value in [float("nan"), float("inf"), float("-inf")]:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "finite"):
+                    await self.store.search(
+                        "kb-1",
+                        [1.0, 0.0, 0.0],
+                        metadata_filter={"confidence": value},
+                    )
 
     async def test_list_chunks_pagination_and_isolation(self) -> None:
         """list_chunks pages by chunk_index and isolates documents."""

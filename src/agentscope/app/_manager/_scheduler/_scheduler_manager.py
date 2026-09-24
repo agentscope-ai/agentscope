@@ -23,7 +23,7 @@ from ...storage import (
     ScheduleRecord,
     ChatModelConfig,
     SessionConfig,
-    SessionSource,
+    ScheduleOrigin,
 )
 
 if TYPE_CHECKING:
@@ -236,8 +236,7 @@ class SchedulerManager:
                             config=session_config,
                             state=state,
                             session_id=stateful_session_id,
-                            source=SessionSource.SCHEDULE,
-                            source_schedule_id=record.id,
+                            origin=ScheduleOrigin(schedule_id=record.id),
                         )
                     else:
                         logger.info(
@@ -272,8 +271,7 @@ class SchedulerManager:
                             chat_model_config=record.data.chat_model_config,
                         ),
                         state=state,
-                        source=SessionSource.SCHEDULE,
-                        source_schedule_id=record.id,
+                        origin=ScheduleOrigin(schedule_id=record.id),
                     )
 
                 logger.info(
@@ -371,13 +369,31 @@ class SchedulerManager:
             # than raising, which is not what the caller asked for.
             raise ValueError("timezone must be a non-empty IANA name")
 
+        # Standard cron counts weekdays from Sunday (0 or 7) while
+        # APScheduler counts from Monday, so map numeric terms to names.
+        weekdays = []
+        for term in day_of_week.split(","):
+            bounds, _, step = term.replace("*", "0-7").partition("/")
+            if term == "*" or not bounds.replace("-", "").isdigit():
+                weekdays.append(term)
+                continue
+            first, _, last = bounds.partition("-")
+            last = last or ("7" if step else first)
+            days = range(int(first), int(last) + 1, int(step or 1))
+            if int(last) > 7 or not days:
+                raise ValueError(f"Invalid day of week: {term!r}")
+            weekdays.extend(
+                ("sun", "mon", "tue", "wed", "thu", "fri", "sat")[d % 7]
+                for d in days
+            )
+
         try:
             trigger = CronTrigger(
                 minute=minute,
                 hour=hour,
                 day=day,
                 month=month,
-                day_of_week=day_of_week,
+                day_of_week=",".join(weekdays),
                 timezone=record.data.timezone,
                 start_date=record.data.started_at,
                 end_date=record.data.ended_at,

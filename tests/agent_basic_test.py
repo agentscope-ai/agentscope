@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
-from agentscope.model import ChatResponse, ChatUsage
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -293,6 +293,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+                "text": None,
             },
             {
                 "type": "MODEL_CALL_END",
@@ -507,6 +508,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+                "text": None,
             },
             {
                 "type": "MODEL_CALL_END",
@@ -1091,10 +1093,24 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ChatResponse(
                     content=[ThinkingBlock(thinking="First thought")],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
                 ),
                 ChatResponse(
                     content=[ThinkingBlock(thinking="Second thought")],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=50,
+                        time=0.2,
+                        cache_input_tokens=7,
+                        cache_creation_input_tokens=3,
+                    ),
                 ),
             ],
         )
@@ -1108,6 +1124,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 **self._get_msg_base(),
                 "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "usage": {
+                    "input_tokens": 180,
+                    "output_tokens": 90,
+                    "cache_input_tokens": 12,
+                    "cache_creation_input_tokens": 5,
+                },
                 "content": [
                     {
                         "type": "text",
@@ -1118,6 +1140,85 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "are exceeded.",
                     },
                 ],
+            },
+        )
+
+    async def test_interrupted_reply_preserves_usage(self) -> None:
+        """An interrupted final message carries the model usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Partial response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                    finished_reason=FinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(
+            UserMsg(name="user", content="Continue"),
+        )
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.INTERRUPTED,
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 40,
+                    "cache_input_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                },
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": (
+                            "I notice the interruption. How can I help you?"
+                        ),
+                    },
+                ],
+            },
+        )
+
+    async def test_reply_does_not_reuse_previous_usage(self) -> None:
+        """A reply with no new context does not reuse prior usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="First response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                ),
+                ChatResponse(content=[], is_last=True),
+            ],
+        )
+
+        await self.agent.reply(UserMsg(name="user", content="Start"))
+        msg = await self.agent.reply()
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "content": [],
             },
         )
 
@@ -1232,7 +1333,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "tool_call_id": tool_call_id_1,
                 "delta": '{"input": ',
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "TOOL_CALL_DELTA",
                 "tool_call_id": tool_call_id_1,
@@ -1295,7 +1396,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
                 "delta": "ended",
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
@@ -1553,7 +1654,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
                 "delta": "All done",
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
@@ -1850,7 +1951,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
                 "delta": "All done",
             },
-            {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,

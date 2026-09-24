@@ -41,7 +41,7 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionRecord,
 )
-from agentscope.mcp import MCPClient, StdioMCPConfig
+from agentscope.mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 from agentscope.message import (
     Base64Source,
     DataBlock,
@@ -1136,6 +1136,50 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         data = json.loads(raw.decode("utf-8"))
         self.assertEqual(data["mcps"]["a"]["s"], [])
 
+    async def test_stateless_mcp_remove_then_readd(self) -> None:
+        """Removing a stateless MCP deregisters it from the gateway."""
+        mcp = MCPClient(
+            name="demo",
+            mcp_config=HttpMCPConfig(url="http://mcp.example/mcp"),
+            is_stateful=False,
+        )
+        await self.workspace.add_mcp(mcp, agent_id="a", session_id="s")
+        first = self.workspace._mcp_instances[("a", "s")]["demo"]
+
+        await self.workspace.remove_mcp("demo", agent_id="a", session_id="s")
+        await self.workspace.add_mcp(mcp, agent_id="a", session_id="s")
+
+        self.assertTrue(first.closed)
+        live = self.workspace._mcp_instances[("a", "s")]
+        self.assertListEqual(list(live), ["demo"])
+        self.assertIsNot(live["demo"], first)
+        raw = await self.workspace._backend.read_file("/home/daytona/.mcp")
+        self.assertDictEqual(
+            json.loads(raw.decode("utf-8")),
+            {
+                "version": 2,
+                "mcps": {
+                    "a": {
+                        "s": [
+                            {
+                                "name": "demo",
+                                "mcp_config": {
+                                    "type": "http_mcp",
+                                    "url": "http://mcp.example/mcp",
+                                    "headers": None,
+                                    "timeout": 30.0,
+                                },
+                                "is_stateful": False,
+                                "enable_tools": None,
+                                "disable_tools": None,
+                                "execution_timeout": None,
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+
     async def test_remove_missing_mcp_is_noop(self) -> None:
         """Removing an unknown MCP leaves persisted config unchanged."""
         await self.workspace.remove_mcp("missing", agent_id="a")
@@ -1208,6 +1252,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             await self.workspace.add_skill(skill_dir)
 
+    @unittest.skipIf(
+        shutil.which("test") is None,
+        "host-backed Daytona fake relies on POSIX sandbox commands",
+    )
     async def test_offload_context_tool_result_and_reset(self) -> None:
         """Offload writes sessions/data and reset clears persistent state."""
         data_block = DataBlock(
