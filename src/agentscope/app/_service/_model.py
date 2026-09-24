@@ -58,16 +58,18 @@ async def get_model(
         parameters=parameters,
     )
 
-    # Override the formatter's input types with the built-in model card's
-    # when one matches; custom models have no card, so keep the default.
+    # Override the context size and the formatter's input types with the
+    # built-in model card's when one matches; custom models have no card,
+    # so keep the defaults.
     try:
         for card in model_cls.list_models():
             if card.name == config.model:
+                model.context_size = card.context_size
                 model.formatter.input_types = card.input_types
                 break
     except Exception:  # pylint: disable=broad-except
         logger.debug(
-            "Failed to look up model card for %s, using formatter defaults.",
+            "Failed to look up model card for %s, using defaults.",
             config.model,
         )
 

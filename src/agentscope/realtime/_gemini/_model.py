@@ -120,6 +120,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """Open the WebSocket and send the setup message."""
         import websockets
 
+        # Stop the previous session and drop its terminal events.
+        await self.close()
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
                 update={"turn_detection": "none"},
@@ -146,14 +151,15 @@ class GeminiRealtimeModel(RealtimeModelBase):
             raise ModelDisconnectedError("Session closed during setup.")
 
     async def close(self) -> None:
-        """Stop reading and close the WebSocket."""
+        """Close the WebSocket and stop reading."""
+        # Close the socket first: the reader's finally resets ``self._ws``.
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
         if self._reader is not None:
             self._reader.cancel()
             await asyncio.gather(self._reader, return_exceptions=True)
             self._reader = None
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
 
     async def events(self) -> AsyncIterator[me.ModelEvent]:
         """Yield events until the session ends."""

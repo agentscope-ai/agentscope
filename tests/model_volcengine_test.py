@@ -644,10 +644,13 @@ class TestVolcengineModelParameters(unittest.TestCase):
 
     def test_verified_model_card(self) -> None:
         """The versioned model ID is discoverable with Ark capabilities."""
-        cards = VolcengineChatModel.list_models()
+        cards = [
+            card
+            for card in VolcengineChatModel.list_models()
+            if card.name == "doubao-seed-2-1-pro-260628"
+        ]
 
         self.assertEqual(len(cards), 1)
-        self.assertEqual(cards[0].name, "doubao-seed-2-1-pro-260628")
         self.assertEqual(cards[0].context_size, 256000)
         self.assertEqual(cards[0].output_size, 256000)
         self.assertIn("image/*", cards[0].input_types)

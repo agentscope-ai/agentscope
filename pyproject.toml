@@ -54,11 +54,13 @@ dependencies = [
 model-gemini = ["google-genai"]
 model-ollama = ["ollama>=0.5.4"]
 model-xai = ["xai-sdk"]
+classifier-jev = ["typesafe-sdk>=0.7"]
 models = [
     "agentscope[model-gemini]",
     "agentscope[model-ollama]",
     "agentscope[model-xai]",
 ]
+classifiers = ["agentscope[classifier-jev]"]
 # ------------ Service ------------
 service = [
     "fastapi",
@@ -111,6 +113,10 @@ realtime = [
     "aiortc>=1.14",
     "websockets>=13",
     "sounddevice",
+]
+# ------------ Terminal UI ------------
+tui = [
+    "textual>=8.2,<9",
 ]
 # ------------ A2A ------------
 a2a = [
@@ -167,6 +173,7 @@ reme = ["agentscope[memory-reme]"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
+    "agentscope[classifiers]",
     "agentscope[service]",
     "agentscope[realtime]",
     "agentscope[storage-redis]",
@@ -175,6 +182,7 @@ full = [
     "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[tui]",
     "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[vdb-qdrant]",
