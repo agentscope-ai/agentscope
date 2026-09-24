@@ -3570,7 +3570,7 @@ class Agent:
             )
 
         elif required and not satisfied:
-            # Maybe the model needs futher reasoning-acting to
+            # Maybe the model needs further reasoning-acting to
             # generate the structured output
             tool_choice = None
             suffix = (
