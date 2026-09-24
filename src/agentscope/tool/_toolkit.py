@@ -23,7 +23,11 @@ from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
-from .._utils._common import _describe_exception, _json_loads_with_repair
+from .._utils._common import (
+    _describe_exception,
+    _generate_id,
+    _json_loads_with_repair,
+)
 from ..exception import (
     DeveloperOrientedException,
     ToolNotFoundError,
@@ -31,6 +35,7 @@ from ..exception import (
 )
 from ..mcp import MCPClient
 from ..message import (
+    DataBlock,
     ToolCallBlock,
     TextBlock,
     ToolResultState,
@@ -61,6 +66,33 @@ Skills are a collection of instructions, scripts, and resources to extend your c
 </skill>{% endfor %}
 </agent-skills>
 """  # noqa: E501
+
+
+def _normalize_chunk_ids(
+    tool_response: ToolResponse,
+    chunk: ToolChunk,
+) -> ToolChunk:
+    """Normalize cross-type block IDs before a tool chunk is yielded."""
+    current_blocks = {block.id: block for block in tool_response.content}
+    normalized = chunk
+    for index, chunk_block in enumerate(chunk.content):
+        current_block = current_blocks.get(chunk_block.id)
+        same_block_type = (
+            isinstance(current_block, TextBlock)
+            and isinstance(chunk_block, TextBlock)
+        ) or (
+            isinstance(current_block, DataBlock)
+            and isinstance(chunk_block, DataBlock)
+        )
+        if current_block is not None and not same_block_type:
+            if normalized is chunk:
+                normalized = chunk.model_copy(deep=True)
+            normalized_block = normalized.content[index]
+            normalized_block.id = _generate_id()
+            current_blocks[normalized_block.id] = normalized_block
+        elif current_block is None:
+            current_blocks[chunk_block.id] = chunk_block
+    return normalized
 
 
 class Toolkit:
@@ -318,18 +350,21 @@ class Toolkit:
                 res = tool_func(**kwargs)
 
             if isinstance(res, ToolChunk):
-                yield res
-                tool_response.append_chunk(res)
+                chunk = _normalize_chunk_ids(tool_response, res)
+                yield chunk
+                tool_response.append_chunk(chunk)
 
             # If return an async generator
             elif isinstance(res, AsyncGenerator):
                 async for chunk in res:
+                    chunk = _normalize_chunk_ids(tool_response, chunk)
                     yield chunk
                     tool_response.append_chunk(chunk)
 
             # If return a sync generator
             elif isinstance(res, Generator):
                 for chunk in res:
+                    chunk = _normalize_chunk_ids(tool_response, chunk)
                     yield chunk
                     tool_response.append_chunk(chunk)
 
@@ -350,6 +385,7 @@ class Toolkit:
                 ],
                 state=ToolResultState.ERROR,
             )
+            chunk = _normalize_chunk_ids(tool_response, chunk)
             yield chunk
             tool_response.append_chunk(chunk)
 
@@ -368,6 +404,7 @@ class Toolkit:
                 ],
                 state=ToolResultState.ERROR,
             )
+            chunk = _normalize_chunk_ids(tool_response, chunk)
             yield chunk
             tool_response.append_chunk(chunk)
 
@@ -384,6 +421,7 @@ class Toolkit:
                 ],
                 state=ToolResultState.INTERRUPTED,
             )
+            chunk = _normalize_chunk_ids(tool_response, chunk)
             yield chunk
             tool_response.append_chunk(chunk)
 
