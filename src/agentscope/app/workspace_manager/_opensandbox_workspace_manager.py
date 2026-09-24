@@ -27,9 +27,11 @@ Differences from the Docker manager:
   ``sandbox.pause()`` is a remote round-trip per sandbox.
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
-from typing import Any, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -42,6 +44,9 @@ from ...workspace._opensandbox._constants import (
 from ...workspace import OpenSandboxWorkspace
 
 from ._base import IsolationPolicy, WorkspaceManagerBase
+
+if TYPE_CHECKING:
+    from opensandbox.models.sandboxes import Volume
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -73,6 +78,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         extra_pip: list[str] | None = None,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        use_server_proxy: bool = False,
+        volumes: list[Volume] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
@@ -126,6 +133,10 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 reattach, the sandbox's persisted ``.mcp`` file wins.
             skill_paths (`list[str] | None`, optional):
                 Skill directories seeded into brand-new workspaces.
+            use_server_proxy (`bool`, defaults to `False`):
+                Route sandbox traffic through the OpenSandbox API server.
+            volumes (`list[Volume] | None`, optional):
+                Volume declarations forwarded to each new sandbox.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle cached workspace is evicted and
                 its sandbox paused.
@@ -148,6 +159,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self._extra_pip = list(extra_pip or [])
         self._default_mcps = list(default_mcps or [])
         self._skill_paths = list(skill_paths or [])
+        self._use_server_proxy = use_server_proxy
+        self._volumes = list(volumes or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
         super().__init__(isolation=isolation)
@@ -192,6 +205,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             extra_pip=self._extra_pip,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
+            use_server_proxy=self._use_server_proxy,
+            volumes=self._volumes,
         )
         await ws.initialize()
         return ws
