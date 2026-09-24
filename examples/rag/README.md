@@ -6,8 +6,13 @@ Two library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no ma
 | --- | --- |
 | [`index_and_search.py`](./index_and_search.py) | The minimal pipeline: parse → chunk → embed → insert, then `KnowledgeBase.search`. Start here. |
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
+| [`ragflow_integration.py`](./ragflow_integration.py) | Exposes RAGFlow's retrieval REST API as a `FunctionTool` — the agent decides when to call it. |
+| [`ragflow_mcp_integration.py`](./ragflow_mcp_integration.py) | Connects to RAGFlow via MCP (Model Context Protocol) for automatic tool discovery. |
+| [`ragflow_middleware_integration.py`](./ragflow_middleware_integration.py) | Uses the official `ExternalRetrievalMiddleware` with `RAGFlowRetrievalBackend` for automatic static-mode injection — configuration locked at construction, LLM never decides "should I search". |
 
 Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
+
+The RAGFlow examples require a running RAGFlow server and use DeepSeek as the chat model. See each script's docstring for the required environment variables.
 
 ## Install
 

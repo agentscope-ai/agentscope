@@ -2,6 +2,12 @@
 """Middleware system for AgentScope agents."""
 
 from ._base import MiddlewareBase
+from ._external_retrieval import (
+    ExternalRetrievalMiddleware,
+    RAGFlowRetrievalBackend,
+    RetrievalBackend,
+    RetrievalResult,
+)
 from ._rag import RAGMiddleware
 from ._budget import ReplyBudgetControlMiddleware
 from ._longterm_memory import (
@@ -16,9 +22,13 @@ from ._model_router import ChatModelCandidate, ModelRouterMiddleware
 __all__ = [
     "MiddlewareBase",
     "AgenticMemoryMiddleware",
+    "ExternalRetrievalMiddleware",
     "Mem0Middleware",
-    "ReMeMiddleware",
+    "RAGFlowRetrievalBackend",
     "RAGMiddleware",
+    "ReMeMiddleware",
+    "RetrievalBackend",
+    "RetrievalResult",
     "TracingMiddleware",
     "ReplyBudgetControlMiddleware",
     "TTSMiddleware",
