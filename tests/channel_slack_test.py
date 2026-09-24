@@ -8,6 +8,7 @@ calls, and the approval-card click round trip.
 """
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
 import asyncio
+import json
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
@@ -27,6 +28,7 @@ from agentscope.app.channel._slack._channel import (
     _STREAM_MIN_INTERVAL,
     SlackChannel,
 )
+from agentscope.app.channel._slack._tools import ListChats
 from agentscope.event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -59,6 +61,7 @@ class _FakeWeb:
         self.updates: list[dict] = []
         self.uploads: list[dict] = []
         self.list_pages: list[dict] = []
+        self.list_calls: list[dict] = []
         self.member_pages: list[dict] = []
         self._ts = 0
 
@@ -99,10 +102,19 @@ class _FakeWeb:
     async def users_info(self, user: str) -> dict:
         return {"user": {"profile": {"display_name": f"Name{user}"}}}
 
-    async def conversations_list(self, **kwargs: Any) -> dict:
+    async def users_conversations(self, **kwargs: Any) -> dict:
+        self.list_calls.append(dict(kwargs))
         if self.list_pages:
             return self.list_pages.pop(0)
         return {"channels": []}
+
+    async def conversations_list(self, **kwargs: Any) -> dict:
+        # Also returns public channels the bot never joined.
+        return {
+            "channels": [
+                {"id": "C9", "name": "not-joined", "is_member": False},
+            ],
+        }
 
     async def conversations_members(self, **kwargs: Any) -> dict:
         if self.member_pages:
@@ -461,6 +473,56 @@ class DiscoveryTest(IsolatedAsyncioTestCase):
                 {"chat_id": "C1", "name": "general", "chat_type": "channel"},
                 {"chat_id": "D1", "name": "U1", "chat_type": "im"},
             ],
+        )
+
+    async def test_only_member_conversations_are_listed(self) -> None:
+        channel, web = _channel()
+        web.list_pages = [{"channels": [{"id": "C1", "name": "general"}]}]
+        chunk = await ListChats(channel, None)()
+        self.assertEqual(
+            json.loads(chunk.content[0].text),
+            {
+                "chats": [
+                    {
+                        "chat_id": "C1",
+                        "name": "general",
+                        "chat_type": "channel",
+                    },
+                ],
+                "next_cursor": None,
+            },
+        )
+
+    async def test_list_chats_returns_one_page_and_its_cursor(self) -> None:
+        channel, web = _channel()
+        web.list_pages = [
+            {
+                "channels": [{"id": "C1", "name": "a"}, {"id": "C2"}],
+                "response_metadata": {"next_cursor": "c2"},
+            },
+            {
+                "channels": [{"id": "C3", "name": "b"}],
+                "response_metadata": {"next_cursor": ""},
+            },
+        ]
+        tool = ListChats(channel, None)
+        first = json.loads((await tool(limit=2)).content[0].text)
+        self.assertEqual(
+            [chat["chat_id"] for chat in first["chats"]],
+            ["C1", "C2"],
+        )
+        self.assertEqual(first["next_cursor"], "c2")
+        second = json.loads(
+            (await tool(limit=2, cursor=first["next_cursor"])).content[0].text,
+        )
+        self.assertEqual(
+            [chat["chat_id"] for chat in second["chats"]],
+            ["C3"],
+        )
+        self.assertIsNone(second["next_cursor"])
+        self.assertEqual(
+            [(c["limit"], c["cursor"]) for c in web.list_calls],
+            [(2, None), (2, "c2")],
         )
 
     async def test_list_chat_members_pages_and_names(self) -> None:

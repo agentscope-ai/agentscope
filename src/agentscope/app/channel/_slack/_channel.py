@@ -785,37 +785,60 @@ class SlackChannel(ChannelBase):
     async def list_bot_chats(self) -> list[dict]:
         """List the conversations the bot is in as ``{chat_id, name,
         chat_type}``."""
-        web = self._web_client()
-        if web is None:
-            return []
         results: list[dict] = []
-        cursor = ""
+        cursor: str | None = None
         while True:
-            try:
-                resp = await web.conversations_list(
-                    types="public_channel,private_channel,mpim,im",
-                    exclude_archived=True,
-                    limit=200,
-                    cursor=cursor or None,
-                )
-            except Exception:  # pylint: disable=broad-except
-                logger.debug("Slack conversations.list failed")
-                break
-            for item in resp.get("channels") or []:
-                results.append(
-                    {
-                        "chat_id": item.get("id", ""),
-                        "name": item.get("name", "")
-                        or item.get("user", "")
-                        or "",
-                        "chat_type": "im" if item.get("is_im") else "channel",
-                    },
-                )
-            meta = resp.get("response_metadata") or {}
-            cursor = meta.get("next_cursor") or ""
+            page = await self.list_chats_page(200, cursor)
+            results.extend(page["chats"])
+            cursor = page["next_cursor"]
             if not cursor:
                 break
         return results
+
+    async def list_chats_page(
+        self,
+        limit: int,
+        cursor: str | None = None,
+    ) -> dict:
+        """One page of the conversations the bot is a member of.
+
+        ``users.conversations`` rather than ``conversations.list``, which
+        also returns public channels the bot never joined: an upload there
+        fails, and a post needs the extra ``chat:write.public`` scope.
+
+        Args:
+            limit (`int`): The most conversations to request.
+            cursor (`str | None`): ``next_cursor`` from the previous page,
+                or ``None`` for the first.
+
+        Returns:
+            `dict`: ``{"chats": [{chat_id, name, chat_type}],
+            "next_cursor": str | None}``, where ``next_cursor`` is ``None``
+            on the last page.
+        """
+        web = self._web_client()
+        if web is None:
+            return {"chats": [], "next_cursor": None}
+        try:
+            resp = await web.users_conversations(
+                types="public_channel,private_channel,mpim,im",
+                exclude_archived=True,
+                limit=limit,
+                cursor=cursor or None,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Slack users.conversations failed")
+            return {"chats": [], "next_cursor": None}
+        chats = [
+            {
+                "chat_id": item.get("id", ""),
+                "name": item.get("name", "") or item.get("user", "") or "",
+                "chat_type": "im" if item.get("is_im") else "channel",
+            }
+            for item in resp.get("channels") or []
+        ]
+        meta = resp.get("response_metadata") or {}
+        return {"chats": chats, "next_cursor": meta.get("next_cursor") or None}
 
     async def list_chat_members(self, chat_id: str) -> list[dict]:
         """List a conversation's members as ``{user_id, name}`` dicts.
