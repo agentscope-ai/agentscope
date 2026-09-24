@@ -157,6 +157,8 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 await self.backend.exec_shell([sys.executable, "-c", "pass"])
+        # NotImplementedError subclasses RuntimeError; require the wrapped type.
+        self.assertIs(type(ctx.exception), RuntimeError)
         self.assertIn("SelectorEventLoop", str(ctx.exception))
         self.assertIsInstance(ctx.exception.__cause__, NotImplementedError)
 
