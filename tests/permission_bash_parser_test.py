@@ -975,6 +975,52 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                     expected,
                 )
 
+    async def test_short_option_with_attached_value(self) -> None:
+        """Attached short-option values match their separated forms."""
+        cases = [
+            (
+                "sed -e's/a/b/' notes.txt",
+                "sed -e 's/a/b/' notes.txt",
+                None,
+            ),
+            (
+                "sed -ne'5p' notes.txt",
+                "sed -n -e '5p' notes.txt",
+                None,
+            ),
+            (
+                "sed -e'/bin/sh/e' notes.txt",
+                "sed -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed -i.bak 's/x/y/' .env",
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -fscript.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+        ]
+        for attached, separated, expected in cases:
+            with self.subTest(attached=attached):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        attached,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""
         test_cases = [

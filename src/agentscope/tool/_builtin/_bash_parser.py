@@ -752,22 +752,39 @@ class BashCommandParser:
                 flags.append("f")
             # Handle flags
             elif name.startswith("-") and not name.startswith("--"):
-                # Combined flags like -nE
-                flag_chars = arg[1:]
-                for char in flag_chars:
+                # Parse combined flags while respecting options whose value
+                # may be attached to the same token, e.g. -ne'5p',
+                # -e's/a/b/' and -i.bak.
+                flag_chars = name[1:]
+                for index, char in enumerate(flag_chars):
                     flags.append(char)
-                # -i flag may have optional backup extension argument
-                # But only skip if next arg doesn't look like an expression
-                if "i" in flag_chars and i + 1 < len(args):
+                    remainder = flag_chars[index + 1 :]
+                    if char == "e":
+                        if remainder:
+                            expressions.append(remainder)
+                            found_first_expr = True
+                        elif i + 1 < len(args):
+                            expressions.append(args[i + 1])
+                            found_first_expr = True
+                            i += 1
+                        break
+                    if char in ("f", "i"):
+                        # -f consumes a script filename and -i consumes an
+                        # optional backup suffix. Neither remainder contains
+                        # more flags.
+                        break
+
+                # A separated -i backup suffix retains the existing
+                # platform-compatible handling. Attached suffixes were
+                # consumed as the remainder above.
+                if flag_chars.endswith("i") and i + 1 < len(args):
                     next_arg = args[i + 1]
-                    # Skip backup extension only if it's not an expression
-                    # or file
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
                         and "." not in next_arg
                     ):
-                        i += 1  # Skip backup extension
+                        i += 1
             elif name == "--in-place":
                 flags.append("i")
                 # Written with '=', the backup suffix already came along in
