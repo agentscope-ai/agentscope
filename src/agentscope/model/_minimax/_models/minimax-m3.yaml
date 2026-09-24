@@ -1,0 +1,29 @@
+name: minimax-m3
+label: MiniMax-M3
+status: active
+
+# Latest M-series language model suited for agentic reasoning, tool calling,
+# code generation, and long-context tasks. Multimodal input is supported
+# (text + image) per the MiniMax OpenAI-compatible surface.
+# Reference: https://platform.minimax.cn/docs/api-reference/text-openai-api
+
+input_types:
+  - text/plain
+  # Image formats accepted via the ``image_url`` content block.
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  # ``application/x-thinking`` is emitted via ``reasoning_details`` when the
+  # ``reasoning_split`` extra body is enabled.
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 65536
+
+parameter_overrides:
+  max_tokens:
+    maximum: 65536

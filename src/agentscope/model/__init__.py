@@ -15,6 +15,7 @@ from ._xai import XAIChatModel
 from ._moonshot import MoonshotChatModel
 from ._openai_response import OpenAIResponseModel
 from ._volcengine import VolcengineChatModel
+from ._minimax import MiniMaxChatModel
 
 __all__ = [
     "ChatUsage",
@@ -27,6 +28,7 @@ __all__ = [
     "DashScopeChatModel",
     "DeepSeekChatModel",
     "GeminiChatModel",
+    "MiniMaxChatModel",
     "OllamaChatModel",
     "OpenAIChatModel",
     "XAIChatModel",

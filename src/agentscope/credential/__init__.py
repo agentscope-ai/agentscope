@@ -12,6 +12,7 @@ from ._openai import OpenAICredential
 from ._typesafe import TypeSafeCredential
 from ._xai import XAICredential
 from ._volcengine import VolcengineCredential
+from ._minimax import MiniMaxCredential
 from ._factory import CredentialFactory
 
 
@@ -21,6 +22,7 @@ __all__ = [
     "DashScopeCredential",
     "DeepSeekCredential",
     "GeminiCredential",
+    "MiniMaxCredential",
     "MoonshotCredential",
     "OllamaCredential",
     "OpenAICredential",
