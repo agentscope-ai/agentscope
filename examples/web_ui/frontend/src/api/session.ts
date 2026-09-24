@@ -6,6 +6,7 @@ import type {
 	InterruptSessionResponse,
 	SessionListResponse,
 	SessionRecord,
+	SessionStatusResponse,
 	UpdateSessionRequest,
 	Msg,
 } from './types';
@@ -82,6 +83,21 @@ export const sessionApi = {
 		client.post<InterruptSessionResponse>(`/sessions/${sessionId}/interrupt`, null, {
 			agent_id: agentId,
 		}),
+
+	/**
+	 * Read the server's authoritative session state.
+	 *
+	 * The live SSE stream is intentionally best-effort; this probe lets the
+	 * chat hook recover when a terminal event was missed between replay and
+	 * subscription. Status checks used for reconciliation stay silent so a
+	 * transient probe failure does not create a user-facing toast.
+	 */
+	status: (sessionId: string, agentId: string) =>
+		client.get<SessionStatusResponse>(
+			`/sessions/${sessionId}/status`,
+			{ agent_id: agentId },
+			{ silent: true },
+		),
 
 	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {

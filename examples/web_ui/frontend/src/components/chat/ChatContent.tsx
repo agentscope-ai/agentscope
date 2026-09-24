@@ -28,6 +28,7 @@ import {
 	MessageScrollerViewport,
 } from '@/components/ui/message-scroller.tsx';
 import { Spinner } from '@/components/ui/spinner';
+import { findPendingReply } from '@/hooks/pendingReply';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
@@ -152,13 +153,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	}, [loading]);
 
 	const toConfirmedToolCalls = useMemo(() => {
-		if (msgs.length === 0) return [];
-
-		const lastMsg = msgs[msgs.length - 1];
-		return getContentBlocks(lastMsg, 'tool_call')
+		// A stale asking block can remain in persisted history after the server
+		// has already settled the run. The reply phase is reconciled from the
+		// authoritative session status, so do not render an old confirmation
+		// card while the session is idle.
+		if (phase !== 'streaming') return [];
+		const pendingReply = findPendingReply(msgs);
+		if (!pendingReply) return [];
+		return getContentBlocks(pendingReply, 'tool_call')
 			.filter((tc) => tc.state === 'asking')
-			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
-	}, [msgs]);
+			.map((tc) => ({ replyId: pendingReply.id, toolCall: tc }));
+	}, [msgs, phase]);
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
