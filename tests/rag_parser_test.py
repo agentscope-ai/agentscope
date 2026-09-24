@@ -1587,9 +1587,25 @@ class WordParserTest(IsolatedAsyncioTestCase):
         parser = WordParser(include_image=False, separate_table=False)
         sections = await parser.parse(docx_bytes, "nested.docx")
 
-        text = "\n".join(section.content.text for section in sections)
-        self.assertIn("Outer cell", text)
-        self.assertIn("Nested cell", text)
+        self.assertListEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before table\n"
+                        "| Outer cell<br>Nested cell |\n"
+                        "| --- |\n\n"
+                        "After table",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "nested.docx",
+                    "metadata": {},
+                },
+            ],
+        )
 
     async def test_table_separated(self) -> None:
         """``separate_table=True`` isolates the table from surrounding
