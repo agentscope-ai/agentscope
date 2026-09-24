@@ -124,6 +124,10 @@ class SOPRunState(BaseModel):
     :attr:`~._schema.SOPStepBase.state_type` subclass adds is written
     out rather than trimmed back to this base."""
 
+    step_subjects: list[str] = Field(default_factory=list)
+    """The SOP's ordered step subjects, which reject a state restored against
+    a reordered procedure — best effort, as subjects need not be unique."""
+
     created_at: str = Field(default_factory=_generate_timestamp)
     """When the run was created."""
 
