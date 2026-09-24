@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """Test the agent-level structured output."""
+import json
+from copy import deepcopy
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from jsonschema import SchemaError
 from pydantic import BaseModel
 from utils import AnyString, MockModel
 
@@ -15,7 +18,7 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import Msg, TextBlock, ToolCallBlock, UserMsg
 from agentscope.event import UserConfirmResultEvent, ConfirmResult
 
 
@@ -144,6 +147,79 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_json_schema_inputs(self) -> None:
+        """Both reply APIs accept schema objects and JSON strings."""
+        schema = WeatherReport.model_json_schema()
+        for schema_input in (schema, json.dumps(schema)):
+            for streaming in (False, True):
+                with self.subTest(schema=schema_input, streaming=streaming):
+                    self.agent.state = AgentState()
+                    self.model.set_responses(
+                        [deepcopy(self.structured_tool_call)],
+                    )
+                    msg = UserMsg(name="user", content="Weather in Hangzhou?")
+                    if streaming:
+                        chunks = [
+                            chunk
+                            async for chunk in self.agent.reply_stream(
+                                msg,
+                                structured_schema=schema_input,
+                                yield_final_msg=True,
+                            )
+                        ]
+                        res = next(c for c in chunks if isinstance(c, Msg))
+                    else:
+                        res = await self.agent.reply(
+                            msg,
+                            structured_schema=schema_input,
+                        )
+                    self.assertEqual(res.finished_reason, "completed")
+                    self.assertEqual(
+                        res.structured_output,
+                        {"city": "Hangzhou", "temperature": 25.0},
+                    )
+                    self.assertEqual(
+                        self.agent.state.reply_context.structured_schema,
+                        schema,
+                    )
+        self.assertEqual(schema, WeatherReport.model_json_schema())
+
+    async def test_invalid_json_schema_preserves_state(self) -> None:
+        """Bad schemas fail before consuming input or calling the model."""
+        cases: list[tuple[Any, type[Exception]]] = [
+            ("{", ValueError),
+            ("[]", TypeError),
+            ("null", TypeError),
+            ("true", TypeError),
+            ({"type": "object", "properties": {"city": 1}}, SchemaError),
+            ({"type": "array"}, ValueError),
+            ({}, ValueError),
+        ]
+        await self.agent.observe(UserMsg(name="user", content="Earlier turn"))
+        before = self.agent.state.model_dump_json()
+        for schema, error in cases:
+            for streaming in (False, True):
+                with self.subTest(schema=schema, streaming=streaming):
+                    with self.assertRaises(error):
+                        if streaming:
+                            async for _ in self.agent.reply_stream(
+                                UserMsg(name="user", content="New turn"),
+                                structured_schema=schema,
+                            ):
+                                self.fail(
+                                    "Invalid schemas must not emit events",
+                                )
+                        else:
+                            await self.agent.reply(
+                                UserMsg(name="user", content="New turn"),
+                                structured_schema=schema,
+                            )
+                    self.assertEqual(
+                        self.agent.state.model_dump_json(),
+                        before,
+                    )
+                    self.assertEqual(self.model.cnt, 0)
+
     async def test_structured_reply_preserves_accumulated_usage(self) -> None:
         """A structured reply exposes usage from every model call."""
         self.model.set_responses(
@@ -251,6 +327,16 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         )
 
     async def test_validation_error_retry(self) -> None:
+        """Invalid model output is retried for each supported schema input."""
+        schema = WeatherReport.model_json_schema()
+        for schema_input in (WeatherReport, schema, json.dumps(schema)):
+            with self.subTest(schema=schema_input):
+                await self._assert_validation_error_retry(schema_input)
+
+    async def _assert_validation_error_retry(
+        self,
+        schema: type[BaseModel] | dict | str,
+    ) -> None:
         """An invalid structured output produces an error tool result, and
         the model retries in the next reasoning round."""
         valid_structured_tool_call = ChatResponse(
@@ -295,7 +381,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
 
         res = await self.agent.reply(
             UserMsg(name="user", content="Weather in Hangzhou?"),
-            structured_schema=WeatherReport,
+            structured_schema=schema,
         )
 
         self.assertDictEqual(
@@ -527,8 +613,25 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         )
 
     async def test_schema_survives_state_serialization(self) -> None:
+        """All schema inputs survive a parked reply's state round-trip."""
+        schema = WeatherReportWithUnit.model_json_schema()
+        for schema_input in (
+            WeatherReportWithUnit,
+            schema,
+            json.dumps(schema),
+        ):
+            with self.subTest(schema=schema_input):
+                await self._assert_schema_survives_state_serialization(
+                    schema_input,
+                )
+
+    async def _assert_schema_survives_state_serialization(
+        self,
+        schema: type[BaseModel] | dict | str,
+    ) -> None:
         """The schema persists across HITL park, state dump/load and resume
         as a JSON schema dict, which fills defaults and keeps extras."""
+        self.agent.state = AgentState()
         self.agent.toolkit = Toolkit(tools=[MockConfirmTool()])
         self.model.set_responses(
             [
@@ -548,7 +651,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         # The reply parks on the user confirmation
         res = await self.agent.reply(
             UserMsg(name="user", content="Weather in Hangzhou?"),
-            structured_schema=WeatherReportWithUnit,
+            structured_schema=schema,
         )
         self.assertIsNone(res.finished_reason)
 
