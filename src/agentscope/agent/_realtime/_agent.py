@@ -6,6 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
+from collections import deque
 
 from ...realtime import _events as me
 from ._aggregator import TurnAggregator
@@ -190,7 +191,8 @@ class RealtimeAgent:
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
-        self._out: asyncio.Queue = asyncio.Queue()
+        self._out: Deque[Any] = deque()
+        self._out_event = asyncio.Event()
         self._reply: _Reply | None = None
         self._finished_item = ""
         # The agent's open reply, and whether the next response continues
@@ -396,24 +398,34 @@ class RealtimeAgent:
             self._pump_uplink(transport),
             name="rt-up",
         )
+        getter = None
         try:
             while not uplink.done():
-                getter = asyncio.ensure_future(self._out.get())
+                if getter is None:
+                    # Create a future to wait for the next event in _out
+                    getter = asyncio.ensure_future(self._wait_for_event())
                 done, _ = await asyncio.wait(
                     {getter, uplink},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if getter in done:
-                    yield getter.result()
+                    # Event received, yield it
+                    event = getter.result()
+                    yield event
+                    getter = None  # Reset getter so we create a new one next iteration
                 else:
-                    getter.cancel()
+                    # Uplink done, cancel getter if it exists
+                    if getter is not None:
+                        getter.cancel()
+                        getter = None
             # The transport is gone: cut off any reply still in flight so
             # the model stops talking to nobody, then hand the caller the
             # events that produced (the interrupted ReplyEnd) before the
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
-            while not self._out.empty():
-                yield self._out.get_nowait()
+            # Drain remaining events using appendleft for completed-but-unyielded events
+            while self._out:
+                yield self._out.popleft()
             # A transport failure must not look like a clean disconnect.
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
@@ -422,6 +434,17 @@ class RealtimeAgent:
                 uplink.cancel()
                 await asyncio.gather(uplink, return_exceptions=True)
             self._transport = None
+
+    async def _wait_for_event(self) -> Any:
+        """Wait for an event to be available in _out and return it."""
+        await self._out_event.wait()
+        while self._out:
+            return self._out.popleft()
+        self._out_event.clear()
+        # This should not happen if wait() returned due to non-empty deque,
+        # but handle spurious wakeups
+        await self._out_event.wait()
+        return self._out.popleft()
 
     # ------------------------------------------------------------------
     # Discrete input
@@ -969,7 +992,8 @@ class RealtimeAgent:
 
     def _emit(self, event: AgentEvent) -> None:
         """Queue one event for :meth:`reply_stream`."""
-        self._out.put_nowait(event)
+        self._out.appendleft(event)
+        self._out_event.set()
 
     # ------------------------------------------------------------------
     # Tools
