@@ -184,7 +184,9 @@ def _build_xai_sdk_stub() -> None:
 _build_xai_sdk_stub()
 
 
-class TestXAIFormatter(IsolatedAsyncioTestCase):
+class TestXAIFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for XAI Chat and MultiAgent formatters.
 
     The stub objects support __eq__, so full assertListEqual works for
@@ -417,6 +419,28 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_respects_image_input_types(self) -> None:
+        """Only image media types declared in input_types are forwarded."""
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data="R0lGODlh",
+                        media_type="image/gif",
+                    ),
+                ),
+            ],
+        )
+
+        self.assertListEqual([], await XAIChatFormatter().format([msg]))
+        self.assertListEqual(
+            [user(image("data:image/gif;base64,R0lGODlh"))],
+            await XAIChatFormatter(
+                input_types=["text/plain", "image/*"],
+            ).format([msg]),
+        )
+
     # -------------------------------------------------------------------
     # XAIMultiAgentFormatter tests
     # -------------------------------------------------------------------
@@ -540,6 +564,36 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                     "</history>",
                     image("data:image/jpeg;base64,Zmlyc3Q="),
                     image("https://example.com/second.png"),
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_history_respects_image_input_types(self) -> None:
+        """Collapsed history does not forward undeclared image types."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this animation."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="R0lGODlh",
+                            media_type="image/gif",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    self._hist_prompt + "<history>\n"
+                    "user: Inspect this animation.\n"
+                    "</history>",
                 ),
             ],
             res,
