@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
 	ChatModelConfig,
 	PermissionMode,
+	RealtimeModelConfig,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
 	UpdateSessionRequest,
@@ -34,6 +35,7 @@ import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBa
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { RealtimeModelSelect } from '@/components/select/RealtimeModelSelect';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,6 +54,7 @@ import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
+import { useRealtimeVoice } from '@/hooks/useRealtimeVoice';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
@@ -178,6 +181,9 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<RealtimeModelConfig | null>(
+		null,
+	);
 	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
 		useState<SessionKnowledgeConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
@@ -247,6 +253,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		[sessionId],
 	);
 
+	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
 	const {
 		msgs,
 		loading: messagesLoading,
@@ -260,6 +267,9 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
 		onSessionUpdated: handleSessionUpdated,
+		isRealtimeAudioActive: () =>
+			realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting',
+		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
 	});
 	const {
 		mcps,
@@ -511,6 +521,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedRealtimeModel(null);
 		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
 
@@ -618,6 +629,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedRealtimeModel(view.session.config.realtime_model_config ?? null);
 		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
 
@@ -672,6 +684,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	 */
 	const handleTTSChange = async (config: TTSModelConfig | null) => {
 		await patchConfig({ tts_model_config: config }, () => setSelectedTTSModel(config));
+	};
+
+	/** Persist the model used by browser realtime voice mode. */
+	const handleRealtimeModelChange = async (config: RealtimeModelConfig | null) => {
+		await patchConfig({ realtime_model_config: config }, () =>
+			setSelectedRealtimeModel(config),
+		);
 	};
 
 	/**
@@ -745,6 +764,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 								{/* Never squeezed by a long session name: the
 								    name truncates instead. */}
 								<div className="flex shrink-0 flex-row gap-x-1">
+									<RealtimeModelSelect
+										value={selectedRealtimeModel}
+										onChange={handleRealtimeModelChange}
+										onAddCredential={() => setCredentialOpen(true)}
+										refetchTrigger={credentialRefetchTrigger}
+										disabled={configPending || realtimeVoice.state !== 'idle'}
+										className="text-muted-foreground hover:text-foreground"
+									/>
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
@@ -849,10 +876,26 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
-									disabled={selectedModel === null}
+									disabled={
+										selectedModel === null ||
+										realtimeVoice.state === 'active' ||
+										realtimeVoice.state === 'connecting'
+									}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
-									onInterrupt={interrupt}
+									onInterrupt={
+										realtimeVoice.state === 'active'
+											? realtimeVoice.interrupt
+											: interrupt
+									}
+									voiceState={realtimeVoice.state}
+									onVoiceToggle={() => void realtimeVoice.toggle()}
+									voiceDisabled={
+										!selectedRealtimeModel ||
+										!agentId ||
+										!sessionId ||
+										(realtimeVoice.state === 'idle' && phase !== 'idle')
+									}
 									// cwd={
 									// 	{cwd: view?.session.config.cwd, git: {
 									// 		branch: 'main',

@@ -108,6 +108,7 @@ tools = [
 ]
 # ------------ Realtime voice ------------
 realtime = [
+    "aiortc>=1.14",
     "websockets>=13",
     "sounddevice",
 ]
@@ -167,6 +168,7 @@ reme = ["agentscope[memory-reme]"]
 full = [
     "agentscope[models]",
     "agentscope[service]",
+    "agentscope[realtime]",
     "agentscope[storage-redis]",
     "agentscope[storage-sql]",
     "agentscope[storage-s3]",

@@ -20,6 +20,13 @@ export interface TTSModelConfig {
 	parameters: Record<string, unknown>;
 }
 
+export interface RealtimeModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	parameters: Record<string, unknown>;
+}
+
 export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;
@@ -150,6 +157,8 @@ export interface SessionConfig {
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** Realtime voice model configuration. null disables voice mode. */
+	realtime_model_config: RealtimeModelConfig | null;
 	/** Knowledge bases attached to this session + KB middleware parameters. */
 	knowledge_config: SessionKnowledgeConfig | null;
 	workspace_id: string;
@@ -187,6 +196,8 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional realtime voice model. Omit (or pass null) for none. */
+	realtime_model_config?: RealtimeModelConfig | null;
 	/** Optional knowledge base attachment. Omit (or null) for none. */
 	knowledge_config?: SessionKnowledgeConfig | null;
 }
@@ -216,6 +227,8 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/** New realtime voice model, or null to disable voice mode. */
+	realtime_model_config?: RealtimeModelConfig | null;
 	/**
 	 * New knowledge base attachment. PATCH semantics:
 	 *   - omit the field → leave unchanged
@@ -824,6 +837,54 @@ export interface ListModelRequest {
 export interface ListModelResponse {
 	models: ModelCard[];
 	total: number;
+}
+
+export interface RealtimeModelCard {
+	type: 'realtime_model';
+	model_type: string;
+	name: string;
+	label: string;
+	status: 'active' | 'deprecated' | 'sunset';
+	deprecated_at: string | null;
+	input_types: string[];
+	output_types: string[];
+	input_sample_rate: number;
+	output_sample_rate: number;
+	supports_tools: boolean;
+	max_context_tokens: number | null;
+	max_audio_turns: number | null;
+	max_audio_duration_s: number | null;
+	max_session_duration_s: number | null;
+	parameter_schema: Record<string, unknown>;
+	parameter_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListRealtimeModelResponse {
+	models: RealtimeModelCard[];
+	total: number;
+}
+
+export interface RealtimeIceServer {
+	urls: string | string[];
+	username?: string;
+	credential?: string;
+	credentialType?: 'password' | 'oauth';
+}
+
+export interface RealtimeConfigResponse {
+	ice_servers: RealtimeIceServer[];
+}
+
+export interface RealtimeOfferRequest {
+	agent_id: string;
+	sdp: string;
+	type: 'offer';
+}
+
+export interface RealtimeOfferResponse {
+	connection_id: string;
+	sdp: string;
+	type: 'answer';
 }
 
 // ─── Embedding ────────────────────────────────────────────────────────────────

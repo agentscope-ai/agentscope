@@ -197,6 +197,9 @@ const ChatPageInner = () => {
 			...(seedConfig?.fallback_chat_model_config
 				? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
 				: {}),
+			...(seedConfig?.realtime_model_config
+				? { realtime_model_config: seedConfig.realtime_model_config }
+				: {}),
 		});
 		navigate(`/chat/${urlAgentId}/${res.session_id}`);
 	};

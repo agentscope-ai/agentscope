@@ -13,6 +13,7 @@ from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
+    TextBlockEndEvent,
 )
 from agentscope.message import AssistantMsg, Msg, UserMsg
 from agentscope.realtime import (
@@ -221,8 +222,15 @@ class FakeTransport(TransportBase):
     input_sample_rate = 16000
     output_sample_rate = 24000
 
-    def __init__(self, frames: int) -> None:
+    def __init__(
+        self,
+        frames: int,
+        played_ms: int = 320,
+        reported_item: str | None = None,
+    ) -> None:
         self.frames = frames
+        self.played_ms = played_ms
+        self.reported_item = reported_item
         self.item = ""
         self.cleared = 0
         self.started = 0
@@ -252,10 +260,14 @@ class FakeTransport(TransportBase):
         return self.playout()
 
     def playout(self) -> PlayoutPosition:
-        """Always 320 ms into the current item."""
+        """Report the configured position in the current item."""
         return PlayoutPosition(
-            item_id=self.item,
-            played_ms=320,
+            item_id=(
+                self.reported_item
+                if self.reported_item is not None
+                else self.item
+            ),
+            played_ms=self.played_ms,
             first_played_at=1.0,
         )
 
@@ -368,6 +380,225 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [("user", "讲个故事"), ("assistant", "从前有座山山里有座庙")],
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
+
+    async def test_barge_in_after_response_done_clears_playout(self) -> None:
+        """A completed response remains interruptible while its queued
+        audio is still playing."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3)
+        rebuilt = Msg(
+            id="r1",
+            role="assistant",
+            name="Friday",
+            content=[],
+        )
+        correction_events = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if getattr(event, "reply_id", None) == "r1":
+                    rebuilt.append_event(event)
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    correction_events.append(
+                        event.model_dump(exclude={"id", "created_at"}),
+                    )
+
+        self.assertEqual(
+            correction_events,
+            [
+                {
+                    "type": "TEXT_BLOCK_END",
+                    "metadata": {},
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "text": "从前有座山山里有座庙",
+                },
+            ],
+        )
+        self.assertEqual(rebuilt.get_text_content(), "从前有座山山里有座庙")
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,320ms,'从前有座山山里有座庙')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (
+                    message.role,
+                    message.get_text_content(),
+                    message.finished_reason,
+                )
+                for message in agent.state.context
+            ],
+            [
+                ("user", "讲个故事", None),
+                (
+                    "assistant",
+                    "从前有座山山里有座庙",
+                    ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    async def test_barge_in_after_completed_playout_keeps_reply(self) -> None:
+        """Speaking after all queued audio played does not truncate it."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3, played_ms=700)
+        correction_events = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    correction_events.append(event)
+
+        self.assertListEqual(correction_events, [])
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (
+                    message.role,
+                    message.get_text_content(),
+                    message.finished_reason,
+                )
+                for message in agent.state.context
+            ],
+            [
+                ("user", "讲个故事", None),
+                (
+                    "assistant",
+                    "从前有座山山里有座庙庙里有个老和尚",
+                    ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    async def test_zero_playout_keeps_no_transcript_prefix(self) -> None:
+        """A response interrupted before playback retains no first word."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3, played_ms=0)
+        corrections = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    corrections.append(
+                        event.model_dump(exclude={"id", "created_at"}),
+                    )
+
+        self.assertEqual(
+            corrections,
+            [
+                {
+                    "type": "TEXT_BLOCK_END",
+                    "metadata": {},
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "text": "",
+                },
+            ],
+        )
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,0ms,'')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("user", "讲个故事")],
+        )
+
+    async def test_mismatched_playout_still_cancels_active_reply(self) -> None:
+        """A stale previous item cannot make the current reply
+        uninterruptible."""
+        script = REPLY_R1 + [me.SpeechStartedEvent(item_id="u2")]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(
+            frames=3,
+            played_ms=700,
+            reported_item="previous-item",
+        )
+
+        async with agent:
+            summary = await self._collect(agent, transport)
+
+        self.assertListEqual(
+            summary,
+            [
+                ("user", "讲个故事"),
+                ("reply_end", "interrupted"),
+            ],
+        )
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,0ms,'')",
+                "cancel",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("user", "讲个故事")],
+        )
 
     async def test_provider_timeout_reconnects_on_next_audio(self) -> None:
         """When the provider closes the session, nothing reconnects until
