@@ -11,6 +11,7 @@ from agentscope.app.channel._telegram._markdown import (
     _plain_text,
     _render_markdown,
     _telegram_markdown_chunks,
+    _TelegramTextChunk,
 )
 
 if importlib.util.find_spec("markdown_it") is None:
@@ -125,16 +126,32 @@ class TelegramMarkdownTest(TestCase):
             4096,
         )
 
-        self.assertEqual(len(chunks), 3)
-        self.assertEqual("".join(chunk.plain for chunk in chunks), "x" * 8200)
+        self.assertEqual(
+            chunks,
+            [
+                _TelegramTextChunk(
+                    html='<a href="https://example.test">'
+                    f"<b>{'x' * 4096}</b></a>",
+                    plain="x" * 4096,
+                ),
+                _TelegramTextChunk(
+                    html='<a href="https://example.test">'
+                    f"<b>{'x' * 4096}</b></a>",
+                    plain="x" * 4096,
+                ),
+                _TelegramTextChunk(
+                    html='<a href="https://example.test">'
+                    f"<b>{'x' * 8}</b></a>",
+                    plain="x" * 8,
+                ),
+            ],
+        )
         for chunk in chunks:
             self.assertLessEqual(len(chunk.plain), 4096)
             validator = _TagValidator()
             validator.feed(chunk.html)
             validator.close()
             self.assertEqual(validator.stack, [])
-            self.assertTrue(chunk.html.startswith('<a href="https://'))
-            self.assertTrue(chunk.html.endswith("</a>"))
 
     def test_empty_markdown_produces_no_messages(self) -> None:
         self.assertEqual(_telegram_markdown_chunks("", 4096), [])

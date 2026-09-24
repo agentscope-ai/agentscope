@@ -5,6 +5,7 @@
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -13,10 +14,14 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 from pydantic import ValidationError
 
-from utils import AnyString
+from utils import AnyString, AnyValue
 
 from agentscope.app.channel import TelegramChannel
-from agentscope.app.channel._base import ChannelEvent, ChatKind
+from agentscope.app.channel._base import (
+    ChannelConfirmationResultEvent,
+    ChannelEvent,
+    ChatKind,
+)
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.channel._telegram._channel import (
     _ApprovalCallback,
@@ -52,7 +57,7 @@ from agentscope.message import (
     URLSource,
 )
 from agentscope.message._block import ToolResultState
-from agentscope.permission import PermissionBehavior
+from agentscope.permission import PermissionBehavior, PermissionDecision
 
 try:
     from telegram import Chat, Message, MessageEntity, Update, User
@@ -203,18 +208,26 @@ class TelegramSchemaTest(TestCase):
             schema["properties"]["bot_token"]["format"],
             "password",
         )
-        self.assertTrue(config.only_at_reply)
-        self.assertFalse(config.show_tool_process)
-        self.assertFalse(config.show_thinking)
-        self.assertTrue(TelegramChannel.capabilities.text)
-        self.assertTrue(TelegramChannel.capabilities.image)
-        self.assertTrue(TelegramChannel.capabilities.file)
-        self.assertTrue(TelegramChannel.capabilities.interactive)
-        self.assertTrue(TelegramChannel.capabilities.markdown)
-        self.assertTrue(TelegramChannel.capabilities.streaming)
         self.assertEqual(
-            TelegramChannel.capabilities.max_message_length,
-            4096,
+            config.model_dump(),
+            {
+                "only_at_reply": True,
+                "show_tool_process": False,
+                "show_thinking": False,
+            },
+        )
+        self.assertEqual(
+            TelegramChannel.capabilities.model_dump(),
+            {
+                "text": True,
+                "markdown": True,
+                "image": True,
+                "file": True,
+                "interactive": True,
+                "streaming": True,
+                "max_message_length": 4096,
+                "wiki": False,
+            },
         )
 
     def test_credentials_are_normalised_and_validated_without_leaks(
@@ -224,8 +237,10 @@ class TelegramSchemaTest(TestCase):
             bot_id=" 123 ",
             bot_token=" 123:abc_DEF-9 ",
         )
-        self.assertEqual(credentials.bot_id, "123")
-        self.assertEqual(credentials.bot_token, "123:abc_DEF-9")
+        self.assertEqual(
+            credentials.model_dump(),
+            {"bot_id": "123", "bot_token": "123:abc_DEF-9"},
+        )
 
         for values in (
             {"bot_id": "bot", "bot_token": "123:valid"},
@@ -428,13 +443,15 @@ class TelegramLifecycleTest(IsolatedAsyncioTestCase):
                 "application.shutdown",
             ],
         )
-        allowed = application.updater.polling_kwargs["allowed_updates"]
         self.assertEqual(
-            [str(value) for value in allowed],
-            ["message", "callback_query"],
-        )
-        self.assertFalse(
-            application.updater.polling_kwargs["drop_pending_updates"],
+            application.updater.polling_kwargs,
+            {
+                "timeout": 30,
+                "bootstrap_retries": 0,
+                "allowed_updates": ["message", "callback_query"],
+                "drop_pending_updates": False,
+                "error_callback": channel._on_polling_error,
+            },
         )
 
     async def test_bot_id_mismatch_is_permanent(self) -> None:
@@ -446,8 +463,12 @@ class TelegramLifecycleTest(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(_PermanentTelegramError, "does not match"):
             await channel._run_application()
         self.assertEqual(
-            application.calls[-1],
-            "application.shutdown",
+            application.calls,
+            [
+                "application.initialize",
+                "bot.get_me",
+                "application.shutdown",
+            ],
         )
 
     async def test_invalid_token_is_permanent_and_closes_requests(
@@ -475,8 +496,15 @@ class TelegramLifecycleTest(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(_PermanentTelegramError, "active webhook"):
             await channel._run_application()
-        self.assertNotIn("updater.start_polling", application.calls)
-        self.assertEqual(application.calls[-1], "application.shutdown")
+        self.assertEqual(
+            application.calls,
+            [
+                "application.initialize",
+                "bot.get_me",
+                "bot.get_webhook_info",
+                "application.shutdown",
+            ],
+        )
 
     async def test_polling_conflict_requests_reconnect(self) -> None:
         channel = _channel()
@@ -554,7 +582,10 @@ class TelegramLifecycleTest(IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await channel.start_listening(AsyncMock())
 
-        self.assertEqual(channel._run_application.await_count, 3)
+        self.assertEqual(
+            channel._run_application.await_args_list,
+            [call()] * 3,
+        )
         self.assertEqual(delays, [1.0, 2.0, 4.0])
 
 
@@ -815,15 +846,21 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
                 selected = self.inbound.select_media(
                     _media_message(**{attr: item}),
                 )
-                self.assertEqual(selected[1:], (expected_mime, expected_name))
+                self.assertEqual(
+                    selected,
+                    (
+                        item[-1] if isinstance(item, list) else item,
+                        expected_mime,
+                        expected_name,
+                    ),
+                )
 
-        smaller = media()
-        largest = media()
+        smaller = media(file_id="small-photo")
+        largest = media(file_id="large-photo")
         selected = self.inbound.select_media(
             _media_message(photo=[smaller, largest]),
         )
-        assert selected is not None
-        self.assertIs(selected[0], largest)
+        self.assertEqual(selected, (largest, "image/jpeg", "photo.jpg"))
 
     async def test_downloaded_media_is_base64_and_preserves_metadata(
         self,
@@ -959,12 +996,8 @@ class TelegramInboundTest(IsolatedAsyncioTestCase):
             self.inbound.buffer_album(second)
             await asyncio.sleep(0.03)
 
-        normalised_messages = self.inbound.normalise_messages.await_args.args[
-            0
-        ]
-        self.assertEqual(
-            [message.message_id for message in normalised_messages],
-            [1, 2],
+        self.inbound.normalise_messages.assert_awaited_once_with(
+            [first, second],
         )
         self.assertEqual(self.received, [event])
 
@@ -1068,7 +1101,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
 
     async def test_text_is_sent_non_streaming_and_split(self) -> None:
         result = await self.channel.send_message_to("-100", "x" * 4097)
-        self.assertTrue(result.ok)
+        self.assertEqual(result, _TelegramResult(True))
         self.assertEqual(
             self.bot.send_message.await_args_list,
             [
@@ -1090,20 +1123,45 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             "huge.bin",
         )
 
-        self.assertTrue(image.ok)
-        self.assertTrue(file_result.ok)
-        self.assertFalse(big_image.ok)
-        self.assertFalse(big_file.ok)
+        self.assertEqual(image, _TelegramResult(True))
+        self.assertEqual(file_result, _TelegramResult(True))
         self.assertEqual(
-            big_image.error,
-            "image exceeds Telegram's 10 MiB photo limit; use SendFile",
+            big_image,
+            _TelegramResult(
+                False,
+                "image exceeds Telegram's 10 MiB photo limit; use SendFile",
+            ),
         )
         self.assertEqual(
-            big_file.error,
-            "file exceeds Telegram's 50 MiB limit",
+            big_file,
+            _TelegramResult(False, "file exceeds Telegram's 50 MiB limit"),
         )
-        self.bot.send_photo.assert_awaited_once()
-        self.bot.send_document.assert_awaited_once()
+        self.assertEqual(
+            [
+                call(
+                    *item.args,
+                    **{
+                        **item.kwargs,
+                        "photo": item.kwargs["photo"].getvalue(),
+                    },
+                )
+                for item in self.bot.send_photo.await_args_list
+            ],
+            [call(chat_id=1, photo=b"image", filename="a.png")],
+        )
+        self.assertEqual(
+            [
+                call(
+                    *item.args,
+                    **{
+                        **item.kwargs,
+                        "document": item.kwargs["document"].getvalue(),
+                    },
+                )
+                for item in self.bot.send_document.await_args_list
+            ],
+            [call(chat_id=1, document=b"file", filename="a.bin")],
+        )
 
     async def test_private_response_uses_draft_then_persistent_message(
         self,
@@ -1123,18 +1181,14 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         )
         await self.channel.send_response(event, _events(items))
 
-        self.bot.send_message_draft.assert_awaited_once()
-        draft = dict(self.bot.send_message_draft.await_args.kwargs)
-        draft_id = draft.pop("draft_id")
+        draft_id = self.bot.send_message_draft.await_args.kwargs["draft_id"]
         self.assertIsInstance(draft_id, int)
         self.assertNotEqual(draft_id, 0)
-        self.assertEqual(
-            draft,
-            {
-                "chat_id": 456,
-                "text": "done",
-                "parse_mode": "HTML",
-            },
+        self.bot.send_message_draft.assert_awaited_once_with(
+            chat_id=456,
+            draft_id=AnyValue(),
+            text="done",
+            parse_mode="HTML",
         )
         self.bot.send_message.assert_awaited_once_with(
             chat_id=456,
@@ -1187,13 +1241,21 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             await self.channel._update_stream_preview("456", preview, "ab")
             await self.channel._update_stream_preview("456", preview, "abc")
 
-        self.assertEqual(self.bot.send_message_draft.await_count, 2)
         self.assertEqual(
+            self.bot.send_message_draft.await_args_list,
             [
-                call.kwargs["text"]
-                for call in self.bot.send_message_draft.await_args_list
+                call(chat_id=456, draft_id=7, text="a", parse_mode="HTML"),
+                call(chat_id=456, draft_id=7, text="abc", parse_mode="HTML"),
             ],
-            ["a", "abc"],
+        )
+        self.assertEqual(
+            preview,
+            _StreamPreview(
+                mode="draft",
+                draft_id=7,
+                last_update=2.1,
+                last_html="abc",
+            ),
         )
 
     async def test_group_stream_updates_use_three_second_cadence(self) -> None:
@@ -1251,7 +1313,16 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             text="x" * 4096,
             parse_mode="HTML",
         )
-        self.assertEqual(preview.last_html, "x" * 4096)
+        self.assertEqual(
+            preview,
+            _StreamPreview(
+                mode="edit",
+                draft_id=7,
+                message_id=99,
+                last_update=AnyValue(),
+                last_html="x" * 4096,
+            ),
+        )
 
     async def test_preview_failure_does_not_block_final_reply(self) -> None:
         self.bot.send_message_draft.side_effect = NetworkError("offline")
@@ -1271,12 +1342,11 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
 
         await self.channel.send_response(event, _events(items))
 
-        self.bot.send_message_draft.assert_awaited_once()
-        draft = dict(self.bot.send_message_draft.await_args.kwargs)
-        draft.pop("draft_id")
-        self.assertEqual(
-            draft,
-            {"chat_id": 456, "text": "done", "parse_mode": "HTML"},
+        self.bot.send_message_draft.assert_awaited_once_with(
+            chat_id=456,
+            draft_id=AnyValue(),
+            text="done",
+            parse_mode="HTML",
         )
         self.bot.send_message.assert_awaited_once_with(
             chat_id=456,
@@ -1321,7 +1391,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
 
         result = await self.channel._send_formatted_chunk("456", chunk)
 
-        self.assertTrue(result.ok)
+        self.assertEqual(result, _TelegramResult(True))
         self.assertEqual(
             self.bot.send_message.await_args_list,
             [
@@ -1366,16 +1436,14 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             "x" * 4097,
         )
 
-        self.channel._send_formatted_chunk.assert_awaited_once()
-        self.assertEqual(
-            self.channel._send_formatted_chunk.await_args.args[:2],
-            (
-                "-100",
-                _TelegramTextChunk(
-                    html="x" * 4096,
-                    plain="x" * 4096,
-                ),
+        self.channel._send_formatted_chunk.assert_awaited_once_with(
+            "-100",
+            _TelegramTextChunk(
+                html="x" * 4096,
+                plain="x" * 4096,
             ),
+            _RetryBudget(deadline=AnyValue()),
+            preview,
         )
 
     async def test_response_image_degrades_to_document(self) -> None:
@@ -1399,7 +1467,19 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             _events([ReplyEndEvent(session_id="s", reply_id="r")]),
         )
         self.bot.send_photo.assert_not_awaited()
-        self.bot.send_document.assert_awaited_once()
+        self.assertEqual(
+            [
+                call(
+                    *item.args,
+                    **{
+                        **item.kwargs,
+                        "document": item.kwargs["document"].getvalue(),
+                    },
+                )
+                for item in self.bot.send_document.await_args_list
+            ],
+            [call(chat_id=1, document=raw, filename="large.png")],
+        )
 
     async def test_response_ignores_url_sources(self) -> None:
         block = DataBlock(
@@ -1484,6 +1564,24 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(order, ["text", "attachment", "approval"])
+        self.channel._send_formatted_chunk.assert_awaited_once_with(
+            "456",
+            _TelegramTextChunk(html="answer", plain="answer"),
+            _RetryBudget(deadline=AnyValue()),
+            _StreamPreview(mode="draft", draft_id=AnyValue()),
+        )
+        self.channel.send_image_to.assert_awaited_once_with(
+            "456",
+            b"image",
+            "image.png",
+            budget=_RetryBudget(deadline=AnyValue()),
+            pace=_StreamPreview(mode="draft", draft_id=AnyValue()),
+        )
+        self.channel._present_confirm.assert_awaited_once_with(
+            event,
+            confirmation,
+            _StreamPreview(mode="draft", draft_id=AnyValue()),
+        )
 
     async def test_approval_buttons_share_one_callback_payload(self) -> None:
         event = ChannelEvent(
@@ -1502,49 +1600,97 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        await self.channel._present_confirm(event, request)
-        sent = dict(self.bot.send_message.await_args.kwargs)
-        markup = sent.pop("reply_markup")
+        with (
+            patch(
+                "agentscope.app.channel._telegram._channel."
+                "secrets.token_urlsafe",
+                return_value="approval-token",
+            ),
+            patch.object(
+                self.bus,
+                "registry_set",
+                wraps=self.bus.registry_set,
+            ) as registry_set,
+        ):
+            await self.channel._present_confirm(event, request)
         self.assertEqual(
-            sent,
-            {
-                "chat_id": -100,
-                "text": (
-                    "🛡️ Tool execution requires approval\n"
-                    "Tool: SendMessage\n"
-                    'Arguments: {"chat_id":"1","text":"hello"}'
+            [
+                call(
+                    *item.args,
+                    **{
+                        **item.kwargs,
+                        "reply_markup": item.kwargs["reply_markup"].to_dict(),
+                    },
+                )
+                for item in self.bot.send_message.await_args_list
+            ],
+            [
+                call(
+                    chat_id=-100,
+                    text=(
+                        "🛡️ Tool execution requires approval\n"
+                        "Tool: SendMessage\n"
+                        'Arguments: {"chat_id":"1","text":"hello"}'
+                    ),
+                    reply_markup={
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "✅ Allow",
+                                    "callback_data": "as:a:approval-token",
+                                },
+                                {
+                                    "text": "❌ Deny",
+                                    "callback_data": "as:d:approval-token",
+                                },
+                            ],
+                        ],
+                    },
                 ),
-            },
+            ],
         )
-        allow_button, deny_button = markup.inline_keyboard[0]
-        self.assertEqual(allow_button.text, "✅ Allow")
-        self.assertEqual(deny_button.text, "❌ Deny")
-        self.assertTrue(allow_button.callback_data.startswith("as:a:"))
-        self.assertTrue(deny_button.callback_data.startswith("as:d:"))
-        allow = allow_button.callback_data
-        deny = deny_button.callback_data
-        (
-            allow_data,
-            allow_token,
-            allow_decision,
-        ) = await self.channel._load_approval_callback(allow)
-        (
-            deny_data,
-            deny_token,
-            deny_decision,
-        ) = await self.channel._load_approval_callback(deny)
-        expected = _ApprovalCallback(
-            tool_call_id="tool-1",
-            chat_id="-100",
-            agent_id="agent-1",
-            session_id="session-1",
+        registry_set.assert_awaited_once_with(
+            "agentscope:channel:approval:telegram-1:approval-token",
+            "payload",
+            json.dumps(
+                {
+                    "tool_call_id": "tool-1",
+                    "chat_id": "-100",
+                    "agent_id": "agent-1",
+                    "session_id": "session-1",
+                    "submitted": False,
+                    "approved": None,
+                },
+                separators=(",", ":"),
+            ),
+            ttl_secs=86400,
         )
-        self.assertEqual(allow_data, expected)
-        self.assertEqual(deny_data, expected)
-        self.assertEqual(allow_token, deny_token)
-        self.assertTrue(allow_decision)
-        self.assertFalse(deny_decision)
-        self.assertLessEqual(len(allow.encode("utf-8")), 64)
+        self.assertEqual(
+            await self.channel._load_approval_callback("as:a:approval-token"),
+            (
+                _ApprovalCallback(
+                    tool_call_id="tool-1",
+                    chat_id="-100",
+                    agent_id="agent-1",
+                    session_id="session-1",
+                ),
+                "approval-token",
+                True,
+            ),
+        )
+        self.assertEqual(
+            await self.channel._load_approval_callback("as:d:approval-token"),
+            (
+                _ApprovalCallback(
+                    tool_call_id="tool-1",
+                    chat_id="-100",
+                    agent_id="agent-1",
+                    session_id="session-1",
+                ),
+                "approval-token",
+                False,
+            ),
+        )
 
     async def test_callback_submit_and_failure_paths(self) -> None:
         token = await self.channel._store_approval_callback(
@@ -1561,16 +1707,17 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             SimpleNamespace(callback_query=failed),
             None,
         )
-        stored, _, _ = await self.channel._load_approval_callback(
-            f"as:d:{token}",
-        )
         self.assertEqual(
-            stored,
-            _ApprovalCallback(
-                tool_call_id="tool-1",
-                chat_id="-100",
-                agent_id="agent-1",
-                session_id="session-1",
+            await self.channel._load_approval_callback(f"as:d:{token}"),
+            (
+                _ApprovalCallback(
+                    tool_call_id="tool-1",
+                    chat_id="-100",
+                    agent_id="agent-1",
+                    session_id="session-1",
+                ),
+                token,
+                False,
             ),
         )
         failed.answer.assert_awaited_once_with(
@@ -1584,19 +1731,17 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             SimpleNamespace(callback_query=succeeded),
             None,
         )
-        emitted = self.channel._emit.await_args.args[0]
-        self.assertEqual(
-            emitted.model_dump(),
-            {
-                "channel_id": "telegram-1",
-                "chat_id": "-100",
-                "channel_user_id": "456",
-                "agent_id": "agent-1",
-                "session_id": "session-1",
-                "tool_call_id": "tool-1",
-                "approved": True,
-                "actor": "456",
-            },
+        self.channel._emit.assert_awaited_once_with(
+            ChannelConfirmationResultEvent(
+                channel_id="telegram-1",
+                chat_id="-100",
+                channel_user_id="456",
+                agent_id="agent-1",
+                session_id="session-1",
+                tool_call_id="tool-1",
+                approved=True,
+                actor="456",
+            ),
         )
         succeeded.answer.assert_awaited_once_with("Decision submitted.")
         succeeded.edit_message_text.assert_awaited_once_with(
@@ -1612,6 +1757,7 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 session_id="session-1",
             ),
         )
+        self.assertLessEqual(len(f"as:a:{token}".encode("utf-8")), 64)
         self.channel._emit = AsyncMock()
         with patch.object(
             self.bus,
@@ -1625,7 +1771,10 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 None,
             )
 
-        registry_get.assert_awaited_once()
+        registry_get.assert_awaited_once_with(
+            f"agentscope:channel:approval:telegram-1:{token}",
+            "payload",
+        )
 
     async def test_wrong_chat_does_not_consume_callback(self) -> None:
         token = await self.channel._store_approval_callback(
@@ -1643,16 +1792,17 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             None,
         )
         self.channel._emit.assert_not_awaited()
-        stored, _, _ = await self.channel._load_approval_callback(
-            f"as:a:{token}",
-        )
         self.assertEqual(
-            stored,
-            _ApprovalCallback(
-                tool_call_id="tool-1",
-                chat_id="-100",
-                agent_id="agent-1",
-                session_id="session-1",
+            await self.channel._load_approval_callback(f"as:a:{token}"),
+            (
+                _ApprovalCallback(
+                    tool_call_id="tool-1",
+                    chat_id="-100",
+                    agent_id="agent-1",
+                    session_id="session-1",
+                ),
+                token,
+                True,
             ),
         )
 
@@ -1675,28 +1825,24 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
 
         self.channel._emit.assert_not_awaited()
 
-        stored, _, _ = await self.channel._load_approval_callback(
-            f"as:a:{token}",
-        )
         self.assertEqual(
-            stored,
-            _ApprovalCallback(
-                tool_call_id="tool-1",
-                chat_id="-100",
-                agent_id="agent-1",
-                session_id="session-1",
+            await self.channel._load_approval_callback(f"as:a:{token}"),
+            (
+                _ApprovalCallback(
+                    tool_call_id="tool-1",
+                    chat_id="-100",
+                    agent_id="agent-1",
+                    session_id="session-1",
+                ),
+                token,
+                True,
             ),
         )
 
     async def test_callback_emits_when_ui_operations_fail(self) -> None:
-        emitted: list[Any] = []
-
-        async def emit(event: Any) -> None:
-            emitted.append(event)
-
-        self.channel._emit = emit
         for failed_ui in ("answer", "edit_message_text"):
             with self.subTest(failed_ui=failed_ui):
+                self.channel._emit = AsyncMock()
                 token = await self.channel._store_approval_callback(
                     _ApprovalCallback(
                         tool_call_id=f"tool-{failed_ui}",
@@ -1713,27 +1859,28 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                     None,
                 )
 
-                self.assertEqual(
-                    emitted[-1].model_dump(),
-                    {
-                        "channel_id": "telegram-1",
-                        "chat_id": "-100",
-                        "channel_user_id": "456",
-                        "agent_id": "agent-1",
-                        "session_id": "session-1",
-                        "tool_call_id": f"tool-{failed_ui}",
-                        "approved": True,
-                        "actor": "456",
-                    },
+                self.channel._emit.assert_awaited_once_with(
+                    ChannelConfirmationResultEvent(
+                        channel_id="telegram-1",
+                        chat_id="-100",
+                        channel_user_id="456",
+                        agent_id="agent-1",
+                        session_id="session-1",
+                        tool_call_id=f"tool-{failed_ui}",
+                        approved=True,
+                        actor="456",
+                    ),
                 )
                 query.answer.assert_awaited_once_with("Decision submitted.")
                 query.edit_message_text.assert_awaited_once_with(
                     "✅ Approval submitted",
                 )
-                stored, _, _ = await self.channel._load_approval_callback(
-                    f"as:a:{token}",
+                self.assertEqual(
+                    await self.channel._load_approval_callback(
+                        f"as:a:{token}",
+                    ),
+                    (None, token, True),
                 )
-                self.assertIsNone(stored)
 
     async def test_concurrent_decisions_submit_once(self) -> None:
         token = await self.channel._store_approval_callback(
@@ -1759,7 +1906,22 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
                 None,
             ),
         )
-        self.channel._emit.assert_awaited_once()
+        # Either concurrent decision may win, but all other fields and the
+        # single emission are deterministic.
+        approved = self.channel._emit.await_args.args[0].approved
+        self.assertIsInstance(approved, bool)
+        self.channel._emit.assert_awaited_once_with(
+            ChannelConfirmationResultEvent(
+                channel_id="telegram-1",
+                chat_id="-100",
+                channel_user_id="456",
+                agent_id="agent-1",
+                session_id="session-1",
+                tool_call_id="tool-1",
+                approved=approved,
+                actor="456",
+            ),
+        )
 
     async def test_delete_failure_leaves_terminal_receipt(self) -> None:
         token = await self.channel._store_approval_callback(
@@ -1780,18 +1942,19 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             ),
             None,
         )
-        stored, _, _ = await self.channel._load_approval_callback(
-            f"as:d:{token}",
-        )
         self.assertEqual(
-            stored,
-            _ApprovalCallback(
-                tool_call_id="tool-1",
-                chat_id="-100",
-                agent_id="agent-1",
-                session_id="session-1",
-                submitted=True,
-                approved=True,
+            await self.channel._load_approval_callback(f"as:d:{token}"),
+            (
+                _ApprovalCallback(
+                    tool_call_id="tool-1",
+                    chat_id="-100",
+                    agent_id="agent-1",
+                    session_id="session-1",
+                    submitted=True,
+                    approved=True,
+                ),
+                token,
+                False,
             ),
         )
 
@@ -1800,7 +1963,18 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
             SimpleNamespace(callback_query=retry),
             None,
         )
-        self.channel._emit.assert_awaited_once()
+        self.channel._emit.assert_awaited_once_with(
+            ChannelConfirmationResultEvent(
+                channel_id="telegram-1",
+                chat_id="-100",
+                channel_user_id="456",
+                agent_id="agent-1",
+                session_id="session-1",
+                tool_call_id="tool-1",
+                approved=True,
+                actor="456",
+            ),
+        )
         retry.edit_message_text.assert_awaited_once_with(
             "✅ Approval submitted",
         )
@@ -1818,9 +1992,9 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
 
         self.assertIs(await channel._bot(), bot)
         self.assertIs(await channel._bot(), bot)
-        bot.initialize.assert_awaited_once()
+        bot.initialize.assert_awaited_once_with()
         await channel.aclose()
-        bot.shutdown.assert_awaited_once()
+        bot.shutdown.assert_awaited_once_with()
 
     async def test_chat_metadata_cache_and_empty_chat_listing(self) -> None:
         chat = Chat(id=-100, type="supergroup", title="Team")
@@ -1872,7 +2046,10 @@ class TelegramOutboundTest(IsolatedAsyncioTestCase):
         )
         waits = [item.args[0] for item in sleep.await_args_list]
         self.assertAlmostEqual(waits[0], retry_delays[0], delta=0.1)
-        self.assertEqual(waits[1:], retry_delays[1:])
+        self.assertEqual(
+            sleep.await_args_list,
+            [call(AnyValue()), *[call(delay) for delay in retry_delays[1:]]],
+        )
 
 
 class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
@@ -1893,7 +2070,15 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
         )
         for tool in tools:
             decision = await tool.check_permissions({}, None)
-            self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+            self.assertEqual(
+                decision,
+                PermissionDecision(
+                    behavior=PermissionBehavior.ASK,
+                    message=(
+                        "Sending content to a Telegram chat requires approval."
+                    ),
+                ),
+            )
 
         message_result = await tools[0](chat_id="1", text="hello")
         file_result = await tools[1](chat_id="1", path="/workspace/a.bin")
@@ -1921,7 +2106,10 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
                     "id": AnyString(),
                 },
             )
-        self.assertEqual(backend.read_file.await_count, 2)
+        self.assertEqual(
+            backend.read_file.await_args_list,
+            [call("/workspace/a.bin"), call("/workspace/a.png")],
+        )
         channel.send_message_to.assert_awaited_once_with("1", "hello")
         channel.send_file_to.assert_awaited_once_with(
             "1",
@@ -1982,9 +2170,11 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
                 "ok",
             )
         self.assertEqual(
-            [call.args[0] for call in sleep.await_args_list],
-            [1, 2, 0.01],
+            sleep.await_args_list,
+            [call(1), call(2), call(0.01)],
         )
+        self.assertEqual(network_operation.await_args_list, [call()] * 3)
+        self.assertEqual(retry_after_operation.await_args_list, [call()] * 2)
 
     async def test_retry_after_cannot_cross_operation_budget(self) -> None:
         channel = _channel()
@@ -1995,7 +2185,7 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
             with self.assertRaises(_TelegramRetryBudgetExceeded):
                 await channel._retry_api(operation)
         sleep.assert_not_awaited()
-        operation.assert_awaited_once()
+        operation.assert_awaited_once_with()
 
     async def test_retry_after_delays_share_one_operation_budget(self) -> None:
         channel = _channel()
@@ -2025,7 +2215,7 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
             with self.assertRaises(_TelegramRetryBudgetExceeded):
                 await channel._retry_api(operation, budget=budget)
 
-        self.assertEqual(operation.await_count, 2)
+        self.assertEqual(operation.await_args_list, [call(), call()])
         sleep.assert_awaited_once_with(200.0)
 
     async def test_side_effect_timeout_is_not_retried(self) -> None:
@@ -2035,7 +2225,7 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
         with self.assertRaises(_TelegramDeliveryUnknown):
             await channel._retry_api(operation, side_effecting=True)
 
-        operation.assert_awaited_once()
+        operation.assert_awaited_once_with()
 
     async def test_non_retryable_and_long_retry_after_is_retried(
         self,
@@ -2056,7 +2246,7 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
             await channel._retry_api(bad_request)
         with patch("asyncio.sleep", new=AsyncMock()) as sleep:
             self.assertEqual(await channel._retry_api(long_retry), "ok")
-        self.assertEqual(bad_request.await_count, 1)
+        bad_request.assert_awaited_once_with()
         self.assertEqual(
             long_retry.await_args_list,
             [call()] * (len(retry_delays) + 1),
@@ -2074,10 +2264,13 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
         with patch("asyncio.sleep", new=AsyncMock()) as sleep:
             with self.assertRaises(_TelegramDeliveryUnknown):
                 await channel._retry_api(network_operation)
-        self.assertEqual(network_operation.await_count, _MAX_API_ATTEMPTS)
         self.assertEqual(
-            [call.args[0] for call in sleep.await_args_list],
-            [1, 2],
+            network_operation.await_args_list,
+            [call()] * _MAX_API_ATTEMPTS,
+        )
+        self.assertEqual(
+            sleep.await_args_list,
+            [call(1), call(2)],
         )
 
         sleep_started = asyncio.Event()
@@ -2097,9 +2290,12 @@ class TelegramToolsAndRetryTest(IsolatedAsyncioTestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        self.assertEqual(retry_after_operation.await_count, 1)
+        retry_after_operation.assert_awaited_once_with()
 
     async def test_token_is_redacted_from_platform_errors(self) -> None:
         channel = _channel()
         error = RuntimeError("request failed for 123:secret-token")
-        self.assertNotIn("secret-token", channel._safe_error(error))
+        self.assertEqual(
+            channel._safe_error(error),
+            "request failed for <redacted>",
+        )
