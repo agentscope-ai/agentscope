@@ -28,6 +28,7 @@ from agentscope.tool import (
     FunctionTool,
 )
 from agentscope.permission import (
+    PermissionContext,
     PermissionDecision,
     PermissionBehavior,
 )
@@ -1252,6 +1253,46 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     },
                 },
             ],
+        )
+
+    async def test_permission(self) -> None:
+        """Test the permission decision of the function tool."""
+
+        def set_mode(mode: str) -> str:
+            """Set the working mode.
+
+            Args:
+                mode: The mode to use
+            """
+            return f"Mode set to {mode}"
+
+        # Ask the user by default
+        self.assertEqual(
+            await FunctionTool(set_mode).check_permissions(
+                {"mode": "fast"},
+                PermissionContext(),
+            ),
+            PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message="Custom function tools must be explicitly allowed "
+                "by the user.",
+            ),
+        )
+
+        # The given decision takes effect
+        decision = PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="set_mode is always allowed.",
+        )
+        self.assertEqual(
+            await FunctionTool(
+                set_mode,
+                permission=decision,
+            ).check_permissions(
+                {"mode": "fast"},
+                PermissionContext(),
+            ),
+            decision,
         )
 
 

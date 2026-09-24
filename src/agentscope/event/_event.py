@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
-from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict, Literal, List, Self, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import deprecated
 
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from ..message import (
     DataBlock,
     TextBlock,
@@ -74,7 +73,7 @@ class EventBase(BaseModel):
 
     id: str = Field(default_factory=_generate_id)
     """Unique event identifier."""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """ISO 8601 timestamp of when the event was created."""
     metadata: Dict[str, Any] = Field(default_factory=dict)
     """Optional metadata attached to the event."""
@@ -190,6 +189,9 @@ class TextBlockEndEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the text block."""
+    text: str | None = None
+    """The block's final text, when it is not the concatenation of the
+    deltas: a voice reply cut short is truncated to what the user heard."""
 
 
 class DataBlockStartEvent(EventBase):
@@ -203,6 +205,8 @@ class DataBlockStartEvent(EventBase):
     """Unique identifier of the data block."""
     media_type: str
     """MIME type of the data content (e.g. "image/png")."""
+    name: str | None = None
+    """Name of the data, e.g. a file name."""
 
 
 class DataBlockDeltaEvent(EventBase):
@@ -214,10 +218,21 @@ class DataBlockDeltaEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the data block."""
-    data: str
-    """Incremental base64-encoded data."""
     media_type: str
     """MIME type of the data content."""
+    data: str | None = None
+    """Incremental base64-encoded data, mutually exclusive with `url`."""
+    url: str | None = None
+    """URL pointing to the data, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
 
 
 class DataBlockEndEvent(EventBase):

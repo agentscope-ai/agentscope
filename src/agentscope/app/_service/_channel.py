@@ -160,6 +160,9 @@ class ChannelService:
         reporting can leave its last entry behind indefinitely while a
         successor keeps the namespace alive.
 
+        With no report at all, the enabled flag decides: an enabled
+        channel is starting, a disabled one is stopped.
+
         Args:
             channel_id (`str`): The channel to report on.
         """
@@ -180,7 +183,17 @@ class ChannelService:
                 return beat.status
             if best is None or best.state == "stopped":
                 best = beat.status
-        return best or ChannelStatus(state="stopped")
+        if best is not None:
+            return best
+
+        # Nobody has reported yet. For an enabled channel that means it
+        # has not been picked up *yet* — a freshly created one is on its
+        # way — and calling that "stopped" sends the operator looking
+        # for something to start that is already starting.
+        record = await self._storage.get_channel(channel_id)
+        if record is not None and record.enabled:
+            return ChannelStatus(state="connecting")
+        return ChannelStatus(state="stopped")
 
     async def list_seen_chat_ids(self, channel_id: str) -> list[str]:
         """Chat_ids passively recorded from inbound messages.

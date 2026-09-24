@@ -60,19 +60,19 @@ function ChannelCard({
 			onClick={onOpen}
 			className="cursor-pointer items-start shadow-panel transition hover:border-ring/40"
 		>
-			<ItemHeader>
-				<div className="flex min-w-0 items-center gap-3">
+			<ItemHeader className="min-w-0">
+				<div className="flex min-w-0 flex-1 items-center gap-3">
 					<ItemMedia>
 						<TypeAvatar type={type} className="size-9 rounded-lg" />
 					</ItemMedia>
-					<div className="min-w-0">
-						<ItemTitle className="truncate">{name}</ItemTitle>
-						<span className="font-mono text-[11px] text-muted-foreground">
+					<div className="min-w-0 flex-1">
+						<ItemTitle className="max-w-full truncate">{name}</ItemTitle>
+						<span className="block truncate font-mono text-[11px] text-muted-foreground">
 							{typeName}
 						</span>
 					</div>
 				</div>
-				<ItemActions>
+				<ItemActions className="shrink-0">
 					<Switch
 						checked={channel.enabled}
 						onClick={(e) => e.stopPropagation()}

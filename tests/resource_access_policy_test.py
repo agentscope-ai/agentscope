@@ -369,6 +369,14 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_try_resolve_agent_returns_none_when_not_visible(
+        self,
+    ) -> None:
+        """Non-raising resolution should represent hidden agents as None."""
+        agent = await self.service.try_resolve_agent("other", "agent-1")
+
+        self.assertIsNone(agent)
+
     async def test_list_agents_skips_shared_team_agents(self) -> None:
         """Cross-owner team agents should not appear in shared lists."""
         views = await self.service.list_resource(

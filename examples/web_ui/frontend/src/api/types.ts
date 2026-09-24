@@ -111,10 +111,25 @@ export interface AgentSchemaV2Response {
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule' | 'channel';
+/** How a session came to exist — fixed when it is created. */
+export type SessionOrigin =
+	| { type: 'user' }
+	| { type: 'schedule'; schedule_id: string }
+	| {
+			type: 'channel';
+			channel_id: string;
+			chat_id: string;
+			chat_name: string | null;
+	  }
+	| { type: 'team' };
+
+/** The tag of a {@link SessionOrigin}. */
+export type SessionSourceKind = SessionOrigin['type'];
 
 export interface SessionConfig {
 	name: string;
+	/** Who owns `name` — see the backend's `SessionNaming`. */
+	naming: { auto: boolean };
 	chat_model_config: ChatModelConfig;
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
@@ -137,9 +152,7 @@ export type AgentState = Record<string, unknown>;
 export interface SessionRecord extends RecordBase {
 	user_id: string;
 	agent_id: string;
-	source: SessionSource;
-	source_schedule_id: string | null;
-	source_channel_id: string | null;
+	origin: SessionOrigin;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called
@@ -1166,7 +1179,9 @@ export interface ChannelRecord {
 export interface CreateChannelRequest {
 	channel_type: string;
 	name?: string | null;
-	credentials: Record<string, unknown>;
+	credentials?: Record<string, unknown>;
+	/** Completed binding to take the credentials from, instead of sending them. */
+	credential_binding_id?: string | null;
 	platform_config?: Record<string, unknown>;
 	routing: RoutingConfig;
 	session: SessionSettings;
@@ -1189,6 +1204,19 @@ export interface ChannelTypeSchema {
 	credentials_schema: Record<string, unknown>;
 	config_schema: Record<string, unknown>;
 	platform_bot_id_field?: string;
+	/** Whether the platform can hand its credentials over interactively. */
+	supports_credential_binding?: boolean;
+}
+
+export type BindingState = 'pending' | 'authorized' | 'failed' | 'cancelled';
+
+export interface BindingView {
+	binding_id: string;
+	state: BindingState;
+	/** Where the operator must approve; rendered as a QR code. */
+	verification_url: string;
+	error: string;
+	retry_after_secs: number;
 }
 
 export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';

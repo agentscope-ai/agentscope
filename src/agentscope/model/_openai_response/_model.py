@@ -28,6 +28,27 @@ else:
 _RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
 
 
+def _dump_reasoning_item(item: Any) -> dict[str, Any]:
+    """Serialize a Responses API reasoning item for history replay.
+
+    ``exclude_none=True`` avoids emitting optional response-only fields as
+    explicit ``null`` values, which some Responses-compatible APIs reject
+    when the item is replayed as input.
+
+    Args:
+        item (`Any`):
+            The reasoning item returned by the OpenAI SDK.
+
+    Returns:
+        `dict[str, Any]`:
+            The JSON-safe item dictionary.
+    """
+    return item.model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+
+
 class OpenAIResponseModel(ChatModelBase):
     """The OpenAI Responses API chat model.
 
@@ -266,7 +287,7 @@ class OpenAIResponseModel(ChatModelBase):
         usage: ChatUsage | None = None
         response_id: str = _generate_id()
         text_id: str = _generate_id()
-        thinking_id: str = _generate_id()
+        reasoning_block_ids: dict[str, str] = {}
         # Mapping from Responses API item id (fc_xxx) to (call_id, name)
         # so subsequent argument deltas can be routed to the right tool
         # call block.
@@ -288,7 +309,10 @@ class OpenAIResponseModel(ChatModelBase):
                     # compatibility with models that do expose it.
                     delta_res.append_thinking(
                         event.delta,
-                        block_id=thinking_id,
+                        block_id=reasoning_block_ids.setdefault(
+                            event.item_id,
+                            _generate_id(),
+                        ),
                     )
 
                 elif event_type == "response.output_text.delta":
@@ -355,8 +379,14 @@ class OpenAIResponseModel(ChatModelBase):
                             if reasoning_item_id:
                                 delta_res.append_thinking(
                                     thinking="",
-                                    block_id=thinking_id,
+                                    block_id=reasoning_block_ids.setdefault(
+                                        reasoning_item_id,
+                                        _generate_id(),
+                                    ),
                                     reasoning_item_id=reasoning_item_id,
+                                    reasoning_item_raw=(
+                                        _dump_reasoning_item(output_item)
+                                    ),
                                 )
 
                 if delta_res.content or usage:
@@ -387,6 +417,7 @@ class OpenAIResponseModel(ChatModelBase):
 
             if item_type == "reasoning":
                 reasoning_item_id = getattr(item, "id", None)
+                reasoning_item_raw = _dump_reasoning_item(item)
                 combined_summary = " ".join(
                     getattr(s, "text", "")
                     for s in getattr(item, "summary", [])
@@ -400,6 +431,7 @@ class OpenAIResponseModel(ChatModelBase):
                             type="thinking",
                             thinking=combined_summary,
                             reasoning_item_id=reasoning_item_id,
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
                     )
 

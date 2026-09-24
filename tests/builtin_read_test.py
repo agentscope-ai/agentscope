@@ -4,6 +4,7 @@ import base64
 import io
 import os
 import tempfile
+import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
@@ -178,7 +179,11 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
     async def test_read_nonexistent_file(self) -> None:
         """Test reading a non-existent file."""
-        chunk = await self.read_tool(file_path="/nonexistent/file.txt")
+        missing_path = os.path.join(
+            os.path.abspath(tempfile.gettempdir()),
+            f"agentscope-no-such-file-{uuid.uuid4().hex}.txt",
+        )
+        chunk = await self.read_tool(file_path=missing_path)
 
         self.assertEqual(chunk.state, "error")
         self.assertIn("does not exist", chunk.content[0].text)

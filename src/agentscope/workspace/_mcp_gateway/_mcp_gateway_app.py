@@ -14,7 +14,9 @@ Endpoints::
     GET    /health
     GET    /mcps                       # [MCPClient.model_dump(), ...]
     POST   /mcps                       # body: MCPClient.model_dump()
+                                       #   (+ optional runtime_headers)
     DELETE /mcps/{name}
+    PUT    /mcps/{name}/runtime-headers
     GET    /mcps/{name}/tools
     POST   /mcps/{name}/tools/{tool}   # body: {arguments: {...}}
 
@@ -33,7 +35,7 @@ import asyncio
 import secrets
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from agentscope.mcp import MCPClient
@@ -47,11 +49,20 @@ class _State:
         self.lock = asyncio.Lock()
 
 
-async def _build_client(spec: dict[str, Any]) -> MCPClient:
+async def _build_client(
+    spec: dict[str, Any],
+    runtime_headers: dict[str, str] | None = None,
+) -> MCPClient:
     """Validate a spec into an ``MCPClient``, connect if stateful,
     and prime its tool cache.
+
+    ``runtime_headers`` are applied before connecting: a rotated
+    credential has to be in place for the handshake below, and it is
+    not part of ``spec`` because it must never be persisted.
     """
     client = MCPClient.model_validate(spec)
+    if runtime_headers:
+        await client.set_runtime_headers(runtime_headers)
     if client.is_stateful:
         await client.connect()
     await client.list_raw_tools()
@@ -120,6 +131,7 @@ def _build_app(
         session_id: str = "",
     ) -> dict[str, Any]:
         body = await request.json()
+        runtime_headers = body.pop("runtime_headers", None)
         name = body.get("name", "")
         if not name:
             raise HTTPException(400, "name required")
@@ -132,9 +144,11 @@ def _build_app(
                     f"session={session_id!r}",
                 )
             try:
-                by_name[name] = await _build_client(body)
+                by_name[name] = await _build_client(body, runtime_headers)
             except HTTPException:
                 raise
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
             except Exception as e:  # noqa: BLE001
                 raise HTTPException(500, f"connect failed: {e}") from e
         return {"ok": True}
@@ -153,6 +167,29 @@ def _build_app(
             if client.is_stateful and client.is_connected:
                 await client.close()
         return {"ok": True}
+
+    @app.put("/mcps/{name}/runtime-headers", status_code=204)
+    async def _set_runtime_headers(
+        name: str,
+        request: Request,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> Response:
+        """Replace live headers without rebuilding the MCP client."""
+        body = await request.json()
+        headers = body.get("headers") if isinstance(body, dict) else None
+        if not isinstance(headers, dict):
+            raise HTTPException(
+                400,
+                "headers must be a JSON object",
+            )
+        try:
+            async with state.lock:
+                client = _lookup(agent_id, session_id, name)
+                await client.set_runtime_headers(headers)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return Response(status_code=204)
 
     @app.get("/mcps/{name}/tools")
     async def _list_tools(

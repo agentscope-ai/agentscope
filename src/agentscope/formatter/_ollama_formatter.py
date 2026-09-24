@@ -113,6 +113,7 @@ class OllamaChatFormatter(_OllamaFormatterBase):
         ),
     )
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -133,8 +134,14 @@ class OllamaChatFormatter(_OllamaFormatterBase):
         for msg in msgs:
             content_parts = []
             images = []
+            # Hold the promoted media until this turn's tool messages are out.
+            pending_media: list[dict] = []
 
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    messages.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, TextBlock):
                     content_parts.append(block.text)
 
@@ -253,13 +260,15 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         }
                         if user_images:
                             user_msg["images"] = user_images
-                        messages.append(user_msg)
+                        pending_media.append(user_msg)
 
                 else:
                     logger.warning(
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            messages.extend(pending_media)
 
             # Add the message if there's content or images
             if content_parts or images:
@@ -373,13 +382,13 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

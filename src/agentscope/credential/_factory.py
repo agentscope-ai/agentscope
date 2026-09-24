@@ -12,6 +12,7 @@ from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
 from ._openai import OpenAICredential
 from ._xai import XAICredential
+from ._volcengine import VolcengineCredential
 from ._base import CredentialBase
 
 
@@ -42,6 +43,7 @@ class CredentialFactory:
         OllamaCredential,
         OpenAICredential,
         XAICredential,
+        VolcengineCredential,
     ]
     _adapter: TypeAdapter[CredentialBase] | None = None
 

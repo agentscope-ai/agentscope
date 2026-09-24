@@ -332,10 +332,11 @@ class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
                 "type": "function",
                 "function": {
                     "name": "mcp__test_defs_client__tool_with_model",
-                    "description": "A tool whose parameter uses a "
-                    "Pydantic sub-model.\n\n    Args:\n        "
-                    "name: Item name.\n        "
-                    "config: Item configuration.\n    ",
+                    # FastMCP forwards the tool's ``__doc__`` verbatim;
+                    # deriving the expectation from it keeps the test
+                    # correct under Python 3.13+, where the compiler
+                    # strips common leading whitespace from docstrings.
+                    "description": tool_with_model.__doc__,
                     "parameters": {
                         "$defs": {
                             "_ItemConfig": {

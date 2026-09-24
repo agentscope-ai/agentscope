@@ -8,7 +8,7 @@
 
 为了支持 AgentScope 开源社区的长期健康发展，我们将公开、透明地维护 AgentScope 的开发计划。
 
-**路线图公开**。AgentScope 的开发计划会发布在 [GitHub Projects 页面](https：//github.com/orgs/agentscope-ai/projects/2)，并持续更新。路线图会反映 AgentScope 的技术发展方向，由核心开发团队对 AgentScope 的整体设计与质量负责。
+**路线图公开**。AgentScope 的开发计划会发布在 [GitHub Projects 页面](https://github.com/orgs/agentscope-ai/projects/2)，并持续更新。路线图会反映 AgentScope 的技术发展方向，由核心开发团队对 AgentScope 的整体设计与质量负责。
 
 **社区可认领的任务**。Projects 页面 / Issues 中标有 `help wanted` 的条目对所有人开放。如果你有兴趣参与某一项：
 
@@ -47,17 +47,18 @@ AgentScope 欢迎使用 AI 编码助手的贡献者——Claude Code、Cursor、
 
 在写代码之前，先找到或创建对应的 issue。
 
-- **基于已有任务**：浏览 [Projects](https：//github.com/orgs/agentscope-ai/projects/2) 与 [Issues](https：//github.com/agentscope-ai/agentscope/issues) 中标有 `help wanted` 的条目(参见 [§1](#1-开发路线图与参与方式))，在 issue 下评论认领后再开始。
+- **基于已有任务**：浏览 [Projects](https://github.com/orgs/agentscope-ai/projects/2) 与 [Issues](https://github.com/agentscope-ai/agentscope/issues) 中标有 `help wanted` 的条目(参见 [§1](#1-开发路线图与参与方式))，在 issue 下评论认领后再开始。
 - **提出新想法**：新建 issue 描述问题、方案与设计上的取舍。等待核心开发团队反馈后再开始实现，避免事后大规模返工。
+- **数量限制**：每位贡献者同时最多有 5 个 open 状态的 issue，最多同时认领 5 个 issue。超出后新提的 issue 会被自动关闭、新的认领会被拒绝，请先聚焦手头已有的。
 
 ### 第 2 步：Fork 仓库并创建开发分支
 
-1. 在 GitHub 上 fork [agentscope-ai/agentscope](https：//github.com/agentscope-ai/agentscope)。
+1. 在 GitHub 上 fork [agentscope-ai/agentscope](https://github.com/agentscope-ai/agentscope)。
 2. clone 自己的 fork 并添加 upstream 远端：
    ```bash
-   git clone https：//github.com/<your-username>/agentscope.git
+   git clone https://github.com/<your-username>/agentscope.git
    cd agentscope
-   git remote add upstream https：//github.com/agentscope-ai/agentscope.git
+   git remote add upstream https://github.com/agentscope-ai/agentscope.git
    ```
 3. 基于最新的 `main` 创建主题分支：
    ```bash
@@ -118,41 +119,42 @@ pytest tests
 
 **改代码的同时请更新文档**。
 
-- AgentScope 文档放在独立仓库：**[agentscope-ai/docs](https：//github.com/agentscope-ai/docs)**。如果改动影响用户可见行为——新模块、新公开 API、行为变化、教程——请在该仓库同步开一个配套 PR。
+- AgentScope 文档放在独立仓库：**[agentscope-ai/docs](https://github.com/agentscope-ai/docs)**。如果改动影响用户可见行为——新模块、新公开 API、行为变化、教程——请在该仓库同步开一个配套 PR。
 - 为新公开 API 更新 docstring 与示例片段。
 - 如果改动影响新手上手或 AgentScope 的对外宣传内容，更新 `README.md`。
 
 ### 第 6 步：提交与发起 PR
 
-**Commit 信息格式**。我们遵循 [Conventional Commits](https：//www.conventionalcommits.org/) 规范，便于阅读历史与自动生成 changelog。
+**Commit 信息格式**。我们遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范，便于阅读历史与自动生成 changelog。
 
 ```
-<type>(<scope>)： <subject>
+<type>(<scope>): <subject>
 ```
 
 **Type 列表：**
-- `feat：` 新功能
-- `fix：` bug 修复
-- `docs：` 仅文档变更
-- `style：` 不影响代码语义的改动(空白、格式等)
-- `refactor：` 既不是修 bug 也不是加功能的代码改动
-- `perf：` 性能优化
-- `ci：` 增补或修正测试
-- `chore：` 构建流程或辅助工具/库的变更
+- `feat:` 新功能
+- `fix:` bug 修复
+- `docs:` 仅文档变更
+- `style:` 不影响代码语义的改动(空白、格式等)
+- `refactor:` 既不是修 bug 也不是加功能的代码改动
+- `perf:` 性能优化
+- `test:` 增补或修正测试
+- `ci:` CI 配置或工作流脚本的变更
+- `chore:` 构建流程或辅助工具/库的变更
 
 **示例：**
 ```bash
-feat(models)： add support for Claude-3 model
-fix(agent)： resolve memory leak in ReActAgent
-docs(readme)： update installation instructions
-refactor(formatter)： simplify message formatting logic
-ci(models)： add unit tests for OpenAI integration
+feat(models): add support for Claude-3 model
+fix(agent): resolve memory leak in ReActAgent
+docs(readme): update installation instructions
+refactor(formatter): simplify message formatting logic
+test(models): add unit tests for OpenAI integration
 ```
 
 **PR 标题格式**。PR 标题同样遵循 Conventional Commits 格式，并由 GitHub Actions 在针对 `main` 的 PR 上自动校验。标题不合规的 PR 会被阻止合入，直到修正为止。
 
 ```
-<type>(<scope>)： <description>
+<type>(<scope>): <description>
 ```
 
 **要求：**
@@ -165,24 +167,24 @@ ci(models)： add unit tests for OpenAI integration
 **示例：**
 ```
 ✅ 合规：
-feat(memory)： add redis cache support
-fix(agent)： resolve memory leak in ReActAgent
-docs(tutorial)： update installation guide
-ci(workflow)： add PR title validation
-refactor(my-feature)： simplify logic
+feat(memory): add redis cache support
+fix(agent): resolve memory leak in ReActAgent
+docs(tutorial): update installation guide
+ci(workflow): add PR title validation
+refactor(my-feature): simplify logic
 
 ❌ 不合规：
-feat(Memory)： add cache          # scope 必须小写
-feat(MEMORY)： add cache          # scope 必须小写
-feat(MyFeature)： add feature     # scope 必须小写
+feat(Memory): add cache          # scope 必须小写
+feat(MEMORY): add cache          # scope 必须小写
+feat(MyFeature): add feature     # scope 必须小写
 ```
 
-**发起 PR**。把分支 push 到自己的 fork，对 `agentscope-ai/agentscope：main` 发起 pull request。在 PR 描述里：
+**发起 PR**。把分支 push 到自己的 fork，对 `agentscope-ai/agentscope:main` 发起 pull request。在 PR 描述里：
 
 - 关联认领的 issue(`Fixes #123` 或 `Refs #123`)
 - 概述改了什么、为什么改
 - 标注任何破坏性改动、废弃项或迁移步骤
-- 如果同时开了文档 PR，链接到 [agentscope-ai/docs](https：//github.com/agentscope-ai/docs) 的对应 PR
+- 如果同时开了文档 PR，链接到 [agentscope-ai/docs](https://github.com/agentscope-ai/docs) 的对应 PR
 
 ## 4. 重要事项
 
@@ -219,18 +221,18 @@ AgentScope 中的一个 chat model 不只是一个类——要在 `Agent` 中可
 
    示例(`claude-sonnet-4-6.yaml`)：
    ```yaml
-   name： claude-sonnet-4-6
-   label： Claude Sonnet 4.6
-   status： active
-   input_types：
+   name: claude-sonnet-4-6
+   label: Claude Sonnet 4.6
+   status: active
+   input_types:
      - text/plain
      - image/jpeg
-   output_types：
+   output_types:
      - text/plain
-   context_size： 1000000
-   output_size： 65536
-   parameter_overrides：
-     max_tokens： {"maximum"： 65536}
+   context_size: 1000000
+   output_size: 65536
+   parameter_overrides:
+     max_tokens: {"maximum": 65536}
    ```
 
 4. **Formatter 类**——位于 `agentscope.formatter`，均继承 `FormatterBase`。需要两种变体，因为部分 API 对多 agent 对话与单用户对话的处理方式不同：
@@ -264,13 +266,13 @@ Workspace 提供 agent 运行所需的运行时上下文（skills、scheduled ta
 2. **Workspace manager 类**——位于 `agentscope/app/_manager/_workspace_manager.py`，继承 `WorkspaceManagerBase`。把 workspace 接入应用生命周期。
    _参考：同文件中的 `LocalWorkspaceManager`_
 
-3. **文档**——在 [agentscope-ai/docs](https：//github.com/agentscope-ai/docs) 配套发起 PR，说明该 workspace 的配置与使用方式。
+3. **文档**——在 [agentscope-ai/docs](https://github.com/agentscope-ai/docs) 配套发起 PR，说明该 workspace 的配置与使用方式。
 
 ### Examples
 
 我们非常欢迎新增展示 AgentScope 能力的 example。
 
-主仓库 `examples/` 目录聚焦于**演示具体特性与能力**——简洁、教学性的参考实现。更完整、贴近生产形态的应用，请贡献到 **[agentscope-samples](https：//github.com/agentscope-ai/agentscope-samples)**。
+主仓库 `examples/` 目录聚焦于**演示具体特性与能力**——简洁、教学性的参考实现。更完整、贴近生产形态的应用，请贡献到 **[agentscope-samples](https://github.com/agentscope-ai/agentscope-samples)**。
 
 新 example 放在自己的子目录下：
 
@@ -288,8 +290,8 @@ examples/
 
 需要协助或有问题，可以：
 
-- 发起 [Discussion](https：//github.com/agentscope-ai/agentscope/discussions)
-- 在 [Issues](https：//github.com/agentscope-ai/agentscope/issues) 中报告 bug
+- 发起 [Discussion](https://github.com/agentscope-ai/agentscope/discussions)
+- 在 [Issues](https://github.com/agentscope-ai/agentscope/issues) 中报告 bug
 - 通过钉钉或 Discord 联系维护者(链接见 README.md)
 
 

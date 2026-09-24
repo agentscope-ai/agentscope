@@ -475,13 +475,8 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
     async def test_chat_formatter_url_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """URL images in tool results are promoted to a follow-up user
         message."""
@@ -501,6 +496,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=URLSource(
                                     url=self.image_url,
                                     media_type="image/png",
@@ -583,6 +579,45 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_tool_result_image_id_is_deterministic(
+        self,
+    ) -> None:
+        """Formatting the same unchanged Msg history twice must produce the
+        same multimodal identifier both times (issue #2161): the id is
+        derived from the DataBlock's own stable id, not freshly generated
+        on every call."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_img",
+                        name="get_map",
+                        input='{"city": "Tokyo"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_img",
+                        name="get_map",
+                        output=[
+                            TextBlock(text="Here is the map."),
+                            DataBlock(
+                                source=URLSource(
+                                    url=self.image_url,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Here is the map of Tokyo."),
+                ],
+            ),
+        ]
+        first = await fmt.format(msgs)
+        second = await fmt.format(msgs)
+        self.assertListEqual(first, second)
 
     # -------------------------------------------------------------------
     # OpenAIMultiAgentFormatter tests
@@ -866,6 +901,134 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "image_url",
                             "image_url": {"url": self.image_data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=URLSource(
+                                    url="https://example.com/shot.png",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        shot_output = (
+            "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_shot",
+                            "type": "function",
+                            "function": {
+                                "name": "screenshot",
+                                "arguments": "{}",
+                            },
+                        },
+                        {
+                            "id": "call_title",
+                            "type": "function",
+                            "function": {
+                                "name": "get_title",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_shot",
+                    "content": shot_output,
+                    "name": "screenshot",
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_title",
+                    "content": "Example Domain",
+                    "name": "get_title",
+                },
+                {
+                    "role": "user",
+                    "name": "system-reminder",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>The multimodal data "
+                            "and their identifiers are listed as follows:",
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/shot.png",
+                            },
+                        },
+                        {"type": "text", "text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "The page is Example Domain.",
                         },
                     ],
                 },

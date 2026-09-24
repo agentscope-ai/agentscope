@@ -324,13 +324,13 @@ information that will be useful in future conversations.
 When looking for past context:
 1. Search topic files in your memory directory:
 ```
-Grep with pattern="<search>" path="{memory_dir}" glob="*.md"</search>
+Grep with pattern="<search>" path="{memory_dir}" glob="*.md"
 # or Bash command:
 grep -rn "<search term>" {memory_dir} --include="*.md"
 ```
 Use narrow search terms (error messages, file paths, function names) rather \
 than broad keywords.
-"""  # noqa:
+"""
 
 DEFAULT_RETRIEVAL_INSTRUCTIONS = (
     "You are selecting memory files that will be useful as context for "
@@ -754,9 +754,11 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             structured_model=_MemorySelection,
         )
 
-        # 3. Validate: discard hallucinated filenames.
+        # 3. Discard hallucinated filenames and count each memory only once.
         raw_selected: list[str] = res.content.get("selected_files", [])
-        selected = [f for f in raw_selected if f in valid_filenames][:5]
+        selected = list(
+            dict.fromkeys(f for f in raw_selected if f in valid_filenames),
+        )[:5]
         if not selected:
             return None
 

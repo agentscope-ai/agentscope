@@ -1,0 +1,30 @@
+type: realtime_model
+name: gemini-3.1-flash-live-preview
+label: Gemini 3.1 Flash Live
+status: active
+
+input_types:
+  - audio/pcm
+  - text/plain
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+supports_tools: true
+
+max_context_tokens: 131072
+# Audio-only sessions are capped at 15 minutes; the connection itself
+# lasts about 10 and is resumed with a `sessionResumption` handle.
+max_session_duration_s: 900
+
+parameter_overrides:
+  voice:
+    enum: ["Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus",
+           "Aoede", "Callirrhoe", "Autonoe", "Enceladus", "Iapetus",
+           "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",
+           "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar",
+           "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+           "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat"]

@@ -14,6 +14,7 @@ from ._manager import (
 )
 from ._service import (
     ChannelService,
+    CredentialBindingService,
     ChatService,
     IndexSweeper,
     IndexTaskConsumer,
@@ -50,6 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     blob_store = app.state.blob_store
     enable_index_worker = app.state.enable_index_worker
     enable_channel_worker = app.state.enable_channel_worker
+    enable_scheduler = app.state.enable_scheduler
     resource_access_policy = app.state.resource_access_policy
 
     async with AsyncExitStack() as stack:
@@ -91,6 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 storage=storage,
                 message_bus=message_bus,
                 workspace_manager=workspace_manager,
+                enabled=enable_scheduler,
             ),
         )
         app.state.scheduler_manager = scheduler
@@ -132,6 +135,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             app.state.channel_service = ChannelService(
                 storage=storage,
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+            )
+            # Binding sessions live in the bus and hold no connection,
+            # so this is available wherever the channel API is.
+            app.state.credential_binding_service = CredentialBindingService(
                 message_bus=message_bus,
                 type_registry=channel_type_registry,
             )
