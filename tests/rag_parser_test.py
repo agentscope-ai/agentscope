@@ -248,6 +248,31 @@ def _make_docx_with_table() -> bytes:
     return buffer.getvalue()
 
 
+def _make_docx_with_nested_table() -> bytes:
+    """Build a DOCX whose outer table cell contains a nested table.
+
+    A nested ``w:tbl`` lives inside the outer ``w:tc``, so its paragraphs are
+    not direct children of that cell.
+    """
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before table")
+
+    outer = doc.add_table(rows=1, cols=1)
+    outer_cell = outer.cell(0, 0)
+    outer_cell.text = "Outer cell"
+
+    nested = outer_cell.add_table(rows=1, cols=1)
+    nested.cell(0, 0).text = "Nested cell"
+
+    doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_docx_with_special_table_cells() -> bytes:
     """Build a DOCX table with pipes and a multi-line cell."""
     from docx import Document as DocxDocument
@@ -1551,6 +1576,32 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "finished_at": None,
                     },
                     "source": "special.docx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_nested_table_text_is_kept(self) -> None:
+        """Text inside a table nested in another cell must survive parsing."""
+        docx_bytes = _make_docx_with_nested_table()
+        parser = WordParser(include_image=False, separate_table=False)
+        sections = await parser.parse(docx_bytes, "nested.docx")
+
+        self.assertListEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before table\n"
+                        "| Outer cell<br>Nested cell |\n"
+                        "| --- |\n\n"
+                        "After table",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "nested.docx",
                     "metadata": {},
                 },
             ],

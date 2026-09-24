@@ -90,7 +90,8 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
         row_data: list[str] = []
         for tc in tr.findall(qn("w:tc")):
             paragraphs: list[str] = []
-            for p_elem in tc.findall(qn("w:p")):
+            # Include paragraphs of tables nested in this cell.
+            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
                     if element.tag == text_tag and element.text:
