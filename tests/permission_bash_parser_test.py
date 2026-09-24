@@ -587,6 +587,34 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 result = self.parser.extract_file_paths(cmd)
                 self.assertEqual(result, expected)
 
+    async def test_quoted_and_expanded_redirection_targets(self) -> None:
+        """A quoted or expanded target is still a redirection target.
+
+        The target parses as a ``word`` only when it is written bare. Quoting
+        or expanding it yields ``string``, ``raw_string`` or ``concatenation``,
+        and those used to be skipped, which kept the path out of the
+        dangerous-path check in ``Bash.check_permissions()`` step 4.
+        """
+        test_cases = [
+            ("echo x > ~/.zshrc", [("redirect", "~/.zshrc")]),
+            ('echo x > "~/.zshrc"', [("redirect", "~/.zshrc")]),
+            ("echo x > '$HOME/.zshrc'", [("redirect", "$HOME/.zshrc")]),
+            ("echo x > $HOME/.zshrc", [("redirect", "$HOME/.zshrc")]),
+            ('echo x > "$HOME/.zshrc"', [("redirect", "$HOME/.zshrc")]),
+            (
+                'ls > "file with spaces.log"',
+                [("redirect", "file with spaces.log")],
+            ),
+            (
+                'cat key > "~/.ssh/authorized_keys"',
+                [("redirect", "~/.ssh/authorized_keys")],
+            ),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
     async def test_compound_commands(self) -> None:
         """Test file path extraction from compound commands."""
         test_cases = [

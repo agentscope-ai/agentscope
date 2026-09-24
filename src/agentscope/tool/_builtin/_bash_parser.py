@@ -311,11 +311,20 @@ class BashCommandParser:
         """
         # Check for redirections
         if node.type == "file_redirect":
-            # Extract the target file
+            # Extract the target file. The target is a ``word`` only when it is
+            # written bare: quoting it yields a ``string`` or ``raw_string``,
+            # and expanding it yields a ``concatenation``. Asking for ``word``
+            # kept all of those out, so a quoted or expanded path never reached
+            # the dangerous-path check. The operator is an anonymous child, so
+            # skipping anonymous children takes the target whichever of those
+            # node types it is.
             for child in node.children:
-                if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
-                    paths.append(("redirect", path.strip("'\"")))
+                if not child.is_named:
+                    continue
+                path = command[child.start_byte : child.end_byte]
+                paths.append(("redirect", path.strip("'\"")))
+                break
+
         # Check for commands
         if node.type == "command":
             # Extract command name and arguments
