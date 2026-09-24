@@ -161,7 +161,8 @@ def prepare_build_context(
     """
     extra_pip_list = list(extra_pip or [])
 
-    install_block = 'RUN uv pip install "agentscope"'
+    # requirements.txt covers the gateway's imports, so skip agentscope's deps
+    install_block = 'RUN uv pip install --no-deps "agentscope"'
 
     dockerfile_text = render_dockerfile(
         base_image=base_image,

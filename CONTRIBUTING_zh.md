@@ -128,32 +128,33 @@ pytest tests
 **Commit 信息格式**。我们遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范，便于阅读历史与自动生成 changelog。
 
 ```
-<type>(<scope>)： <subject>
+<type>(<scope>): <subject>
 ```
 
 **Type 列表：**
-- `feat：` 新功能
-- `fix：` bug 修复
-- `docs：` 仅文档变更
-- `style：` 不影响代码语义的改动(空白、格式等)
-- `refactor：` 既不是修 bug 也不是加功能的代码改动
-- `perf：` 性能优化
-- `ci：` 增补或修正测试
-- `chore：` 构建流程或辅助工具/库的变更
+- `feat:` 新功能
+- `fix:` bug 修复
+- `docs:` 仅文档变更
+- `style:` 不影响代码语义的改动(空白、格式等)
+- `refactor:` 既不是修 bug 也不是加功能的代码改动
+- `perf:` 性能优化
+- `test:` 增补或修正测试
+- `ci:` CI 配置或工作流脚本的变更
+- `chore:` 构建流程或辅助工具/库的变更
 
 **示例：**
 ```bash
-feat(models)： add support for Claude-3 model
-fix(agent)： resolve memory leak in ReActAgent
-docs(readme)： update installation instructions
-refactor(formatter)： simplify message formatting logic
-ci(models)： add unit tests for OpenAI integration
+feat(models): add support for Claude-3 model
+fix(agent): resolve memory leak in ReActAgent
+docs(readme): update installation instructions
+refactor(formatter): simplify message formatting logic
+test(models): add unit tests for OpenAI integration
 ```
 
 **PR 标题格式**。PR 标题同样遵循 Conventional Commits 格式，并由 GitHub Actions 在针对 `main` 的 PR 上自动校验。标题不合规的 PR 会被阻止合入，直到修正为止。
 
 ```
-<type>(<scope>)： <description>
+<type>(<scope>): <description>
 ```
 
 **要求：**
@@ -166,19 +167,19 @@ ci(models)： add unit tests for OpenAI integration
 **示例：**
 ```
 ✅ 合规：
-feat(memory)： add redis cache support
-fix(agent)： resolve memory leak in ReActAgent
-docs(tutorial)： update installation guide
-ci(workflow)： add PR title validation
-refactor(my-feature)： simplify logic
+feat(memory): add redis cache support
+fix(agent): resolve memory leak in ReActAgent
+docs(tutorial): update installation guide
+ci(workflow): add PR title validation
+refactor(my-feature): simplify logic
 
 ❌ 不合规：
-feat(Memory)： add cache          # scope 必须小写
-feat(MEMORY)： add cache          # scope 必须小写
-feat(MyFeature)： add feature     # scope 必须小写
+feat(Memory): add cache          # scope 必须小写
+feat(MEMORY): add cache          # scope 必须小写
+feat(MyFeature): add feature     # scope 必须小写
 ```
 
-**发起 PR**。把分支 push 到自己的 fork，对 `agentscope-ai/agentscope：main` 发起 pull request。在 PR 描述里：
+**发起 PR**。把分支 push 到自己的 fork，对 `agentscope-ai/agentscope:main` 发起 pull request。在 PR 描述里：
 
 - 关联认领的 issue(`Fixes #123` 或 `Refs #123`)
 - 概述改了什么、为什么改
@@ -220,18 +221,18 @@ AgentScope 中的一个 chat model 不只是一个类——要在 `Agent` 中可
 
    示例(`claude-sonnet-4-6.yaml`)：
    ```yaml
-   name： claude-sonnet-4-6
-   label： Claude Sonnet 4.6
-   status： active
-   input_types：
+   name: claude-sonnet-4-6
+   label: Claude Sonnet 4.6
+   status: active
+   input_types:
      - text/plain
      - image/jpeg
-   output_types：
+   output_types:
      - text/plain
-   context_size： 1000000
-   output_size： 65536
-   parameter_overrides：
-     max_tokens： {"maximum"： 65536}
+   context_size: 1000000
+   output_size: 65536
+   parameter_overrides:
+     max_tokens: {"maximum": 65536}
    ```
 
 4. **Formatter 类**——位于 `agentscope.formatter`，均继承 `FormatterBase`。需要两种变体，因为部分 API 对多 agent 对话与单用户对话的处理方式不同：

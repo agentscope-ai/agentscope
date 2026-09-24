@@ -500,6 +500,51 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_multiagent_formatter_history_keeps_images(self) -> None:
+        """Images of the collapsed messages ride along with the history
+        text, in message order."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Compare these two charts."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="Zmlyc3Q=",
+                            media_type="image/jpeg",
+                        ),
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="agent",
+                content=[
+                    TextBlock(text="The second one differs."),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/second.png",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    self._hist_prompt + "<history>\n"
+                    "user: Compare these two charts.\n"
+                    "agent: The second one differs.\n"
+                    "</history>",
+                    image("data:image/jpeg;base64,Zmlyc3Q="),
+                    image("https://example.com/second.png"),
+                ),
+            ],
+            res,
+        )
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
