@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for the Gemini Live realtime adapter: cards, the setup
 message and frame parsing. Nothing here opens a connection."""
 # pylint: disable=protected-access
@@ -331,8 +330,10 @@ class GeminiParseTest(unittest.TestCase):
                     "ResponseDoneEvent",
                     {
                         "item_id": AnyString(),
-                        "input_tokens": 0,
-                        "output_tokens": 0,
+                        # no usageMetadata arrived for this tool-call-only
+                        # response: None (absent), not a reported zero.
+                        "input_tokens": None,
+                        "output_tokens": None,
                     },
                 ),
             ],

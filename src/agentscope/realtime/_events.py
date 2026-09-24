@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Events emitted by a realtime model.
 
 These are internal to :mod:`agentscope.realtime`: adapters normalise
@@ -73,8 +72,11 @@ class ResponseDoneEvent(ModelEvent):
     """The provider finished producing a reply."""
 
     item_id: str
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
+    # None = the provider omitted usage for this response. Keeping that
+    # distinct from an explicit 0 lets downstream estimators tell "no
+    # report" apart from "reported zero growth".
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
 
 
 class ModelErrorEvent(ModelEvent):

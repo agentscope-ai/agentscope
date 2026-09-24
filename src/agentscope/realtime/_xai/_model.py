@@ -1,12 +1,15 @@
-# -*- coding: utf-8 -*-
 """The xAI Grok voice realtime model."""
 import asyncio
 import base64
 import json
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from typing import Any, Literal
 
 from pydantic import Field
 
+from ..._logging import logger
+from ...credential import XAICredential
+from ...message import TextBlock, ToolCallBlock, ToolResultBlock
 from .. import _events as me
 from .._base import (
     ModelDisconnectedError,
@@ -14,9 +17,6 @@ from .._base import (
     TruncationSupport,
 )
 from .._model_card import RealtimeModelCard
-from ..._logging import logger
-from ...credential import XAICredential
-from ...message import TextBlock, ToolCallBlock, ToolResultBlock
 
 
 class XAIRealtimeModel(RealtimeModelBase):
@@ -307,8 +307,8 @@ class XAIRealtimeModel(RealtimeModelBase):
                 usage = response.get("usage") or {}
                 event = me.ResponseDoneEvent(
                     item_id=response.get("id") or self._response_id,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
+                    input_tokens=usage.get("input_tokens"),
+                    output_tokens=usage.get("output_tokens"),
                 )
                 self._response_id = ""
                 return event

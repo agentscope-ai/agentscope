@@ -1,23 +1,12 @@
-# -*- coding: utf-8 -*-
 """The realtime voice agent."""
 import asyncio
 import base64
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
-from ...realtime import _events as me
-from ._aggregator import TurnAggregator
-from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
-from ._metrics import TurnMetrics
-from ...realtime._transport._base import (
-    AudioFrame,
-    ControlFrame,
-    ControlFrameType,
-    TransportBase,
-)
-from ...realtime._vad import SpeechTransition, VADBase
 from ..._logging import logger
 from ..._utils._common import _json_loads_with_repair
 from ...event import (
@@ -54,9 +43,23 @@ from ...message import (
     UserMsg,
 )
 from ...permission import PermissionBehavior, PermissionEngine
+from ...realtime import _events as me
+from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
+from ...realtime._transport._base import (
+    AudioFrame,
+    ControlFrame,
+    ControlFrameType,
+    TransportBase,
+)
+from ...realtime._vad import SpeechTransition, VADBase
 from ...state import AgentState
-from ...tool import ToolChunk, ToolResponse, Toolkit
+from ...tool import ToolChunk, Toolkit, ToolResponse
 from ...types import ReplyFinishedReason
+from ...workspace import Offloader
+from .._config import RealtimeContextConfig
+from ._aggregator import TurnAggregator
+from ._context_usage import ContextUsageTracker
+from ._metrics import TurnMetrics
 
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
@@ -150,6 +153,8 @@ class RealtimeAgent:
         state: AgentState | None = None,
         vad: VADBase | None = None,
         aggregator: TurnAggregator | None = None,
+        context_config: RealtimeContextConfig | None = None,
+        workspace: Offloader | None = None,
     ) -> None:
         """Initialize the realtime agent.
 
@@ -184,6 +189,13 @@ class RealtimeAgent:
                 acknowledgements. Subclass it to change what counts as a
                 turn. A default with no backchannel list is used if
                 omitted.
+            context_config (`RealtimeContextConfig | None`, optional):
+                Context-management settings for the voice mode: the
+                provider-side context budget, per-tool-result limits and
+                the compression knobs. A default is used when omitted.
+            workspace (`Offloader | None`, optional):
+                Where compressed context segments are offloaded. Reserved
+                for the compression layer; a default is used if omitted.
         """
         self.name = name
         self.system_prompt = system_prompt
@@ -192,6 +204,9 @@ class RealtimeAgent:
         self.state = state or AgentState()
         self.vad = vad
         self.aggregator = aggregator or TurnAggregator()
+        self.context_config = context_config or RealtimeContextConfig()
+        self.workspace = workspace
+        self._ctx_usage = ContextUsageTracker()
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
@@ -234,7 +249,7 @@ class RealtimeAgent:
         await self.connect()
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         """Disconnect on exit."""
         await self.close()
 
@@ -270,6 +285,11 @@ class RealtimeAgent:
         # retroactively, so treat it as affecting future turns only. Do
         # not let it change `voice`: OpenAI locks it after first audio.
         history = self._replayable_history()
+        if history:
+            # The provider has not yet reported usage for the injected
+            # context, so the pre-reconnect observation cannot serve as
+            # the new session's baseline.
+            self._ctx_usage.mark_baseline_untrusted(len(history))
         if history and not self.model.supports_history_replay:
             fallback = self._format_history_fallback(history)
             if fallback:
@@ -553,6 +573,7 @@ class RealtimeAgent:
                     self._mark_disconnected()
                     raise
                 self.state.context.append(msg)
+                self._ctx_usage.note_local_append()
 
     async def interrupt(self) -> None:
         """Stop the active reply, as when the user presses stop."""
@@ -659,6 +680,7 @@ class RealtimeAgent:
 
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
+        self._ctx_usage.mark_stale("barge-in interrupted the in-flight response")
         active_reply = self._reply is not None
         reply = self._reply or self._playout_reply
         if reply is None:
@@ -812,14 +834,24 @@ class RealtimeAgent:
                     self.state.append_context(self.name, [event.tool_call])
 
             case me.ResponseDoneEvent():
-                self._metrics.input_tokens = event.input_tokens
-                self._metrics.output_tokens = event.output_tokens
+                self._ctx_usage.observe_provider_report(
+                    event.input_tokens,
+                    event.output_tokens,
+                )
+                if event.input_tokens is not None:
+                    self._metrics.input_tokens = event.input_tokens
+                if event.output_tokens is not None:
+                    self._metrics.output_tokens = event.output_tokens
                 tail = self.state.context[-1] if self.state.context else None
-                if tail is not None and tail.id == self._reply_id:
+                if (
+                    tail is not None
+                    and tail.id == self._reply_id
+                    and event.input_tokens is not None
+                ):
                     tail.append_usage(
                         Usage(
                             input_tokens=event.input_tokens,
-                            output_tokens=event.output_tokens,
+                            output_tokens=event.output_tokens or 0,
                         ),
                     )
                 if self._pending_tools and self.toolkit is not None:
@@ -1238,7 +1270,7 @@ class RealtimeAgent:
         self._confirmations[call.id] = future
         try:
             result = await asyncio.wait_for(future, timeout=300)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             return False
         finally:
             self._confirmations.pop(call.id, None)
@@ -1292,4 +1324,5 @@ class RealtimeAgent:
                 break
         else:
             self.state.append_context(self.name, [block])
+        self._ctx_usage.note_local_append()
         await self.model.push_tool_result(block)
