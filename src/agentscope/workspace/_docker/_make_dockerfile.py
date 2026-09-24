@@ -161,9 +161,7 @@ def prepare_build_context(
     """
     extra_pip_list = list(extra_pip or [])
 
-    # ``--no-deps``: requirements.txt already names everything the gateway
-    # imports, so agentscope's own tree (numpy, tree_sitter, opentelemetry,
-    # the model SDKs, …) stays out of the image.
+    # requirements.txt covers the gateway's imports, so skip agentscope's deps
     install_block = 'RUN uv pip install --no-deps "agentscope"'
 
     dockerfile_text = render_dockerfile(
