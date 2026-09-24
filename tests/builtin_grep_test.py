@@ -277,3 +277,39 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn(expected_pattern, suggestion_contents)
+
+    async def test_suggested_rule_covers_search_root(self) -> None:
+        """The search root itself needs a rule, not only its children."""
+        abs_path = os.path.abspath(self.temp_dir)
+        suggestions = await self.grep_tool.generate_suggestions(
+            {"path": self.temp_dir, "pattern": "hello"},
+        )
+        self.assertListEqual(
+            [_.rule_content for _ in suggestions],
+            [abs_path, abs_path + "/**"],
+        )
+
+    async def test_suggested_rules_match_their_own_search(self) -> None:
+        """Approving the suggestions must cover the search they came from."""
+        for tool_input in (
+            {"path": self.temp_dir, "pattern": "hello"},
+            {"path": self.temp_dir + "/", "pattern": "hello"},
+            # An omitted path searches the working directory, which is the
+            # directory the suggestion is derived from.
+            {"pattern": "hello"},
+        ):
+            suggestions = await self.grep_tool.generate_suggestions(
+                tool_input,
+            )
+            matched = [
+                await self.grep_tool.match_rule(
+                    rule.rule_content,
+                    tool_input,
+                )
+                for rule in suggestions
+            ]
+            self.assertTrue(
+                any(matched),
+                f"{[_.rule_content for _ in suggestions]} "
+                f"do not cover {tool_input}",
+            )

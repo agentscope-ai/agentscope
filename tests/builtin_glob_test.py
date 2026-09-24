@@ -339,3 +339,69 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn(expected_pattern, suggestion_contents)
+
+
+class GlobToolMatchRuleTest(IsolatedAsyncioTestCase):
+    """Test cases for the Glob tool match_rule and generate_suggestions."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up the tool and an empty search directory."""
+        self.glob_tool = Glob()
+        self.temp_dir = tempfile.mkdtemp()
+
+    async def test_match_rule_defaults_to_cwd(self) -> None:
+        """Test match_rule defaults to cwd when no path is provided."""
+        cwd = os.getcwd()
+
+        # When no path provided, the search runs in the working directory,
+        # so a rule for that directory must match it.
+        self.assertTrue(
+            await self.glob_tool.match_rule(
+                cwd,
+                {"pattern": "*.py"},
+            ),
+        )
+
+        # Should not match a different path
+        self.assertFalse(
+            await self.glob_tool.match_rule(
+                "/some/other/path",
+                {"pattern": "*.py"},
+            ),
+        )
+
+    async def test_suggested_rule_covers_search_root(self) -> None:
+        """The search root itself needs a rule, not only its children."""
+        abs_path = os.path.abspath(self.temp_dir)
+        suggestions = await self.glob_tool.generate_suggestions(
+            {"path": self.temp_dir, "pattern": "*.py"},
+        )
+        self.assertListEqual(
+            [_.rule_content for _ in suggestions],
+            [abs_path, abs_path + "/**"],
+        )
+
+    async def test_suggested_rules_match_their_own_search(self) -> None:
+        """Approving the suggestions must cover the search they came from."""
+        for tool_input in (
+            {"path": self.temp_dir, "pattern": "*.py"},
+            {"path": self.temp_dir + "/", "pattern": "*.py"},
+            # An omitted path searches the working directory, which is the
+            # directory the suggestion is derived from.
+            {"pattern": "*.py"},
+        ):
+            suggestions = await self.glob_tool.generate_suggestions(
+                tool_input,
+            )
+            matched = [
+                await self.glob_tool.match_rule(
+                    rule.rule_content,
+                    tool_input,
+                )
+                for rule in suggestions
+            ]
+            self.assertTrue(
+                any(matched),
+                f"{[_.rule_content for _ in suggestions]} "
+                f"do not cover {tool_input}",
+            )
