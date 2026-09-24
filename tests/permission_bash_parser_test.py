@@ -1432,6 +1432,103 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 result = self.parser.check_dangerous_command(cmd)
                 self.assertIsNone(result, f"Expected '{cmd}' to be safe")
 
+    async def test_pattern_word_outside_command_position(
+        self,
+    ) -> None:
+        """A dangerous name used as an option or file name is safe.
+
+        ``format`` and ``fdisk`` are ordinary English words in option and
+        file names, so only a command position may flag them.
+        """
+        safe_commands = [
+            "npm run format",
+            "yarn format",
+            "make format",
+            "eslint --format stylish src/",
+            "tar --format=ustar -cf out.tar src",
+            "python format_report.py",
+            "cp fdisk.log /tmp",
+            "mv format_names.py format_tools.py",
+            "echo 'use the format command'",
+            "git log --format=%h -5",
+            "ls -la dd/",
+            "grep -r mkfs src/",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
+    async def test_pattern_in_every_resolved_command_position(
+        self,
+    ) -> None:
+        """Paths the shell takes to the program must stay flagged.
+
+        The substring match reached these by accident, so position
+        matching has to keep each one explicitly.
+        """
+        cases = {
+            "/sbin/fdisk -l /dev/sda": "fdisk",
+            "\\fdisk -l": "fdisk",
+            "sudo fdisk -l": "fdisk",
+            "sudo /sbin/fdisk -l": "fdisk",
+            "sudo -u root dd if=/dev/zero of=/dev/sda": "dd",
+            "env FOO=bar fdisk -l": "fdisk",
+            "command fdisk -l": "fdisk",
+            "FOO=1 fdisk -l": "fdisk",
+            "sh -c 'fdisk /dev/sda'": "fdisk",
+            'bash -c "mkfs -t ext4 /dev/sda1"': "mkfs",
+            "echo foo | xargs fdisk": "fdisk",
+            "ls && fdisk -l": "fdisk",
+            "ls; dd if=/dev/zero of=/dev/sda": "dd",
+            "for f in a b; do dd if=/dev/null of=$f; done": "dd",
+            "( fdisk -l )": "fdisk",
+            "if true; then mkfs -t ext4 /dev/sda1; fi": "mkfs",
+            "echo $(dd if=/dev/zero of=/dev/sda bs=1M)": "dd",
+            "time dd if=/dev/zero of=/dev/sda": "dd",
+            "timeout 10 dd if=/dev/zero of=/dev/sda": "dd",
+        }
+        for cmd, pattern in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    pattern,
+                )
+
+    async def test_dotted_program_suffix_is_the_program(self) -> None:
+        """``mkfs.ext4`` is mkfs with the filesystem type in its name."""
+        cases = {
+            "mkfs.ext4 /dev/sda1": "mkfs",
+            "sudo mkfs.xfs /dev/sdb1": "mkfs",
+        }
+        for cmd, pattern in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    pattern,
+                )
+
+    async def test_similar_program_names_are_not_matched(self) -> None:
+        """A name that merely contains the pattern is another program."""
+        safe_commands = [
+            "ddrescue /dev/sda /dev/sdb",
+            "sfdisk /dev/sda",
+            "cfdisk /dev/sda",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
+    async def test_unresolvable_command_keeps_the_whole_line_scan(
+        self,
+    ) -> None:
+        """A line the parser cannot resolve stays conservative."""
+        self.assertEqual(
+            self.parser.check_dangerous_command('echo "unterminated format'),
+            "format",
+        )
+
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.parser = None

@@ -144,6 +144,31 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
+# Commands that run something else, so a dangerous program name can sit in
+# their argument list rather than in the command position.
+PROGRAM_WRAPPERS: Set[str] = {
+    # exec their argument as a program
+    "sudo",
+    "doas",
+    "env",
+    "command",
+    "builtin",
+    "exec",
+    "nohup",
+    "time",
+    "nice",
+    "stdbuf",
+    "timeout",
+    "watch",
+    "xargs",
+    # run a script given inline
+    "sh",
+    "bash",
+    "dash",
+    "ksh",
+    "zsh",
+}
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -644,11 +669,121 @@ class BashCommandParser:
 
         return None
 
+    @staticmethod
+    def _program_name(word: str) -> str:
+        """Reduce a word to the program name bash would exec.
+
+        Args:
+            word (`str`):
+                A single word, possibly quoted, path-qualified or
+                backslash-escaped.
+
+        Returns:
+            `str`:
+                The bare program name.
+        """
+        name = word.strip("\"'").lstrip("\\")
+        return name.rsplit("/", 1)[-1]
+
+    def _collect_command_nodes(self, node: Node, out: List[Node]) -> None:
+        """Append every ``command`` node in the subtree to ``out``.
+
+        Args:
+            node (`Node`):
+                The AST node to search from.
+            out (`List[Node]`):
+                The list to append to.
+        """
+        if node.type == "command":
+            out.append(node)
+        for child in node.children:
+            self._collect_command_nodes(child, out)
+
+    def _program_names(self, command: str) -> Optional[Set[str]]:
+        """List the programs a command can run.
+
+        Covers every command position the shell resolves statically: the
+        head of each simple command, ones nested in subshells, loops,
+        conditionals and ``$(...)`` substitutions, and the argument of a
+        wrapper such as ``sudo``. A wrapper gets every remaining word,
+        because ``sudo -u root dd`` hides the program behind an option
+        that takes a value.
+
+        Args:
+            command (`str`):
+                The bash command to analyze.
+
+        Returns:
+            `Optional[Set[str]]`:
+                The program names, or ``None`` when the command cannot be
+                resolved, which the caller must treat as unknown rather
+                than as a safe empty set.
+        """
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+        except Exception:
+            return None
+
+        root = tree.root_node
+        if root.has_error:
+            return None
+
+        cmd_nodes: List[Node] = []
+        self._collect_command_nodes(root, cmd_nodes)
+
+        names: Set[str] = set()
+        for cmd_node in cmd_nodes:
+            name_node = cmd_node.child_by_field_name("name")
+            if name_node is None:
+                return None
+            program = self._program_name(name_node.text.decode("utf8"))
+            names.add(program)
+            if program in PROGRAM_WRAPPERS:
+                for child in cmd_node.children:
+                    if child is name_node:
+                        continue
+                    for word in child.text.decode("utf8").split():
+                        names.add(self._program_name(word))
+
+        return names or None
+
+    @staticmethod
+    def _runs_program(pattern: str, programs: Set[str]) -> bool:
+        """Whether *pattern* names one of *programs*.
+
+        ``mkfs.ext4`` is mkfs with the filesystem type spelled into its
+        name, so a dotted suffix still counts. Matching the whole name
+        rather than a substring keeps ``ddrescue`` out.
+
+        Args:
+            pattern (`str`):
+                A single-word dangerous program name.
+            programs (`Set[str]`):
+                The program names resolved from a command.
+
+        Returns:
+            `bool`:
+                True if one of *programs* is that program.
+        """
+        prefix = pattern + "."
+        return any(
+            name == pattern or name.startswith(prefix) for name in programs
+        )
+
     def check_dangerous_command(self, command: str) -> Optional[str]:
         """Check if command contains dangerous patterns.
 
-        Uses word-boundary aware matching to avoid false positives like
-        'git add' matching 'dd' pattern.
+        A multi-word pattern like ``rm -rf`` is matched as a substring, as
+        before. A single-word pattern is matched only against the programs
+        the command can actually run: ``format`` and ``fdisk`` are English
+        words that options and file names borrow constantly, so matching
+        them anywhere in the line asked the user to approve commands that
+        invoke neither. ``dd`` and ``mkfs`` move to the same rule, which
+        is why ``tar -C dd`` is no longer flagged.
+
+        Two cases keep the previous whole-line scan, so no command that
+        used to be caught can slip through: a line the parser cannot
+        resolve, and a multi-word pattern.
 
         Args:
             command (`str`):
@@ -662,19 +797,27 @@ class BashCommandParser:
         # Normalize command for matching
         normalized = " ".join(command.split())
 
+        # Lazily resolved, so a multi-word match costs nothing
+        programs: Optional[Set[str]] = None
+
         # Check each dangerous pattern
         for pattern in DANGEROUS_COMMANDS:
-            # For single-word patterns like "dd", use word boundary matching
-            # to avoid false positives (e.g., "git add" shouldn't match "dd")
-            if " " not in pattern and len(pattern) <= 4:
-                # Single word pattern - use word boundaries
-                regex = r"\b" + re.escape(pattern) + r"\b"
-                if re.search(regex, normalized):
-                    return pattern
-            else:
-                # Multi-word pattern or longer pattern - use substring match
+            if " " in pattern:
+                # Multi-word pattern - the words are already a phrase, so
+                # a substring match cannot misattribute them to an option.
                 if pattern in normalized:
                     return pattern
+                continue
+
+            # Single word pattern - only a program position counts
+            if programs is None:
+                programs = self._program_names(normalized)
+
+            if programs is None:
+                if re.search(r"\b" + re.escape(pattern) + r"\b", normalized):
+                    return pattern
+            elif self._runs_program(pattern, programs):
+                return pattern
 
         return None
 
