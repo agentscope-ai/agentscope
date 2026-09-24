@@ -368,7 +368,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        response = dashscope.embeddings.TextEmbedding.call(
+        response = await asyncio.to_thread(
+            dashscope.embeddings.TextEmbedding.call,
             api_key=self.api_key,
             **api_kwargs,
         )
@@ -453,7 +454,10 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        res = dashscope.MultiModalEmbedding.call(**api_kwargs)
+        res = await asyncio.to_thread(
+            dashscope.MultiModalEmbedding.call,
+            **api_kwargs,
+        )
         time = (datetime.now() - start_time).total_seconds()
 
         if res.status_code != 200:

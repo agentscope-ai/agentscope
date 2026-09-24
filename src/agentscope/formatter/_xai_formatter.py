@@ -365,6 +365,11 @@ class XAIChatFormatter(FormatterBase):
                     parts.append(item.text)
                 elif isinstance(item, str):
                     parts.append(item)
+                elif isinstance(item, DataBlock):
+                    # Tool results are text-only here; media becomes a hint.
+                    parts.append(
+                        self._convert_unsupported_data_block_to_string(item),
+                    )
                 else:
                     parts.append(str(item))
             return "\n".join(parts)

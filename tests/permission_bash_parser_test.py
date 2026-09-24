@@ -898,6 +898,83 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn(expected_substring, result)
 
+    async def test_denylist_every_e_expression(self) -> None:
+        """Test denylist: every -e expression is checked, not only the 1st."""
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '/x/w /tmp/out' f",
+                self.dangerous_files,
+            ),
+            "sed write operation (w/W) not allowed",
+        )
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '1e id' f",
+                self.dangerous_files,
+            ),
+            "sed expression '1e id' not in allowlist",
+        )
+        self.assertIsNone(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e 's/x/y/g' f",
+                self.dangerous_files,
+            ),
+        )
+
+    async def test_long_option_with_inline_value(self) -> None:
+        """Test long options that carry their value after an '='.
+
+        ``shlex`` keeps such an option and its value in one token, so a value
+        that is a sed script, a backup suffix or a script file has to be split
+        off before the option is recognised -- otherwise both disappear from
+        the analysis and the command they belong to goes unchecked.
+        """
+        cases = [
+            (
+                "sed -n --expression='/bin/sh/e' -e '1p' notes.txt",
+                "sed -n -e '1p' -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed --file=script.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+            (
+                "sed --expression='/bin/sh/e' notes.txt",
+                "sed --expression '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                # An unchecked long option leaves the *filename* to be judged
+                # as the expression, so plain line printing is flagged too.
+                "sed -n --expression='5p' notes.txt",
+                "sed -n '5p' notes.txt",
+                None,
+            ),
+        ]
+        for inline, separated, expected in cases:
+            with self.subTest(inline=inline):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        inline,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""
         test_cases = [

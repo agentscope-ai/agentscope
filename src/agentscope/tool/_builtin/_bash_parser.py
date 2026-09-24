@@ -728,9 +728,30 @@ class BashCommandParser:
 
         while i < len(args):
             arg = args[i]
+            # A GNU long option may carry its value right after '=', which
+            # keeps option name and value in one token. Split them, or the
+            # value -- a sed script, a backup suffix -- vanishes from the
+            # analysis together with the option that introduced it.
+            name, assigned, inline = (
+                arg.partition("=") if arg.startswith("--") else (arg, "", "")
+            )
 
+            # -e/--expression takes a sed script as its value, so it must be
+            # matched before the combined short flags below
+            if name in ("-e", "--expression"):
+                if assigned:
+                    expressions.append(inline)
+                    found_first_expr = True
+                elif i + 1 < len(args):
+                    expressions.append(args[i + 1])
+                    found_first_expr = True
+                    i += 1
+            # --file is the long spelling of -f, which the flag allowlist
+            # below rejects: an expression read from a file is never seen here.
+            elif name == "--file":
+                flags.append("f")
             # Handle flags
-            if arg.startswith("-") and not arg.startswith("--"):
+            elif name.startswith("-") and not name.startswith("--"):
                 # Combined flags like -nE
                 flag_chars = arg[1:]
                 for char in flag_chars:
@@ -747,9 +768,11 @@ class BashCommandParser:
                         and "." not in next_arg
                     ):
                         i += 1  # Skip backup extension
-            elif arg == "--in-place":
+            elif name == "--in-place":
                 flags.append("i")
-                if i + 1 < len(args):
+                # Written with '=', the backup suffix already came along in
+                # this token; only the separated form can take the next one.
+                if not assigned and i + 1 < len(args):
                     next_arg = args[i + 1]
                     if (
                         not next_arg.startswith("-")
@@ -757,10 +780,6 @@ class BashCommandParser:
                         and "." not in next_arg
                     ):
                         i += 1
-            elif arg in ["-e", "--expression"]:
-                if i + 1 < len(args):
-                    expressions.append(args[i + 1])
-                    i += 1
             elif not arg.startswith("-"):
                 # First non-flag, non-option arg is expression (if no -e used)
                 if not found_first_expr:

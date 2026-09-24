@@ -304,8 +304,8 @@ Usage:
             content.encode("utf-8"),
         )
 
-        # Count lines in content
-        line_count = len(content.split("\n"))
+        # Count lines the way the ``Read`` tool numbers them
+        line_count = len(content.splitlines())
 
         # Build the unified diff between previous and new content. When the
         # file is brand new, ``unified_diff`` over an empty old side naturally

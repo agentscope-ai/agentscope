@@ -37,7 +37,8 @@ class FileEmbeddingCache(EmbeddingCacheBase):
             max_cache_size (`int | None`, defaults to `None`):
                 The maximum size of the cache directory in MB. If exceeded,
                 the oldest files will be removed until the size is within the
-                limit.
+                limit. A vector set that exceeds the limit on its own is not
+                cached, so that storing it cannot empty the cache.
         """
         self._cache_dir = os.path.abspath(cache_dir)
         self.max_file_number = max_file_number
@@ -81,10 +82,10 @@ class FileEmbeddingCache(EmbeddingCacheBase):
 
             if overwrite:
                 np.save(path_file, embeddings)
-                await self._maintain_cache_dir()
+                await self._maintain_cache_dir(path_file)
         else:
             np.save(path_file, embeddings)
-            await self._maintain_cache_dir()
+            await self._maintain_cache_dir(path_file)
 
     async def retrieve(
         self,
@@ -145,10 +146,35 @@ class FileEmbeddingCache(EmbeddingCacheBase):
         json_str = json.dumps(identifier, ensure_ascii=False)
         return hashlib.sha256(json_str.encode("utf-8")).hexdigest() + ".npy"
 
-    async def _maintain_cache_dir(self) -> None:
+    async def _maintain_cache_dir(
+        self,
+        new_file: str | None = None,
+    ) -> None:
         """Maintain the cache directory by removing old files if the number of
         files exceeds the maximum limit or if the cache size exceeds the
-        maximum size."""
+        maximum size.
+
+        Args:
+            new_file (`str | None`, defaults to `None`):
+                The path of the file that :meth:`store` has just written.
+                When that file alone is larger than ``max_cache_size`` it is
+                dropped uncached and the rest of the cache is left untouched:
+                evicting oldest-first towards such a limit would delete
+                every other file and still not fit.
+        """
+        if new_file and self.max_cache_size is not None:
+            new_size_mb = os.path.getsize(new_file) / (1024.0 * 1024.0)
+            if new_size_mb > self.max_cache_size:
+                os.remove(new_file)
+                logger.warning(
+                    "Do not cache %s: it holds %.2f MB, which exceeds the "
+                    "%d MB cache limit on its own.",
+                    os.path.basename(new_file),
+                    new_size_mb,
+                    self.max_cache_size,
+                )
+                return
+
         files = [
             (_.name, _.stat().st_mtime)
             for _ in os.scandir(self.cache_dir)

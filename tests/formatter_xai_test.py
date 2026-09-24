@@ -7,6 +7,8 @@ dicts), a lightweight xai_sdk stub is built at module load so that tests run
 without the real package.  The stub objects support __eq__ and __repr__ so
 full assertListEqual comparisons work.
 """
+import os
+import re
 import sys
 from typing import Any
 from types import ModuleType
@@ -21,6 +23,7 @@ from agentscope.message import (
     TextBlock,
     DataBlock,
     Base64Source,
+    URLSource,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
@@ -306,6 +309,87 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
             [
                 tool_result(
                     "The capital of Japan is Tokyo.",
+                    tool_call_id="call_1",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_tool_result_with_url_media(self) -> None:
+        """URL media in a tool result becomes a placeholder with its URL."""
+        fmt = XAIChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="screenshot",
+                            output=[
+                                TextBlock(text="done"),
+                                DataBlock(
+                                    source=URLSource(
+                                        url="https://example.com/a.png",
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "done\n<system-reminder>A(n) image file is returned "
+                    "and can be accessed at the URL: "
+                    "https://example.com/a.png.</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_tool_result_with_base64_media(
+        self,
+    ) -> None:
+        """Base64 media in a tool result is saved to a file, not dumped."""
+        fmt = XAIChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="screenshot",
+                            output=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data="iVBORw0KGgo=",
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        path = re.search(
+            r"saved locally at: (.+)\.</system-reminder>",
+            res[0].args[0],
+        ).group(1)
+        os.unlink(path)
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "<system-reminder>A(n) image file is returned and "
+                    f"saved locally at: {path}.</system-reminder>",
                     tool_call_id="call_1",
                 ),
             ],

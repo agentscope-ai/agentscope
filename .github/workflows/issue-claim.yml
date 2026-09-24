@@ -15,6 +15,7 @@ permissions: {}
 env:
   TRIAGE_MODEL: qwen3.8-max
   CLAIM_DAYS: '14'
+  MAX_CLAIMS: '5'
   MAINTAINERS: DavdGao qbc2016
 
 jobs:
@@ -155,6 +156,23 @@ jobs:
                 'label.',
               );
               return;
+            }
+
+            // Spread thin, nothing gets finished. A maintainer's load is
+            // their own business.
+            if (!maintainers.includes(who)) {
+              const mine = (await github.paginate(
+                github.rest.issues.listForRepo,
+                { owner, repo, assignee: who, state: 'open', per_page: 100 },
+              )).filter((i) => !i.pull_request);
+              if (mine.length >= Number(process.env.MAX_CLAIMS)) {
+                await say(
+                  `Thanks for offering, @${who}. To keep the work focused, ` +
+                  'please concentrate on the issues you already hold first: ' +
+                  mine.map((i) => `#${i.number}`).join(', ') + '.',
+                );
+                return;
+              }
             }
 
             if (holders.length > 0) {

@@ -2,6 +2,7 @@
 # pylint: disable=protected-access,unused-argument
 """Unit tests for DashScopeEmbeddingModel."""
 from dataclasses import asdict
+from threading import get_ident
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -158,6 +159,26 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
                 "source": "api",
             },
         )
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_sdk_thread(self, mock_api: Any) -> None:
+        """The SDK executes on a worker instead of the event loop thread."""
+        loop_thread = get_ident()
+        on_loop_thread: list[bool] = []
+
+        def record_thread(**_kwargs: Any) -> MagicMock:
+            """Capture the thread that executes the SDK request."""
+            on_loop_thread.append(get_ident() == loop_thread)
+            return _text_resp([[1.0]])
+
+        mock_api.side_effect = record_thread
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="text-embedding-v4",
+            dimensions=1,
+        )
+        await model(["hello"])
+        self.assertListEqual(on_loop_thread, [False])
 
     @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_text_rejects_datablock(self, mock_api: Any) -> None:
