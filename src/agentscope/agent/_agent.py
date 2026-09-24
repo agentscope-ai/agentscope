@@ -3297,6 +3297,117 @@ class Agent:
         if self.model_config.fallback_model:
             models.append(self.model_config.fallback_model)
 
+        async def invoke_model(
+            current_model: ChatModelBase,
+        ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+            """Invoke one model attempt through the middleware chain."""
+            if not self._model_call_middlewares:
+                return await current_model(
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )
+
+            async def execute_chain(
+                index: int = 0,
+                current_model: ChatModelBase = current_model,
+                messages: list[Msg] = messages,
+                tools: list[dict] = tools,
+                tool_choice: ToolChoice | None = tool_choice,
+            ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+                """Execute the model middleware chain."""
+                if index >= len(self._model_call_middlewares):
+                    return await current_model(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                    )
+
+                mw = self._model_call_middlewares[index]
+                input_kwargs = {
+                    "current_model": current_model,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": tool_choice,
+                }
+
+                async def next_handler(
+                    **kwargs: Any,
+                ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+                    return await execute_chain(
+                        index + 1,
+                        **{**input_kwargs, **kwargs},
+                    )
+
+                return await mw.on_model_call(
+                    agent=self,
+                    input_kwargs=input_kwargs,
+                    next_handler=next_handler,
+                )
+
+            return await execute_chain()
+
+        def log_failure(model: ChatModelBase, attempt: int) -> None:
+            """Log a failed model attempt."""
+            if attempt < self.model_config.max_retries:
+                logger.warning(
+                    "Model %s call failed for agent %s. "
+                    "Retrying (%d/%d)...",
+                    model.model,
+                    self.name,
+                    attempt + 1,
+                    self.model_config.max_retries,
+                )
+            else:
+                logger.warning(
+                    "Model %s exhausted all %d attempt(s) for agent %s.",
+                    model.model,
+                    self.model_config.max_retries + 1,
+                    self.name,
+                )
+
+        async def stream_with_retry(
+            initial_stream: AsyncGenerator[ChatResponse, None],
+            model_index: int,
+            attempt: int,
+        ) -> AsyncGenerator[ChatResponse, None]:
+            """Retry a stream only before its first visible chunk."""
+            result: ChatResponse | AsyncGenerator[ChatResponse, None] | None
+            result = initial_stream
+
+            while True:
+                yielded = False
+                try:
+                    if result is None:
+                        result = await invoke_model(models[model_index])
+
+                    if isinstance(result, ChatResponse):
+                        yielded = True
+                        yield result
+                    else:
+                        async for chunk in result:
+                            yielded = True
+                            yield chunk
+                    return
+                except Exception:
+                    # Do not replay a stream after emitting output.
+                    if yielded:
+                        raise
+
+                    log_failure(models[model_index], attempt)
+                    if attempt < self.model_config.max_retries:
+                        attempt += 1
+                    else:
+                        model_index += 1
+                        attempt = 0
+                        if model_index >= len(models):
+                            raise
+                        logger.info(
+                            "Fallback to model '%s'",
+                            models[model_index].model,
+                        )
+                    result = None
+
         last_exception = None
         # ``max_retries`` is the number of retries on top of the initial
         # call (mirrors ``ChatModelBase.max_retries``), so total attempts
@@ -3310,80 +3421,13 @@ class Agent:
 
             for attempt in range(self.model_config.max_retries + 1):
                 try:
-                    # Apply middleware to wrap the actual model() call
-                    if not self._model_call_middlewares:
-                        return await model(
-                            messages=messages,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                        )
-                    else:
-                        # pylint: disable=cell-var-from-loop
-                        async def execute_chain(
-                            index: int = 0,
-                            current_model: ChatModelBase = model,
-                            messages: list[Msg] = messages,
-                            tools: list[dict] = tools,
-                            tool_choice: ToolChoice = tool_choice,
-                        ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-                            """Execute the model chain."""
-                            if index >= len(self._model_call_middlewares):
-                                return await current_model(
-                                    messages=messages,
-                                    tools=tools,
-                                    tool_choice=tool_choice,
-                                )
-                            else:
-                                mw = self._model_call_middlewares[index]
-                                input_kwargs = {
-                                    "current_model": current_model,
-                                    "messages": messages,
-                                    "tools": tools,
-                                    "tool_choice": tool_choice,
-                                }
-
-                                async def next_handler(
-                                    **kwargs: Any,
-                                ) -> (
-                                    ChatResponse
-                                    | AsyncGenerator[ChatResponse, None]
-                                ):
-                                    # pylint: disable=cell-var-from-loop
-                                    return await execute_chain(
-                                        index + 1,
-                                        **{**input_kwargs, **kwargs},
-                                    )
-
-                                return await mw.on_model_call(
-                                    agent=self,
-                                    input_kwargs=input_kwargs,
-                                    next_handler=next_handler,
-                                )
-
-                        return await execute_chain()
+                    result = await invoke_model(model)
+                    if isinstance(result, ChatResponse):
+                        return result
+                    return stream_with_retry(result, index, attempt)
                 except Exception as e:
                     last_exception = e
-                    # Only log a "Retrying" message when there's actually a
-                    # next attempt left for this model. When ``max_retries=0``
-                    # or the last retry has been used, the outer loop either
-                    # falls over to the fallback or raises.
-                    if attempt < self.model_config.max_retries:
-                        logger.warning(
-                            "Model %s call failed for agent %s. "
-                            "Retrying (%d/%d)...",
-                            model.model,
-                            self.name,
-                            attempt + 1,
-                            self.model_config.max_retries,
-                        )
-                    else:
-                        logger.warning(
-                            "Model %s exhausted all %d attempt(s) "
-                            "for agent %s.",
-                            model.model,
-                            self.model_config.max_retries + 1,
-                            self.name,
-                        )
+                    log_failure(model, attempt)
 
         if last_exception:
             raise last_exception from None
