@@ -7,6 +7,7 @@ opened up front to meet the five-second window, the push fallback for
 runs with no inbound message, and the approval-card click round trip.
 """
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
@@ -521,3 +522,16 @@ class MediaSendTest(IsolatedAsyncioTestCase):
         self.assertEqual(ack["errcode"], -1)
         self.assertEqual(client.cmds, [])
         self.assertEqual(client.sent, [])
+
+
+class ListToolsTest(IsolatedAsyncioTestCase):
+    """The override keeps the base contract ChatService calls it with."""
+
+    async def test_accepts_the_session_user(self) -> None:
+        channel, _ = _channel()
+        workspace = SimpleNamespace(get_backend=lambda: None)
+        tools = await channel.list_tools(workspace, "user-1")
+        self.assertEqual(
+            [tool.name for tool in tools],
+            ["SendMessage", "SendFile", "SendImage"],
+        )
