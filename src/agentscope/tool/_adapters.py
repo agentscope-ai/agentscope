@@ -409,6 +409,20 @@ class MCPTool(ToolBase):
                             text=content.resource.model_dump_json(indent=2),
                         ),
                     )
+                elif isinstance(
+                    content.resource,
+                    mcp.types.BlobResourceContents,
+                ):
+                    as_content.append(
+                        DataBlock(
+                            source=Base64Source(
+                                type="base64",
+                                media_type=content.resource.mimeType
+                                or "application/octet-stream",
+                                data=content.resource.blob,
+                            ),
+                        ),
+                    )
                 else:
                     logger.error(
                         "Unsupported EmbeddedResource content type: %s. "
