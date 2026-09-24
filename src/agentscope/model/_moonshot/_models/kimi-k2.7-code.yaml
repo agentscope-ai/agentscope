@@ -1,0 +1,23 @@
+name: kimi-k2.7-code
+label: Kimi K2.7 Code
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 262144
+# Moonshot publishes no per-model output ceiling; matched to kimi-k2.6,
+# which shares the same context window.
+output_size: 32768
+
+parameter_overrides:
+  max_tokens:
+    maximum: 32768
+  # Thinking is always on for the Code models and cannot be disabled.
+  thinking_enable:
+    hidden: true

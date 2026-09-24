@@ -14,7 +14,7 @@ export const buildChatTour = (t: TFunction): Tour => ({
 			side: 'bottom',
 			showControls: false,
 			pointerPadding: 8,
-			pointerRadius: 8,
+			pointerRadius: 16,
 		},
 		{
 			icon: null,
@@ -24,7 +24,7 @@ export const buildChatTour = (t: TFunction): Tour => ({
 			side: 'right',
 			showControls: false,
 			pointerPadding: 6,
-			pointerRadius: 6,
+			pointerRadius: 22,
 		},
 		{
 			icon: null,
@@ -34,7 +34,7 @@ export const buildChatTour = (t: TFunction): Tour => ({
 			side: 'bottom',
 			showControls: false,
 			pointerPadding: 6,
-			pointerRadius: 8,
+			pointerRadius: 20,
 		},
 		{
 			icon: null,
@@ -44,7 +44,7 @@ export const buildChatTour = (t: TFunction): Tour => ({
 			side: 'bottom-right',
 			showControls: false,
 			pointerPadding: 6,
-			pointerRadius: 8,
+			pointerRadius: 22,
 		},
 		{
 			icon: null,
@@ -54,7 +54,7 @@ export const buildChatTour = (t: TFunction): Tour => ({
 			side: 'top',
 			showControls: false,
 			pointerPadding: 6,
-			pointerRadius: 16,
+			pointerRadius: 34,
 		},
 	],
 });

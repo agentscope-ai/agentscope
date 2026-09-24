@@ -2,7 +2,6 @@
 """Google Gemini API formatter in agentscope."""
 import base64
 import fnmatch
-import json
 from abc import ABC
 from typing import Any
 
@@ -11,6 +10,7 @@ from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..message import (
     Msg,
     TextBlock,
@@ -120,10 +120,11 @@ class GeminiChatFormatter(_GeminiFormatterBase):
             "image/*",
             "audio/*",
             "video/*",
+            "application/pdf",
         ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            'The supported input types. Defaults to ``["text/plain", '
+            '"image/*", "audio/*", "video/*", "application/pdf"]``.'
         ),
     )
 
@@ -151,26 +152,50 @@ class GeminiChatFormatter(_GeminiFormatterBase):
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
-                    parts.append({"text": block.text})
+                    if block.text:
+                        parts.append({"text": block.text})
 
                 elif isinstance(block, ThinkingBlock):
                     # Gemini API requires `thought: true` to mark a part as a
                     # thinking/reasoning block so the model can distinguish it
                     # from normal text and maintain reasoning continuity.
-                    parts.append({"thought": True, "text": block.thinking})
+                    # Skip empty thinking — Gemini rejects a thought part
+                    # whose text is empty with a 400
+                    # ("contents.parts must not be empty"). Empty thinking
+                    # occurs when a reasoning model returns no summary.
+                    if block.thinking:
+                        parts.append(
+                            {"thought": True, "text": block.thinking},
+                        )
 
                 elif isinstance(block, HintBlock):
-                    if parts:
-                        role = "model" if msg.role == "assistant" else "user"
-                        messages.append({"role": role, "parts": parts})
-                        parts = []
+                    if isinstance(block.hint, str):
+                        hint_parts = (
+                            [{"text": block.hint}] if block.hint else []
+                        )
+                    else:
+                        hint_parts = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                if sub.text:
+                                    hint_parts.append({"text": sub.text})
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = self._format_gemini_data_block(
+                                    sub,
+                                )
+                                if formatted_sub:
+                                    hint_parts.append(formatted_sub)
 
-                    messages.append(
-                        {
-                            "role": "user",
-                            "parts": [{"text": block.hint}],
-                        },
-                    )
+                    if hint_parts:
+                        if parts:
+                            role = (
+                                "model" if msg.role == "assistant" else "user"
+                            )
+                            messages.append({"role": role, "parts": parts})
+                            parts = []
+                        messages.append(
+                            {"role": "user", "parts": hint_parts},
+                        )
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_gemini_data_block(block)
@@ -183,7 +208,13 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                             "function_call": {
                                 "id": block.id,
                                 "name": block.name,
-                                "args": json.loads(block.input or "{}"),
+                                # Use the repair helper so a truncated input
+                                # (from interrupted streaming or context
+                                # compression) degrades to {} instead of
+                                # raising JSONDecodeError.
+                                "args": _json_loads_with_repair(
+                                    block.input or "{}",
+                                ),
                             },
                         },
                     )
@@ -288,10 +319,11 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
             "image/*",
             "audio/*",
             "video/*",
+            "application/pdf",
         ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            'The supported input types. Defaults to ``["text/plain", '
+            '"image/*", "audio/*", "video/*", "application/pdf"]``.'
         ),
     )
 
@@ -316,13 +348,13 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

@@ -7,7 +7,7 @@ Tests cover both non-streaming and streaming modes.
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -149,27 +149,29 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "kimi-1")
 
-    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         mock_create = AsyncMock(
@@ -183,7 +185,7 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -192,8 +194,9 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="call-1",
+                        created_at=A,
                         name="get_weather",
                         input='{"city":"Shanghai"}',
                     ),
@@ -201,10 +204,8 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("openai.AsyncClient")
     async def test_thinking_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream response with reasoning creates ThinkingBlock."""
         mock_create = AsyncMock(
@@ -213,7 +214,7 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
                 reasoning="Step by step...",
             ),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -224,9 +225,10 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Step by step...",
                     ),
-                    TextBlock.model_construct(id=A, text="42"),
+                    TextBlock.model_construct(id=A, created_at=A, text="42"),
                 ],
             ),
         )
@@ -257,9 +259,10 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+    async def test_stream_text(self) -> None:
         """Stream text yields n deltas (is_last=False) + 1 final
         (is_last=True) with full content."""
         chunks = [
@@ -271,7 +274,7 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -279,16 +282,35 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hi")]),
-                (False, [TextBlock.model_construct(id=A, text=" there")]),
-                (True, [TextBlock.model_construct(id=A, text="Hi there")]),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" there",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hi there",
+                        ),
+                    ],
+                ),
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_thinking_then_text(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Moonshot yields thinking chunks separately before text."""
         chunks = [
@@ -301,7 +323,7 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -311,30 +333,54 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Let me")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Let me",
+                        ),
+                    ],
                 ),
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking=" think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking=" think",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Result")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me think",
                         ),
-                        TextBlock.model_construct(id=A, text="Result"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
                     ],
                 ),
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_tool_calls(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream tool calls accumulate across chunks into final response."""
         chunks = [
@@ -354,7 +400,7 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -365,8 +411,9 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":',
                         ),
@@ -375,8 +422,9 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='"test"}',
                         ),
@@ -385,8 +433,9 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":"test"}',
                         ),

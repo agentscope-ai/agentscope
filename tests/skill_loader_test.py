@@ -6,6 +6,7 @@ import tempfile
 import shutil
 import time
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.skill import LocalSkillLoader
 
@@ -84,6 +85,60 @@ This is the subdir2 skill content.
             self.assertEqual(len(skills), 0)
         finally:
             shutil.rmtree(empty_dir)
+
+    async def test_expanduser_directory(self) -> None:
+        """Test that ``~`` is expanded before loading skills."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is loaded through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            with patch.dict(os.environ, env, clear=False):
+                loader = LocalSkillLoader(
+                    os.path.join("~", "tilde_skill"),
+                    scan_subdir=False,
+                )
+                self.assertEqual(loader.directory, os.path.abspath(skill_dir))
+                skills = await loader.list_skills()
+
+            self.assertListEqual(
+                [
+                    {
+                        "name": skill.name,
+                        "description": skill.description,
+                        "dir": skill.dir,
+                    }
+                    for skill in skills
+                ],
+                [
+                    {
+                        "name": "tilde_skill",
+                        "description": (
+                            "A skill under the user home directory"
+                        ),
+                        "dir": os.path.abspath(skill_dir),
+                    },
+                ],
+            )
 
     async def test_scan_subdir_flag_controls_subdirectory_scanning(
         self,

@@ -1,13 +1,24 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
-import uuid
-from datetime import datetime
 from enum import StrEnum
-from typing import Literal, List, TypeAlias
+from typing import Any, Dict, Literal, List, Self, TypeAlias
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing_extensions import deprecated
 
-from ..message import ToolCallBlock, ToolResultBlock, ToolResultState
+from .._utils._common import _generate_id, _generate_timestamp
+from ..message import (
+    DataBlock,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
+)
+from ..model import FinishedReason
 from ..permission import PermissionRule
 
 
@@ -32,6 +43,8 @@ class EventType(StrEnum):
     THINKING_BLOCK_DELTA = "THINKING_BLOCK_DELTA"
     THINKING_BLOCK_END = "THINKING_BLOCK_END"
 
+    HINT_BLOCK = "HINT_BLOCK"
+
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_DELTA = "TOOL_CALL_DELTA"
     TOOL_CALL_END = "TOOL_CALL_END"
@@ -47,7 +60,10 @@ class EventType(StrEnum):
     REQUIRE_EXTERNAL_EXECUTION = "REQUIRE_EXTERNAL_EXECUTION"
 
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
+    USER_INTERRUPT = "USER_INTERRUPT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
+
+    CUSTOM = "CUSTOM"
 
 
 class EventBase(BaseModel):
@@ -55,10 +71,12 @@ class EventBase(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """Unique event identifier."""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """ISO 8601 timestamp of when the event was created."""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the event."""
 
 
 class ReplyStartEvent(EventBase):
@@ -76,6 +94,20 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
+class ReplyEndReason(StrEnum):
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
+
+
 class ReplyEndEvent(EventBase):
     """Reply end event."""
 
@@ -85,6 +117,11 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
+    """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):
@@ -109,6 +146,14 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    cache_input_tokens: int = 0
+    """Number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """Number of input tokens used to create the prompt cache."""
+    finished_reason: FinishedReason = Field(
+        default=FinishedReason.COMPLETED,
+    )
+    """The finished reason of this model call."""
 
 
 class TextBlockStartEvent(EventBase):
@@ -144,6 +189,9 @@ class TextBlockEndEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the text block."""
+    text: str | None = None
+    """The block's final text, when it is not the concatenation of the
+    deltas: a voice reply cut short is truncated to what the user heard."""
 
 
 class DataBlockStartEvent(EventBase):
@@ -157,6 +205,8 @@ class DataBlockStartEvent(EventBase):
     """Unique identifier of the data block."""
     media_type: str
     """MIME type of the data content (e.g. "image/png")."""
+    name: str | None = None
+    """Name of the data, e.g. a file name."""
 
 
 class DataBlockDeltaEvent(EventBase):
@@ -168,10 +218,21 @@ class DataBlockDeltaEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the data block."""
-    data: str
-    """Incremental base64-encoded data."""
     media_type: str
     """MIME type of the data content."""
+    data: str | None = None
+    """Incremental base64-encoded data, mutually exclusive with `url`."""
+    url: str | None = None
+    """URL pointing to the data, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
 
 
 class DataBlockEndEvent(EventBase):
@@ -222,6 +283,31 @@ class ThinkingBlockEndEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the thinking block."""
+
+
+class HintBlockEvent(EventBase):
+    """One-shot hint block event.
+
+    Unlike text/thinking blocks, hint blocks are not streamed — the
+    full content is available at creation time (team messages,
+    background tool results, user interruptions, …). A single event
+    carries the complete :class:`~agentscope.message.HintBlock`.
+
+    The ``hint`` field mirrors :attr:`HintBlock.hint` and may be a
+    plain string or a list of :class:`TextBlock` / :class:`DataBlock`
+    for multimodal content.
+    """
+
+    type: Literal[EventType.HINT_BLOCK] = EventType.HINT_BLOCK
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the hint block."""
+    source: str | None = None
+    """Sender or origin of this hint (e.g. ``"alice"``, ``"system"``)."""
+    hint: str | List[TextBlock | DataBlock]
+    """Complete hint content — ``str`` or ``list[TextBlock | DataBlock]``."""
 
 
 class ToolCallStartEvent(EventBase):
@@ -300,7 +386,7 @@ class ToolResultDataDeltaEvent(EventBase):
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
-    block_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    block_id: str = Field(default_factory=_generate_id)
     """Unique identifier of the data block created by this event."""
     media_type: str
     """MIME type of the binary content."""
@@ -308,6 +394,15 @@ class ToolResultDataDeltaEvent(EventBase):
     """Base64-encoded binary data, mutually exclusive with `url`."""
     url: str | None = None
     """URL pointing to the binary content, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
 
 
 class ToolResultEndEvent(EventBase):
@@ -323,10 +418,18 @@ class ToolResultEndEvent(EventBase):
     """ID of the corresponding tool call."""
     state: ToolResultState
     """Final execution state of the tool call."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the tool result event."""
 
 
+@deprecated(
+    "ExceedMaxItersEvent is deprecated and will be removed; check the "
+    "'finished_reason' field of ReplyEndEvent against "
+    "ReplyFinishedReason.EXCEED_MAX_ITERS instead.",
+)
 class ExceedMaxItersEvent(EventBase):
-    """Exceeded max iteration event."""
+    """Deprecated exceeded max iteration event, still emitted for backward
+    compatibility without semantics; use ``ReplyEndEvent.finished_reason``."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""
@@ -389,6 +492,31 @@ class UserConfirmResultEvent(EventBase):
     """Confirmation results for each pending tool call."""
 
 
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply.
+
+    Delivered to :meth:`Agent.reply_stream` (or :meth:`Agent.reply`) to
+    abort a reply that is currently waiting on external input — either
+    user confirmation (:class:`RequireUserConfirmEvent`) or external
+    execution (:class:`RequireExternalExecutionEvent`).
+
+    On receipt, the agent closes every pending tool call with an
+    interrupted tool result, emits a fallback assistant message, ends
+    the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
+    enter the reasoning-acting loop.
+
+    .. note:: This event is only meaningful for parked replies. To
+        interrupt a running (actively-generating) reply, cancel the
+        underlying task instead — the agent handles that path via its
+        own ``CancelledError`` cleanup.
+    """
+
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this interrupt targets."""
+
+
 class ExternalExecutionResultEvent(EventBase):
     """External execution result event."""
 
@@ -400,6 +528,40 @@ class ExternalExecutionResultEvent(EventBase):
     """ID of the reply message associated with this run."""
     execution_results: List[ToolResultBlock]
     """Results returned by the external executor."""
+
+
+class CustomEvent(EventBase):
+    """Generic extensible event for signals that don't fit a specific
+    ``AgentEvent`` subtype.
+
+    Used by service-layer middleware to notify front-end subscribers
+    about state changes (task progress, team membership, permission
+    updates, …) without polluting the core agent event enum with
+    application-specific types.
+
+    Front-end implementations should handle unknown ``name`` values
+    gracefully — skip with no error.
+
+    Attributes:
+        name (`str`):
+            Identifies the kind of notification. Well-known values:
+
+            - ``"state_updated"`` — agent state (tasks / permission)
+              changed during a tool call.
+            - ``"team_updated"`` — team membership changed (member
+              added / team created or dissolved).
+
+        value (`dict`):
+            Arbitrary JSON-serializable payload whose schema depends
+            on ``name``. May be empty.
+    """
+
+    type: Literal[EventType.CUSTOM] = EventType.CUSTOM
+    """Event type discriminator."""
+    name: str
+    """Kind of notification — see class docstring for well-known values."""
+    value: dict = Field(default_factory=dict)
+    """Arbitrary payload."""
 
 
 AgentEvent: TypeAlias = (
@@ -419,6 +581,7 @@ AgentEvent: TypeAlias = (
     | ThinkingBlockStartEvent
     | ThinkingBlockDeltaEvent
     | ThinkingBlockEndEvent
+    | HintBlockEvent
     | ToolCallStartEvent
     | ToolCallDeltaEvent
     | ToolCallEndEvent
@@ -427,5 +590,7 @@ AgentEvent: TypeAlias = (
     | ToolResultDataDeltaEvent
     | ToolResultEndEvent
     | UserConfirmResultEvent
+    | UserInterruptEvent
     | ExternalExecutionResultEvent
+    | CustomEvent
 )

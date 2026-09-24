@@ -34,6 +34,7 @@ async def example_simple_call() -> None:
         stream=True,
         context_size=200_000,
         parameters=OpenAIChatModel.Parameters(
+            thinking_enable=True,
             reasoning_effort="low",
         ),
     )
@@ -80,6 +81,7 @@ async def example_tool_call() -> None:
         stream=True,
         context_size=200_000,
         parameters=OpenAIChatModel.Parameters(
+            thinking_enable=True,
             reasoning_effort="low",
         ),
     )
@@ -155,6 +157,7 @@ async def example_structured_output() -> None:
         stream=True,
         context_size=200_000,
         parameters=OpenAIChatModel.Parameters(
+            thinking_enable=True,
             reasoning_effort="low",
         ),
     )

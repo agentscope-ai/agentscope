@@ -27,6 +27,68 @@ from ..message import (
 )
 
 
+def _xai_user_args_from_blocks(
+    blocks: list,
+    image: Any,
+) -> list:
+    """Convert a list of ``TextBlock | DataBlock`` into the positional
+    args expected by ``xai_sdk.chat.user(*args)``.
+
+    DataBlocks that are not images (or use an unsupported media type) are
+    dropped with a warning, matching the user-role DataBlock handling in
+    :meth:`XAIChatFormatter.format`.
+
+    Args:
+        blocks (`list`):
+            The ``TextBlock`` / ``DataBlock`` list to convert.
+        image (`Any`):
+            The ``xai_sdk.chat.image`` constructor, passed in to keep
+            the local import contract identical to ``format``.
+
+    Returns:
+        `list`:
+            Positional args for ``user(*args)``; empty if nothing
+            survived.
+    """
+    args: list = []
+    for sub in blocks:
+        if isinstance(sub, TextBlock):
+            args.append(sub.text)
+        elif isinstance(sub, DataBlock):
+            if not sub.source.media_type.startswith("image/"):
+                logger.warning(
+                    "Unsupported media type %s for xAI API. "
+                    "Only image/jpeg and image/png are supported. "
+                    "This block will be skipped.",
+                    sub.source.media_type,
+                )
+                continue
+            if isinstance(sub.source, URLSource):
+                url_str = str(sub.source.url)
+                if url_str.startswith("file://"):
+                    local_path = url_str.removeprefix("file://")
+                    with open(local_path, "rb") as f:
+                        encoded = base64.b64encode(f.read()).decode(
+                            "utf-8",
+                        )
+                    args.append(
+                        image(
+                            f"data:{sub.source.media_type};"
+                            f"base64,{encoded}",
+                        ),
+                    )
+                else:
+                    args.append(image(url_str))
+            elif isinstance(sub.source, Base64Source):
+                args.append(
+                    image(
+                        f"data:{sub.source.media_type};"
+                        f"base64,{sub.source.data}",
+                    ),
+                )
+    return args
+
+
 class XAIChatFormatter(FormatterBase):
     """Formatter for the xAI chat model.
 
@@ -97,7 +159,15 @@ class XAIChatFormatter(FormatterBase):
                         if content_args:
                             xai_messages.append(user(*content_args))
                             content_args = []
-                        xai_messages.append(user(block.hint))
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            hint_args = _xai_user_args_from_blocks(
+                                block.hint,
+                                image,
+                            )
+                            if hint_args:
+                                xai_messages.append(user(*hint_args))
                     elif isinstance(block, TextBlock):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
@@ -229,7 +299,15 @@ class XAIChatFormatter(FormatterBase):
                                 if text:
                                     xai_messages.append(assistant(text))
                                 pending_text = []
-                        xai_messages.append(user(block.hint))
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            hint_args = _xai_user_args_from_blocks(
+                                block.hint,
+                                image,
+                            )
+                            if hint_args:
+                                xai_messages.append(user(*hint_args))
 
                 if pending_tool_calls:
                     # Assistant turn that triggered tool calls (history).
@@ -287,6 +365,11 @@ class XAIChatFormatter(FormatterBase):
                     parts.append(item.text)
                 elif isinstance(item, str):
                     parts.append(item)
+                elif isinstance(item, DataBlock):
+                    # Tool results are text-only here; media becomes a hint.
+                    parts.append(
+                        self._convert_unsupported_data_block_to_string(item),
+                    )
                 else:
                     parts.append(str(item))
             return "\n".join(parts)
@@ -298,8 +381,9 @@ class XAIMultiAgentFormatter(FormatterBase):
 
     Produces ``xai_sdk`` protobuf ``Message`` objects (same as
     :class:`XAIChatFormatter`).  Prior agent-to-agent messages are collapsed
-    into a single ``user`` message with ``<history></history>`` tags; tool
-    call / result sequences are delegated to :class:`XAIChatFormatter`.
+    into a single ``user`` message with ``<history></history>`` tags; the
+    images of those messages are appended to the same ``user`` message, and
+    tool call / result sequences are delegated to :class:`XAIChatFormatter`.
 
     .. note:: ``format()`` returns ``list[Any]`` (protobuf messages), not
         ``list[dict]``.
@@ -330,8 +414,9 @@ class XAIMultiAgentFormatter(FormatterBase):
         """Convert a list of ``Msg`` objects to ``xai_sdk`` proto messages.
 
         Conversation history (non-tool messages) is collapsed into a single
-        ``user`` protobuf message containing ``<history></history>`` tags.
-        Tool sequences are formatted by :class:`XAIChatFormatter`.
+        ``user`` protobuf message containing ``<history></history>`` tags,
+        followed by the images of those messages. Tool sequences are
+        formatted by :class:`XAIChatFormatter`.
 
         Args:
             msgs (`list[Msg]`):
@@ -343,7 +428,7 @@ class XAIMultiAgentFormatter(FormatterBase):
             `list[Any]`:
                 A list of ``chat_pb2.Message`` proto objects.
         """
-        from xai_sdk.chat import system, user
+        from xai_sdk.chat import image, system, user
 
         self.assert_list_of_msgs(msgs)
 
@@ -368,9 +453,21 @@ class XAIMultiAgentFormatter(FormatterBase):
                     group,
                     is_first=is_first_agent_message,
                 )
+                user_args = _xai_user_args_from_blocks(
+                    [
+                        block
+                        for msg in group
+                        for block in msg.get_content_blocks()
+                        if isinstance(block, DataBlock)
+                    ],
+                    image,
+                )
                 if history_text:
-                    xai_messages.append(user(history_text))
-                is_first_agent_message = False
+                    user_args.insert(0, history_text)
+                if user_args:
+                    xai_messages.append(user(*user_args))
+                    if history_text:
+                        is_first_agent_message = False
 
         return xai_messages
 

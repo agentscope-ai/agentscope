@@ -18,8 +18,8 @@ Please ensure your PR title follows the Conventional Commits format:
 
 Please check the following items before code is ready to be reviewed.
 
-- [ ]  Code has been formatted with `pre-commit run --all-files` command
-- [ ]  All tests are passing
+- [ ]  An issue has been created for this PR
+- [ ]  I have read the [CONTRIBUTING.md](https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md)
 - [ ]  Docstrings are in Google style
-- [ ]  Related documentation has been updated (e.g. links, examples, etc.)
+- [ ]  Related documentation has been updated (e.g. links, examples, etc.) in [documentation repository](https://github.com/agentscope-ai/docs)
 - [ ]  Code is ready for review

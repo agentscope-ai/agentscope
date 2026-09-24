@@ -1,13 +1,24 @@
-import { SlidersHorizontal } from 'lucide-react';
+import { Check, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
-import type { ChatModelConfig, ModelCard } from '@/api';
+import type {
+	ChatModelConfig,
+	CredentialView,
+	ModelCard,
+	TTSModelCard,
+	TTSModelConfig,
+} from '@/api';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
+	DropdownMenuGroup,
 	DropdownMenuLabel,
+	DropdownMenuPortal,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
 	DropdownMenuSeparator,
 	DropdownMenuSub,
 	DropdownMenuSubContent,
@@ -17,8 +28,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useAvailableTTSModels } from '@/hooks/useAvailableTTSModels';
 import { useTranslation } from '@/i18n/useI18n';
+import { cn } from '@/lib/utils';
+import { credentialLabel } from '@/utils/common';
 
 interface ParameterProperty {
 	type?: string;
@@ -29,7 +44,8 @@ interface ParameterProperty {
 	maximum?: number;
 	exclusiveMinimum?: number;
 	exclusiveMaximum?: number;
-	anyOf?: Array<{ type: string }>;
+	enum?: unknown[];
+	anyOf?: ParameterProperty[];
 }
 
 interface ParameterSchema {
@@ -40,6 +56,166 @@ interface ParameterSchema {
 	required?: string[];
 }
 
+interface ResolvedType {
+	type: string;
+	enumValues: unknown[] | null;
+}
+
+/** Resolve a property's effective scalar type and enum values, looking
+ *  through ``anyOf`` and ignoring ``null`` variants. */
+function resolveType(prop: ParameterProperty): ResolvedType {
+	if (prop.type) {
+		return { type: prop.type, enumValues: prop.enum ?? null };
+	}
+	for (const variant of prop.anyOf ?? []) {
+		if (variant.type && variant.type !== 'null') {
+			return {
+				type: variant.type,
+				enumValues: variant.enum ?? prop.enum ?? null,
+			};
+		}
+	}
+	return { type: 'string', enumValues: null };
+}
+
+/** Extract default values from a TTS model card's parameter schema. */
+function extractDefaults(schema: ParameterSchema | undefined): Record<string, unknown> {
+	const defaults: Record<string, unknown> = {};
+	if (schema?.properties) {
+		for (const [k, p] of Object.entries(schema.properties)) {
+			if (p.default !== undefined) defaults[k] = p.default;
+		}
+	}
+	return defaults;
+}
+
+// ---------------------------------------------------------------------------
+// Field components
+// ---------------------------------------------------------------------------
+
+interface FieldProps {
+	id: string;
+	label: string;
+	required: boolean;
+	prop: ParameterProperty;
+	value: unknown;
+	onChange: (next: unknown) => void;
+}
+
+function BooleanField({ id, label, prop, value, onChange }: FieldProps) {
+	return (
+		<>
+			<Label htmlFor={id} className="whitespace-nowrap">
+				{label}
+			</Label>
+			<Switch
+				id={id}
+				checked={value !== undefined ? !!value : !!prop.default}
+				onCheckedChange={(checked) => onChange(!!checked)}
+			/>
+		</>
+	);
+}
+
+function EnumField({ id, label, required, prop, value, onChange }: FieldProps) {
+	const enumValues = resolveType(prop).enumValues ?? [];
+	// TODO: experiment with using prop.description as placeholder text
+	const displayValue = value !== undefined && value !== null ? String(value) : '';
+
+	return (
+		<>
+			<Label htmlFor={id} className="whitespace-nowrap">
+				{label}
+				{required && <span className="text-destructive ml-0.5">*</span>}
+			</Label>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button id={id} variant="outline" className="w-full justify-between gap-1">
+						<span className="truncate">{displayValue}</span>
+						<ChevronDown className="size-3.5 opacity-50 shrink-0" />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
+					align="start"
+					className="max-h-60 overflow-y-auto"
+					onPointerDown={(e) => e.stopPropagation()}
+				>
+					<DropdownMenuRadioGroup value={displayValue} onValueChange={(v) => onChange(v)}>
+						{enumValues.map((opt) => (
+							<DropdownMenuRadioItem key={String(opt)} value={String(opt)}>
+								{String(opt)}
+							</DropdownMenuRadioItem>
+						))}
+					</DropdownMenuRadioGroup>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</>
+	);
+}
+
+function NumberField({ id, label, required, prop, value, onChange }: FieldProps) {
+	const { type: effectiveType } = resolveType(prop);
+
+	return (
+		<>
+			<Label htmlFor={id} className="whitespace-nowrap">
+				{label}
+				{required && <span className="text-destructive ml-0.5">*</span>}
+			</Label>
+			<Input
+				id={id}
+				type="number"
+				value={value !== undefined ? String(value) : ''}
+				placeholder={prop.default != null ? String(prop.default) : undefined}
+				min={prop.minimum}
+				max={prop.maximum}
+				step={effectiveType === 'number' ? 'any' : undefined}
+				onChange={(e) => {
+					const raw = e.target.value;
+					onChange(raw === '' ? undefined : Number(raw));
+				}}
+				onBlur={(e) => {
+					if (e.target.value === '') return;
+					let num = Number(e.target.value);
+					if (prop.minimum !== undefined && num < prop.minimum) num = prop.minimum;
+					if (prop.maximum !== undefined && num > prop.maximum) num = prop.maximum;
+					if (prop.exclusiveMinimum !== undefined && num <= prop.exclusiveMinimum)
+						num =
+							prop.exclusiveMinimum +
+							(effectiveType === 'integer' ? 1 : Number.EPSILON);
+					if (prop.exclusiveMaximum !== undefined && num >= prop.exclusiveMaximum)
+						num =
+							prop.exclusiveMaximum -
+							(effectiveType === 'integer' ? 1 : Number.EPSILON);
+					if (num !== Number(e.target.value)) onChange(num);
+				}}
+			/>
+		</>
+	);
+}
+
+function StringField({ id, label, required, prop, value, onChange }: FieldProps) {
+	return (
+		<>
+			<Label htmlFor={id} className="whitespace-nowrap">
+				{label}
+				{required && <span className="text-destructive ml-0.5">*</span>}
+			</Label>
+			<Input
+				id={id}
+				type="text"
+				value={value !== undefined ? String(value) : ''}
+				placeholder={prop.default != null ? String(prop.default) : undefined}
+				onChange={(e) => onChange(e.target.value)}
+			/>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 interface Props {
 	/** Currently selected primary model — used to read the parameter schema. */
 	selectedModel: ChatModelConfig | null;
@@ -47,10 +223,20 @@ interface Props {
 	modelCard: ModelCard | null;
 	/** Called when the user edits the primary model's parameters. */
 	onChange: (parameters: Record<string, unknown>) => void;
-	/** Currently selected fallback model. `null` means no fallback configured. */
-	selectedFallbackModel: ChatModelConfig | null;
+	/** Currently selected fallback model. `null` means no fallback configured. `undefined` hides the section. */
+	selectedFallbackModel?: ChatModelConfig | null;
 	/** Called when the user picks a fallback model or clears the selection. */
-	onFallbackChange: (config: ChatModelConfig | null) => void;
+	onFallbackChange?: (config: ChatModelConfig | null) => void;
+	/** Currently selected TTS model. `null` means TTS is disabled. `undefined` hides the TTS section entirely. */
+	selectedTTSModel?: TTSModelConfig | null;
+	/** Called when the user picks a TTS model+voice or disables TTS. */
+	onTTSChange?: (config: TTSModelConfig | null) => void;
+	/**
+	 * Locks the trigger while a session config write is in flight, so a
+	 * second edit cannot race the first. The trigger is also locked
+	 * whenever no primary model is selected.
+	 */
+	disabled?: boolean;
 }
 
 /**
@@ -68,10 +254,14 @@ export function ModelParametersPopover({
 	onChange,
 	selectedFallbackModel,
 	onFallbackChange,
+	selectedTTSModel,
+	onTTSChange,
+	disabled: locked = false,
 }: Props) {
 	const [values, setValues] = useState<Record<string, unknown>>({});
 	const { t } = useTranslation();
 	const { groups } = useAvailableModels();
+	const { groups: ttsGroups } = useAvailableTTSModels();
 
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
@@ -95,7 +285,7 @@ export function ModelParametersPopover({
 	);
 
 	const handleSelectFallback = (type: string, credentialId: string, model: string) => {
-		onFallbackChange({
+		onFallbackChange?.({
 			type,
 			credential_id: credentialId,
 			model,
@@ -103,8 +293,16 @@ export function ModelParametersPopover({
 		});
 	};
 
-	const disabled = !selectedModel;
-	const hasFallbackOptions = Object.keys(groups).length > 0;
+	const disabled = locked || !selectedModel;
+	// Credentials whose model list failed to load come back with an empty
+	// `models` array; drop them so they don't render empty submenus
+	const fallbackGroups = Object.entries(groups)
+		.map(([type, items]) => [type, items.filter((i) => i.models.length > 0)] as const)
+		.filter(([, usable]) => usable.length > 0);
+	const ttsGroupEntries = Object.entries(ttsGroups)
+		.map(([type, items]) => [type, items.filter((i) => i.models.length > 0)] as const)
+		.filter(([, usable]) => usable.length > 0);
+	const hasFallbackOptions = fallbackGroups.length > 0;
 
 	return (
 		<DropdownMenu>
@@ -115,42 +313,35 @@ export function ModelParametersPopover({
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="min-w-40">
 				{/* ----- Fallback model selection ----- */}
-				{/* The sub-trigger reflects the current fallback selection so the
-				    user can see the active model without drilling in. The label
-				    is truncated with an ellipsis to keep the trigger on one line
-				    when the model name is long. */}
-				<DropdownMenuSub>
-					<DropdownMenuSubTrigger>
-						<span className="truncate">
-							{selectedFallbackModel
-								? t('model-parameters.fallbackLabelWithModel', {
-										model: selectedFallbackModel.model,
-									})
-								: t('model-parameters.fallbackLabel')}
-						</span>
-					</DropdownMenuSubTrigger>
-					<DropdownMenuSubContent className="max-h-72 overflow-y-auto">
-						{!hasFallbackOptions ? (
-							<div className="px-2 py-3 text-center text-sm text-muted-foreground">
-								<p>{t('llm-select.empty.title')}</p>
-							</div>
-						) : (
-							Object.entries(groups).map(([type, items], idx) => (
-								<div key={type}>
-									{idx > 0 && <DropdownMenuSeparator />}
-									<DropdownMenuLabel>
-										{type.replace(/_credential$/, '')}
-									</DropdownMenuLabel>
-									{items.flatMap(({ credential, models }) =>
+				{onFallbackChange !== undefined && (
+					<DropdownMenuSub>
+						<DropdownMenuSubTrigger>
+							<span className="truncate">
+								{selectedFallbackModel
+									? t('model-parameters.fallbackLabelWithModel', {
+											model: selectedFallbackModel.model,
+										})
+									: t('model-parameters.fallbackLabel')}
+							</span>
+						</DropdownMenuSubTrigger>
+						<DropdownMenuSubContent className="max-h-72 overflow-y-auto">
+							{!hasFallbackOptions ? (
+								<div className="px-2 py-3 text-center text-sm text-muted-foreground">
+									<p>{t('llm-select.empty.title')}</p>
+								</div>
+							) : (
+								fallbackGroups.map(([type, usable], idx) => {
+									const isSingle = usable.length === 1;
+
+									const renderFallbackItems = (
+										credential: CredentialView,
+										models: ModelCard[],
+									) =>
 										models.map((m) => {
 											const isSelected =
 												selectedFallbackModel?.credential_id ===
 													credential.id &&
 												selectedFallbackModel?.model === m.name;
-											// Checkbox-style indicator: a check appears next
-											// to the active fallback. Toggling off the active
-											// item clears the selection (mirrors the explicit
-											// "No fallback" entry below).
 											return (
 												<DropdownMenuCheckboxItem
 													key={`${credential.id}-${m.name}`}
@@ -170,25 +361,66 @@ export function ModelParametersPopover({
 													{m.label}
 												</DropdownMenuCheckboxItem>
 											);
-										}),
-									)}
-								</div>
-							))
-						)}
-						<DropdownMenuSeparator />
-						{/* "No fallback" is checked exactly when no fallback is set,
-						    making the list behave like a single-select group. Clicking
-						    it while already checked is a no-op. */}
-						<DropdownMenuCheckboxItem
-							checked={!selectedFallbackModel}
-							onCheckedChange={(checked) => {
-								if (checked) onFallbackChange(null);
-							}}
-						>
-							{t('llm-select.noFallback')}
-						</DropdownMenuCheckboxItem>
-					</DropdownMenuSubContent>
-				</DropdownMenuSub>
+										});
+
+									return (
+										<DropdownMenuGroup key={type}>
+											{idx > 0 && <DropdownMenuSeparator />}
+											<DropdownMenuLabel>
+												{type.replace(/_credential$/, '')}
+											</DropdownMenuLabel>
+											{isSingle
+												? renderFallbackItems(
+														usable[0].credential,
+														usable[0].models,
+													)
+												: usable.map(({ credential, models }) => {
+														const hasSelected = models.some(
+															(m) =>
+																selectedFallbackModel?.credential_id ===
+																	credential.id &&
+																selectedFallbackModel?.model ===
+																	m.name,
+														);
+														return (
+															<DropdownMenuSub key={credential.id}>
+																<DropdownMenuSubTrigger>
+																	<Check
+																		className={cn(
+																			'size-4 mr-1.5 shrink-0',
+																			!hasSelected &&
+																				'invisible',
+																		)}
+																	/>
+																	{credentialLabel(credential)}
+																</DropdownMenuSubTrigger>
+																<DropdownMenuPortal>
+																	<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
+																		{renderFallbackItems(
+																			credential,
+																			models,
+																		)}
+																	</DropdownMenuSubContent>
+																</DropdownMenuPortal>
+															</DropdownMenuSub>
+														);
+													})}
+										</DropdownMenuGroup>
+									);
+								})
+							)}
+							<DropdownMenuSeparator />
+							<DropdownMenuCheckboxItem
+								checked={!selectedFallbackModel}
+								onCheckedChange={(checked) => {
+									if (checked) onFallbackChange(null);
+								}}
+							>
+								{t('llm-select.noFallback')}
+							</DropdownMenuCheckboxItem>
+						</DropdownMenuSubContent>
+					</DropdownMenuSub>
+				)}
 
 				{/* ----- Primary model parameters ----- */}
 				<DropdownMenuSub>
@@ -207,140 +439,304 @@ export function ModelParametersPopover({
 								{t('model-parameters.empty')}
 							</p>
 						) : (
-							<div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+							<div
+								className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+								onPointerDown={(e) => e.stopPropagation()}
+								onKeyDown={(e) => e.stopPropagation()}
+							>
 								{entries.map(([key, prop]) => {
-									const effectiveType =
-										prop.type ??
-										prop.anyOf?.find((t) => t.type !== 'null')?.type ??
-										'string';
-									const isBoolean = effectiveType === 'boolean';
-									const isNumber =
-										effectiveType === 'number' || effectiveType === 'integer';
+									const { type: effectiveType, enumValues } = resolveType(prop);
 									const label = prop.title ?? key;
 									const isRequired = required.includes(key);
+									const fieldProps: FieldProps = {
+										id: `param-${key}`,
+										label,
+										required: isRequired,
+										prop,
+										value: values[key],
+										onChange: (v) => handleChange(key, v),
+									};
 
-									if (isBoolean) {
-										return (
-											<div
-												key={key}
-												className="contents"
-												// Keep clicks/keys inside the form from
-												// closing the dropdown menu.
-												onPointerDown={(e) => e.stopPropagation()}
-												onKeyDown={(e) => e.stopPropagation()}
-											>
-												<Label
-													htmlFor={`param-${key}`}
-													className="whitespace-nowrap"
-												>
-													{label}
-												</Label>
-												<Switch
-													id={`param-${key}`}
-													checked={
-														values[key] !== undefined
-															? !!values[key]
-															: !!prop.default
-													}
-													onCheckedChange={(checked) =>
-														handleChange(key, !!checked)
-													}
-												/>
-											</div>
-										);
+									let field: React.ReactNode;
+									if (effectiveType === 'boolean') {
+										field = <BooleanField {...fieldProps} />;
+									} else if (enumValues) {
+										field = <EnumField {...fieldProps} />;
+									} else if (
+										effectiveType === 'number' ||
+										effectiveType === 'integer'
+									) {
+										field = <NumberField {...fieldProps} />;
+									} else {
+										field = <StringField {...fieldProps} />;
 									}
 
 									return (
-										<div
-											key={key}
-											className="contents"
-											onPointerDown={(e) => e.stopPropagation()}
-											onKeyDown={(e) => e.stopPropagation()}
-										>
-											<Label
-												htmlFor={`param-${key}`}
-												className="whitespace-nowrap"
-											>
-												{label}
-												{isRequired && (
-													<span className="text-destructive ml-0.5">
-														*
-													</span>
-												)}
-											</Label>
-											<Input
-												id={`param-${key}`}
-												type={isNumber ? 'number' : 'text'}
-												value={
-													values[key] !== undefined
-														? String(values[key])
-														: ''
-												}
-												placeholder={
-													prop.default !== undefined
-														? String(prop.default)
-														: undefined
-												}
-												min={prop.minimum}
-												max={prop.maximum}
-												step={
-													isNumber && effectiveType === 'number'
-														? 'any'
-														: undefined
-												}
-												onChange={(e) => {
-													const raw = e.target.value;
-													if (isNumber) {
-														handleChange(
-															key,
-															raw === '' ? undefined : Number(raw),
-														);
-													} else {
-														handleChange(key, raw);
-													}
-												}}
-												onBlur={(e) => {
-													if (!isNumber || e.target.value === '') return;
-													let num = Number(e.target.value);
-													if (
-														prop.minimum !== undefined &&
-														num < prop.minimum
-													)
-														num = prop.minimum;
-													if (
-														prop.maximum !== undefined &&
-														num > prop.maximum
-													)
-														num = prop.maximum;
-													if (
-														prop.exclusiveMinimum !== undefined &&
-														num <= prop.exclusiveMinimum
-													)
-														num =
-															prop.exclusiveMinimum +
-															(effectiveType === 'integer'
-																? 1
-																: Number.EPSILON);
-													if (
-														prop.exclusiveMaximum !== undefined &&
-														num >= prop.exclusiveMaximum
-													)
-														num =
-															prop.exclusiveMaximum -
-															(effectiveType === 'integer'
-																? 1
-																: Number.EPSILON);
-													if (num !== Number(e.target.value))
-														handleChange(key, num);
-												}}
-											/>
-										</div>
+										<Tooltip key={key}>
+											<TooltipTrigger asChild>
+												<div className="col-span-2 grid grid-cols-subgrid items-center">
+													{field}
+												</div>
+											</TooltipTrigger>
+											{prop.description && (
+												<TooltipContent side="left">
+													{prop.description}
+												</TooltipContent>
+											)}
+										</Tooltip>
 									);
 								})}
 							</div>
 						)}
 					</DropdownMenuSubContent>
 				</DropdownMenuSub>
+
+				{/* ----- TTS ----- */}
+				{onTTSChange !== undefined && (
+					<DropdownMenuSub>
+						<DropdownMenuSubTrigger>
+							<span className="truncate">{t('model-parameters.ttsLabel')}</span>
+						</DropdownMenuSubTrigger>
+						<DropdownMenuSubContent className="max-h-96 overflow-y-auto">
+							{ttsGroupEntries.length === 0 ? (
+								<div className="px-2 py-3 text-center text-sm text-muted-foreground">
+									<p>{t('model-parameters.ttsEmpty')}</p>
+								</div>
+							) : (
+								ttsGroupEntries.map(([type, usable], idx) => {
+									const isSingle = usable.length === 1;
+
+									const renderTTSItems = (
+										credential: CredentialView,
+										models: TTSModelCard[],
+									) =>
+										models.map((m) => {
+											const isSelected =
+												selectedTTSModel?.credential_id === credential.id &&
+												selectedTTSModel?.model === m.name;
+											return (
+												<DropdownMenuCheckboxItem
+													key={`${credential.id}-${m.name}`}
+													checked={isSelected}
+													onSelect={(e) => e.preventDefault()}
+													onCheckedChange={(checked) => {
+														if (!checked) return;
+														onTTSChange({
+															type,
+															credential_id: credential.id,
+															model: m.name,
+															parameters: extractDefaults(
+																m.parameter_schema as
+																	| ParameterSchema
+																	| undefined,
+															),
+														});
+													}}
+												>
+													{m.label}
+													{m.realtime && (
+														<Badge
+															variant="outline"
+															className="ml-1.5 text-[10px] px-1 py-0"
+														>
+															Realtime
+														</Badge>
+													)}
+												</DropdownMenuCheckboxItem>
+											);
+										});
+
+									return (
+										<DropdownMenuGroup key={type}>
+											{idx > 0 && <DropdownMenuSeparator />}
+											<DropdownMenuLabel>
+												{type.replace(/_credential$/, '')}
+											</DropdownMenuLabel>
+											{isSingle
+												? renderTTSItems(
+														usable[0].credential,
+														usable[0].models,
+													)
+												: usable.map(({ credential, models }) => {
+														const hasSelected = models.some(
+															(m) =>
+																selectedTTSModel?.credential_id ===
+																	credential.id &&
+																selectedTTSModel?.model === m.name,
+														);
+														return (
+															<DropdownMenuSub key={credential.id}>
+																<DropdownMenuSubTrigger>
+																	<Check
+																		className={cn(
+																			'size-4 mr-1.5 shrink-0',
+																			!hasSelected &&
+																				'invisible',
+																		)}
+																	/>
+																	{credentialLabel(credential)}
+																</DropdownMenuSubTrigger>
+																<DropdownMenuPortal>
+																	<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
+																		{renderTTSItems(
+																			credential,
+																			models,
+																		)}
+																	</DropdownMenuSubContent>
+																</DropdownMenuPortal>
+															</DropdownMenuSub>
+														);
+													})}
+										</DropdownMenuGroup>
+									);
+								})
+							)}
+
+							{/* TTS parameters sub-panel (hover to expand right) */}
+							{selectedTTSModel && (
+								<>
+									<DropdownMenuSeparator />
+									<DropdownMenuSub>
+										<DropdownMenuSubTrigger>
+											{t('model-parameters.ttsParameters')}
+										</DropdownMenuSubTrigger>
+										<DropdownMenuSubContent className="w-72 max-h-96 overflow-y-auto p-3">
+											<div className="mb-3">
+												<p className="text-sm font-medium">
+													{t('model-parameters.title')}
+												</p>
+												<p className="text-muted-foreground text-xs">
+													{t('model-parameters.ttsParametersDescription')}
+												</p>
+											</div>
+											{(() => {
+												if (!selectedTTSModel) return null;
+												const selType = selectedTTSModel.type;
+												const selItems = ttsGroups[selType];
+												if (!selItems) return null;
+												let selModel: TTSModelCard | undefined;
+												for (const { credential, models } of selItems) {
+													if (
+														credential.id !==
+														selectedTTSModel.credential_id
+													)
+														continue;
+													selModel = models.find(
+														(m) => m.name === selectedTTSModel.model,
+													);
+													if (selModel) break;
+												}
+												if (!selModel) return null;
+												const mSchema = selModel.parameter_schema as
+													| ParameterSchema
+													| undefined;
+												const mProps = mSchema?.properties ?? {};
+												const mRequired = mSchema?.required ?? [];
+												const mEntries = Object.entries(mProps);
+												if (mEntries.length === 0) {
+													return (
+														<p className="text-muted-foreground text-xs">
+															{t('model-parameters.empty')}
+														</p>
+													);
+												}
+												const curParams = selectedTTSModel.parameters ?? {};
+
+												return (
+													<div
+														className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+														onPointerDown={(e) => e.stopPropagation()}
+														onKeyDown={(e) => e.stopPropagation()}
+													>
+														{mEntries.map(([key, prop]) => {
+															const {
+																type: effectiveType,
+																enumValues,
+															} = resolveType(prop);
+															const label = prop.title ?? key;
+															const isReq = mRequired.includes(key);
+															const fieldProps: FieldProps = {
+																id: `tts-${selModel!.name}-${key}`,
+																label,
+																required: isReq,
+																prop,
+																value: curParams[key],
+																onChange: (v) => {
+																	const next = {
+																		...curParams,
+																		[key]: v,
+																	};
+																	if (
+																		v === '' ||
+																		v === undefined
+																	) {
+																		delete next[key];
+																	}
+																	onTTSChange({
+																		...selectedTTSModel,
+																		parameters: next,
+																	});
+																},
+															};
+
+															let field: React.ReactNode;
+															if (effectiveType === 'boolean') {
+																field = (
+																	<BooleanField {...fieldProps} />
+																);
+															} else if (enumValues) {
+																field = (
+																	<EnumField {...fieldProps} />
+																);
+															} else if (
+																effectiveType === 'number' ||
+																effectiveType === 'integer'
+															) {
+																field = (
+																	<NumberField {...fieldProps} />
+																);
+															} else {
+																field = (
+																	<StringField {...fieldProps} />
+																);
+															}
+
+															return (
+																<Tooltip key={key}>
+																	<TooltipTrigger asChild>
+																		<div className="col-span-2 grid grid-cols-subgrid items-center">
+																			{field}
+																		</div>
+																	</TooltipTrigger>
+																	{prop.description && (
+																		<TooltipContent side="left">
+																			{prop.description}
+																		</TooltipContent>
+																	)}
+																</Tooltip>
+															);
+														})}
+													</div>
+												);
+											})()}
+										</DropdownMenuSubContent>
+									</DropdownMenuSub>
+								</>
+							)}
+
+							<DropdownMenuSeparator />
+							<DropdownMenuCheckboxItem
+								checked={!selectedTTSModel}
+								onSelect={(e) => e.preventDefault()}
+								onCheckedChange={(checked) => {
+									if (checked) onTTSChange(null);
+								}}
+							>
+								{t('model-parameters.noTts')}
+							</DropdownMenuCheckboxItem>
+						</DropdownMenuSubContent>
+					</DropdownMenuSub>
+				)}
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

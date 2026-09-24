@@ -44,7 +44,7 @@ Returns full task details:
 
     input_schema: dict = _TaskGetParams.model_json_schema()
 
-    async def __call__(
+    async def call(
         self,
         task_id: str,
         _agent_state: AgentState,
@@ -74,7 +74,7 @@ Returns full task details:
 
         # Build the response
         lines = [
-            f"Task #{task.id}: {task.subject}",
+            f"Task (id={task.id}): {task.subject}",
             f"Status: {task.state}",
             f"Description: {task.description}",
         ]

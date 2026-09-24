@@ -4,6 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from agentscope.message import ToolResultState
 from agentscope.tool import Grep
 from agentscope.permission import (
     PermissionContext,
@@ -86,7 +87,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
             output_mode="files_with_matches",
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, ToolResultState.SUCCESS)
 
         content = chunk.content[0].text
         # Should find files containing "Hello"
@@ -107,6 +108,31 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Should show matching lines
         self.assertIn("def hello", content)
         self.assertIn("def goodbye", content)
+
+    async def test_pagination_is_stable(self) -> None:
+        """Pages taken with offset/head_limit follow the path order."""
+        pages = []
+        for offset in range(3):
+            chunk = await self.grep_tool(
+                pattern="def",
+                path=self.temp_dir,
+                output_mode="files_with_matches",
+                head_limit=1,
+                offset=offset,
+            )
+            pages.append(chunk.content[0].text)
+
+        self.assertListEqual(
+            pages,
+            [
+                os.path.join(self.temp_dir, "subdir", "nested.py")
+                + "\n\n[Showing results with pagination = limit: 1]",
+                os.path.join(self.temp_dir, "test1.py")
+                + "\n\n[Showing results with pagination = limit: 1, "
+                "offset: 1]",
+                os.path.join(self.temp_dir, "test2.py"),
+            ],
+        )
 
     async def test_case_insensitive(self) -> None:
         """Test case-insensitive search."""
@@ -177,7 +203,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         """Test match_rule with search path patterns."""
         # Test matching explicit path
         self.assertTrue(
-            self.grep_tool.match_rule(
+            await self.grep_tool.match_rule(
                 self.temp_dir,
                 {"path": self.temp_dir},
             ),
@@ -186,7 +212,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Test wildcard pattern matching path
         parent_dir = os.path.dirname(self.temp_dir)
         self.assertTrue(
-            self.grep_tool.match_rule(
+            await self.grep_tool.match_rule(
                 parent_dir + "/**",
                 {"path": self.temp_dir},
             ),
@@ -194,7 +220,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
         # Test non-matching path
         self.assertFalse(
-            self.grep_tool.match_rule(
+            await self.grep_tool.match_rule(
                 "/some/other/path/**",
                 {"path": self.temp_dir},
             ),
@@ -206,7 +232,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
         # When no path provided, should match against cwd
         self.assertTrue(
-            self.grep_tool.match_rule(
+            await self.grep_tool.match_rule(
                 cwd,
                 {"pattern": "hello"},
             ),
@@ -214,7 +240,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
         # Should not match a different path
         self.assertFalse(
-            self.grep_tool.match_rule(
+            await self.grep_tool.match_rule(
                 "/some/other/path",
                 {"pattern": "hello"},
             ),
@@ -223,7 +249,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
     async def test_generate_suggestions_with_path(self) -> None:
         """Test generate_suggestions for grep with explicit path."""
 
-        suggestions = self.grep_tool.generate_suggestions(
+        suggestions = await self.grep_tool.generate_suggestions(
             {"path": self.temp_dir, "pattern": "hello"},
         )
 
@@ -240,7 +266,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
     async def test_generate_suggestions_defaults_to_cwd(self) -> None:
         """Test generate_suggestions defaults to cwd when no path provided."""
 
-        suggestions = self.grep_tool.generate_suggestions(
+        suggestions = await self.grep_tool.generate_suggestions(
             {"pattern": "hello"},
         )
 

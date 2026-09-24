@@ -2,7 +2,6 @@
 """The Anthropic formatter module."""
 import base64
 import fnmatch
-import json
 from abc import ABC
 from typing import Any
 
@@ -11,6 +10,7 @@ from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..message import (
     Msg,
     TextBlock,
@@ -28,6 +28,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
     """Mixin for formatting Anthropic formatters to avoid duplication between
     AnthropicChatFormatter and AnthropicMultiAgentFormatter."""
 
+    # pylint: disable=too-many-branches
     async def _format_messages(
         self,
         msgs: list[Msg],
@@ -71,48 +72,88 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     has_tool_result = False
 
                 if isinstance(block, TextBlock):
-                    content_blocks.append(
-                        {"type": "text", "text": block.text},
-                    )
+                    # Anthropic rejects empty text blocks with a 400
+                    # ("text blocks must be non-empty"). Empty TextBlocks
+                    # occur after a tool-call-only assistant turn whose
+                    # streamed text is empty, so drop them here.
+                    if block.text:
+                        content_blocks.append(
+                            {"type": "text", "text": block.text},
+                        )
 
                 elif isinstance(block, ThinkingBlock):
-                    # Anthropic rejects thinking blocks without a valid
-                    # signature ("Invalid `signature` in `thinking` block").
-                    # ThinkingBlocks from other providers (OpenAI, DeepSeek,
-                    # ...) carry no signature, so drop them instead of
-                    # forwarding an empty one.
-                    signature = getattr(block, "signature", None)
-                    if signature:
+                    redacted_data = getattr(
+                        block,
+                        "redacted_thinking_data",
+                        None,
+                    )
+                    if redacted_data is not None:
                         content_blocks.append(
                             {
-                                "type": "thinking",
-                                "thinking": block.thinking,
-                                "signature": signature,
+                                "type": "redacted_thinking",
+                                "data": redacted_data,
                             },
                         )
                     else:
-                        logger.debug(
-                            "Dropping ThinkingBlock without signature; "
-                            "Anthropic requires a valid signature.",
+                        # Anthropic rejects thinking blocks without
+                        # a valid signature ("Invalid `signature`
+                        # in `thinking` block"). ThinkingBlocks from
+                        # other providers (OpenAI, DeepSeek, ...)
+                        # carry no signature, so drop them instead
+                        # of forwarding an empty one.
+                        signature = getattr(
+                            block,
+                            "signature",
+                            None,
                         )
+                        if signature:
+                            content_blocks.append(
+                                {
+                                    "type": "thinking",
+                                    "thinking": block.thinking,
+                                    "signature": signature,
+                                },
+                            )
+                        else:
+                            logger.debug(
+                                "Dropping ThinkingBlock without "
+                                "signature; Anthropic requires "
+                                "a valid signature.",
+                            )
 
                 elif isinstance(block, HintBlock):
-                    if content_blocks:
-                        role = "user" if has_tool_result else msg.role
-                        messages.append(
-                            {"role": role, "content": content_blocks},
+                    if isinstance(block.hint, str):
+                        hint_parts = (
+                            [{"type": "text", "text": block.hint}]
+                            if block.hint
+                            else []
                         )
-                        content_blocks = []
-                        has_tool_result = False
+                    else:
+                        hint_parts = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                if sub.text:
+                                    hint_parts.append(
+                                        {"type": "text", "text": sub.text},
+                                    )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = (
+                                    self._format_anthropic_data_block(sub)
+                                )
+                                if formatted_sub:
+                                    hint_parts.append(formatted_sub)
 
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": block.hint},
-                            ],
-                        },
-                    )
+                    if hint_parts:
+                        if content_blocks:
+                            role = "user" if has_tool_result else msg.role
+                            messages.append(
+                                {"role": role, "content": content_blocks},
+                            )
+                            content_blocks = []
+                            has_tool_result = False
+                        messages.append(
+                            {"role": "user", "content": hint_parts},
+                        )
 
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_anthropic_data_block(block)
@@ -126,13 +167,25 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             "id": block.id,
                             "name": block.name,
                             # Anthropic API expects input as a dict, not a
-                            # JSON string.
-                            "input": json.loads(block.input or "{}"),
+                            # JSON string. Use the repair helper so a
+                            # truncated input (from interrupted streaming or
+                            # context compression) degrades to {} instead of
+                            # raising JSONDecodeError.
+                            "input": _json_loads_with_repair(
+                                block.input or "{}",
+                            ),
                         },
                     )
 
                 elif isinstance(block, ToolResultBlock):
-                    if content_blocks:
+                    # Only flush when we have non-tool-result content
+                    # (i.e. the preceding assistant turn). Once
+                    # `has_tool_result` is True we are already accumulating
+                    # tool_results into the current user message, so we must
+                    # NOT flush on each additional ToolResultBlock — doing so
+                    # would split parallel results into separate user messages
+                    # which strict endpoints (e.g. DeepSeek) reject with 400.
+                    if content_blocks and not has_tool_result:
                         role = "user" if has_tool_result else msg.role
                         messages.append(
                             {"role": role, "content": content_blocks},
@@ -142,15 +195,22 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     tool_result_content: list[dict] = []
                     output = block.output
                     if isinstance(output, str):
-                        tool_result_content.append(
-                            {"type": "text", "text": output},
-                        )
+                        if output:
+                            tool_result_content.append(
+                                {"type": "text", "text": output},
+                            )
                     else:
                         for out_block in output:
                             if isinstance(out_block, TextBlock):
-                                tool_result_content.append(
-                                    {"type": "text", "text": out_block.text},
-                                )
+                                # Skip empty text — Anthropic rejects
+                                # {"type": "text", "text": ""}.
+                                if out_block.text:
+                                    tool_result_content.append(
+                                        {
+                                            "type": "text",
+                                            "text": out_block.text,
+                                        },
+                                    )
                             elif isinstance(out_block, DataBlock):
                                 fmt_block = self._format_anthropic_data_block(
                                     out_block,
@@ -173,6 +233,15 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                     tool_result_content.append(
                                         {"type": "text", "text": fallback},
                                     )
+
+                    # Anthropic rejects a tool_result whose content list is
+                    # empty. If every output block was an empty text (or the
+                    # output was an empty string), fall back to a placeholder
+                    # so the tool_result remains valid.
+                    if not tool_result_content:
+                        tool_result_content.append(
+                            {"type": "text", "text": "(empty tool output)"},
+                        )
 
                     content_blocks.append(
                         {
@@ -232,69 +301,59 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             )
             return None
 
-        # Anthropic only supports images
-        if not media_type.startswith("image/"):
-            logger.warning(
-                "Anthropic only supports image data, got %s, skipped.",
-                media_type,
-            )
-            return None
+        # Anthropic supports images and PDF documents
+        if media_type.startswith("image/"):
+            return self._format_source(source, "image")
+        if media_type == "application/pdf":
+            return self._format_source(source, "document")
 
-        return self._format_image_source(source)
+        logger.warning(
+            "Anthropic only supports image and PDF data, got %s, skipped.",
+            media_type,
+        )
+        return None
 
     @staticmethod
-    def _format_image_source(
+    def _format_source(
         source: URLSource | Base64Source,
+        block_type: str,
     ) -> dict[str, Any]:
-        """Format an image source into Anthropic API format.
+        """Format an image or document source into an Anthropic base64
+        content block.
 
         Args:
             source (`URLSource | Base64Source`):
-                The image source to format.
+                The source to format. Local ``file://`` URLs are read from
+                disk and remote URLs are downloaded.
+            block_type (`str`):
+                The Anthropic block type, ``"image"`` or ``"document"``.
 
         Returns:
             `dict[str, Any]`:
-                The formatted image source.
+                The formatted content block.
         """
         if isinstance(source, Base64Source):
-            return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": source.media_type,
-                    "data": source.data,
-                },
-            }
+            data = source.data
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
-                # Local file - read and convert to base64
-                file_path = url.removeprefix("file://")
-                with open(file_path, "rb") as f:
+                with open(url.removeprefix("file://"), "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": source.media_type,
-                        "data": data,
-                    },
-                }
             else:
-                # Remote URL - download and convert to base64
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": source.media_type,
-                        "data": data,
-                    },
-                }
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")
+
+        return {
+            "type": block_type,
+            "source": {
+                "type": "base64",
+                "media_type": source.media_type,
+                "data": data,
+            },
+        }
 
 
 class AnthropicChatFormatter(_AnthropicFormatterBase):
@@ -304,10 +363,10 @@ class AnthropicChatFormatter(_AnthropicFormatterBase):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``.'
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``.'
         ),
     )
 
@@ -349,10 +408,10 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
     )
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``.'
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``.'
         ),
     )
 
@@ -377,13 +436,13 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                         await self._format_messages(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

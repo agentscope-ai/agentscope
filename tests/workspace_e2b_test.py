@@ -26,7 +26,7 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
     """Test cases for E2BWorkspace lifecycle and MCP integration.
 
     Each test creates a real E2B cloud sandbox and tears it down
-    (``pause``) afterwards.  The suite is skipped entirely when
+    (``pause``) afterward.  The suite is skipped entirely when
     ``E2B_API_KEY`` is absent so that CI runs without E2B credentials
     are unaffected.
     """
@@ -42,7 +42,7 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         Verifies:
         1. The workspace initializes without raising.
-        2. ``list_mcps`` returns at least the seeded MCP (browser-use).
+        2. ``list_mcps`` returns at least the seeded MCP (playwright).
         3. Each MCP exposes at least one tool via ``list_raw_tools``.
         4. ``close`` (sandbox pause) completes without raising.
         """
@@ -50,7 +50,7 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
             api_key=_E2B_API_KEY,
             default_mcps=[
                 MCPClient(
-                    name="browser-use",
+                    name="playwright",
                     mcp_config=StdioMCPConfig(
                         command="npx",
                         args=["@playwright/mcp@latest"],
@@ -62,7 +62,10 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         await workspace.initialize()
 
-        mcps = await workspace.list_mcps()
+        mcps = await workspace.list_mcps(
+            agent_id="test-agent",
+            session_id="test-session",
+        )
         self.assertGreater(len(mcps), 0)
 
         for mcp in mcps:

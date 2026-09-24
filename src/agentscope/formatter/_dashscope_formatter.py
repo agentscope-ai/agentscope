@@ -63,7 +63,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     def _format_dashscope_data_block(
         self,
         block: DataBlock,
-        role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the OpenAI-compatible format for
         DashScope API.
@@ -76,10 +75,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
-            role (`str`, defaults to ``"user"``):
-                The role of the message containing this block. Audio blocks
-                in assistant messages are skipped to avoid errors in
-                subsequent model calls.
 
         Returns:
             `dict[str, Any] | None`:
@@ -107,8 +102,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
             return self._format_video_source(block.source)
 
         if main_type == "audio":
-            if role == "assistant":
-                return None
             return self._format_audio_source(block.source)
 
         logger.warning(
@@ -182,30 +175,32 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         """Convert an audio source to DashScope ``input_audio`` format.
 
         DashScope's compatible API accepts URLs directly in the ``data``
-        field (unlike standard OpenAI which requires base64). Local files
-        are still read and base64-encoded.
+        field. Base64-encoded audio must be wrapped in a data URL. Local
+        files are read, base64-encoded, and wrapped in the same form.
         """
+        fmt = source.media_type.split("/")[-1]
+        if fmt == "mpeg":
+            fmt = "mp3"
+
         if isinstance(source, Base64Source):
-            fmt = source.media_type.split("/")[-1]
             return {
                 "type": "input_audio",
                 "input_audio": {
-                    "data": source.data,
+                    "data": f"data:;base64,{source.data}",
                     "format": fmt,
                 },
             }
 
         if isinstance(source, URLSource):
             url_str = str(source.url)
-            fmt = source.media_type.split("/")[-1]
             if url_str.startswith("file://"):
                 local_path = url_str.removeprefix("file://")
                 with open(local_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
                 return {
                     "type": "input_audio",
                     "input_audio": {
-                        "data": data,
+                        "data": f"data:;base64,{encoded}",
                         "format": fmt,
                     },
                 }
@@ -231,6 +226,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
     thinking (``reasoning_content``).
     """
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -255,14 +251,20 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             tool_calls = []
             thinking_parts: list[str] = []
 
+            # Hold the promoted media until this turn's tool messages are out.
+            pending_media: list[dict] = []
+
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    formatted_msgs.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_dashscope_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted_block:
                         content_blocks.append(formatted_block)
@@ -284,14 +286,34 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         tool_calls = []
                         thinking_parts = []
 
-                    formatted_msgs.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": block.hint},
-                            ],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        formatted_msgs.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": block.hint},
+                                ],
+                            },
+                        )
+                    else:
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append(
+                                    {"type": "text", "text": sub.text},
+                                )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = (
+                                    self._format_dashscope_data_block(
+                                        sub,
+                                    )
+                                )
+                                if formatted_sub:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            formatted_msgs.append(
+                                {"role": "user", "content": hint_parts},
+                            )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(
@@ -350,12 +372,11 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_dashscope_data_block(
                                     item,
-                                    role="user",
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
                         if promo_content:
-                            formatted_msgs.append(
+                            pending_media.append(
                                 {
                                     "role": "user",
                                     "content": promo_content,
@@ -367,6 +388,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            formatted_msgs.extend(pending_media)
 
             msg_dashscope: dict[str, Any] = {
                 "role": msg.role,
@@ -452,13 +475,13 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 
@@ -497,7 +520,6 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_dashscope_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted_block is not None:
                         media_blocks.append(formatted_block)

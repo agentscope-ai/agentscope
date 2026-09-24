@@ -123,7 +123,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("cat file.txt | grep error", []),
             ("docker ps | grep nginx", ["docker ps"]),
-            ("npm run build | tee output.log", ["npm run"]),
+            ("npm run build | tee output.log", ["npm run", "tee output.log"]),
         ]
 
         for command, expected in test_cases:
@@ -140,7 +140,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
             ),
             (
                 "npm install && npm run build | tee log.txt",
-                ["npm install", "npm run"],
+                ["npm install", "npm run", "tee log.txt"],
             ),
         ]
 
@@ -244,6 +244,9 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "tail -f log.txt",
             "grep pattern file.txt",
             "find . -name '*.py'",
+            "find . -name '-delete'",
+            "find . -path './-fprint'",
+            "find . -regex '.*-exec.*'",
             "tree",
             "pwd",
             "which python",
@@ -253,6 +256,46 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 self.assertTrue(
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be read-only",
+                )
+
+    async def test_mutating_find_commands_are_not_read_only(self) -> None:
+        """Test find predicates that can modify files are not read-only."""
+        mutating_find_commands = [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -daystart -delete",
+            "find . -nogroup -delete",
+            "find . -nouser -delete",
+            "find . -exec rm {} \\;",
+            "find . -execdir rm {} \\;",
+            "find . -fls results.txt",
+            "find . -fprint results.txt",
+            "find . -fprint0 results.txt",
+            "find . -fprintf results.txt '%p\\n'",
+            "find . -ok rm {} \\;",
+            "find . -okdir rm {} \\;",
+        ]
+        for cmd in mutating_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_tee_writes_through_are_not_read_only(self) -> None:
+        """Test commands writing through ``tee`` are not read-only."""
+        writing_commands = [
+            "echo x | tee out.txt",
+            "echo x | tee -a out.txt",
+            "echo x | tee /tmp/out.txt",
+            "cat README.md | tee /tmp/out.txt",
+            "printf hi | tee /tmp/out.txt",
+        ]
+        for cmd in writing_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
                 )
 
     async def test_single_read_only_docker_commands(self) -> None:
@@ -855,6 +898,83 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn(expected_substring, result)
 
+    async def test_denylist_every_e_expression(self) -> None:
+        """Test denylist: every -e expression is checked, not only the 1st."""
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '/x/w /tmp/out' f",
+                self.dangerous_files,
+            ),
+            "sed write operation (w/W) not allowed",
+        )
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '1e id' f",
+                self.dangerous_files,
+            ),
+            "sed expression '1e id' not in allowlist",
+        )
+        self.assertIsNone(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e 's/x/y/g' f",
+                self.dangerous_files,
+            ),
+        )
+
+    async def test_long_option_with_inline_value(self) -> None:
+        """Test long options that carry their value after an '='.
+
+        ``shlex`` keeps such an option and its value in one token, so a value
+        that is a sed script, a backup suffix or a script file has to be split
+        off before the option is recognised -- otherwise both disappear from
+        the analysis and the command they belong to goes unchecked.
+        """
+        cases = [
+            (
+                "sed -n --expression='/bin/sh/e' -e '1p' notes.txt",
+                "sed -n -e '1p' -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed --file=script.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+            (
+                "sed --expression='/bin/sh/e' notes.txt",
+                "sed --expression '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                # An unchecked long option leaves the *filename* to be judged
+                # as the expression, so plain line printing is flagged too.
+                "sed -n --expression='5p' notes.txt",
+                "sed -n '5p' notes.txt",
+                None,
+            ),
+        ]
+        for inline, separated, expected in cases:
+            with self.subTest(inline=inline):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        inline,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""
         test_cases = [
@@ -975,7 +1095,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -990,7 +1110,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1006,7 +1126,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1023,7 +1143,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1039,7 +1159,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )

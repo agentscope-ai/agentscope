@@ -21,7 +21,8 @@ from tree_sitter import Language, Parser, Node
 from .._constants import DANGEROUS_NODE_TYPES, DANGEROUS_COMMANDS
 
 
-# Commands that are considered safe and don't require permission rules
+# Commands that are considered safe and don't require permission rules,
+# so any command that writes must not be listed here
 SAFE_COMMANDS: Set[str] = {
     "echo",
     "cat",
@@ -32,7 +33,6 @@ SAFE_COMMANDS: Set[str] = {
     "false",
     "printf",
     "grep",
-    "tee",
 }
 
 # Safe environment variables that can be skipped when extracting command prefix
@@ -132,6 +132,18 @@ READ_ONLY_COMMANDS = {
     "pip show",
 }
 
+FIND_MUTATING_PREDICATES = {
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-fls",
+    "-fprint",
+    "-fprint0",
+    "-fprintf",
+    "-ok",
+    "-okdir",
+}
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -199,6 +211,9 @@ class BashCommandParser:
         if cmd in READ_ONLY_COMMANDS:
             return True
 
+        if self._is_mutating_find_command(cmd):
+            return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
@@ -218,6 +233,30 @@ class BashCommandParser:
             # Check if base command is in safe commands
             if base_cmd in SAFE_COMMANDS:
                 return True
+
+        return False
+
+    def _is_mutating_find_command(self, cmd: str) -> bool:
+        """Check if a find command contains mutating predicates via AST."""
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+        except Exception:
+            return False
+
+        root = tree.root_node
+        cmd_node = self._find_first_simple_command(root)
+        if cmd_node is None:
+            return False
+
+        name_node = cmd_node.child_by_field_name("name")
+        if name_node is None or name_node.text.decode("utf8") != "find":
+            return False
+
+        for child in cmd_node.children:
+            if child.type == "word":
+                text = child.text.decode("utf8")
+                if text in FIND_MUTATING_PREDICATES:
+                    return True
 
         return False
 
@@ -301,6 +340,8 @@ class BashCommandParser:
                 "touch",
                 "ln",
                 "sed",
+                "mkdir",
+                "rmdir",
             ]:
                 # Extract file arguments (skip flags)
                 for arg in args:
@@ -341,7 +382,17 @@ class BashCommandParser:
                 continue
 
             # Check for file-manipulating commands
-            if token in ["rm", "mv", "cp", "chmod", "chown", "sed", "touch"]:
+            if token in [
+                "rm",
+                "mv",
+                "cp",
+                "chmod",
+                "chown",
+                "sed",
+                "touch",
+                "mkdir",
+                "rmdir",
+            ]:
                 cmd_name = token
                 # Look for file arguments after this command
                 j = i + 1
@@ -677,9 +728,30 @@ class BashCommandParser:
 
         while i < len(args):
             arg = args[i]
+            # A GNU long option may carry its value right after '=', which
+            # keeps option name and value in one token. Split them, or the
+            # value -- a sed script, a backup suffix -- vanishes from the
+            # analysis together with the option that introduced it.
+            name, assigned, inline = (
+                arg.partition("=") if arg.startswith("--") else (arg, "", "")
+            )
 
+            # -e/--expression takes a sed script as its value, so it must be
+            # matched before the combined short flags below
+            if name in ("-e", "--expression"):
+                if assigned:
+                    expressions.append(inline)
+                    found_first_expr = True
+                elif i + 1 < len(args):
+                    expressions.append(args[i + 1])
+                    found_first_expr = True
+                    i += 1
+            # --file is the long spelling of -f, which the flag allowlist
+            # below rejects: an expression read from a file is never seen here.
+            elif name == "--file":
+                flags.append("f")
             # Handle flags
-            if arg.startswith("-") and not arg.startswith("--"):
+            elif name.startswith("-") and not name.startswith("--"):
                 # Combined flags like -nE
                 flag_chars = arg[1:]
                 for char in flag_chars:
@@ -696,9 +768,11 @@ class BashCommandParser:
                         and "." not in next_arg
                     ):
                         i += 1  # Skip backup extension
-            elif arg == "--in-place":
+            elif name == "--in-place":
                 flags.append("i")
-                if i + 1 < len(args):
+                # Written with '=', the backup suffix already came along in
+                # this token; only the separated form can take the next one.
+                if not assigned and i + 1 < len(args):
                     next_arg = args[i + 1]
                     if (
                         not next_arg.startswith("-")
@@ -706,10 +780,6 @@ class BashCommandParser:
                         and "." not in next_arg
                     ):
                         i += 1
-            elif arg in ["-e", "--expression"]:
-                if i + 1 < len(args):
-                    expressions.append(args[i + 1])
-                    i += 1
             elif not arg.startswith("-"):
                 # First non-flag, non-option arg is expression (if no -e used)
                 if not found_first_expr:

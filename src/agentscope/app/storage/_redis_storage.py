@@ -2,19 +2,30 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
-from datetime import datetime
+import warnings
+from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
 
 from ._base import StorageBase
+from ._model._session import _origin_kwargs
 from ._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
+    KnowledgeBaseRecord,
+    KnowledgeDocumentRecord,
+    KnowledgeDocumentStatus,
+    MCPRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    ChannelOrigin,
+    ScheduleOrigin,
+    SessionOrigin,
+    SkillRecord,
+    TeamRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
@@ -28,35 +39,102 @@ else:
     Redis = Any
 
 
-class RedisKeyConfig(BaseModel):
-    """Key templates for all Redis keys used by RedisStorage."""
+def _watch_error() -> type[BaseException]:
+    """Return the ``WatchError`` class from ``redis.exceptions``.
 
-    # Record keys
-    credential: str = "agentscope:user:{user_id}:credential:{credential_id}"
-    agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
-    session: str = "agentscope:user:{user_id}:session:{session_id}"
+    Lazy-imported so ``redis`` stays an optional dependency at module
+    load time — same trick the storage class uses in ``__aenter__``.
+    """
+    from redis.exceptions import WatchError
 
-    # Index keys (Redis Sets — store all IDs for a given scope)
-    credential_index: str = "agentscope:user:{user_id}:credentials"
-    agent_index: str = "agentscope:user:{user_id}:agents"
-    session_index: str = "agentscope:user:{user_id}:agent:{agent_id}:sessions"
-
-    # Lookup key: maps (user_id, agent_id) → session_id
-    session_lookup: str = "agentscope:user:{user_id}:agent:{agent_id}:session"
-
-    # Message list key (Redis List — ordered message history per session)
-    messages: str = "agentscope:user:{user_id}:session:{session_id}:messages"
-
-    schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
-    schedule_index: str = "agentscope:user:{user_id}:schedules"
-    schedule_global_index: str = "agentscope:schedules"
-    schedule_session_index: str = (
-        "agentscope:user:{user_id}:schedule:{schedule_id}:sessions"
-    )
+    return WatchError
 
 
 class RedisStorage(StorageBase):
     """The Redis storage implementation."""
+
+    class KeyConfig(BaseModel):
+        """Key templates for all Redis keys used by :class:`RedisStorage`.
+
+        Nested on :class:`RedisStorage` because customising key prefixes
+        is meaningful only for this backend; users tweak them via
+        ``RedisStorage(key_config=RedisStorage.KeyConfig(...))``.
+        """
+
+        # Record keys
+        credential: str = (
+            "agentscope:user:{user_id}:credential:{credential_id}"
+        )
+        agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
+        session: str = "agentscope:user:{user_id}:session:{session_id}"
+        mcp: str = "agentscope:user:{user_id}:mcp:{mcp_id}"
+        skill: str = "agentscope:user:{user_id}:skill:{skill_id}"
+
+        # Index keys (Redis Sets — store all IDs for a given scope)
+        credential_index: str = "agentscope:user:{user_id}:credentials"
+        agent_index: str = "agentscope:user:{user_id}:agents"
+        mcp_index: str = "agentscope:user:{user_id}:mcps"
+        skill_index: str = "agentscope:user:{user_id}:skills"
+
+        # Name indexes (Redis Hash — name → record id). Each doubles as
+        # the per-user uniqueness constraint and as the lookup for the
+        # workspace relation, which joins on name rather than record id.
+        mcp_name_index: str = "agentscope:user:{user_id}:mcp_names"
+        skill_name_index: str = "agentscope:user:{user_id}:skill_names"
+        session_index: str = (
+            "agentscope:user:{user_id}:agent:{agent_id}:sessions"
+        )
+
+        # Lookup key: maps (user_id, agent_id) → session_id
+        session_lookup: str = (
+            "agentscope:user:{user_id}:agent:{agent_id}:session"
+        )
+
+        # Message list key (Redis List — ordered message history per session)
+        messages: str = (
+            "agentscope:user:{user_id}:session:{session_id}:messages"
+        )
+
+        schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
+        schedule_index: str = "agentscope:user:{user_id}:schedules"
+        schedule_global_index: str = "agentscope:schedules"
+        schedule_session_index: str = (
+            "agentscope:user:{user_id}:schedule:{schedule_id}:sessions"
+        )
+
+        # channel_id is a globally unique UUID, so the record lives at a
+        # single global key. Indexes: per-user (management list),
+        # all-channels (reconcile enumeration), bot-id (uniqueness /
+        # dedup).
+        channel: str = "agentscope:channel_record:{channel_id}"
+        channel_index: str = "agentscope:user:{user_id}:channels"
+        channel_all_index: str = "agentscope:channels"
+        channel_botid_index: str = "agentscope:channel_botid:{platform_bot_id}"
+        channel_session_index: str = (
+            "agentscope:user:{user_id}:channel:{channel_id}:sessions"
+        )
+
+        team: str = "agentscope:user:{user_id}:team:{team_id}"
+        team_index: str = "agentscope:user:{user_id}:teams"
+
+        knowledge_base: str = (
+            "agentscope:user:{user_id}:knowledge_base:{knowledge_base_id}"
+        )
+        knowledge_base_index: str = "agentscope:user:{user_id}:knowledge_bases"
+
+        # Knowledge document keys
+        knowledge_document: str = (
+            "agentscope:user:{user_id}"
+            ":knowledge_base:{knowledge_base_id}"
+            ":document:{document_id}"
+        )
+        knowledge_document_index: str = (
+            "agentscope:user:{user_id}"
+            ":knowledge_base:{knowledge_base_id}:documents"
+        )
+        # Global index of every document key as ``user_id:kb_id:doc_id``;
+        # used by the lease sweeper, never by per-user listing.
+        knowledge_document_global_index: str = "agentscope:knowledge_documents"
 
     def __init__(
         self,
@@ -66,7 +144,7 @@ class RedisStorage(StorageBase):
         password: str | None = None,
         connection_pool: ConnectionPool | None = None,
         key_ttl: int | None = None,
-        key_config: RedisKeyConfig | None = None,
+        key_config: "RedisStorage.KeyConfig | None" = None,
         **kwargs: Any,
     ) -> None:
         """Store connection parameters; the actual pool is created in
@@ -88,8 +166,9 @@ class RedisStorage(StorageBase):
             key_ttl (`int | None`, optional):
                 Expire time in seconds for record keys. Refreshed on every
                 write (sliding TTL). If `None`, keys do not expire.
-            key_config (`RedisKeyConfig | None`, optional):
-                Key template configuration. Defaults to `RedisKeyConfig()`.
+            key_config (`RedisStorage.KeyConfig | None`, optional):
+                Key template configuration. Defaults to
+                ``RedisStorage.KeyConfig()``.
             **kwargs (`Any`):
                 Extra keyword arguments forwarded to
                 ``redis.asyncio.ConnectionPool`` when the pool is created
@@ -102,7 +181,7 @@ class RedisStorage(StorageBase):
         self._external_pool: ConnectionPool | None = connection_pool
         self._kwargs = kwargs
         self.key_ttl = key_ttl
-        self.key_config = key_config or RedisKeyConfig()
+        self.key_config = key_config or RedisStorage.KeyConfig()
 
         # Populated in __aenter__; None until the context is entered.
         self._client: Redis | None = None
@@ -349,6 +428,285 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, credential_id)
         return deleted > 0
 
+    async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
+        """Create or update an installed-MCP record for the given user.
+
+        Keeps the name index in step with the write: the name is claimed
+        for this record, and a rename releases the old one. A name held
+        by a different record is rejected outright — the workspace
+        relation joins on name, so two records sharing one would make
+        that join ambiguous.
+
+        Args:
+            user_id (`str`): The owner user id.
+            mcp_record (`MCPRecord`): The record to write.
+
+        Returns:
+            `str`: The id of the created or updated record.
+
+        Raises:
+            `ValueError`: When another record already uses the name.
+        """
+        name_key = self._key(
+            self.key_config.mcp_name_index,
+            user_id=user_id,
+        )
+        holder = await self._client.hget(name_key, mcp_record.client.name)
+        if holder is not None and holder != mcp_record.id:
+            raise ValueError(
+                f"An MCP named {mcp_record.client.name!r} already exists "
+                f"for this user.",
+            )
+
+        key = self._key(
+            self.key_config.mcp,
+            user_id=user_id,
+            mcp_id=mcp_record.id,
+        )
+        raw = await self._client.get(key)
+
+        mcp_record.user_id = user_id
+        if raw:
+            mcp_record.updated_at = datetime.now()
+
+        await self._set_with_ttl(key, mcp_record.model_dump_json())
+        await self._client.sadd(
+            self._key(self.key_config.mcp_index, user_id=user_id),
+            mcp_record.id,
+        )
+        await self._client.hset(
+            name_key,
+            mcp_record.client.name,
+            mcp_record.id,
+        )
+
+        if raw:
+            previous = MCPRecord.model_validate_json(raw).client.name
+            if previous != mcp_record.client.name:
+                await self._client.hdel(name_key, previous)
+
+        return mcp_record.id
+
+    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
+        """Return every installed-MCP record belonging to the user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[MCPRecord]`: All installed-MCP records for the user.
+        """
+        index_key = self._key(self.key_config.mcp_index, user_id=user_id)
+        ids = await self._client.smembers(index_key)
+        records = []
+        for mcp_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.mcp,
+                    user_id=user_id,
+                    mcp_id=mcp_id,
+                ),
+            )
+            if raw:
+                records.append(MCPRecord.model_validate_json(raw))
+        return records
+
+    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
+        """Fetch a single installed-MCP record by id."""
+        key = self._key(
+            self.key_config.mcp,
+            user_id=user_id,
+            mcp_id=mcp_id,
+        )
+        raw = await self._client.get(key)
+        return MCPRecord.model_validate_json(raw) if raw else None
+
+    async def get_mcp_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> MCPRecord | None:
+        """Fetch an installed-MCP record by its MCP name."""
+        mcp_id = await self._client.hget(
+            self._key(self.key_config.mcp_name_index, user_id=user_id),
+            name,
+        )
+        return await self.get_mcp(user_id, mcp_id) if mcp_id else None
+
+    async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
+        """Delete an installed-MCP record and drop it from both indexes.
+
+        Args:
+            user_id (`str`): The owner user id.
+            mcp_id (`str`): The id of the record to delete.
+
+        Returns:
+            `bool`: ``True`` if the record existed and was deleted.
+        """
+        record = await self.get_mcp(user_id, mcp_id)
+
+        deleted = await self._client.delete(
+            self._key(
+                self.key_config.mcp,
+                user_id=user_id,
+                mcp_id=mcp_id,
+            ),
+        )
+        await self._client.srem(
+            self._key(self.key_config.mcp_index, user_id=user_id),
+            mcp_id,
+        )
+        if record:
+            await self._client.hdel(
+                self._key(self.key_config.mcp_name_index, user_id=user_id),
+                record.client.name,
+            )
+        return deleted > 0
+
+    async def upsert_skill(
+        self,
+        user_id: str,
+        skill_record: SkillRecord,
+    ) -> str:
+        """Create or update an installed-skill record for the user.
+
+        Mirrors :meth:`upsert_mcp` — see it for the name-index rules.
+
+        Args:
+            user_id (`str`): The owner user id.
+            skill_record (`SkillRecord`): The record to write.
+
+        Returns:
+            `str`: The id of the created or updated record.
+
+        Raises:
+            `ValueError`: When another record already uses the name.
+        """
+        name_key = self._key(
+            self.key_config.skill_name_index,
+            user_id=user_id,
+        )
+        holder = await self._client.hget(name_key, skill_record.name)
+        if holder is not None and holder != skill_record.id:
+            raise ValueError(
+                f"A skill named {skill_record.name!r} already exists for "
+                f"this user.",
+            )
+
+        key = self._key(
+            self.key_config.skill,
+            user_id=user_id,
+            skill_id=skill_record.id,
+        )
+        raw = await self._client.get(key)
+
+        skill_record.user_id = user_id
+        if raw:
+            skill_record.updated_at = datetime.now()
+
+        await self._set_with_ttl(key, skill_record.model_dump_json())
+        await self._client.sadd(
+            self._key(self.key_config.skill_index, user_id=user_id),
+            skill_record.id,
+        )
+        await self._client.hset(name_key, skill_record.name, skill_record.id)
+
+        if raw:
+            previous = SkillRecord.model_validate_json(raw).name
+            if previous != skill_record.name:
+                await self._client.hdel(name_key, previous)
+
+        return skill_record.id
+
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
+        """Return every installed-skill record belonging to the user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[SkillRecord]`: All installed-skill records for the user.
+        """
+        index_key = self._key(self.key_config.skill_index, user_id=user_id)
+        ids = await self._client.smembers(index_key)
+        records = []
+        for skill_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.skill,
+                    user_id=user_id,
+                    skill_id=skill_id,
+                ),
+            )
+            if raw:
+                records.append(SkillRecord.model_validate_json(raw))
+        return records
+
+    async def get_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> SkillRecord | None:
+        """Fetch a single installed-skill record by id."""
+        key = self._key(
+            self.key_config.skill,
+            user_id=user_id,
+            skill_id=skill_id,
+        )
+        raw = await self._client.get(key)
+        return SkillRecord.model_validate_json(raw) if raw else None
+
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> SkillRecord | None:
+        """Fetch an installed-skill record by its skill name."""
+        skill_id = await self._client.hget(
+            self._key(self.key_config.skill_name_index, user_id=user_id),
+            name,
+        )
+        if not skill_id:
+            return None
+        return await self.get_skill(user_id, skill_id)
+
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete an installed-skill record and drop both index entries.
+
+        Args:
+            user_id (`str`): The owner user id.
+            skill_id (`str`): The id of the record to delete.
+
+        Returns:
+            `bool`: ``True`` if the record existed and was deleted.
+        """
+        record = await self.get_skill(user_id, skill_id)
+
+        deleted = await self._client.delete(
+            self._key(
+                self.key_config.skill,
+                user_id=user_id,
+                skill_id=skill_id,
+            ),
+        )
+        await self._client.srem(
+            self._key(self.key_config.skill_index, user_id=user_id),
+            skill_id,
+        )
+        if record:
+            await self._client.hdel(
+                self._key(
+                    self.key_config.skill_name_index,
+                    user_id=user_id,
+                ),
+                record.name,
+            )
+        return deleted > 0
+
     async def upsert_agent(
         self,
         user_id: str,
@@ -381,17 +739,23 @@ class RedisStorage(StorageBase):
         return agent_record.id
 
     async def list_agents(self, user_id: str) -> list[AgentRecord]:
-        """Return all agent records belonging to the given user.
+        """Return user-facing agent records (``source='user'``).
 
-        Reads the per-user agent index Set to obtain all ids, then fetches
-        each record individually. Records whose keys have expired or been
-        deleted externally are silently skipped.
+        Reads the per-user agent index Set to obtain all ids, fetches
+        each record individually, and **filters out team-spawned
+        workers** (``source='team'``) — those are scoped to a team
+        and only addressable via team detail / direct id lookup, not
+        enumerated as part of the user's regular agent list.
+
+        Records whose keys have expired or been deleted externally
+        are silently skipped.
 
         Args:
             user_id (`str`): The owner user id.
 
         Returns:
-            `list[AgentRecord]`: All agent records for the user.
+            `list[AgentRecord]`:
+                All ``source='user'`` agent records for the user.
         """
         index_key = self._key(self.key_config.agent_index, user_id=user_id)
         ids = await self._client.smembers(index_key)
@@ -405,7 +769,9 @@ class RedisStorage(StorageBase):
                 ),
             )
             if raw:
-                records.append(AgentRecord.model_validate_json(raw))
+                record = AgentRecord.model_validate_json(raw)
+                if record.source == "user":
+                    records.append(record)
         return records
 
     async def get_agent(
@@ -423,21 +789,41 @@ class RedisStorage(StorageBase):
         return AgentRecord.model_validate_json(raw) if raw else None
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
-        """Delete an agent record and cascade-delete its sessions and
-        schedules.
+        """Delete an agent record and cascade-delete its sessions,
+        schedules, and any team back-references.
 
-        Removes all session records (and their lookup / index keys) that belong
-        to this agent, then removes all schedule records whose
-        ``data.agent_id`` matches.  Finally, the agent record itself and its
-        entry in the per-user agent index are deleted.
+        Cascade order:
+
+        1. **Sessions** — every session belonging to this agent is
+           deleted via :meth:`delete_session` (which itself cascades
+           message log, schedule-session index, and — if a session leads
+           a team — the team).
+        2. **Schedules** — every schedule whose ``data.agent_id`` matches
+           is deleted via :meth:`delete_schedule`.
+        3. **Team back-references (defensive)** — if the caller chose to
+           delete the agent directly instead of going through
+           :meth:`delete_team`, scan the user's teams and remove the
+           agent id from both the legacy :attr:`TeamData.member_ids`
+           list *and* the current :attr:`TeamData.members` list. The
+           normal path (``delete_team`` iterates members and calls
+           ``delete_agent`` / ``delete_session`` for each) does not
+           need this scan, but it keeps team records consistent if a
+           caller bypasses it. Applies to invited members too — a stale
+           entry pointing at a removed agent would otherwise poison
+           ``TeamSay`` routing.
+        4. **Agent record + index** — finally delete the agent key and
+           remove from the per-user agent index.
 
         Args:
-            user_id (`str`): The owner user id.
-            agent_id (`str`): The id of the agent to delete.
+            user_id (`str`):
+                The owner user id.
+            agent_id (`str`):
+                The id of the agent to delete.
 
         Returns:
-            `bool`: ``True`` if the agent record existed and was deleted,
-            ``False`` if it did not exist.
+            `bool`:
+                ``True`` if the agent record existed and was deleted,
+                ``False`` if it did not exist.
         """
         # Cascade: sessions
         sessions = await self.list_sessions(user_id, agent_id)
@@ -447,8 +833,30 @@ class RedisStorage(StorageBase):
         # Cascade: schedules owned by this agent
         schedules = await self.list_schedules(user_id)
         for schedule in schedules:
-            if schedule.data.agent_id == agent_id:
+            if schedule.agent_id == agent_id:
                 await self.delete_schedule(user_id, schedule.id)
+
+        # Defensive: scrub agent_id from any team's member roster.
+        # Covers both the legacy ``member_ids`` field and the current
+        # ``members`` list (which additionally holds invited entries).
+        # The common path (delete_team -> delete_agent / delete_session)
+        # is unaffected because the team is being torn down anyway.
+        teams = await self.list_teams(user_id)
+        for team in teams:
+            dirty = False
+            if agent_id in team.data.member_ids:
+                team.data.member_ids = [
+                    mid for mid in team.data.member_ids if mid != agent_id
+                ]
+                dirty = True
+            filtered_members = [
+                m for m in team.data.members if m.agent_id != agent_id
+            ]
+            if len(filtered_members) != len(team.data.members):
+                team.data.members = filtered_members
+                dirty = True
+            if dirty:
+                await self.upsert_team(user_id, team)
 
         key = self._key(
             self.key_config.agent,
@@ -467,8 +875,12 @@ class RedisStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
+        source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -491,13 +903,24 @@ class RedisStorage(StorageBase):
                 await self._set_with_ttl(key, record.model_dump_json())
                 return record
 
+        # Use the caller-provided ``session_id`` when given so a
+        # "create-if-missing under this id" call (e.g. scheduler's
+        # stateful-mode session) lands at the expected key.
+        new_id_kwargs = {"id": session_id} if session_id else {}
         record = SessionRecord(
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source,
-            source_schedule_id=source_schedule_id,
+            **_origin_kwargs(
+                origin,
+                source,
+                source_schedule_id,
+                source_channel_id,
+                source_chat_id,
+                source_chat_name,
+            ),
             state=state if state is not None else AgentState(),
+            **new_id_kwargs,
         )
         key = self._key(
             self.key_config.session,
@@ -512,13 +935,21 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
 
-        if source_schedule_id:
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=source_schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.sadd(schedule_session_key, record.id)
+
+        if isinstance(record.origin, ChannelOrigin):
+            channel_session_key = self._key(
+                self.key_config.channel_session_index,
+                user_id=user_id,
+                channel_id=record.origin.channel_id,
+            )
+            await self._client.sadd(channel_session_key, record.id)
 
         return record
 
@@ -609,7 +1040,41 @@ class RedisStorage(StorageBase):
         agent_id: str,
         session_id: str,
     ) -> bool:
-        """Delete a session record and clean up all associated keys."""
+        """Delete a session record and cascade clean-up.
+
+        Cascades:
+
+        - Existing: per-session message log, schedule-session index entry.
+        - **NEW**: if this session is the leader of a team (``team_id``
+          set AND a :class:`TeamRecord` exists with
+          ``session_id == this session_id``), call :meth:`delete_team`
+          first. ``delete_team`` will recursively cascade workers and
+          clear ``team_id`` on this session — that clear is idempotent
+          and the session itself is deleted right after, so the order is
+          safe.
+
+        Worker sessions (``team_id`` set, but the team's
+        ``leader_session_id`` is **not** this session) are deleted
+        without dissolving the team — the team and the surviving leader
+        keep their member_ids list pointing to the now-orphaned worker
+        agent. This intentional asymmetry mirrors SQL: there is no FK
+        from :class:`SessionRecord` back to the agent that owns it, so
+        deleting a session doesn't automatically delete the agent.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            agent_id (`str`):
+                The id of the agent that owns the session (used to
+                clean up the per-agent session index).
+            session_id (`str`):
+                The id of the session to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the session existed and was deleted,
+                ``False`` if no record was found.
+        """
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -620,6 +1085,12 @@ class RedisStorage(StorageBase):
             return False
 
         record = SessionRecord.model_validate_json(raw)
+
+        # Cascade: if this session leads a team, dissolve it first.
+        if record.team_id:
+            team = await self.get_team(user_id, record.team_id)
+            if team is not None and team.session_id == session_id:
+                await self.delete_team(user_id, record.team_id)
 
         index_key = self._key(
             self.key_config.session_index,
@@ -635,13 +1106,21 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
 
-        if record.source_schedule_id:
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=record.source_schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.srem(schedule_session_key, session_id)
+
+        if isinstance(record.origin, ChannelOrigin):
+            channel_session_key = self._key(
+                self.key_config.channel_session_index,
+                user_id=user_id,
+                channel_id=record.origin.channel_id,
+            )
+            await self._client.srem(channel_session_key, session_id)
 
         return True
 
@@ -657,6 +1136,32 @@ class RedisStorage(StorageBase):
             schedule_id=schedule_id,
         )
         ids = await self._client.smembers(schedule_session_key)
+        records = []
+        for session_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.session,
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
+            if raw:
+                records.append(SessionRecord.model_validate_json(raw))
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return records
+
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions derived from a given channel."""
+        channel_session_key = self._key(
+            self.key_config.channel_session_index,
+            user_id=user_id,
+            channel_id=channel_id,
+        )
+        ids = await self._client.smembers(channel_session_key)
         records = []
         for session_id in ids:
             raw = await self._client.get(
@@ -797,6 +1302,124 @@ class RedisStorage(StorageBase):
         return records
 
     # ------------------------------------------------------------------
+    # Channel persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and refresh its indexes."""
+        key = self._key(self.key_config.channel, channel_id=record.id)
+        index_key = self._key(
+            self.key_config.channel_index,
+            user_id=record.user_id,
+        )
+        botid_key = self._key(
+            self.key_config.channel_botid_index,
+            platform_bot_id=platform_bot_id,
+        )
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(index_key, record.id)
+        await self._client.sadd(self.key_config.channel_all_index, record.id)
+        await self._set_with_ttl(botid_key, record.id)
+        return record.id
+
+    async def get_channel(
+        self,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a channel record by its global id."""
+        raw = await self._client.get(
+            self._key(self.key_config.channel, channel_id=channel_id),
+        )
+        if not raw:
+            return None
+        return ChannelRecord.model_validate_json(raw)
+
+    async def list_channels(self, user_id: str) -> list[ChannelRecord]:
+        """Return all channel records owned by the given user.
+
+        Stale entries whose record key has expired are purged from the
+        user index (self-healing).
+        """
+        index_key = self._key(self.key_config.channel_index, user_id=user_id)
+        return await self._collect_channels(
+            index_key,
+            await self._client.smembers(index_key),
+        )
+
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Return every channel record across all users."""
+        index_key = self.key_config.channel_all_index
+        return await self._collect_channels(
+            index_key,
+            await self._client.smembers(index_key),
+        )
+
+    async def _collect_channels(
+        self,
+        index_key: str,
+        ids: "set[str]",
+    ) -> list[ChannelRecord]:
+        """Load channel records for ``ids``, purging stale index entries."""
+        records: list[ChannelRecord] = []
+        stale: list[str] = []
+        for channel_id in ids:
+            raw = await self._client.get(
+                self._key(self.key_config.channel, channel_id=channel_id),
+            )
+            if raw:
+                records.append(ChannelRecord.model_validate_json(raw))
+            else:
+                stale.append(channel_id)
+        if stale:
+            await self._client.srem(index_key, *stale)
+        return records
+
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record and clean up all indexes."""
+        key = self._key(self.key_config.channel, channel_id=channel_id)
+        raw = await self._client.get(key)
+        if not raw:
+            return False
+        record = ChannelRecord.model_validate_json(raw)
+
+        await self._client.delete(key)
+        await self._client.srem(
+            self._key(
+                self.key_config.channel_index,
+                user_id=record.user_id,
+            ),
+            channel_id,
+        )
+        await self._client.srem(self.key_config.channel_all_index, channel_id)
+        await self._client.delete(
+            self._key(
+                self.key_config.channel_botid_index,
+                platform_bot_id=platform_bot_id,
+            ),
+        )
+        return True
+
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel id bound to a platform bot, if any."""
+        return await self._client.get(
+            self._key(
+                self.key_config.channel_botid_index,
+                platform_bot_id=platform_bot_id,
+            ),
+        )
+
+    # ------------------------------------------------------------------
     # Message persistence
     # ------------------------------------------------------------------
 
@@ -843,14 +1466,862 @@ class RedisStorage(StorageBase):
                     return msg
         return None
 
+    async def _find_message_index(
+        self,
+        key: str,
+        message_id: str,
+        chunk_size: int = 100,
+    ) -> int | None:
+        """Return the index of a message in the Redis list, or ``None``.
+
+        Scans backwards from the tail (most recent) in chunks, since
+        ``before`` cursors are typically near the end.
+
+        Args:
+            key (`str`): The Redis list key.
+            message_id (`str`): The message ID to locate.
+            chunk_size (`int`, optional): Number of entries fetched per
+                round trip. Defaults to 100.
+
+        Returns:
+            `int | None`: Zero-based index, or ``None`` if not found.
+        """
+        end = await self._client.llen(key) - 1
+        while end >= 0:
+            start = max(end - chunk_size + 1, 0)
+            raw_list = await self._client.lrange(key, start, end)
+            for offset, raw in enumerate(reversed(raw_list)):
+                if Msg.model_validate_json(raw).id == message_id:
+                    return end - offset
+            end = start - 1
+        return None
+
     async def list_messages(
         self,
         user_id: str,
         session_id: str,
-        offset: int = 0,
         limit: int = 50,
-    ) -> list[Msg]:
-        """Return messages for a session with pagination."""
+        before: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[Msg], bool]:
+        """Return the most recent messages with cursor-based pagination.
+
+        Messages are returned in chronological order.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            limit (`int`, optional): Maximum number of messages to
+                return. Defaults to 50.
+            before (`str | None`, optional): A message ID used as the
+                cursor. When provided, returns messages created before
+                this message. Omit to get the latest page.
+            **kwargs: Reserved for backward compatibility. Passing
+                ``offset`` will emit a ``DeprecationWarning`` and be
+                ignored.
+
+        Returns:
+            `tuple[list[Msg], bool]`: A tuple of (messages in
+            chronological order, has_more). ``has_more`` is ``True``
+            when older messages exist before the returned page.
+        """
+        if "offset" in kwargs:
+            warnings.warn(
+                "The 'offset' parameter is deprecated and will be "
+                "removed in a future version. Use 'before' for "
+                "cursor-based pagination instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         key = self._message_key(user_id, session_id)
-        raw_list = await self._client.lrange(key, offset, offset + limit - 1)
-        return [Msg.model_validate_json(raw) for raw in raw_list]
+        total = await self._client.llen(key)
+
+        if total == 0:
+            return [], False
+
+        if before is None:
+            end = total - 1
+        else:
+            idx = await self._find_message_index(key, before)
+            if idx is None:
+                return [], False
+            end = idx - 1
+
+        start = max(end - limit + 1, 0)
+        if end < 0:
+            return [], False
+
+        raw_list = await self._client.lrange(key, start, end)
+        has_more = start > 0
+        return [Msg.model_validate_json(raw) for raw in raw_list], has_more
+
+    # ------------------------------------------------------------------
+    # Team persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_team(
+        self,
+        user_id: str,
+        record: TeamRecord,
+    ) -> TeamRecord:
+        """Persist a team record and register it in the user's team index.
+
+        Args:
+            user_id (`str`):
+                The owner user id. Used to scope both the record key and
+                the per-user team index.
+            record (`TeamRecord`):
+                The team record to persist. Its ``id`` is used as the
+                primary key; an existing record with the same id is
+                overwritten. ``updated_at`` is refreshed to ``datetime.now()``
+                before writing.
+
+        Returns:
+            `TeamRecord`:
+                The stored record (with refreshed ``updated_at``).
+        """
+        record.updated_at = datetime.now()
+        key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=record.id,
+        )
+        index_key = self._key(self.key_config.team_index, user_id=user_id)
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(index_key, record.id)
+        return record
+
+    async def get_team(
+        self,
+        user_id: str,
+        team_id: str,
+    ) -> TeamRecord | None:
+        """Fetch a single team record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            team_id (`str`):
+                The team id to look up.
+
+        Returns:
+            `TeamRecord | None`:
+                The record, or ``None`` if no record exists at the
+                ``(user_id, team_id)`` key (e.g. expired or never created).
+        """
+        key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=team_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return None
+        return TeamRecord.model_validate_json(raw)
+
+    async def list_teams(self, user_id: str) -> list[TeamRecord]:
+        """Return all team records belonging to the given user.
+
+        Reads the per-user team index (a Redis Set of team ids) and fetches
+        each record individually. Records whose keys have expired or been
+        deleted externally are silently skipped.
+
+        Args:
+            user_id (`str`):
+                The owner user id whose teams to list.
+
+        Returns:
+            `list[TeamRecord]`:
+                All team records for the user, in arbitrary order (the
+                index is a Set).
+        """
+        index_key = self._key(self.key_config.team_index, user_id=user_id)
+        ids = await self._client.smembers(index_key)
+        records: list[TeamRecord] = []
+        for team_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.team,
+                    user_id=user_id,
+                    team_id=team_id,
+                ),
+            )
+            if raw:
+                records.append(TeamRecord.model_validate_json(raw))
+        return records
+
+    async def set_session_team_id(
+        self,
+        user_id: str,
+        session_id: str,
+        team_id: str | None,
+    ) -> None:
+        """Set or clear ``team_id`` on an existing session record.
+
+        Bypasses :meth:`upsert_session` because that method does not
+        allow writing ``team_id`` (which is a relation column the
+        application normally only mutates via team operations).
+        Idempotent: a no-op if the session does not exist or already
+        holds the given value.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The session whose ``team_id`` should be updated.
+            team_id (`str | None`):
+                The new value. ``None`` detaches the session from any
+                team (used by :meth:`delete_team` and by the team
+                service when a session leaves a team).
+        """
+        key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return
+        record = SessionRecord.model_validate_json(raw)
+        if record.team_id == team_id:
+            return
+        record.team_id = team_id
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(key, record.model_dump_json())
+
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        """Delete a team record and cascade-clean its members by role.
+
+        Cascade order (mirrors what SQL's ``ON DELETE CASCADE`` would do
+        for the same set of foreign keys, but role-aware to honour the
+        ``AgentInvite`` semantics — see :class:`TeamMember`):
+
+        1. Materialise the member roster via
+           :func:`ensure_team_members` (which migrates legacy
+           ``member_ids``-only records on first read). For each entry:
+
+           - ``role == "created"`` — the member was spawned by
+             ``AgentCreate`` and lives only for this team. Delete it in
+             full via :meth:`delete_agent`, which cascades that
+             worker's session.
+           - ``role == "invited"`` — the member is a pre-existing
+             user-owned agent that was borrowed via ``AgentInvite``.
+             Only remove the team-scoped session from the team owner's
+             namespace via
+             :meth:`delete_session`; the underlying
+             :class:`AgentRecord` and its other sessions must survive.
+
+        2. Clear ``team_id`` on the leader session (referenced by
+           :attr:`TeamRecord.session_id`) — semantically equivalent to
+           ``ON DELETE SET NULL`` for that direction of the relationship.
+           Idempotent if the session has already been deleted (no-op).
+        3. Delete the :class:`TeamRecord` key and remove it from the
+           per-user team index.
+
+        The cascade is best-effort: Redis has no cross-key transaction,
+        so a process crash mid-cascade may leave residue. Each step is
+        idempotent so retries are safe.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            team_id (`str`):
+                The id of the team to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the team record existed and was deleted,
+                ``False`` if no record was found at the
+                ``(user_id, team_id)`` key.
+        """
+        # Local import to avoid a top-level cycle between _utils (which
+        # imports TeamMember from _model) and _base (which imports the
+        # abstract StorageBase from this module hierarchy).
+        from ._utils import _ensure_team_members
+
+        team = await self.get_team(user_id, team_id)
+        if team is None:
+            # Make sure the index is also clean if the record vanished
+            # for any reason.
+            index_key = self._key(self.key_config.team_index, user_id=user_id)
+            await self._client.srem(index_key, team_id)
+            return False
+
+        # Role-aware member cleanup — see docstring above.
+        members = await _ensure_team_members(self, user_id, team)
+        for member in members:
+            if member.role == "created":
+                await self.delete_agent(member.owner_id, member.agent_id)
+            else:  # invited
+                await self.delete_session(
+                    user_id,
+                    member.agent_id,
+                    member.session_id,
+                )
+
+        # Clear team_id on the leader session (idempotent)
+        await self.set_session_team_id(user_id, team.session_id, None)
+
+        # Delete the TeamRecord key + index entry
+        key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=team_id,
+        )
+        existed = await self._client.delete(key)
+        index_key = self._key(self.key_config.team_index, user_id=user_id)
+        await self._client.srem(index_key, team_id)
+        return bool(existed)
+
+    # ------------------------------------------------------------------
+    # Knowledge base persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_knowledge_base(
+        self,
+        user_id: str,
+        record: KnowledgeBaseRecord,
+    ) -> KnowledgeBaseRecord:
+        """Persist a knowledge base record and register it in the user index.
+
+        If a record with the same ``id`` already exists it is overwritten
+        and ``updated_at`` is refreshed; ``created_at`` is preserved.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`KnowledgeBaseRecord`):
+                The fully-populated record to store.
+
+        Returns:
+            `KnowledgeBaseRecord`:
+                The stored record (with ``updated_at`` refreshed).
+        """
+        if record.user_id != user_id:
+            raise ValueError(
+                "record.user_id does not match the given user_id.",
+            )
+
+        key = self._key(
+            self.key_config.knowledge_base,
+            user_id=user_id,
+            knowledge_base_id=record.id,
+        )
+        existing_raw = await self._client.get(key)
+        if existing_raw:
+            existing = KnowledgeBaseRecord.model_validate_json(existing_raw)
+            record.created_at = existing.created_at
+        record.updated_at = datetime.now()
+
+        index_key = self._key(
+            self.key_config.knowledge_base_index,
+            user_id=user_id,
+        )
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(index_key, record.id)
+        return record
+
+    async def get_knowledge_base(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> KnowledgeBaseRecord | None:
+        """Fetch a single knowledge base record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The knowledge base id.
+
+        Returns:
+            `KnowledgeBaseRecord | None`:
+                The record, or ``None`` if not found.
+        """
+        key = self._key(
+            self.key_config.knowledge_base,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        raw = await self._client.get(key)
+        return KnowledgeBaseRecord.model_validate_json(raw) if raw else None
+
+    async def list_knowledge_bases(
+        self,
+        user_id: str,
+    ) -> list[KnowledgeBaseRecord]:
+        """List all knowledge base records belonging to the given user.
+
+        Reads the per-user knowledge base index Set to obtain all ids,
+        then fetches each record individually. Records whose keys have
+        expired or been deleted externally are silently skipped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[KnowledgeBaseRecord]`:
+                All knowledge base records for the user.
+        """
+        index_key = self._key(
+            self.key_config.knowledge_base_index,
+            user_id=user_id,
+        )
+        ids = await self._client.smembers(index_key)
+        records: list[KnowledgeBaseRecord] = []
+        for kb_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.knowledge_base,
+                    user_id=user_id,
+                    knowledge_base_id=kb_id,
+                ),
+            )
+            if raw:
+                records.append(
+                    KnowledgeBaseRecord.model_validate_json(raw),
+                )
+        return records
+
+    async def delete_knowledge_base(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> bool:
+        """Delete a knowledge base record and remove it from the index.
+
+        Cascades the per-knowledge-base document index: every
+        :class:`KnowledgeDocumentRecord` indexed under the KB is
+        removed from storage so no orphan documents survive the KB
+        deletion.  Cleanup of the underlying vector store collection
+        and blob payloads remains the caller's responsibility (the
+        manager + the blob store, respectively).
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The id of the record to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the record existed and was deleted,
+                ``False`` if not found.
+        """
+        # Cascade: drop every document record so the sweeper does not
+        # later try to redispatch leases for a KB that no longer exists.
+        documents = await self.list_knowledge_documents(
+            user_id,
+            knowledge_base_id,
+        )
+        for document in documents:
+            await self.delete_knowledge_document(
+                user_id,
+                knowledge_base_id,
+                document.id,
+            )
+
+        key = self._key(
+            self.key_config.knowledge_base,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        index_key = self._key(
+            self.key_config.knowledge_base_index,
+            user_id=user_id,
+        )
+        deleted = await self._client.delete(key)
+        await self._client.srem(index_key, knowledge_base_id)
+        return deleted > 0
+
+    # ------------------------------------------------------------------
+    # Knowledge document persistence
+    # ------------------------------------------------------------------
+
+    def _document_key(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> str:
+        """Format the Redis key for one document record."""
+        return self._key(
+            self.key_config.knowledge_document,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+        )
+
+    def _document_index_key(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> str:
+        """Format the per-KB document index Set key."""
+        return self._key(
+            self.key_config.knowledge_document_index,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+
+    def _document_global_token(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> str:
+        """Encode (user_id, kb_id, doc_id) for the global sweeper index."""
+        return f"{user_id}:{knowledge_base_id}:{document_id}"
+
+    async def upsert_knowledge_document(
+        self,
+        user_id: str,
+        record: KnowledgeDocumentRecord,
+    ) -> KnowledgeDocumentRecord:
+        """Persist a document record and update its indexes.
+
+        If a record with the same ``id`` already exists it is
+        overwritten and ``updated_at`` refreshed; ``created_at`` is
+        preserved.
+
+        Args:
+            user_id (`str`):
+                The owner user id.  Must match ``record.user_id``.
+            record (`KnowledgeDocumentRecord`):
+                The fully-populated record to persist.
+
+        Returns:
+            `KnowledgeDocumentRecord`:
+                The stored record (with ``updated_at`` refreshed).
+        """
+        if record.user_id != user_id:
+            raise ValueError(
+                "record.user_id does not match the given user_id.",
+            )
+
+        key = self._document_key(
+            user_id,
+            record.knowledge_base_id,
+            record.id,
+        )
+        existing_raw = await self._client.get(key)
+        if existing_raw:
+            existing = KnowledgeDocumentRecord.model_validate_json(
+                existing_raw,
+            )
+            record.created_at = existing.created_at
+        record.updated_at = datetime.now()
+
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(
+            self._document_index_key(user_id, record.knowledge_base_id),
+            record.id,
+        )
+        await self._client.sadd(
+            self.key_config.knowledge_document_global_index,
+            self._document_global_token(
+                user_id,
+                record.knowledge_base_id,
+                record.id,
+            ),
+        )
+        return record
+
+    async def get_knowledge_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> KnowledgeDocumentRecord | None:
+        """Fetch a single knowledge document record by id."""
+        raw = await self._client.get(
+            self._document_key(user_id, knowledge_base_id, document_id),
+        )
+        return (
+            KnowledgeDocumentRecord.model_validate_json(raw) if raw else None
+        )
+
+    async def list_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> list[KnowledgeDocumentRecord]:
+        """List all documents in a knowledge base.
+
+        Reads the per-KB document index Set and fetches each record.
+        Records whose keys have expired or been deleted externally are
+        silently skipped.
+        """
+        ids = await self._client.smembers(
+            self._document_index_key(user_id, knowledge_base_id),
+        )
+        records: list[KnowledgeDocumentRecord] = []
+        for document_id in ids:
+            raw = await self._client.get(
+                self._document_key(user_id, knowledge_base_id, document_id),
+            )
+            if raw:
+                records.append(
+                    KnowledgeDocumentRecord.model_validate_json(raw),
+                )
+        return records
+
+    async def delete_knowledge_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> bool:
+        """Delete a document record and remove it from the indexes."""
+        key = self._document_key(user_id, knowledge_base_id, document_id)
+        deleted = await self._client.delete(key)
+        await self._client.srem(
+            self._document_index_key(user_id, knowledge_base_id),
+            document_id,
+        )
+        await self._client.srem(
+            self.key_config.knowledge_document_global_index,
+            self._document_global_token(
+                user_id,
+                knowledge_base_id,
+                document_id,
+            ),
+        )
+        return deleted > 0
+
+    async def update_knowledge_document_status(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        status: KnowledgeDocumentStatus,
+        error: str | None = None,
+        chunk_count: int | None = None,
+    ) -> None:
+        """Update only the status-related fields of a document record.
+
+        Reads the record, mutates the status fields in memory, and
+        writes it back.  Not atomic across multiple writers — relies
+        on the indexing worker holding the lease, which serialises
+        status transitions for a single document.
+        """
+        key = self._document_key(user_id, knowledge_base_id, document_id)
+        raw = await self._client.get(key)
+        if not raw:
+            return
+        record = KnowledgeDocumentRecord.model_validate_json(raw)
+        record.status = status
+        if error is not None:
+            record.data.error = error
+        if chunk_count is not None:
+            record.data.chunk_count = chunk_count
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(key, record.model_dump_json())
+
+    async def acquire_knowledge_document_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        processing_node: str,
+        lease_ttl: timedelta,
+        now: datetime | None = None,
+    ) -> bool:
+        """Compare-and-swap acquisition of the processing lease.
+
+        Implementation is a read-modify-write under a per-document
+        ``WATCH`` so two workers racing on the same document cannot
+        both win.  Redis ``WATCH`` aborts the transaction if the key
+        changes between WATCH and EXEC; we retry a few times on
+        ``WatchError`` and otherwise give up (treating the contention
+        as "someone else already holds the lease").
+        """
+        now = now or datetime.now()
+        new_deadline = now + lease_ttl
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    key = self._document_key(
+                        user_id,
+                        knowledge_base_id,
+                        document_id,
+                    )
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        return False
+                    record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    holder = record.processing_node
+                    deadline = record.lease_expires_at
+                    if (
+                        holder is not None
+                        and deadline is not None
+                        and deadline > now
+                    ):
+                        await pipe.unwatch()
+                        return False
+                    record.processing_node = processing_node
+                    record.lease_expires_at = new_deadline
+                    record.updated_at = now
+                    pipe.multi()
+                    pipe.set(key, record.model_dump_json())
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                    await pipe.execute()
+                    return True
+                except _watch_error():
+                    # Another writer touched the key between WATCH and
+                    # EXEC; loop and re-read.
+                    continue
+            return False
+
+    async def renew_knowledge_document_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        processing_node: str,
+        lease_ttl: timedelta,
+        now: datetime | None = None,
+    ) -> bool:
+        """Extend the lease this worker already holds."""
+        now = now or datetime.now()
+        new_deadline = now + lease_ttl
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    key = self._document_key(
+                        user_id,
+                        knowledge_base_id,
+                        document_id,
+                    )
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        return False
+                    record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    if record.processing_node != processing_node:
+                        await pipe.unwatch()
+                        return False
+                    record.lease_expires_at = new_deadline
+                    record.updated_at = now
+                    pipe.multi()
+                    pipe.set(key, record.model_dump_json())
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                    await pipe.execute()
+                    return True
+                except _watch_error():
+                    continue
+            return False
+
+    async def release_knowledge_document_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        processing_node: str,
+    ) -> None:
+        """Release the lease only if this worker still owns it."""
+        async with self._client.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    key = self._document_key(
+                        user_id,
+                        knowledge_base_id,
+                        document_id,
+                    )
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        return
+                    record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    if record.processing_node != processing_node:
+                        await pipe.unwatch()
+                        return
+                    record.processing_node = None
+                    record.lease_expires_at = None
+                    record.updated_at = datetime.now()
+                    pipe.multi()
+                    pipe.set(key, record.model_dump_json())
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                    await pipe.execute()
+                    return
+                except _watch_error():
+                    continue
+
+    async def list_knowledge_documents_with_expired_lease(
+        self,
+        now: datetime | None = None,
+    ) -> list[KnowledgeDocumentRecord]:
+        """Return non-terminal documents whose lease has expired.
+
+        Reads the global document index and filters in-memory — there
+        is no Redis-side filter primitive that knows about our nested
+        ``data.lease_expires_at`` field.  For production deployments
+        with very large document counts a secondary index would pay
+        off, but for the v1 workload the global scan is acceptable
+        because the sweep runs on a slow cadence (minutes) and only
+        cares about the small subset of non-terminal documents.
+        """
+        now = now or datetime.now()
+        terminal = {"ready", "error"}
+        tokens = await self._client.smembers(
+            self.key_config.knowledge_document_global_index,
+        )
+        records: list[KnowledgeDocumentRecord] = []
+        for token in tokens:
+            try:
+                user_id, kb_id, document_id = token.split(":", 2)
+            except ValueError:
+                continue
+            raw = await self._client.get(
+                self._document_key(user_id, kb_id, document_id),
+            )
+            if not raw:
+                continue
+            record = KnowledgeDocumentRecord.model_validate_json(raw)
+            if record.status in terminal:
+                continue
+            if record.processing_node is None:
+                continue
+            if (
+                record.lease_expires_at is not None
+                and record.lease_expires_at < now
+            ):
+                records.append(record)
+        return records
+
+    async def list_knowledge_documents_pending_since(
+        self,
+        threshold: datetime,
+    ) -> list[KnowledgeDocumentRecord]:
+        """Return documents stuck in ``pending`` since before ``threshold``."""
+        tokens = await self._client.smembers(
+            self.key_config.knowledge_document_global_index,
+        )
+        records: list[KnowledgeDocumentRecord] = []
+        for token in tokens:
+            try:
+                user_id, kb_id, document_id = token.split(":", 2)
+            except ValueError:
+                continue
+            raw = await self._client.get(
+                self._document_key(user_id, kb_id, document_id),
+            )
+            if not raw:
+                continue
+            record = KnowledgeDocumentRecord.model_validate_json(raw)
+            if record.status != "pending":
+                continue
+            if record.created_at < threshold:
+                records.append(record)
+        return records

@@ -38,7 +38,10 @@ async def example_simple_call() -> None:
         model="o1",
         stream=True,
         context_size=200_000,
-        parameters=OpenAIResponseModel.Parameters(reasoning_effort="low"),
+        parameters=OpenAIResponseModel.Parameters(
+            thinking_enable=True,
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [
@@ -82,7 +85,10 @@ async def example_tool_call() -> None:
         model="o1",
         stream=True,
         context_size=200_000,
-        parameters=OpenAIResponseModel.Parameters(reasoning_effort="low"),
+        parameters=OpenAIResponseModel.Parameters(
+            thinking_enable=True,
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [
@@ -158,7 +164,10 @@ async def example_structured_output() -> None:
         model="o1",
         stream=True,
         context_size=200_000,
-        parameters=OpenAIResponseModel.Parameters(reasoning_effort="low"),
+        parameters=OpenAIResponseModel.Parameters(
+            thinking_enable=True,
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [

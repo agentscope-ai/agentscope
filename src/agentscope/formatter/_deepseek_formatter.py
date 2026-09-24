@@ -9,6 +9,7 @@ from .._logging import logger
 from ..message import (
     Msg,
     TextBlock,
+    DataBlock,
     ThinkingBlock,
     HintBlock,
     ToolCallBlock,
@@ -86,9 +87,27 @@ class DeepSeekChatFormatter(FormatterBase):
                         reasoning_content_blocks = []
                         tool_calls = []
 
-                    messages.append(
-                        {"role": "user", "content": block.hint},
-                    )
+                    if isinstance(block.hint, str):
+                        messages.append(
+                            {"role": "user", "content": block.hint},
+                        )
+                    else:
+                        hint_text_parts: list[str] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_text_parts.append(sub.text)
+                            elif isinstance(sub, DataBlock):
+                                hint_text_parts.append(
+                                    f"[{sub.source.media_type} attached, "
+                                    "not supported by this provider]",
+                                )
+                        if hint_text_parts:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": "\n".join(hint_text_parts),
+                                },
+                            )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(
@@ -223,13 +242,13 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

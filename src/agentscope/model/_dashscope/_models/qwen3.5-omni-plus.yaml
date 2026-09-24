@@ -24,5 +24,15 @@ context_size: 262144
 output_size: 65536
 
 parameter_overrides:
-  max_tokens: {"maximum": 65536}
-
+  max_tokens:
+    maximum: 65536
+  # Source: https://help.aliyun.com/zh/model-studio/omni-voice-list
+  voice:
+    default: Tina
+    enum:
+      - Tina
+      - Cherry
+      - Ethan
+      - Serena
+      - Chelsie
+      - Cindy

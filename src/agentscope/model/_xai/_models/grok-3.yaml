@@ -1,6 +1,6 @@
 name: grok-3
 label: Grok 3
-status: active
+status: deprecated
 
 input_types:
   - text/plain

@@ -5,14 +5,18 @@ import asyncio
 import json
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import BaseModel
-from utils import MockModel
+
+
+from utils import AnyString, MockModel
 
 from agentscope.agent import Agent
-from agentscope.app import BackgroundTaskManager, ToolOffloadMiddleware
-from agentscope.message import HintBlock, TextBlock, UserMsg, ToolCallBlock
-from agentscope.model import ChatResponse
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
+from agentscope.app.middleware import ToolOffloadMiddleware
+from agentscope.app._manager import BackgroundTaskManager
+from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -148,7 +152,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
         self.mock_model = MockModel()
-        self.bg_manager = BackgroundTaskManager()
+        self.bg_manager = BackgroundTaskManager(
+            message_bus=MagicMock(spec=MessageBus),
+        )
 
     # ------------------------------------------------------------------
     # Helper
@@ -171,8 +177,17 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             `tuple[Agent, ToolOffloadMiddleware]`:
                 The configured agent and the middleware instance.
         """
+        # No run is registered as this session's inbox consumer, so a
+        # completed background tool is expected to wake the session.
+        # ``spec`` alone would hand back a truthy sentinel and make the
+        # delivery look like somebody was already going to drain it.
+        message_bus = MagicMock(spec=MessageBus)
+        message_bus.registry_get = AsyncMock(return_value=None)
         middleware = ToolOffloadMiddleware(
             bg_manager=self.bg_manager,
+            message_bus=message_bus,
+            user_id="u",
+            agent_id="a",
             timeout_secs=timeout_secs,
         )
         agent = Agent(
@@ -234,9 +249,26 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # Should yield a synthetic ToolResponse immediately
         responses = [r for r in results if isinstance(r, ToolResponse)]
         self.assertEqual(len(responses), 1)
+        self.assertDictEqual(
+            responses[0].model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "success",
+                "metadata": {},
+                "id": "call_slow",
+            },
+        )
         text = responses[0].content[0].text  # type: ignore[union-attr]
         self.assertIn("background", text)
-        self.assertIn("task_id=", text)
+        self.assertIn("id=", text)
 
         # Background task should be registered
         self.assertEqual(len(self.bg_manager.tasks), 1)
@@ -245,10 +277,10 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """After the background tool finishes, the result is pushed to the
-        BackgroundTaskManager as a HintBlock."""
+        session inbox on the message bus as a serialised HintBlock."""
 
         toolkit = Toolkit(tools=[SlowTool()])
-        agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
 
         tool_call = ToolCallBlock(
             id="call_bg",
@@ -264,56 +296,86 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # Wait long enough for the background tool (0.2s) to finish
         await asyncio.sleep(0.4)
 
-        # The completed result should now be available on the manager
-        pending = self.bg_manager.pop_results(agent.state.session_id)
-        self.assertEqual(len(pending), 1)
-        self.assertIsInstance(pending[0], HintBlock)
-        hint_text = pending[0].hint
+        # The completed result should now have been pushed to the message bus
+        # inbox as a model-dumped HintBlock.
+        mock_bus = middleware._message_bus
+        # The middleware uses queue_push(inbox_key, payload) rather
+        # than the deprecated inbox_push(session_id, payload).
+        inbox_calls = [
+            c
+            for c in mock_bus.queue_push.call_args_list
+            if c.args[0] == MessageBusKeys.inbox(agent.state.session_id)
+        ]
+        self.assertEqual(len(inbox_calls), 1)
+        _, hint_dict = inbox_calls[0].args
+        session_id_called = agent.state.session_id
+        self.assertEqual(session_id_called, agent.state.session_id)
+        self.maxDiff = None
+        self.assertDictEqual(
+            hint_dict,
+            {
+                "type": "hint",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
+                "source": '{"label": "tool_output", "sublabel": "slow_tool · '
+                'call_bg"}',
+                "hint": [
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+            },
+        )
+        hint_text = hint_dict["hint"][0]["text"]
         self.assertIn("SlowTool finished", hint_text)
         self.assertIn("<system-notification>", hint_text)
 
-    async def test_on_reasoning_injects_pending_messages(self) -> None:
-        """on_reasoning hook injects pending HintBlocks into the agent
-        context as part of an assistant message."""
-        session_id = "session_test_inject"
+    async def test_background_task_triggers_wakeup_on_completion(
+        self,
+    ) -> None:
+        """After a background tool finishes, a wakeup is enqueued on the
+        message bus so that an idle session can be restarted automatically."""
 
-        self.mock_model.set_responses(
-            [
-                ChatResponse(
-                    content=[TextBlock(text="ok")],
-                    is_last=True,
-                ),
-            ],
+        toolkit = Toolkit(tools=[SlowTool()])
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+
+        tool_call = ToolCallBlock(
+            id="call_wakeup",
+            name="slow_tool",
+            input=json.dumps({"delay": 0.2}),
         )
 
-        toolkit = Toolkit()
-        agent, _ = self._make_agent(toolkit, timeout_secs=5.0)
+        # Trigger offload
+        # pylint: disable=protected-access
+        async for _ in agent._acting(tool_call):
+            pass
 
-        # Override the agent's session_id and pre-populate a pending hint
-        # for that session on the manager.
-        agent.state.session_id = session_id
-        self.bg_manager.push_result(
-            session_id,
-            HintBlock(hint="Background result: done"),
-        )
+        # Wait long enough for the background tool (0.2s) to finish
+        await asyncio.sleep(0.4)
 
-        await agent.reply(UserMsg("user", "anything"))
-
-        # Context should contain a HintBlock (injected before reasoning) on
-        # an assistant message authored by this agent.
-        injected_hints = [
-            block.hint
-            for m in agent.state.context
-            if m.role == "assistant" and m.name == agent.name
-            for block in m.content
-            if isinstance(block, HintBlock)
+        # enqueue_wakeup must be called exactly once with the correct ids so
+        # WakeupDispatcher can re-invoke ChatService.run for this session.
+        mock_bus = middleware._message_bus
+        # enqueue_run_trigger is a standalone function that calls
+        # bus.queue_push + bus.publish under the hood.
+        wakeup_calls = [
+            c
+            for c in mock_bus.queue_push.call_args_list
+            if c.args[0] == MessageBusKeys.wakeup_queue()
         ]
-        self.assertTrue(
-            any("Background result" in t for t in injected_hints),
-        )
+        self.assertEqual(len(wakeup_calls), 1)
+        payload = wakeup_calls[0].args[1]
+        self.assertEqual(payload["user_id"], "u")
+        self.assertEqual(payload["session_id"], agent.state.session_id)
+        self.assertEqual(payload["agent_id"], "a")
 
-    async def test_task_stop_cancels_background_task(self) -> None:
-        """TaskStop tool cancels the running background asyncio task."""
+    async def test_tool_stop_cancels_background_task(self) -> None:
+        """ToolStop tool cancels the running background asyncio task."""
 
         toolkit = Toolkit(tools=[SlowTool()])
         agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
@@ -331,12 +393,16 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.bg_manager.tasks), 1)
         task_id = next(iter(self.bg_manager.tasks))
-        asyncio_task = self.bg_manager.tasks[task_id].asyncio_task
+        bg_task = self.bg_manager.tasks[task_id]
+        asyncio_task = bg_task.asyncio_task
 
-        # Call TaskStop
-        task_stop_tools = await self.bg_manager.list_tools()
-        task_stop = task_stop_tools[0]
-        result = await task_stop(task_id=task_id)
+        # Call ToolStop bound to the same session as the registered
+        # background task, so the local cancel path matches.
+        tool_stop_tools = await self.bg_manager.list_tools(
+            session_id=bg_task.session_id,
+        )
+        tool_stop = tool_stop_tools[0]
+        result = await tool_stop(task_id=task_id)
         text = result.content[0].text  # type: ignore[union-attr]
         self.assertIn("stopped successfully", text)
 

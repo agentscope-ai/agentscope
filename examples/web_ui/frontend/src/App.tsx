@@ -1,14 +1,22 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { Onborda, OnbordaProvider } from 'onborda';
 import { useMemo, useState } from 'react';
-import { createBrowserRouter, RouterProvider, useNavigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
+import { MCPHubPage } from './pages/mcp';
+import { SkillHubPage } from './pages/skill';
+import { RouteError } from '@/components/error/RouteError';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
+import { UploadProvider } from '@/context/UploadContext';
 import { useTranslation } from '@/i18n/useI18n';
+import { queryClient } from '@/lib/query-client';
+import { ChannelPage } from '@/pages/channel';
 import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
+import { KnowledgePage } from '@/pages/knowledge';
 import { SchedulePage } from '@/pages/schedule';
 import { SetupPage } from '@/pages/setup';
 
@@ -27,14 +35,34 @@ function SetupPageRoute() {
 const router = createBrowserRouter([
 	{
 		element: <AppLayout />,
+		errorElement: <RouteError />,
 		children: [
-			{ path: '/', element: <ChatPage /> },
-			{ path: '/chat/:agentId/:sessionId', element: <ChatPage /> },
-			{ path: '/schedule', element: <SchedulePage /> },
-			{ path: '/credential', element: <CredentialPage /> },
+			{
+				// Content-level boundary: a crash in a page replaces only
+				// the Outlet area, so AppLayout (the icon rail / nav) stays
+				// usable. The parent route keeps its own errorElement as a
+				// last-resort catch-all for AppLayout/AppSidebar crashes.
+				errorElement: <RouteError />,
+				children: [
+					{ path: '/', element: <Navigate to="/chat" replace /> },
+					{
+						path: '/chat/:agentId?/:sessionId?/:memberId?',
+						element: <ChatPage />,
+					},
+					{ path: '/schedule', element: <SchedulePage /> },
+					{ path: '/channel', element: <ChannelPage /> },
+					{ path: '/credential', element: <CredentialPage /> },
+					{ path: '/mcp', element: <MCPHubPage /> },
+					{ path: '/mcp/:hubId', element: <MCPHubPage /> },
+					{ path: '/skill', element: <SkillHubPage /> },
+					{ path: '/skill/:hubId', element: <SkillHubPage /> },
+					{ path: '/knowledge', element: <KnowledgePage /> },
+					{ path: '/knowledge/:kbId', element: <KnowledgePage /> },
+				],
+			},
 		],
 	},
-	{ path: '/setup', element: <SetupPageRoute /> },
+	{ path: '/setup', element: <SetupPageRoute />, errorElement: <RouteError /> },
 ]);
 
 function App() {
@@ -47,17 +75,21 @@ function App() {
 	}
 
 	return (
-		<OnbordaProvider>
-			<Onborda
-				steps={tours}
-				cardComponent={TourCard}
-				shadowOpacity="0.6"
-				cardTransition={{ type: 'spring', duration: 0.4 }}
-			>
-				<RouterProvider router={router} />
-				<Toaster richColors position="top-right" />
-			</Onborda>
-		</OnbordaProvider>
+		<QueryClientProvider client={queryClient}>
+			<OnbordaProvider>
+				<Onborda
+					steps={tours}
+					cardComponent={TourCard}
+					shadowOpacity="0.6"
+					cardTransition={{ type: 'spring', duration: 0.4 }}
+				>
+					<UploadProvider>
+						<RouterProvider router={router} />
+					</UploadProvider>
+					<Toaster richColors position="top-right" />
+				</Onborda>
+			</OnbordaProvider>
+		</QueryClientProvider>
 	);
 }
 

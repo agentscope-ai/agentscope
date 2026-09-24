@@ -4,7 +4,7 @@ import type {
 	CreateScheduleResponse,
 	ScheduleListResponse,
 	ScheduleRecord,
-	SessionListResponse,
+	ScheduleSessionsResponse,
 	UpdateScheduleRequest,
 } from './types';
 
@@ -20,5 +20,5 @@ export const scheduleApi = {
 	delete: (scheduleId: string) => client.delete(`/schedule/${scheduleId}`),
 
 	listSessions: (scheduleId: string) =>
-		client.get<SessionListResponse>(`/schedule/${scheduleId}/sessions`),
+		client.get<ScheduleSessionsResponse>(`/schedule/${scheduleId}/sessions`),
 };

@@ -1,29 +1,27 @@
+import { format, isToday } from 'date-fns';
 import {
+	BotMessageSquare,
+	Cable,
+	CalendarClock,
 	Ellipsis,
+	type LucideIcon,
 	MessageSquareDashed,
-	PanelLeft,
-	PanelLeftClose,
 	Pencil,
 	Plus,
 	Settings2,
-	Toolbox,
 	Trash2,
+	Users,
 } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 
-import type { ChatModelConfig } from '@/api';
-import type { SessionRecord } from '@/api';
-import { ChatContent } from '@/components/chat/ChatContent.tsx';
+import { ChatViewport } from './ChatViewport';
+import type { SessionRecord, SessionSourceKind } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
-import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
-import { DeleteAgentDialog } from '@/components/dialog/DeleteAgentDialog';
+import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
-import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
-import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
-import { LlmSelect } from '@/components/select/LlmSelect';
-import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { AgentSelect } from '@/components/select/AgentSelect';
 import { ChatTourController } from '@/components/tour/ChatTourController';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,235 +35,190 @@ import {
 	EmptyHeader,
 	EmptyTitle,
 	EmptyDescription,
-	EmptyContent,
 	EmptyMedia,
 } from '@/components/ui/empty';
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select';
-import {
 	Sidebar,
 	SidebarContent,
-	SidebarFooter,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
-	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuAction,
+	SidebarMenuBadge,
 	SidebarMenuButton,
 	SidebarMenuItem,
+	SidebarProvider,
+	useSidebar,
 } from '@/components/ui/sidebar';
-import { ChatProvider, useChatContext } from '@/context/ChatContext';
+import { AudioProvider } from '@/context/AudioContext';
 import { useAgents } from '@/hooks/useAgents';
-import { useAvailableModels } from '@/hooks/useAvailableModels';
-import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
-import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
+/**
+ * The chat page's outer shell. Responsibilities split cleanly:
+ *
+ * - **This component** owns *which* `(agent, session)` is being
+ *   viewed. The URL is the single source of truth: every selection
+ *   (agent dropdown, session row, team member, new session) is a
+ *   ``navigate(...)`` call. State is derived from ``useParams``,
+ *   never duplicated in React state. Renders the main left sidebar
+ *   (agent picker + session list + create/rename/delete actions) and
+ *   computes the ``effective`` ids to feed the chat viewport.
+ * - **`ChatViewport`** owns *what* to render for that pair: messages,
+ *   model selector, permission mode, workspace drawer, team sidebar.
+ *
+ * Splitting along this seam means switching between the leader's
+ * session and a focused team member is just a prop change for the
+ * viewport — the leader's session list stays anchored in this outer
+ * sidebar. Driving everything off URL also gets us browser back /
+ * forward, shareable links, and refresh-preserving state for free.
+ *
+ * @returns The chat page JSX.
+ */
+// Icon per session origin, shown only when a sidebar mixes sources.
+const SOURCE_ICON: Record<SessionSourceKind, LucideIcon> = {
+	user: BotMessageSquare,
+	schedule: CalendarClock,
+	channel: Cable,
+	team: Users,
+};
+
+/** localStorage keys holding the last (agent, session) the user viewed. */
+const LAST_AGENT_KEY = 'chat_last_agent';
+const LAST_SESSION_KEY = 'chat_last_session';
+
 const ChatPageInner = () => {
-	const { selectedAgentId, setSelectedAgentId, selectedSessionId, setSelectedSessionId } =
-		useChatContext();
-	const { agentId: urlAgentId, sessionId: urlSessionId } = useParams<{
+	const navigate = useNavigate();
+	const {
+		agentId: urlAgentId,
+		sessionId: urlSessionId,
+		memberId: urlMemberId,
+	} = useParams<{
 		agentId?: string;
 		sessionId?: string;
+		memberId?: string;
 	}>();
 	const { t } = useTranslation();
-	const { agents, refetch: refetchAgents } = useAgents();
+	const { agents, refetch: refetchAgents, remove: removeAgent } = useAgents();
 	const {
 		sessions,
+		refetch: refetchSessions,
 		create: createSession,
 		update: updateSession,
 		remove: removeSession,
-	} = useSessions(selectedAgentId);
+	} = useSessions(urlAgentId ?? null);
 
-	// Fetch available model list, used to auto-select the first model when none is specified
-	const { groups } = useAvailableModels();
-
-	const [sidebarOpen, setSidebarOpen] = useState(true);
-	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
-	// Fallback model used when the primary model fails. `null` means none.
-	// Unlike the primary model, we never auto-select a fallback — the user
-	// must opt in explicitly.
-	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
-		null,
-	);
-	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
+	const { isMobile, setOpen, setOpenMobile } = useSidebar();
 	const [editOpen, setEditOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
-	const [credentialOpen, setCredentialOpen] = useState(false);
-	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
+	const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
+	const [sessionToDelete, setSessionToDelete] = useState<SessionRecord | null>(null);
 
-	const { msgs, streaming, send, onUserConfirm } = useMessages(
-		selectedAgentId,
-		selectedSessionId,
-	);
-	const {
-		mcps,
-		loading: mcpsLoading,
-		addMcps,
-		removeMcp,
-		skills,
-		skillsLoading,
-		addSkill,
-		removeSkill,
-	} = useWorkspace(selectedAgentId, selectedSessionId);
+	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
+	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
+	// Show a per-origin icon only when sessions actually mix sources —
+	// a uniform list needs no disambiguation.
+	const showSourceIcons = new Set(sessions.map((v) => v.session.origin.type)).size > 1;
 
-	const selectedAgent = agents.find((a) => a.id === selectedAgentId) ?? null;
+	// "Inner focus" — when the URL carries a third `:memberId` segment
+	// the user is drilling into a team member's chat. The main sidebar
+	// stays anchored on the outer (leader) session; only the chat
+	// viewport follows this inner focus. When `urlMemberId` is
+	// undefined or doesn't resolve to a known team member, the inner
+	// focus collapses back to the outer (leader) session.
+	const focusedMember = urlMemberId
+		? (currentView?.team?.members.find((m) => m.agent.id === urlMemberId) ?? null)
+		: null;
+	const effectiveAgentId =
+		focusedMember && focusedMember.session_id ? focusedMember.agent.id : (urlAgentId ?? null);
+	const effectiveSessionId =
+		focusedMember && focusedMember.session_id
+			? focusedMember.session_id
+			: currentView
+				? (urlSessionId ?? null)
+				: null;
 
-	const selectedModelCard = useMemo(() => {
-		if (!selectedModel) return null;
-		const items = groups[selectedModel.type];
-		if (!items) return null;
-		for (const { models } of items) {
-			const card = models.find((m) => m.name === selectedModel.model);
-			if (card) return card;
-		}
-		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model]);
-
-	// Auto-select agent on load — prefer URL param, fallback to first agent
+	// Remember where the user was, so coming back to a bare `/chat` —
+	// from another page, or from a new tab — reopens it instead of
+	// making them pick the same pair again.
 	useEffect(() => {
-		if (!selectedAgentId && agents.length > 0) {
-			const target = urlAgentId && agents.find((a) => a.id === urlAgentId);
-			setSelectedAgentId(target ? target.id : agents[0].id);
-		}
-	}, [agents, selectedAgentId, setSelectedAgentId, urlAgentId]);
+		if (!urlAgentId || !urlSessionId) return;
+		localStorage.setItem(LAST_AGENT_KEY, urlAgentId);
+		localStorage.setItem(LAST_SESSION_KEY, urlSessionId);
+	}, [urlAgentId, urlSessionId]);
 
-	// Keep selectedSessionId in sync when sessions list changes — prefer URL param
+	// Redirect: URL is missing an agent → reopen the last one viewed,
+	// falling back to the first, and rewrite the URL in-place (replace
+	// so we don't pollute history).
 	useEffect(() => {
-		if (sessions.length === 0) {
-			setSelectedSessionId(null);
-		} else if (!sessions.find((s) => s.id === selectedSessionId)) {
-			const target = urlSessionId && sessions.find((s) => s.id === urlSessionId);
-			setSelectedSessionId(target ? target.id : sessions[0].id);
-		}
-	}, [sessions]);
+		if (urlAgentId || agents.length === 0) return;
+		const remembered = localStorage.getItem(LAST_AGENT_KEY);
+		const agent = agents.find((a) => a.id === remembered) ?? agents[0];
+		navigate(`/chat/${agent.id}`, { replace: true });
+	}, [agents, urlAgentId, navigate]);
 
-	// Extract the first available model from groups, used as the fallback default selection.
-	// groups shape: { [type]: { credential, models[] }[] }
-	const getFirstAvailableModel = (): ChatModelConfig | null => {
-		const firstType = Object.keys(groups)[0];
-		if (!firstType) return null;
-
-		const items = groups[firstType];
-		if (!items || items.length === 0) return null;
-
-		const firstItem = items[0];
-		const firstModel = (firstItem.models as { name?: string; id?: string }[])[0];
-		if (!firstModel) return null;
-
-		const modelName = firstModel.name ?? firstModel.id ?? null;
-		if (!modelName) return null;
-
-		return {
-			type: firstType,
-			credential_id: firstItem.credential.id,
-			model: modelName,
-			parameters: {},
-		};
-	};
-
-	// Sync selectedModel with the current session's chat_model_config.
-	// Re-runs when: the selected session changes, the sessions list changes,
-	// or the available models list finishes loading.
+	// Redirect: URL has an agent but no session, or its sessionId no
+	// longer exists for this agent → reopen the last session viewed
+	// under *this* agent, falling back to the first available one.
 	useEffect(() => {
-		const session = sessions.find((s) => s.id === selectedSessionId);
-		const sessionModel = session?.config.chat_model_config ?? null;
+		if (!urlAgentId || sessions.length === 0) return;
+		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
+		if (matches) return;
+		const remembered =
+			localStorage.getItem(LAST_AGENT_KEY) === urlAgentId
+				? localStorage.getItem(LAST_SESSION_KEY)
+				: null;
+		const view = sessions.find((v) => v.session.id === remembered) ?? sessions[0];
+		navigate(`/chat/${urlAgentId}/${view.session.id}`, { replace: true });
+	}, [urlAgentId, urlSessionId, sessions, navigate]);
 
-		if (sessionModel) {
-			// Case 1: the current session already has a model configured — use it directly.
-			setSelectedModel(sessionModel);
-		} else {
-			// Case 2: no model configured on the current session (or no session selected).
-			// Try to auto-select the first available model to reduce manual work.
-			const firstModel = getFirstAvailableModel();
-			if (firstModel) {
-				// A model is available — set it as the current selection.
-				// Persistence notes:
-				//   - If a session exists, persist the selection via updateSession below.
-				//   - If no session exists yet, handleCreateSession will carry selectedModel on creation.
-				setSelectedModel(firstModel);
-
-				// If there is an active session without a model, persist the auto-selected model to it.
-				if (selectedSessionId && selectedAgentId) {
-					updateSession(selectedSessionId, { chat_model_config: firstModel });
-				}
-			} else {
-				// Case 3: no model configured and no credentials added yet — clear the selection.
-				setSelectedModel(null);
-			}
-		}
-
-		// Fallback is purely opt-in: mirror what's persisted, never auto-select.
-		setSelectedFallbackModel(session?.config.fallback_chat_model_config ?? null);
-	}, [selectedSessionId, sessions, groups]);
-
-	// Sync selectedPermissionMode when switching sessions.
-	useEffect(() => {
-		const session = sessions.find((s) => s.id === selectedSessionId);
-		const mode = (session?.state?.permission_context as Record<string, unknown>)
-			?.mode as string;
-		setSelectedPermissionMode(mode ?? 'default');
-	}, [selectedSessionId]);
-
-	// Primary selector does not enable `allowClear`, so `config` is always
-	// non-null in practice; the union below just satisfies the shared
-	// `LlmSelect` callback signature.
-	const handleLlmChange = async (config: ChatModelConfig | null) => {
-		if (!config) return;
-		setSelectedModel(config);
-		if (selectedSessionId && selectedAgentId) {
-			await updateSession(selectedSessionId, { chat_model_config: config });
-		}
-	};
-
-	const handleParametersChange = async (parameters: Record<string, unknown>) => {
-		if (!selectedModel) return;
-		const updated = { ...selectedModel, parameters };
-		setSelectedModel(updated);
-		if (selectedSessionId && selectedAgentId) {
-			await updateSession(selectedSessionId, { chat_model_config: updated });
-		}
-	};
-
-	// Fallback selector emits `null` when the user clears the selection.
-	// Persist the change to the active session if one exists.
-	const handleFallbackChange = async (config: ChatModelConfig | null) => {
-		setSelectedFallbackModel(config);
-		if (selectedSessionId && selectedAgentId) {
-			await updateSession(selectedSessionId, {
-				fallback_chat_model_config: config,
-			});
-		}
-	};
-
+	/**
+	 * Create a new session under the currently selected agent and
+	 * pre-fill it with the model + fallback the currently open session
+	 * is using (so "new chat" inherits whatever the user just had
+	 * configured). Falls back to any other session under this agent
+	 * when there is no current one — keeps the model choice sticky
+	 * across "delete last → create new" instead of dropping back to
+	 * whatever ChatViewport's auto-pick happens to land on. Navigates
+	 * to the freshly created session.
+	 */
 	const handleCreateSession = async () => {
-		if (!selectedAgentId) return;
+		if (!urlAgentId) return;
+		const seedConfig = currentView?.session.config ?? sessions[0]?.session.config;
 		const res = await createSession({
-			agent_id: selectedAgentId,
-			...(selectedModel ? { chat_model_config: selectedModel } : {}),
-			...(selectedFallbackModel ? { fallback_chat_model_config: selectedFallbackModel } : {}),
+			agent_id: urlAgentId,
+			...(seedConfig?.chat_model_config
+				? { chat_model_config: seedConfig.chat_model_config }
+				: {}),
+			...(seedConfig?.fallback_chat_model_config
+				? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
+				: {}),
 		});
-		setSelectedSessionId(res.session_id);
+		navigate(`/chat/${urlAgentId}/${res.session_id}`);
 	};
 
 	const handleAgentDeleted = async () => {
-		setSelectedAgentId(null);
-		setSelectedSessionId(null);
+		navigate('/chat', { replace: true });
 		await refetchAgents();
 	};
 
 	const handleDeleteSession = async (sessionId: string) => {
 		await removeSession(sessionId);
+		// If we just removed the session the URL is pointing at, fall
+		// back to the parent /chat/:agentId path; the redirect effect
+		// will then pick the next available session.
+		if (sessionId === urlSessionId && urlAgentId) {
+			navigate(`/chat/${urlAgentId}`, { replace: true });
+		}
+	};
+
+	const requestDeleteSession = (session: SessionRecord) => {
+		setSessionToDelete(session);
+		setDeleteSessionOpen(true);
 	};
 
 	const handleRenameConfirm = async (name: string) => {
@@ -273,92 +226,91 @@ const ChatPageInner = () => {
 		await updateSession(renameSession.id, { name });
 	};
 
+	const todaySessions = sessions.filter((sess) => isToday(new Date(sess.session.created_at)));
+	const earlierSessions = sessions.filter((sess) => !isToday(new Date(sess.session.created_at)));
+
 	return (
-		<div className="flex h-full w-full">
-			{sidebarOpen && (
-				<Sidebar collapsible="none" className="w-80">
-					<SidebarHeader>
-						<div className="flex flex-col gap-y-2">
-							<span className="text-muted-foreground text-xs">
-								{localStorage.getItem('server_url')}
-							</span>
-							<div className="flex flex-row gap-x-2 items-center">
-								<Select
-									value={selectedAgentId ?? ''}
-									onValueChange={setSelectedAgentId}
-								>
-									<SelectTrigger className="w-full" size="sm">
-										<SelectValue
-											placeholder={t('chat.agent.selectPlaceholder')}
-										/>
-									</SelectTrigger>
-									<SelectContent position="popper">
-										{agents.length === 0 ? (
-											<Empty className="border-none py-4">
-												<EmptyHeader>
-													<EmptyTitle>
-														{t('chat.agent.emptyTitle')}
-													</EmptyTitle>
-													<EmptyDescription>
-														{t('chat.agent.emptyDescription')}
-													</EmptyDescription>
-												</EmptyHeader>
-											</Empty>
-										) : (
-											agents.map((agent) => (
-												<SelectItem key={agent.id} value={agent.id}>
-													{agent.data.name}
-												</SelectItem>
-											))
-										)}
-									</SelectContent>
-								</Select>
+		<div className="flex h-full w-full p-2 gap-2">
+			{/*
+			 * Desktop stays `collapsible="none"` so the session list sits in
+			 * normal flow beside the app rail (AppSidebar). Mobile switches to
+			 * `offcanvas`, which makes shadcn's Sidebar render its Sheet overlay
+			 * (the drawer we want) — instead of the desktop `fixed left-0`
+			 * container, which would otherwise cover the app rail.
+			 */}
+			<Sidebar collapsible={isMobile ? 'offcanvas' : 'none'} className="rounded-[22px]">
+				{/* Scrolling moves down to the session list below, so the
+				    agent picker and the new-session button stay put. */}
+				<SidebarContent className="my-2 overflow-hidden">
+					<SidebarGroup className="px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('common.agent')}
+							<AgentDialog onCreated={refetchAgents}>
 								<Button
-									size="icon-sm"
 									variant="ghost"
-									disabled={!selectedAgentId}
-									onClick={() => setEditOpen(true)}
-								>
-									<Settings2 />
-								</Button>
-								<Button
-									size="icon-sm"
-									variant="ghost"
-									disabled={!selectedAgentId}
-									onClick={() => setDeleteOpen(true)}
-								>
-									<Trash2 className="text-destructive" />
-								</Button>
-							</div>
-							<AgentDialog onCreated={refetchAgents} triggerId="tour-create-agent" />
-						</div>
-					</SidebarHeader>
-					<SidebarContent className="my-5">
-						{/*<SidebarGroup>*/}
-						{/*	<SidebarGroupContent>*/}
-						{/*		<Tabs defaultValue="mcp" onValueChange={() => {}}>*/}
-						{/*			<TabsList className={'w-full'}>*/}
-						{/*				<TabsTrigger value={'mcp'}>会话</TabsTrigger>*/}
-						{/*				<TabsTrigger value={'skill'}>定时任务</TabsTrigger>*/}
-						{/*			</TabsList>*/}
-						{/*			<TabsContent value={'mcp'} asChild></TabsContent>*/}
-						{/*		</Tabs>*/}
-						{/*	</SidebarGroupContent>*/}
-						{/*</SidebarGroup>*/}
-						<SidebarGroup>
-							<SidebarGroupLabel>{t('chat.session.label')}</SidebarGroupLabel>
-							<SidebarGroupAction>
-								<Button
-									id="tour-create-session"
 									size="icon-xs"
-									variant="default"
-									disabled={!selectedAgentId}
-									onClick={handleCreateSession}
+									title={t('dialog-agent-create.title')}
 								>
-									<Plus />
+									<Plus id="tour-create-agent" className="size-3.5" />
 								</Button>
-							</SidebarGroupAction>
-							<SidebarGroupContent>
+							</AgentDialog>
+						</SidebarGroupLabel>
+						<SidebarGroupContent className="flex items-center">
+							<AgentSelect
+								className="flex-1 min-w-0"
+								agents={agents}
+								value={urlAgentId ?? null}
+								onChange={(id) => navigate(`/chat/${id}`)}
+								variant="ghost"
+								size="default"
+							/>
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										className="shrink-0 text-muted-foreground"
+										variant="ghost"
+										size="icon"
+										disabled={!urlAgentId || !selectedAgent?.editable}
+									>
+										<Ellipsis />
+									</Button>
+								</DropdownMenuTrigger>
+								{/* w-auto: the default pins the menu to the
+								    trigger's width, which is a 32px icon button. */}
+								<DropdownMenuContent className="w-auto">
+									<DropdownMenuItem onClick={() => setEditOpen(true)}>
+										<Settings2 />
+										{t('agent-menu.settings')}
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										onClick={() => setDeleteOpen(true)}
+										variant="destructive"
+									>
+										<Trash2 />
+										{t('agent-menu.delete')}
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+					<SidebarGroup className="mt-5 min-h-0 flex-1 px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('chat.session.label')}
+							<span className="text-[10px] text-text-data font-mono">
+								{sessions.length}
+							</span>
+						</SidebarGroupLabel>
+						<SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
+							<SidebarGroup>
+								<SidebarMenu className="mb-2">
+									<Button id="tour-create-session" onClick={handleCreateSession}>
+										<Plus />
+										{t('chat.newSession')}
+									</Button>
+								</SidebarMenu>
+							</SidebarGroup>
+
+							<div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
 								{sessions.length === 0 ? (
 									<Empty className="border-none py-4 min-h-50">
 										<EmptyHeader>
@@ -367,208 +319,206 @@ const ChatPageInner = () => {
 											</EmptyMedia>
 											<EmptyTitle>{t('chat.session.emptyTitle')}</EmptyTitle>
 											<EmptyDescription>
-												{selectedAgentId
+												{urlAgentId
 													? t('chat.session.emptyHasAgent')
 													: t('chat.session.emptyNoAgent')}
 											</EmptyDescription>
 										</EmptyHeader>
-										<EmptyContent>
-											<Button
-												variant="outline"
-												size="sm"
-												disabled={!selectedAgentId}
-												onClick={handleCreateSession}
-											>
-												Create Session
-											</Button>
-										</EmptyContent>
 									</Empty>
 								) : (
-									<SidebarMenu>
-										{sessions.map((session) => (
-											<SidebarMenuItem key={session.id}>
-												<SidebarMenuButton
-													isActive={selectedSessionId === session.id}
-													onClick={() => setSelectedSessionId(session.id)}
-												>
-													<span className="truncate">
-														{session.config.name || session.id}
-													</span>
-												</SidebarMenuButton>
-												<SidebarMenuAction showOnHover>
-													<DropdownMenu>
-														<DropdownMenuTrigger asChild>
-															<Ellipsis />
-														</DropdownMenuTrigger>
-														<DropdownMenuContent
-															side="right"
-															align="start"
-														>
-															<DropdownMenuItem
-																onClick={() => {
-																	setRenameSession(session);
-																	setRenameOpen(true);
-																}}
-															>
-																<Pencil />
-																{t('session-menu.rename')}
-															</DropdownMenuItem>
-															<DropdownMenuItem
-																variant="destructive"
-																onClick={() =>
-																	handleDeleteSession(session.id)
-																}
-															>
-																<Trash2 />
-																{t('session-menu.delete')}
-															</DropdownMenuItem>
-														</DropdownMenuContent>
-													</DropdownMenu>
-												</SidebarMenuAction>
-											</SidebarMenuItem>
-										))}
-									</SidebarMenu>
+									<>
+										<SidebarGroup>
+											<SidebarGroupLabel>
+												{t('chat.session.today')}
+											</SidebarGroupLabel>
+											<SidebarGroupContent>
+												<SidebarMenu>
+													{todaySessions.map((view) => {
+														const session = view.session;
+														const SourceIcon =
+															SOURCE_ICON[session.origin.type] ??
+															BotMessageSquare;
+														return (
+															<SidebarMenuItem key={session.id}>
+																{/* Wider right gutter than the stock
+															    pr-8: the badge holds a mono timestamp. */}
+																<SidebarMenuButton
+																	className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
+																	isActive={
+																		urlSessionId === session.id
+																	}
+																	onClick={() => {
+																		navigate(
+																			`/chat/${urlAgentId}/${session.id}`,
+																		);
+																		setOpenMobile(false);
+																	}}
+																>
+																	{showSourceIcons && (
+																		<SourceIcon />
+																	)}
+																	<span className="truncate">
+																		{session.config.name ||
+																			session.id}
+																	</span>
+																</SidebarMenuButton>
+																{/* Badge and action are mutually exclusive.
+															    Keyboard focus reveals the action, plain
+															    focus-within does not — otherwise clicking
+															    the row would pin it open. */}
+																<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
+																	{format(
+																		new Date(
+																			view.session.created_at,
+																		),
+																		'HH:mm',
+																	)}
+																</SidebarMenuBadge>
+																<DropdownMenu>
+																	<DropdownMenuTrigger asChild>
+																		<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
+																			<Ellipsis />
+																		</SidebarMenuAction>
+																	</DropdownMenuTrigger>
+																	<DropdownMenuContent
+																		className="w-auto"
+																		side="right"
+																		align="start"
+																	>
+																		<DropdownMenuItem
+																			onClick={() => {
+																				setRenameSession(
+																					session,
+																				);
+																				setRenameOpen(true);
+																			}}
+																		>
+																			<Pencil />
+																			{t(
+																				'session-menu.rename',
+																			)}
+																		</DropdownMenuItem>
+																		<DropdownMenuItem
+																			variant="destructive"
+																			onClick={() =>
+																				requestDeleteSession(
+																					session,
+																				)
+																			}
+																		>
+																			<Trash2 />
+																			{t(
+																				'session-menu.delete',
+																			)}
+																		</DropdownMenuItem>
+																	</DropdownMenuContent>
+																</DropdownMenu>
+															</SidebarMenuItem>
+														);
+													})}
+												</SidebarMenu>
+											</SidebarGroupContent>
+										</SidebarGroup>
+										<SidebarGroup>
+											<SidebarGroupLabel>
+												{t('chat.session.earlier')}
+											</SidebarGroupLabel>
+											<SidebarGroupContent>
+												<SidebarMenu>
+													{earlierSessions.map((view) => {
+														const session = view.session;
+														const SourceIcon =
+															SOURCE_ICON[session.origin.type] ??
+															BotMessageSquare;
+														return (
+															<SidebarMenuItem key={session.id}>
+																<SidebarMenuButton
+																	className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
+																	isActive={
+																		urlSessionId === session.id
+																	}
+																	onClick={() => {
+																		navigate(
+																			`/chat/${urlAgentId}/${session.id}`,
+																		);
+																		setOpenMobile(false);
+																	}}
+																>
+																	{showSourceIcons && (
+																		<SourceIcon />
+																	)}
+																	<span className="truncate">
+																		{session.config.name ||
+																			session.id}
+																	</span>
+																</SidebarMenuButton>
+																<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
+																	{format(
+																		new Date(
+																			view.session.created_at,
+																		),
+																		'MMM dd',
+																	)}
+																</SidebarMenuBadge>
+																<DropdownMenu>
+																	<DropdownMenuTrigger asChild>
+																		<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
+																			<Ellipsis />
+																		</SidebarMenuAction>
+																	</DropdownMenuTrigger>
+																	<DropdownMenuContent
+																		className="w-auto"
+																		side="right"
+																		align="start"
+																	>
+																		<DropdownMenuItem
+																			onClick={() => {
+																				setRenameSession(
+																					session,
+																				);
+																				setRenameOpen(true);
+																			}}
+																		>
+																			<Pencil />
+																			{t(
+																				'session-menu.rename',
+																			)}
+																		</DropdownMenuItem>
+																		<DropdownMenuItem
+																			variant="destructive"
+																			onClick={() =>
+																				requestDeleteSession(
+																					session,
+																				)
+																			}
+																		>
+																			<Trash2 />
+																			{t(
+																				'session-menu.delete',
+																			)}
+																		</DropdownMenuItem>
+																	</DropdownMenuContent>
+																</DropdownMenu>
+															</SidebarMenuItem>
+														);
+													})}
+												</SidebarMenu>
+											</SidebarGroupContent>
+										</SidebarGroup>
+									</>
 								)}
-							</SidebarGroupContent>
-						</SidebarGroup>
-					</SidebarContent>
-					<SidebarFooter />
-				</Sidebar>
-			)}
-			<main className="flex size-full pt-2">
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					onClick={() => setSidebarOpen((prev) => !prev)}
-					className="ml-2 mr-4"
-				>
-					{sidebarOpen ? (
-						<PanelLeftClose className="size-4" />
-					) : (
-						<PanelLeft className="size-4" />
-					)}
-				</Button>
-				<div className="flex flex-col flex-1 min-h-0">
-					<div className="flex flex-row gap-x-2 justify-between">
-						<div id="tour-llm-select" className="flex flex-row items-center gap-x-1">
-							<LlmSelect
-								value={selectedModel}
-								onChange={handleLlmChange}
-								onAddCredential={() => setCredentialOpen(true)}
-								refetchTrigger={credentialRefetchTrigger}
-							/>
-							{/*
-							 * Combined settings dropdown: fallback model + parameter
-							 * editing for the primary model. Disabled until a primary
-							 * model is selected.
-							 */}
-							<ModelParametersPopover
-								selectedModel={selectedModel}
-								modelCard={selectedModelCard}
-								onChange={handleParametersChange}
-								selectedFallbackModel={selectedFallbackModel}
-								onFallbackChange={handleFallbackChange}
-							/>
-						</div>
-						<div id="tour-permission-mode" className="flex flex-row gap-x-2">
-							<PermissionModeSelect
-								value={selectedPermissionMode}
-								disabled={!selectedSessionId}
-								onChange={(mode) => {
-									setSelectedPermissionMode(mode);
-									if (selectedSessionId) {
-										updateSession(selectedSessionId, { permission_mode: mode });
-									}
-								}}
-							/>
-						</div>
-					</div>
-					<div className="flex flex-1 justify-center min-h-0 overflow-hidden">
-						<ChatContent
-							className={'max-w-xl'}
-							msgs={msgs}
-							sending={streaming}
-							disabled={selectedModel === null}
-							onSend={send}
-							onUserConfirm={onUserConfirm}
-							allowedInputTypes={(selectedModelCard?.input_types ?? []).filter(
-								(t) =>
-									/^(image|video|audio|text)\/.+/.test(t) ||
-									t === 'application/pdf' ||
-									t.startsWith('application/vnd.') ||
-									t.startsWith('application/msword') ||
-									t.startsWith('application/vnd.openxmlformats'),
-							)}
-							fileProcessor={async (file) => {
-								const filePath = (file as File & { path?: string }).path;
-
-								// ── Electron environment: have real local path ──
-								if (filePath) {
-									return {
-										id: crypto.randomUUID(),
-										type: 'data' as const,
-										source: {
-											type: 'url' as const,
-											url: `file://${filePath}`,
-											media_type: file.type || 'application/octet-stream',
-										},
-										name: file.name,
-									};
-								}
-
-								// ── Browser environment: only File object in memory ──
-								// text/plain → read as text, wrap in TextBlock
-								if (file.type === 'text/plain') {
-									const text = await file.text();
-									// TODO: handle oversized text files — e.g. truncate, split into
-									//  chunks, or warn the user when text.length exceeds the model's
-									//  context window limit.
-									return {
-										id: crypto.randomUUID(),
-										type: 'text' as const,
-										text: `[File: ${file.name}]\n${text}`,
-									};
-								}
-
-								// image/audio/video → read as base64, wrap in DataBlock
-								const buffer = await file.arrayBuffer();
-								const bytes = new Uint8Array(buffer);
-								let binary = '';
-								for (let i = 0; i < bytes.byteLength; i++) {
-									binary += String.fromCharCode(bytes[i]);
-								}
-								const base64 = btoa(binary);
-								return {
-									id: crypto.randomUUID(),
-									type: 'data' as const,
-									source: {
-										type: 'base64' as const,
-										media_type: file.type || 'application/octet-stream',
-										data: base64,
-									},
-									name: file.name,
-								};
-							}}
-						/>
-					</div>
-				</div>
-				<div className="flex h-full px-2">
-					<WorkspaceDrawer
-						mcps={mcps}
-						loading={mcpsLoading}
-						onAdd={addMcps}
-						onRemove={removeMcp}
-						skills={skills}
-						skillsLoading={skillsLoading}
-						onAddSkill={addSkill}
-						onRemoveSkill={removeSkill}
-					>
-						<Button size="icon-sm" variant="ghost">
-							<Toolbox />
-						</Button>
-					</WorkspaceDrawer>
-				</div>
-			</main>
+							</div>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				</SidebarContent>
+			</Sidebar>
+			<div className="flex flex-1 min-w-0">
+				<ChatViewport
+					agentId={effectiveAgentId}
+					sessionId={effectiveSessionId}
+					onSessionsChanged={refetchSessions}
+				/>
+			</div>
 			{selectedAgent && (
 				<>
 					<EditAgentDialog
@@ -577,36 +527,62 @@ const ChatPageInner = () => {
 						agent={selectedAgent}
 						onUpdated={refetchAgents}
 					/>
-					<DeleteAgentDialog
+					<DeleteDialog
 						open={deleteOpen}
 						onOpenChange={setDeleteOpen}
-						agent={selectedAgent}
-						onDeleted={handleAgentDeleted}
+						title={t('common.deleteTitle', {
+							entity: t('dialog-agent-delete.entity'),
+							name: selectedAgent.data.name,
+						})}
+						description={t('common.deleteDescription')}
+						confirmLabel={t('dialog-agent-delete.confirm')}
+						onConfirm={async () => {
+							await removeAgent(selectedAgent.id);
+							await handleAgentDeleted();
+						}}
 					/>
 				</>
 			)}
-			<CreateCredentialDialog
-				open={credentialOpen}
-				onOpenChange={setCredentialOpen}
-				onCreated={() => setCredentialRefetchTrigger((n) => n + 1)}
-			/>
 			<RenameSessionDialog
 				open={renameOpen}
 				onOpenChange={setRenameOpen}
 				currentName={renameSession?.config.name ?? renameSession?.id ?? ''}
 				onConfirm={handleRenameConfirm}
 			/>
+			<DeleteDialog
+				open={deleteSessionOpen}
+				onOpenChange={setDeleteSessionOpen}
+				title={t('common.deleteTitle', {
+					entity: t('dialog-session-delete.entity'),
+					name: (() => {
+						const raw = sessionToDelete?.config.name || sessionToDelete?.id || '';
+						return raw.length > 30 ? `${raw.slice(0, 30)}…` : raw;
+					})(),
+				})}
+				description={t('common.deleteDescription')}
+				confirmLabel={t('dialog-session-delete.confirm')}
+				onConfirm={async () => {
+					if (sessionToDelete) {
+						await handleDeleteSession(sessionToDelete.id);
+					}
+				}}
+			/>
 			<ChatTourController
 				agentsCount={agents.length}
 				sessionsCount={sessions.length}
-				onEnsureSidebarOpen={() => setSidebarOpen(true)}
+				onEnsureSidebarOpen={() => {
+					setOpen(true);
+					setOpenMobile(true);
+				}}
 			/>
 		</div>
 	);
 };
 
 export const ChatPage = () => (
-	<ChatProvider>
-		<ChatPageInner />
-	</ChatProvider>
+	<AudioProvider>
+		<SidebarProvider defaultOpen>
+			<ChatPageInner />
+		</SidebarProvider>
+	</AudioProvider>
 );

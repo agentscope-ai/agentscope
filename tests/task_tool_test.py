@@ -30,10 +30,12 @@ class TestTaskCreate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Task {task_id} created successfully: "
+                    "text": f"Task (id={task_id}) created successfully: "
                     f"Test Task 1",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -74,9 +76,12 @@ class TestTaskCreate(IsolatedAsyncioTestCase):
         expected_result1 = {
             "content": [
                 {
-                    "text": f"Task {task1_id} created successfully: Task 1",
+                    "text": f"Task (id={task1_id}) created successfully: "
+                    f"Task 1",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -96,9 +101,12 @@ class TestTaskCreate(IsolatedAsyncioTestCase):
         expected_result2 = {
             "content": [
                 {
-                    "text": f"Task {task2_id} created successfully: Task 2",
+                    "text": f"Task (id={task2_id}) created successfully: "
+                    f"Task 2",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -119,9 +127,12 @@ class TestTaskCreate(IsolatedAsyncioTestCase):
         expected_result3 = {
             "content": [
                 {
-                    "text": f"Task {task3_id} created successfully: Task 3",
+                    "text": f"Task (id={task3_id}) created successfully: "
+                    f"Task 3",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -188,9 +199,12 @@ class TestTaskCreate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Task {task_id} created successfully: Bug Fix",
+                    "text": f"Task (id={task_id}) created successfully: "
+                    f"Bug Fix",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -267,11 +281,13 @@ class TestTaskList(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"#{task1_id} [pending] Task 1\n"
-                    f"#{task2_id} [pending] Task 2\n"
-                    f"#{task3_id} [pending] Task 3",
+                    "text": f"{task1_id} [pending] Task 1\n"
+                    f"{task2_id} [pending] Task 2\n"
+                    f"{task3_id} [pending] Task 3",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -314,12 +330,14 @@ class TestTaskGet(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Task #{task_id}: Test Task\n"
+                    "text": f"Task (id={task_id}): Test Task\n"
                     f"Status: pending\n"
                     f"Description: This is a test task with details\n"
                     f"Metadata: {{'priority': 'high'}}",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -344,6 +362,8 @@ class TestTaskGet(IsolatedAsyncioTestCase):
                     "text": "Task not found",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "error",
@@ -385,9 +405,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} subject.",
+                    "text": f"Update task (id={task_id}) subject.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -438,9 +460,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} description.",
+                    "text": f"Update task (id={task_id}) description.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -491,9 +515,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} status.",
+                    "text": f"Update task (id={task_id}) status.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -534,12 +560,14 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} status.\n\n"
+                    "text": f"Update task (id={task_id}) status.\n\n"
                     f"Task completed. "
                     f"Call TaskList now to find your next available "
                     f"task or see if your work unblocked others.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -576,9 +604,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Task {task_to_delete_id} has been deleted.",
+                    "text": f"Task (id={task_to_delete_id}) has been deleted.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -614,9 +644,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} owner.",
+                    "text": f"Update task (id={task_id}) owner.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -668,9 +700,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} metadata.",
+                    "text": f"Update task (id={task_id}) metadata.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -732,9 +766,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task1_id} add_blocks.",
+                    "text": f"Update task (id={task1_id}) add_blocks.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -803,9 +839,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task2_id} add_blocked_by.",
+                    "text": f"Update task (id={task2_id}) add_blocked_by.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -844,6 +882,122 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             },
         ]
         self.assertEqual(tasks_dump, expected)
+
+    async def test_update_completed_unblocks_dependents(self) -> None:
+        """Test completing a task removes it from dependents' blocked_by."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 3",
+            description="Third task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+        task3_id = self.agent_state.tasks_context.tasks[2].id
+
+        await self.task_update(
+            task_id=task3_id,
+            add_blocked_by=[task1_id, task2_id],
+            _agent_state=self.agent_state,
+        )
+
+        # Complete task1, task3 should remain blocked by task2 only
+        result = await self.task_update(
+            task_id=task1_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task1_id}) status.\n\n"
+                    f"Task completed. "
+                    f"Call TaskList now to find your next available "
+                    f"task or see if your work unblocked others.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "Task 1",
+                "description": "First task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "completed",
+                "id": task1_id,
+                "owner": None,
+                "blocks": [task3_id],
+                "blocked_by": [],
+            },
+            {
+                "subject": "Task 2",
+                "description": "Second task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task2_id,
+                "owner": None,
+                "blocks": [task3_id],
+                "blocked_by": [],
+            },
+            {
+                "subject": "Task 3",
+                "description": "Third task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task3_id,
+                "owner": None,
+                "blocks": [],
+                "blocked_by": [task2_id],
+            },
+        ]
+        self.assertEqual(tasks_dump, expected)
+
+        result = await TaskList()(_agent_state=self.agent_state)
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"{task1_id} [completed] Task 1\n"
+                    f"{task2_id} [pending] Task 2\n"
+                    f"{task3_id} [pending] Task 3[blocked by {task2_id}]",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
 
     async def test_update_delete_task(self) -> None:
         """Test deleting a task and removing it from blocks/blocked_by."""
@@ -901,9 +1055,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Task {task2_id} has been deleted.",
+                    "text": f"Task (id={task2_id}) has been deleted.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "running",
@@ -943,9 +1099,11 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             "content": [
                 {
                     "text": "TaskNotFoundError: "
-                    "The task nonexistent-id does not exist.",
+                    "The task (id=nonexistent-id) does not exist.",
                     "type": "text",
                     "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
                 },
             ],
             "state": "error",

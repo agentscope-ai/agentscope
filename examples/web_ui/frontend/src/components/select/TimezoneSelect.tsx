@@ -15,14 +15,14 @@ const LOCAL_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const ALL_TIMEZONES: string[] = Intl.supportedValuesOf('timeZone');
 
-interface Props {
+interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	className?: string;
 	value?: string;
 	onChange?: (value: string) => void;
 	disabled?: boolean;
 }
 
-export function TimezoneSelect({ className, value, onChange, disabled }: Props) {
+export function TimezoneSelect({ className, value, onChange, disabled, ...props }: Props) {
 	const [search, setSearch] = React.useState('');
 	const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -44,14 +44,15 @@ export function TimezoneSelect({ className, value, onChange, disabled }: Props) 
 				<Button
 					variant="outline"
 					size="sm"
-					className={cn('justify-between gap-1', className)}
+					className={cn('justify-between gap-1 font-normal', className)}
 					disabled={disabled}
+					{...props}
 				>
 					<div className="flex flex-row items-center gap-x-2">
 						<Globe className="size-3.5" />
-						<span className="truncate text-xs">{displayLabel}</span>
+						<span className="truncate">{displayLabel}</span>
 					</div>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="w-64">

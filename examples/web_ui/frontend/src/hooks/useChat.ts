@@ -1,37 +1,35 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 
 import { chatApi } from '@/api';
-import type { AgentEvent, ChatRequest } from '@/api';
+import type { ChatRequest } from '@/api';
 
 /**
- * Drives a streaming chat session with an agent.
+ * Fire-and-forget chat trigger.
  *
- * Collects SSE AgentEvent frames into `events` as they arrive.
- * Call `abort()` to cancel an in-flight stream.
+ * Sends a ``POST /chat/`` request that kicks off a chat run on the
+ * backend. Events are **not** returned here — they arrive via the
+ * session's SSE stream (``GET /sessions/{sid}/stream``), consumed by
+ * :func:`useMessages`.
+ *
+ * This hook is a thin wrapper around ``chatApi.trigger``; it mainly
+ * exists for parity with the previous ``useChat`` API shape.
  */
 export function useChat() {
-	const [events, setEvents] = useState<AgentEvent[]>([]);
 	const [streaming, setStreaming] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
-	const abortRef = useRef<AbortController | null>(null);
 
 	/**
-	 * Sends a message and streams the agent's reply into `events`.
-	 * Cancels any previous in-flight stream before starting.
+	 * Trigger a chat run. Returns when the POST completes (not when
+	 * the run finishes).
+	 *
+	 * @param body - The chat request payload.
 	 */
 	const send = useCallback(async (body: ChatRequest) => {
-		abortRef.current?.abort();
-		const controller = new AbortController();
-		abortRef.current = controller;
-
-		setEvents([]);
 		setStreaming(true);
 		setError(null);
 
 		try {
-			for await (const event of chatApi.stream(body, controller.signal)) {
-				setEvents((prev) => [...prev, event]);
-			}
+			await chatApi.trigger(body);
 		} catch (e) {
 			if ((e as Error).name !== 'AbortError') setError(e as Error);
 		} finally {
@@ -39,10 +37,5 @@ export function useChat() {
 		}
 	}, []);
 
-	/** Cancels the current in-flight stream. */
-	const abort = useCallback(() => {
-		abortRef.current?.abort();
-	}, []);
-
-	return { events, streaming, error, send, abort };
+	return { streaming, error, send };
 }

@@ -1,7 +1,8 @@
+import { CircleAlert, Loader2, Save } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
-import type { CredentialRecord, CredentialSchema } from '@/api';
+import type { CredentialView, CredentialSchema } from '@/api';
 import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,6 +10,7 @@ import {
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 	DialogFooter,
 } from '@/components/ui/dialog';
 import { useCredentials } from '@/hooks/useCredentials';
@@ -17,7 +19,7 @@ import { useTranslation } from '@/i18n/useI18n';
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	credential: CredentialRecord;
+	credential: CredentialView;
 	onUpdated?: () => void;
 }
 
@@ -78,9 +80,10 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent>
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-credential-edit.title')}</DialogTitle>
+					<DialogDescription>{t('dialog-credential-edit.description')}</DialogDescription>
 				</DialogHeader>
 				{loadingSchema ? (
 					<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
@@ -92,10 +95,20 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 					/>
 				) : null}
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={submitting}
+					>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
 					<Button onClick={handleSubmit} disabled={submitting || !schema}>
+						{submitting ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<Save className="size-3.5" />
+						)}
 						{submitting ? t('common.saving') : t('common.save')}
 					</Button>
 				</DialogFooter>

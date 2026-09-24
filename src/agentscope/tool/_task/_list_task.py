@@ -3,13 +3,13 @@
 
 from ._task_tool_base import _TaskToolBase
 from .._response import ToolChunk
-from .._base import _ParamsBase
+from .._base import ParamsBase
 from ...state import AgentState
 from ...exception import DeveloperOrientedException
 from ...message import TextBlock
 
 
-class _TaskListParams(_ParamsBase):
+class _TaskListParams(ParamsBase):
     """The params of the list task params."""
 
 
@@ -41,7 +41,7 @@ Use TaskGet with a specific task ID to view full details including description a
 
     input_schema: dict = _TaskListParams.model_json_schema()
 
-    async def __call__(self, _agent_state: AgentState) -> ToolChunk:
+    async def call(self, _agent_state: AgentState) -> ToolChunk:
         """List tasks for the agent to perform."""
         if not isinstance(_agent_state, AgentState):
             # Expose error to the developer
@@ -64,7 +64,7 @@ Use TaskGet with a specific task ID to view full details including description a
                 else ""
             )
             tasks.append(
-                f"#{task.id} [{task.state}] {task.subject}{owner}{blocked}",
+                f"{task.id} [{task.state}] {task.subject}{owner}{blocked}",
             )
 
         return ToolChunk(

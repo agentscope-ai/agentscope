@@ -4,6 +4,8 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.tool import Write
 from agentscope.permission import (
     PermissionContext,
@@ -126,6 +128,39 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             content = f.read()
         self.assertEqual(content, "")
 
+    async def test_written_line_count_matches_read_numbering(self) -> None:
+        """The reported line count matches the ``Read`` tool numbering."""
+        cases = [
+            ("alpha\nbeta\n", 2),
+            ("alpha\nbeta", 2),
+            ("alpha\n", 1),
+            ("alpha", 1),
+            ("", 0),
+        ]
+        for index, (content, line_count) in enumerate(cases):
+            file_path = os.path.join(self.temp_dir, f"count-{index}.txt")
+
+            chunk = await self.write_tool(
+                file_path=file_path,
+                content=content,
+            )
+
+            self.assertListEqual(
+                [block.model_dump() for block in chunk.content],
+                [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"The file {file_path} has been written "
+                            f"successfully ({line_count} lines)."
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+            )
+
     async def test_overwrite_existing_without_prior_read_errors(self) -> None:
         """Overwriting an existing file via state-injected call requires
         the file to have been read first (cached in tool_context).
@@ -151,7 +186,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         """Test match_rule with glob patterns."""
         # Test exact match
         self.assertTrue(
-            self.write_tool.match_rule(
+            await self.write_tool.match_rule(
                 "test.py",
                 {"file_path": "test.py"},
             ),
@@ -159,7 +194,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Test wildcard pattern
         self.assertTrue(
-            self.write_tool.match_rule(
+            await self.write_tool.match_rule(
                 "*.py",
                 {"file_path": "test.py"},
             ),
@@ -167,7 +202,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Test directory pattern
         self.assertTrue(
-            self.write_tool.match_rule(
+            await self.write_tool.match_rule(
                 "/tmp/**",
                 {"file_path": "/tmp/test.py"},
             ),
@@ -175,7 +210,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Test non-matching pattern
         self.assertFalse(
-            self.write_tool.match_rule(
+            await self.write_tool.match_rule(
                 "*.txt",
                 {"file_path": "test.py"},
             ),
@@ -183,7 +218,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Test empty file_path
         self.assertFalse(
-            self.write_tool.match_rule(
+            await self.write_tool.match_rule(
                 "*.py",
                 {"file_path": ""},
             ),
@@ -193,7 +228,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         """Test generate_suggestions for file operations."""
 
         # Test suggestion for file in subdirectory
-        suggestions = self.write_tool.generate_suggestions(
+        suggestions = await self.write_tool.generate_suggestions(
             {"file_path": "/tmp/project/src/main.py"},
         )
 
@@ -206,7 +241,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
         # Test suggestion for file in root
-        suggestions = self.write_tool.generate_suggestions(
+        suggestions = await self.write_tool.generate_suggestions(
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)

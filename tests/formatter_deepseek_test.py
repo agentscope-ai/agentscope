@@ -13,6 +13,8 @@ from agentscope.message import (
     AssistantMsg,
     SystemMsg,
     TextBlock,
+    DataBlock,
+    Base64Source,
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
@@ -488,6 +490,42 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": "Here is my answer.",
                     "reasoning_content": "",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block_multimodal(self) -> None:
+        """DeepSeek is text-only — DataBlock degrades to a placeholder
+        string."""
+        fmt = DeepSeekChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="Inspect this screenshot:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="ZmFrZSBpbWFnZSBkYXRh",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Inspect this screenshot:\n"
+                        "[image/png attached, not supported by this provider]"
+                    ),
                 },
             ],
             res,

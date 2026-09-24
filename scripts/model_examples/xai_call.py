@@ -38,7 +38,10 @@ async def example_simple_call() -> None:
         model="grok-3-mini",
         stream=True,
         context_size=131_072,
-        parameters=XAIChatModel.Parameters(reasoning_effort="low"),
+        parameters=XAIChatModel.Parameters(
+            thinking_enable=True,
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [
@@ -157,7 +160,10 @@ async def example_structured_output() -> None:
         model="grok-3-mini",
         stream=True,
         context_size=131_072,
-        parameters=XAIChatModel.Parameters(reasoning_effort="low"),
+        parameters=XAIChatModel.Parameters(
+            thinking_enable=True,
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [

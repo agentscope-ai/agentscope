@@ -8,8 +8,7 @@ input_types:
   - image/png
   - image/gif
   - image/webp
-  - audio/mp3
-  - audio/wav
+  - application/pdf
 
 output_types:
   - text/plain
@@ -23,4 +22,8 @@ parameter_overrides:
   thinking_enable:
     hidden: true
   reasoning_effort:
+    hidden: true
+  # Voice only applies to omni-style models; hide the field for this
+  # non-omni model so the frontend popover doesn't render it.
+  voice:
     hidden: true

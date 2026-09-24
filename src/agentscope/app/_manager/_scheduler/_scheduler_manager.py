@@ -1,24 +1,33 @@
 # -*- coding: utf-8 -*-
 """The cron scheduler manager class."""
+import asyncio
+import json
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING
+from datetime import datetime
+from zoneinfo import ZoneInfoNotFoundError
 
+from typing import Self, TYPE_CHECKING
 
-from ....message import UserMsg
+from ....message import HintBlock
+from ....permission import PermissionContext
+from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
-from ._tools import ScheduleCreate, ScheduleList, ScheduleStop, ScheduleView
+from ...._utils._common import _generate_id
+from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
+from ...message_bus import MessageBus, MessageBusKeys
+from ...workspace_manager import WorkspaceManagerBase
+from ..._bus_ops import deliver_to_inbox
 from ...storage import (
     StorageBase,
     ScheduleRecord,
     ChatModelConfig,
+    SessionConfig,
+    ScheduleOrigin,
 )
-from .._background_task_manager import BackgroundTaskManager
-from .._session_manager import SessionManager
-from .._workspace_manager import WorkspaceManagerBase
 
 if TYPE_CHECKING:
-    from ..._types import AgentMiddlewareFactory, AgentToolFactory
+    from apscheduler.triggers.cron import CronTrigger
 
 
 class SchedulerManager:
@@ -26,65 +35,112 @@ class SchedulerManager:
     lifecycle within the agent service.
 
     The manager owns both the in-memory APScheduler instance and the trigger
-    logic that runs agents on schedule.  Inject it with ``storage`` and
-    ``session_manager`` so it can build self-contained trigger coroutines
-    without external callbacks.
+    logic that fires scheduled tasks. Triggers do not call ``ChatService``
+    directly; instead they push a :class:`HintBlock` to the target session's
+    inbox and enqueue a wakeup, so that the application-wide
+    :class:`WakeupDispatcher` (running on any process) picks up the work.
+    This keeps the scheduler decoupled from ``ChatService`` and makes the
+    fire path consistent with team / background-tool result delivery.
+
+    The timers themselves are held by **one** node — APScheduler's
+    jobstore is in-memory, so every node holding them fires every cron
+    tick, and a schedule runs once per replica. Which node owns them is
+    a deployment choice (``create_app(enable_scheduler=...)``), so
+    writers cannot register a job in-process: they persist the record
+    and call :meth:`notify_changed`, and the owner reconciles its jobs
+    against storage. Storage is the source of truth; the notification
+    only makes the owner look sooner than its periodic reconcile would.
     """
+
+    RECONCILE_INTERVAL_SECS = 60
+    """How often the owner re-reads storage regardless of
+    notifications, so a dropped one costs at most one interval."""
 
     def __init__(
         self,
         storage: StorageBase,
-        session_manager: SessionManager,
-        background_task_manager: BackgroundTaskManager,
+        message_bus: MessageBus,
         workspace_manager: WorkspaceManagerBase,
-        extra_agent_middlewares: "AgentMiddlewareFactory | None" = None,
-        extra_agent_tools: "AgentToolFactory | None" = None,
+        enabled: bool = True,
     ) -> None:
         """Initialize the scheduler manager.
 
         Args:
             storage (`StorageBase`):
-                The storage backend used for persistence and session creation.
-            session_manager (`SessionManager`):
-                The session manager used when running agent chat sessions.
-            background_task_manager (`BackgroundTaskManager`):
-                The background task manager passed through to
-                :class:`ChatService` so triggered agents can offload
-                long-running tools.
+                The storage backend used for persistence and session
+                creation.
+            message_bus (`MessageBus`):
+                The application message bus. Each scheduled fire pushes
+                a :class:`HintBlock` to the target session's inbox and
+                enqueues a wakeup via this bus.
             workspace_manager (`WorkspaceManagerBase`):
-                The workspace manager passed through to :class:`ChatService`
-                so triggered agents get the configured toolkit and MCPs.
-            extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
-optional):
-                Async factory passed through to :class:`ChatService` to
-                produce extra agent middlewares per scheduled trigger.
-            extra_agent_tools (`AgentToolFactory | None`, optional):
-                Async factory passed through to :class:`ChatService` to
-                produce extra agent tools per scheduled trigger.
+                Binds a workspace to the sessions this manager creates,
+                under the application's isolation policy.
+            enabled (`bool`, defaults to ``True``):
+                Whether this node owns the timers. Exactly one node in a
+                deployment should enable them; the rest still create,
+                edit and delete schedules — they just do not fire them.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         self._storage = storage
-        self._session_manager = session_manager
-        self._background_task_manager = background_task_manager
+        self._message_bus = message_bus
         self._workspace_manager = workspace_manager
-        self._extra_agent_middlewares = extra_agent_middlewares
-        self._extra_agent_tools = extra_agent_tools
+        self._enabled = enabled
         self._scheduler = AsyncIOScheduler()
+        # ``updated_at`` of each registered job, so a reconcile can tell
+        # an edited schedule from an unchanged one.
+        self._versions: dict[str, datetime] = {}
+        self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def start(self) -> None:
-        """Start the underlying APScheduler."""
+    async def __aenter__(self) -> Self:
+        """Take ownership of the timers, unless this node is disabled.
+
+        A disabled manager holds no jobs and runs no loops; it stays
+        usable for :meth:`notify_changed` and :meth:`list_tools`, which
+        every node needs.
+
+        Returns:
+            `Self`: This manager instance.
+        """
+        if not self._enabled:
+            logger.info(
+                "SchedulerManager disabled on this node; schedules are "
+                "owned elsewhere.",
+            )
+            return self
+
         logger.info("SchedulerManager starting APScheduler")
         self._scheduler.start()
+        # Subscribe before the first reconcile, and wait for it: a
+        # notification published in between would otherwise be lost, and
+        # the schedule behind it would wait for the periodic pass.
+        ready = asyncio.Event()
+        self._tasks = [
+            asyncio.create_task(
+                self._listen(ready),
+                name="schedule-lifecycle",
+            ),
+            asyncio.create_task(self._periodic(), name="schedule-reconcile"),
+        ]
+        await ready.wait()
+        await self.reconcile()
         logger.info("SchedulerManager APScheduler started")
+        return self
 
-    async def shutdown(self) -> None:
-        """Shut down the underlying APScheduler."""
+    async def __aexit__(self, *exc: object) -> None:
+        """Stop the loops and shut down APScheduler, if it was started."""
+        if not self._enabled:
+            return
+
         logger.info("SchedulerManager shutting down APScheduler")
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         self._scheduler.shutdown()
         logger.info("SchedulerManager APScheduler shut down")
 
@@ -117,16 +173,11 @@ optional):
             `Callable[[], Coroutine]`:
                 A zero-argument async callable suitable for APScheduler.
         """
-        # Collect closure-friendly references to avoid re-looking them up
-        # on every fire.  ChatService is imported lazily inside the closure to
-        # break the circular dependency:
-        #   _manager._scheduler → _service._chat → _manager
+        # Closure-friendly references so APScheduler doesn't have to
+        # re-look these up on every fire.
         storage = self._storage
-        session_manager = self._session_manager
-        background_task_manager = self._background_task_manager
+        message_bus = self._message_bus
         workspace_manager = self._workspace_manager
-        extra_agent_middlewares = self._extra_agent_middlewares
-        extra_agent_tools = self._extra_agent_tools
 
         async def _trigger() -> None:
             logger.info(
@@ -142,17 +193,6 @@ optional):
                     record.data.name,
                 )
                 return
-
-            # Lazy import to break circular dependency
-            from ..._service._chat import ChatService  # noqa: PLC0415
-            from ....permission._context import (
-                PermissionContext,
-            )  # noqa: PLC0415
-            from ....state import AgentState  # noqa: PLC0415
-            from ...storage._model._session import (  # noqa: PLC0415
-                SessionConfig,
-                SessionSource,
-            )
 
             try:
                 if record.data.stateful:
@@ -181,7 +221,13 @@ optional):
                             mode=record.data.permission_mode,
                         )
                         session_config = SessionConfig(
-                            workspace_id="",
+                            workspace_id=(
+                                await workspace_manager.assign_workspace_id(
+                                    user_id=record.user_id,
+                                    agent_id=record.agent_id,
+                                    session_id=stateful_session_id,
+                                )
+                            ),
                             chat_model_config=record.data.chat_model_config,
                         )
                         session = await storage.upsert_session(
@@ -190,8 +236,7 @@ optional):
                             config=session_config,
                             state=state,
                             session_id=stateful_session_id,
-                            source=SessionSource.SCHEDULE,
-                            source_schedule_id=record.id,
+                            origin=ScheduleOrigin(schedule_id=record.id),
                         )
                     else:
                         logger.info(
@@ -216,46 +261,55 @@ optional):
                         user_id=record.user_id,
                         agent_id=record.agent_id,
                         config=SessionConfig(
-                            workspace_id="",
+                            workspace_id=(
+                                await workspace_manager.assign_workspace_id(
+                                    user_id=record.user_id,
+                                    agent_id=record.agent_id,
+                                    session_id=_generate_id(),
+                                )
+                            ),
                             chat_model_config=record.data.chat_model_config,
                         ),
                         state=state,
-                        source=SessionSource.SCHEDULE,
-                        source_schedule_id=record.id,
+                        origin=ScheduleOrigin(schedule_id=record.id),
                     )
 
                 logger.info(
                     "[Schedule:%s(%s)] Session ready: %s, "
-                    "starting chat execution",
+                    "delivering prompt via inbox + wakeup",
                     record.id,
                     record.data.name,
                     session.id,
                 )
 
-                input_msg = UserMsg(
-                    name=record.user_id,
-                    content=record.data.description,
+                # Wrap the schedule prompt in an XML tag so the LLM
+                # recognises it as a system-driven trigger rather than
+                # a regular user turn — same shape as team / system
+                # notification hints.
+                hint = HintBlock(
+                    hint=(
+                        f"<scheduled-task>\n"
+                        f"{record.data.description}\n"
+                        f"</scheduled-task>"
+                    ),
+                    source=json.dumps(
+                        {
+                            "label": "schedule",
+                            "sublabel": record.data.name,
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
-
-                chat_service = ChatService(
-                    storage=storage,
-                    session_manager=session_manager,
-                    background_task_manager=background_task_manager,
-                    workspace_manager=workspace_manager,
-                    extra_agent_middlewares=extra_agent_middlewares,
-                    extra_agent_tools=extra_agent_tools,
-                )
-                async for _ in chat_service.stream_chat(
+                await deliver_to_inbox(
+                    message_bus,
                     user_id=record.user_id,
                     session_id=session.id,
                     agent_id=record.agent_id,
-                    input_msg=input_msg,
-                ):
-                    pass
+                    payload=hint.model_dump(mode="json"),
+                )
 
                 logger.info(
-                    "[Schedule:%s(%s)] Chat execution completed "
-                    "for session %s",
+                    "[Schedule:%s(%s)] Wakeup enqueued for session %s",
                     record.id,
                     record.data.name,
                     session.id,
@@ -274,24 +328,172 @@ optional):
     # Schedule management
     # ------------------------------------------------------------------
 
-    async def register_schedule(self, record: ScheduleRecord) -> str:
-        """Persist-and-register a schedule record with APScheduler.
+    @staticmethod
+    def validate_schedule(record: ScheduleRecord) -> "CronTrigger":
+        """Build the record's cron trigger, rejecting a bad schedule.
 
-        Builds the trigger coroutine via :meth:`_build_trigger` and adds the
-        job to APScheduler.  This is the single entry point used by both the
-        HTTP API and the :class:`ScheduleCreate` agent tool.
+        Writers call this before persisting so an invalid schedule never
+        reaches storage, and :meth:`_add_job` reuses what it returns
+        rather than parsing the expression a second time.
+
+        ``CronTrigger.from_crontab`` is not usable here: it forwards only
+        the 5 parsed fields and ``timezone``, with no parameter for
+        ``start_date`` / ``end_date``, so the configured activation
+        window would be dropped.
 
         Args:
             record (`ScheduleRecord`):
-                The fully-populated record (already persisted to storage).
+                The schedule to check.
 
         Returns:
-            `str`:
-                The APScheduler job ID (equal to ``record.id``).
-        """
+            `CronTrigger`:
+                The trigger the job would fire on.
 
+        Raises:
+            `ValueError`:
+                The cron expression, the timezone, or the activation
+                window is invalid.
+        """
         from apscheduler.triggers.cron import CronTrigger
 
+        fields = record.data.cron_expression.split()
+        if len(fields) != 5:
+            raise ValueError(
+                "Expected a 5-field cron expression, got "
+                f"{record.data.cron_expression!r}",
+            )
+        minute, hour, day, month, day_of_week = fields
+
+        if not record.data.timezone:
+            # An empty one resolves to the server's local zone rather
+            # than raising, which is not what the caller asked for.
+            raise ValueError("timezone must be a non-empty IANA name")
+
+        try:
+            trigger = CronTrigger(
+                minute=minute,
+                hour=hour,
+                day=day,
+                month=month,
+                day_of_week=day_of_week,
+                timezone=record.data.timezone,
+                start_date=record.data.started_at,
+                end_date=record.data.ended_at,
+            )
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            # Field ranges, expression syntax and the timezone are all
+            # checked by the constructor.
+            raise ValueError(str(exc)) from exc
+
+        # The window is the one thing it does not check: an inverted one
+        # is accepted and simply never fires.
+        if (
+            trigger.end_date is not None
+            and trigger.end_date <= trigger.start_date
+        ):
+            raise ValueError("ended_at must be later than started_at")
+
+        return trigger
+
+    async def notify_changed(self, schedule_id: str) -> None:
+        """Tell the timer-owning node that a schedule was written.
+
+        Call after persisting a create / update / delete. Best-effort:
+        reconcile re-reads storage, so the payload is only a nudge and a
+        lost notification costs at most one reconcile interval.
+
+        Args:
+            schedule_id (`str`):
+                The changed schedule, for logging on the owner's side.
+        """
+        try:
+            await self._message_bus.publish(
+                MessageBusKeys.schedule_lifecycle(),
+                {"schedule_id": schedule_id},
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to publish schedule change %s; the periodic "
+                "reconcile will pick it up.",
+                schedule_id,
+            )
+
+    async def reconcile(self) -> None:
+        """Drive the local job set to match the enabled records.
+
+        Adds jobs that are missing, drops jobs whose record is gone or
+        no longer enabled, and re-registers those whose ``updated_at``
+        moved. Safe to call repeatedly — that is how a dropped
+        notification heals.
+        """
+        try:
+            records = await self._storage.list_all_schedules()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Schedule reconcile: failed to list schedules")
+            return
+
+        desired = {r.id: r for r in records if r.data.enabled}
+
+        for schedule_id in set(self._versions) - set(desired):
+            self._remove_job(schedule_id)
+
+        for schedule_id, record in desired.items():
+            if self._versions.get(schedule_id) == record.updated_at:
+                continue
+            if schedule_id in self._versions:
+                self._remove_job(schedule_id)
+            try:
+                self._add_job(record)
+            except Exception:  # pylint: disable=broad-except
+                # A record with an unparseable cron would otherwise take
+                # every schedule after it down with it.
+                logger.exception(
+                    "Schedule reconcile: cannot register %s",
+                    schedule_id,
+                )
+
+    # -- Loops --
+
+    async def _listen(self, ready: asyncio.Event) -> None:
+        """Reconcile on each lifecycle notification (reconnect on drop).
+
+        Args:
+            ready (`asyncio.Event`):
+                Signalled once the SUBSCRIBE has landed, so
+                :meth:`__aenter__` can order its first reconcile after
+                it.
+        """
+        backoff = 1.0
+        while True:
+            try:
+                async for _ in self._message_bus.subscribe(
+                    MessageBusKeys.schedule_lifecycle(),
+                    on_ready=ready.set,
+                ):
+                    backoff = 1.0
+                    await self.reconcile()
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.warning("schedule lifecycle subscription lost")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+
+    async def _periodic(self) -> None:
+        """Reconcile on a fixed interval, self-healing lost events."""
+        while True:
+            await asyncio.sleep(self.RECONCILE_INTERVAL_SECS)
+            await self.reconcile()
+
+    # -- Job set --
+
+    def _add_job(self, record: ScheduleRecord) -> None:
+        """Add one APScheduler job from its record.
+
+        Args:
+            record (`ScheduleRecord`):
+                An enabled schedule record.
+        """
         logger.info(
             "Registering schedule %s(%s) cron=%s tz=%s",
             record.id,
@@ -299,60 +501,40 @@ optional):
             record.data.cron_expression,
             record.data.timezone,
         )
-
-        trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
-            trigger,
-            trigger=CronTrigger.from_crontab(
-                record.data.cron_expression,
-                timezone=record.data.timezone,
-            ),
+            self._build_trigger(record),
+            trigger=self.validate_schedule(record),
             id=record.id,
             name=record.data.name,
             misfire_grace_time=300,
         )
+        self._versions[record.id] = record.updated_at
         logger.info(
             "Schedule %s(%s) registered, next_run=%s",
             record.id,
             record.data.name,
             job.next_run_time,
         )
-        return job.id
 
-    async def remove_schedule(self, job_id: str) -> None:
-        """Remove a job from APScheduler.
+    def _remove_job(self, schedule_id: str) -> None:
+        """Drop one APScheduler job.
 
         Args:
-            job_id (`str`):
-                The APScheduler job ID to remove.
+            schedule_id (`str`):
+                The schedule whose job should go; it doubles as the
+                APScheduler job id.
         """
         from apscheduler.jobstores.base import JobLookupError
 
-        logger.info("Removing schedule job %s", job_id)
+        self._versions.pop(schedule_id, None)
         try:
-            self._scheduler.remove_job(job_id)
-            logger.info("Schedule job %s removed", job_id)
+            self._scheduler.remove_job(schedule_id)
+            logger.info("Schedule job %s removed", schedule_id)
         except JobLookupError:
-            logger.warning("Schedule job %s not found in APScheduler", job_id)
-
-    async def restore(self, records: list[ScheduleRecord]) -> None:
-        """Re-register persisted schedules on service startup.
-
-        Only enabled schedules are restored.
-
-        Args:
-            records (`list[ScheduleRecord]`):
-                All schedule records loaded from storage on startup.
-        """
-        enabled = [r for r in records if r.data.enabled]
-        logger.info(
-            "Restoring schedules: %d total, %d enabled",
-            len(records),
-            len(enabled),
-        )
-        for record in enabled:
-            await self.register_schedule(record)
-        logger.info("Schedule restore complete")
+            logger.warning(
+                "Schedule job %s not found in APScheduler",
+                schedule_id,
+            )
 
     async def list_tasks(self) -> list[dict]:
         """Return a summary of all currently registered APScheduler jobs.
@@ -394,7 +576,7 @@ optional):
         Returns:
             `list[ToolBase]`:
                 The four schedule tools: :class:`ScheduleCreate`,
-                :class:`ScheduleView`, :class:`ScheduleStop`, and
+                :class:`ScheduleView`, :class:`ScheduleDelete`, and
                 :class:`ScheduleList`.
         """
         return [
@@ -410,10 +592,11 @@ optional):
                 scheduler=self._scheduler,
                 storage=self._storage,
             ),
-            ScheduleStop(
+            ScheduleDelete(
                 user_id=user_id,
                 scheduler=self._scheduler,
                 storage=self._storage,
+                message_bus=self._message_bus,
             ),
             ScheduleList(
                 user_id=user_id,

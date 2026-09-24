@@ -132,7 +132,7 @@ Set up task dependencies:
 
     input_schema: dict = _TaskUpdateParams.model_json_schema()
 
-    async def __call__(
+    async def call(
         self,
         _agent_state: AgentState,
         task_id: str,
@@ -163,7 +163,7 @@ Set up task dependencies:
                 content=[
                     TextBlock(
                         text=f"TaskNotFoundError: "
-                        f"The task {task_id} does not exist.",
+                        f"The task (id={task_id}) does not exist.",
                     ),
                 ],
                 state=ToolResultState.ERROR,
@@ -227,12 +227,19 @@ Set up task dependencies:
                         task.blocked_by.remove(task_id)
                 return ToolChunk(
                     content=[
-                        TextBlock(text=f"Task {task_id} has been deleted."),
+                        TextBlock(
+                            text=f"Task (id={task_id}) has been deleted.",
+                        ),
                     ],
                 )
             # Update the status
             updated_fields.append("status")
             _agent_state.tasks_context.tasks[index].state = status
+            # A completed task no longer blocks its dependents
+            if status == "completed":
+                for task in _agent_state.tasks_context.tasks:
+                    if task_id in task.blocked_by:
+                        task.blocked_by.remove(task_id)
 
         if owner is not None:
             updated_fields.append("owner")
@@ -250,10 +257,10 @@ Set up task dependencies:
                     _agent_state.tasks_context.tasks[index].metadata[k] = v
 
         if updated_fields:
-            res = f'Update task #{task_id} {", ".join(updated_fields)}.'
+            res = f'Update task (id={task_id}) {", ".join(updated_fields)}.'
         else:
             res = (
-                f"No updates were made to the task #{task_id}. "
+                f"No updates were made to the task (id={task_id}). "
                 f"Make sure you provided at least one field to update and "
                 f"the values are correct."
             )

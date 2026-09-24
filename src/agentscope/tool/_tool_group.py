@@ -51,7 +51,7 @@ class ToolGroup:
         """Initialize the tool group.
 
         Args:
-            name (`Literal["basic"] | str):
+            name (`Literal["basic"] | str`):
                 The name of the tool group.
             description (`str | None`):
                 The description of the tool group.
@@ -78,8 +78,10 @@ class ToolGroup:
         self.name = name
         self.description = description or ""
         self.instructions = instructions
-        self.tools = tools or []
-        self.mcps = mcps or []
+        # Copy the caller's lists: add_tool() appends to them in place, so
+        # keeping the reference would mutate the caller's data.
+        self.tools = list(tools or [])
+        self.mcps = list(mcps or [])
 
         # Skill
         self.skills_or_loaders = []
