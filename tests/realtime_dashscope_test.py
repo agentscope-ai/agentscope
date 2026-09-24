@@ -7,7 +7,7 @@ import base64
 import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 from agentscope.credential import DashScopeCredential
 from agentscope.realtime import (
@@ -70,7 +70,7 @@ class DashScopeCardsTest(unittest.TestCase):
         )
 
     def test_audio_cards(self) -> None:
-        """The Audio adapter lists the two Audio cards."""
+        """The Audio adapter lists the three Audio cards."""
         self.assertListEqual(
             [
                 (
@@ -94,8 +94,196 @@ class DashScopeCardsTest(unittest.TestCase):
                     50,
                     300,
                 ),
+                (
+                    "qwen-audio-3.1-realtime-plus",
+                    "dashscope_audio_realtime",
+                    50,
+                    300,
+                ),
             ],
         )
+
+    def test_omni_cards_apply_model_specific_voice_defaults(self) -> None:
+        """Card defaults drive runtime parameters unless explicitly set."""
+        cards = {
+            card.name: card for card in DashScopeRealtimeModel.list_models()
+        }
+        self.assertDictEqual(
+            {
+                name: {
+                    "schema": cards[name].parameter_schema["properties"][
+                        "voice"
+                    ],
+                    "runtime_default": DashScopeRealtimeModel(
+                        name,
+                        CRED,
+                    ).parameters.voice,
+                }
+                for name in cards
+            },
+            {
+                "qwen-omni-turbo-realtime": {
+                    "schema": {
+                        "default": "Chelsie",
+                        "enum": ["Cherry", "Serena", "Ethan", "Chelsie"],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "Chelsie",
+                },
+                "qwen3-omni-flash-realtime": {
+                    "schema": {
+                        "default": "Cherry",
+                        "enum": ["Cherry", "Serena", "Ethan", "Chelsie"],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "Cherry",
+                },
+                "qwen3.5-omni-flash-realtime": {
+                    "schema": {
+                        "default": "Tina",
+                        "enum": ["Tina", "Serena", "Ethan"],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "Tina",
+                },
+                "qwen3.5-omni-plus-realtime": {
+                    "schema": {
+                        "default": "Tina",
+                        "enum": ["Tina", "Serena", "Ethan"],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "Tina",
+                },
+            },
+        )
+
+        explicit = DashScopeRealtimeModel(
+            "qwen3.5-omni-flash-realtime",
+            CRED,
+            parameters=DashScopeRealtimeModel.Parameters(voice="Serena"),
+        )
+        self.assertEqual(explicit.parameters.voice, "Serena")
+
+    def test_audio_cards_apply_model_specific_voice_defaults(self) -> None:
+        """Audio cards expose and apply their complete voice schemas."""
+        cards = {
+            card.name: card
+            for card in DashScopeAudioRealtimeModel.list_models()
+        }
+        self.assertDictEqual(
+            {
+                name: {
+                    "schema": cards[name].parameter_schema["properties"][
+                        "voice"
+                    ],
+                    "runtime_default": DashScopeAudioRealtimeModel(
+                        name,
+                        CRED,
+                    ).parameters.voice,
+                }
+                for name in cards
+            },
+            {
+                "qwen-audio-3.0-realtime-flash": {
+                    "schema": {
+                        "default": "longanqian",
+                        "enum": [
+                            "longanqian",
+                            "longanlingxin",
+                            "longanlingxi",
+                            "longanxiaoxin",
+                            "longanlufeng",
+                        ],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "longanqian",
+                },
+                "qwen-audio-3.0-realtime-plus": {
+                    "schema": {
+                        "default": "longanqian",
+                        "enum": [
+                            "longanqian",
+                            "longanlingxin",
+                            "longanlingxi",
+                            "longanxiaoxin",
+                            "longanlufeng",
+                        ],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "longanqian",
+                },
+                "qwen-audio-3.1-realtime-plus": {
+                    "schema": {
+                        "default": "longanqian_v3.1",
+                        "enum": [
+                            "longanqian",
+                            "longanlingxin",
+                            "longanlingxi",
+                            "longanxiaoxin",
+                            "longanlufeng",
+                            "longanqian_v3.1",
+                            "longanhuan_v3.1",
+                            "longanlingxin_v3.1",
+                            "longanfengyue_v3.1",
+                            "xunanchuan_v3.1",
+                            "beth_v3.1",
+                            "betty_v3.1",
+                            "cally_v3.1",
+                        ],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "longanqian_v3.1",
+                },
+            },
+        )
+
+    def test_credential_builds_regional_realtime_urls(self) -> None:
+        """Realtime URLs preserve the configured HTTP endpoint host."""
+        self.assertListEqual(
+            [
+                DashScopeCredential(
+                    api_key="sk-x",
+                ).get_realtime_base_url(),
+                DashScopeCredential(
+                    api_key="sk-x",
+                    base_url=(
+                        "https://dashscope-intl.aliyuncs.com"
+                        "/compatible-mode/v1"
+                    ),
+                ).get_realtime_base_url(),
+                DashScopeCredential(
+                    api_key="sk-x",
+                    base_url=(
+                        "https://llm-beijing.cn-beijing.maas.aliyuncs.com"
+                        "/compatible-mode/v1"
+                    ),
+                ).get_realtime_base_url(),
+                DashScopeCredential(
+                    api_key="sk-x",
+                    base_url=("http://localhost:8080/custom/dashscope/path"),
+                ).get_realtime_base_url(),
+            ],
+            [
+                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+                "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
+                "wss://llm-beijing.cn-beijing.maas.aliyuncs.com"
+                "/api-ws/v1/realtime",
+                "ws://localhost:8080/api-ws/v1/realtime",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "Invalid DashScope"):
+            DashScopeCredential(
+                api_key="sk-x",
+                base_url="not-a-url",
+            ).get_realtime_base_url()
 
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""
@@ -108,6 +296,7 @@ class DashScopeCardsTest(unittest.TestCase):
             {
                 "qwen-audio-3.0-realtime-flash": "DashScopeAudioRealtimeModel",
                 "qwen-audio-3.0-realtime-plus": "DashScopeAudioRealtimeModel",
+                "qwen-audio-3.1-realtime-plus": "DashScopeAudioRealtimeModel",
                 "qwen-omni-turbo-realtime": "DashScopeRealtimeModel",
                 "qwen3-omni-flash-realtime": "DashScopeRealtimeModel",
                 "qwen3.5-omni-flash-realtime": "DashScopeRealtimeModel",
@@ -134,7 +323,7 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
                 "session": {
                     "instructions": "be nice",
                     "modalities": ["audio", "text"],
-                    "voice": "Cherry",
+                    "voice": "Tina",
                     "input_audio_format": "pcm16",
                     "output_audio_format": "pcm24",
                     "turn_detection": {
@@ -181,6 +370,32 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
                     "turn_detection": {
                         "type": "smart_turn",
                         "voiceprint_audio_urls": ["https://x/a.wav"],
+                    },
+                },
+            },
+        )
+
+    def test_audio_31_payload_uses_model_voice_default(self) -> None:
+        """Audio 3.1 sends its model-specific default voice."""
+        model = DashScopeAudioRealtimeModel(
+            "qwen-audio-3.1-realtime-plus",
+            CRED,
+        )
+        self.assertDictEqual(
+            model._session_update("be nice", None),
+            {
+                "type": "session.update",
+                "session": {
+                    "instructions": "be nice",
+                    "modalities": ["audio", "text"],
+                    "voice": "longanqian_v3.1",
+                    "input_audio_format": "pcm",
+                    "output_audio_format": "pcm",
+                    "max_history_turns": 20,
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "silence_duration_ms": 800,
                     },
                 },
             },
@@ -587,6 +802,80 @@ class DashScopeAudioTextInputTest(IsolatedAsyncioTestCase):
 class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
     """A closed WebSocket surfaces as ModelDisconnectedError."""
 
+    async def test_workspace_endpoint_connects_models(self) -> None:
+        """Both adapters connect through the credential endpoint."""
+
+        class ReadySocket:
+            """A socket that confirms setup and then remains open."""
+
+            def __init__(self) -> None:
+                self.ready_sent = False
+
+            def __aiter__(self) -> "ReadySocket":
+                """Return this socket as an asynchronous iterator."""
+                return self
+
+            async def __anext__(self) -> str:
+                """Confirm setup once, then wait for cancellation."""
+                if not self.ready_sent:
+                    self.ready_sent = True
+                    return json.dumps({"type": "session.updated"})
+                await asyncio.Future()
+                raise StopAsyncIteration
+
+            async def send(self, _payload: str) -> None:
+                """Accept an outgoing frame."""
+
+            async def close(self) -> None:
+                """Accept connection shutdown."""
+
+        credential = DashScopeCredential(
+            api_key="sk-workspace",
+            base_url=(
+                "https://llm-workspace.ap-southeast-1.maas.aliyuncs.com"
+                "/compatible-mode/v1"
+            ),
+        )
+        omni = DashScopeRealtimeModel(
+            "qwen3.5-omni-plus-realtime",
+            credential,
+        )
+        audio = DashScopeAudioRealtimeModel(
+            "qwen-audio-3.1-realtime-plus",
+            credential,
+        )
+        connect = AsyncMock(
+            side_effect=[ReadySocket(), ReadySocket()],
+        )
+
+        with patch("websockets.connect", new=connect):
+            await omni.connect(instructions="test")
+            await audio.connect(instructions="test")
+
+        await omni.close()
+        await audio.close()
+        base_url = (
+            "wss://llm-workspace.ap-southeast-1.maas.aliyuncs.com"
+            "/api-ws/v1/realtime"
+        )
+        headers = {
+            "Authorization": "Bearer sk-workspace",
+            "X-DashScope-DataInspection": "disable",
+        }
+        self.assertListEqual(
+            connect.await_args_list,
+            [
+                call(
+                    f"{base_url}?model=qwen3.5-omni-plus-realtime",
+                    additional_headers=headers,
+                ),
+                call(
+                    f"{base_url}?model=qwen-audio-3.1-realtime-plus",
+                    additional_headers=headers,
+                ),
+            ],
+        )
+
     async def test_send_on_closed_socket(self) -> None:
         """websockets' ConnectionClosed becomes the realtime-level error
         and the socket reference is dropped."""
@@ -629,6 +918,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.closed = False
                 self.sent: list[str] = []
+                self.ready_sent = False
 
             def __aiter__(self) -> "LiveSocket":
                 """Return the socket as its own frame iterator."""
@@ -636,6 +926,9 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
 
             async def __anext__(self) -> str:
                 """Wait until the reader task is cancelled."""
+                if not self.ready_sent:
+                    self.ready_sent = True
+                    return json.dumps({"type": "session.updated"})
                 await asyncio.Future()
                 raise StopAsyncIteration
 
@@ -665,10 +958,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
         connection_state = {
             "queue_replaced": model._queue is not old_queue,
             "new_queue_size": model._queue.qsize(),
-            "old_queue": [
-                old_queue.get_nowait(),
-                old_queue.get_nowait(),
-            ],
+            "old_queue_size": old_queue.qsize(),
             "sent": [json.loads(payload) for payload in socket.sent],
         }
         await asyncio.sleep(0)
@@ -687,17 +977,14 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
                 "connected": {
                     "queue_replaced": True,
                     "new_queue_size": 0,
-                    "old_queue": [
-                        me.SessionEndedEvent(reason="closed"),
-                        None,
-                    ],
+                    "old_queue_size": 0,
                     "sent": [
                         {
                             "type": "session.update",
                             "session": {
                                 "instructions": "test",
                                 "modalities": ["audio", "text"],
-                                "voice": "Cherry",
+                                "voice": "Tina",
                                 "input_audio_format": "pcm16",
                                 "output_audio_format": "pcm24",
                                 "turn_detection": {
@@ -717,5 +1004,73 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
                     "reader": None,
                     "websocket": None,
                 },
+            },
+        )
+
+    async def test_connect_surfaces_session_setup_error(self) -> None:
+        """An invalid session update fails connect with provider detail."""
+
+        class RejectedSocket:
+            """Return one provider error, then wait for cancellation."""
+
+            def __init__(self) -> None:
+                self.error_sent = False
+                self.closed = False
+
+            def __aiter__(self) -> "RejectedSocket":
+                """Return this socket as an asynchronous iterator."""
+                return self
+
+            async def __anext__(self) -> str:
+                """Return the provider error and then wait indefinitely."""
+                if not self.error_sent:
+                    self.error_sent = True
+                    return json.dumps(
+                        {
+                            "type": "error",
+                            "error": {
+                                "code": "invalid_parameter",
+                                "message": "Voice 'Cherry' is not supported.",
+                            },
+                        },
+                    )
+                await asyncio.Future()
+                raise StopAsyncIteration
+
+            async def send(self, _payload: str) -> None:
+                """Accept the session update sent during connection setup."""
+                return None
+
+            async def close(self) -> None:
+                """Record that the socket was closed."""
+                self.closed = True
+
+        socket = RejectedSocket()
+        model = DashScopeRealtimeModel(
+            "qwen3.5-omni-flash-realtime",
+            CRED,
+            parameters=DashScopeRealtimeModel.Parameters(voice="Cherry"),
+        )
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Voice 'Cherry' is not supported",
+            ):
+                await model.connect(instructions="test")
+
+        self.assertDictEqual(
+            {
+                "closed": socket.closed,
+                "reader": model._reader,
+                "websocket": model._ws,
+            },
+            {
+                "closed": True,
+                "reader": None,
+                "websocket": None,
             },
         )

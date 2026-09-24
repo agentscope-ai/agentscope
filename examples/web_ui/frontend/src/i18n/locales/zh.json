@@ -446,6 +446,7 @@
 	},
 	"realtime": {
 		"selectModel": "语音模型",
+		"parameters": "实时语音参数",
 		"noModels": "暂无可用的实时语音模型。",
 		"disable": "停用语音模型",
 		"selectFirst": "请先选择语音模型",

@@ -17,7 +17,7 @@ _SESSION_READY_TIMEOUT_S = 15.0
 
 
 class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
-    """The Qwen-Audio-3.0-Realtime API over WebSocket.
+    """The Qwen-Audio-Realtime API over WebSocket.
 
     Same endpoint and framing as Qwen-Omni, but it accepts text turns,
     spells both PCM formats as ``"pcm"``, and offers ``smart_turn``

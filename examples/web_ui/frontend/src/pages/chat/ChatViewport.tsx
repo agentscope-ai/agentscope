@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
@@ -175,6 +176,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
+	const { groups: realtimeGroups } = useAvailableRealtimeModels();
 
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
@@ -536,6 +538,22 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		return null;
 	}, [groups, selectedModel?.type, selectedModel?.model]);
 
+	const selectedRealtimeModelCard = useMemo(() => {
+		if (!selectedRealtimeModel) return null;
+		for (const items of Object.values(realtimeGroups)) {
+			for (const { credential, models } of items) {
+				if (credential.id !== selectedRealtimeModel.credential_id) continue;
+				const card = models.find(
+					(model) =>
+						model.model_type === selectedRealtimeModel.type &&
+						model.name === selectedRealtimeModel.model,
+				);
+				if (card) return card;
+			}
+		}
+		return null;
+	}, [realtimeGroups, selectedRealtimeModel]);
+
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
 	 * as a sensible default when the current session has no model
@@ -693,6 +711,15 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		);
 	};
 
+	/** Persist parameters for the browser realtime voice model. */
+	const handleRealtimeParametersChange = async (parameters: Record<string, unknown>) => {
+		if (!selectedRealtimeModel) return;
+		const updated = { ...selectedRealtimeModel, parameters };
+		await patchConfig({ realtime_model_config: updated }, () =>
+			setSelectedRealtimeModel(updated),
+		);
+	};
+
 	/**
 	 * Persist a permission-mode change.
 	 *
@@ -771,6 +798,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										refetchTrigger={credentialRefetchTrigger}
 										disabled={configPending || realtimeVoice.state !== 'idle'}
 										className="text-muted-foreground hover:text-foreground"
+									/>
+									<ModelParametersPopover
+										selectedModel={selectedRealtimeModel}
+										modelCard={selectedRealtimeModelCard}
+										onChange={handleRealtimeParametersChange}
+										idPrefix="realtime"
+										triggerLabel={t('realtime.parameters')}
+										disabled={configPending || realtimeVoice.state !== 'idle'}
 									/>
 									<LlmSelect
 										id="tour-llm-select"

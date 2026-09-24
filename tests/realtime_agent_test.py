@@ -5,9 +5,14 @@ transport — no network, no sound card."""
 import asyncio
 from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
-from utils import AnyString
+from utils import AnyString, MockModel
 
-from agentscope.agent import RealtimeAgent, TurnAggregator
+from agentscope.agent import (
+    Agent,
+    InjectionConfig,
+    RealtimeAgent,
+    TurnAggregator,
+)
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     ReplyEndEvent,
@@ -16,6 +21,7 @@ from agentscope.event import (
     TextBlockEndEvent,
 )
 from agentscope.message import AssistantMsg, Msg, UserMsg
+from agentscope.model import ChatResponse
 from agentscope.realtime import (
     AudioFrame,
     ControlFrame,
@@ -883,6 +889,95 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                     "close",
                 ],
                 "replayed": [expected_replay, expected_replay],
+            },
+        )
+
+    async def test_completed_chat_reply_is_replayed_in_realtime(self) -> None:
+        """Switching modes preserves the complete preceding chat turn."""
+        story = "从前有一只小猫，它每天都在窗边等待朋友回来。"
+        chat_model = MockModel()
+        chat_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text=story)],
+                    is_last=True,
+                ),
+            ],
+        )
+        chat_agent = Agent(
+            name="Friday",
+            system_prompt="be brief",
+            model=chat_model,
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        await chat_agent.reply(
+            UserMsg(name="user", content="讲一个一百字的故事"),
+        )
+
+        realtime_model = HistoryScriptedModel([[]])
+        realtime_agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            realtime_model,
+            state=chat_agent.state,
+        )
+        async with realtime_agent:
+            replayed = [
+                message.model_dump(mode="json")
+                for message in realtime_model.replayed[0]
+            ]
+
+        fallback_model = ScriptedModel([[]])
+        fallback_agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            fallback_model,
+            state=chat_agent.state,
+        )
+        async with fallback_agent:
+            instructions = fallback_model.instructions
+
+        self.assertDictEqual(
+            {
+                "replayed": replayed,
+                "fallback_instructions": instructions,
+            },
+            {
+                "replayed": [
+                    message.model_dump(mode="json")
+                    for message in chat_agent.state.context
+                ],
+                "fallback_instructions": (
+                    "be brief\n\n## Conversation so far\n"
+                    "user: 讲一个一百字的故事\n"
+                    f"Friday: {story}"
+                ),
+            },
+        )
+
+    def test_history_fallback_keeps_only_complete_recent_messages(
+        self,
+    ) -> None:
+        """Text fallback drops old messages instead of slicing one in half."""
+        old_text = "旧" * 20_000
+        recent_text = "新" * 20_000
+        fallback = RealtimeAgent._format_history_fallback(
+            [
+                UserMsg(name="old", content=old_text),
+                UserMsg(name="recent", content=recent_text),
+            ],
+        )
+
+        self.assertDictEqual(
+            {
+                "fallback": fallback,
+                "contains_old_message": old_text in fallback,
+                "length": len(fallback),
+            },
+            {
+                "fallback": f"recent: {recent_text}",
+                "contains_old_message": False,
+                "length": len("recent: ") + len(recent_text),
             },
         )
 

@@ -3,6 +3,7 @@
 import json
 import os
 import secrets
+from weakref import WeakValueDictionary
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
@@ -385,7 +386,7 @@ def create_app(
         realtime_ice_servers,
     )
     app.state.realtime_connections = {}
-    app.state.realtime_offer_locks = {}
+    app.state.realtime_offer_locks = WeakValueDictionary()
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is

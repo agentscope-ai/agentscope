@@ -49,6 +49,7 @@ class WebRTCSession:
         self.session_id = session_id
         self._on_closed = on_closed
         self._task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
         self._close_lock = asyncio.Lock()
         self._closing = False
         self._lock_acquired = asyncio.Event()
@@ -61,6 +62,28 @@ class WebRTCSession:
             self._run(),
             name=f"webrtc-session-{self.session_id}",
         )
+
+    def request_close(self) -> None:
+        """Schedule one owned close task from a synchronous callback."""
+        if self._closing or self._close_task is not None:
+            return
+        self._close_task = asyncio.create_task(
+            self.close(),
+            name=f"webrtc-session-close-{self.session_id}",
+        )
+        self._close_task.add_done_callback(self._on_close_done)
+
+    def _on_close_done(self, task: asyncio.Task[None]) -> None:
+        """Retrieve an asynchronous close error instead of losing it."""
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Failed to close WebRTC session %r: %s",
+                self.session_id,
+                error,
+            )
 
     async def close(self) -> None:
         """End the transport and wait for persistence to finish."""
@@ -135,6 +158,8 @@ class WebRTCSession:
             )
             self.transport.send_error(str(exc))
         finally:
+            async with self._close_lock:
+                self._closing = True
             if self._lock_acquired.is_set():
                 try:
                     await self._persist_state()

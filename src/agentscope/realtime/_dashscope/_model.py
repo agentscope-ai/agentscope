@@ -18,7 +18,7 @@ from ..._logging import logger
 from ...credential import DashScopeCredential
 from ...message import TextBlock, ToolCallBlock, ToolResultBlock
 
-_REALTIME_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+_SESSION_READY_TIMEOUT_S = 15.0
 
 
 class DashScopeRealtimeModel(RealtimeModelBase):
@@ -111,7 +111,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
 
         credential: DashScopeCredential = self.credential  # type: ignore
         self._ws = await websockets.connect(
-            f"{_REALTIME_URL}?model={self.model}",
+            f"{credential.get_realtime_base_url()}?model={self.model}",
             additional_headers={
                 "Authorization": f"Bearer "
                 f"{credential.api_key.get_secret_value()}",
@@ -125,6 +125,20 @@ class DashScopeRealtimeModel(RealtimeModelBase):
             name="dashscope-rt",
         )
         await self._send(self._session_update(instructions, tools))
+        try:
+            await asyncio.wait_for(
+                self._session_ready.wait(),
+                timeout=_SESSION_READY_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError as exc:
+            await self._stop_connection()
+            raise ModelDisconnectedError(
+                "Timed out waiting for DashScope session setup.",
+            ) from exc
+        if self._session_setup_error is not None:
+            error = self._session_setup_error
+            await self._stop_connection()
+            raise error
 
     async def close(self) -> None:
         """Stop reading and close the WebSocket."""

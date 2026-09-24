@@ -1,0 +1,38 @@
+type: realtime_model
+name: qwen-audio-3.1-realtime-plus
+label: Qwen-Audio-3.1-Realtime-Plus
+status: active
+
+input_types:
+  - audio/pcm
+  - text/plain
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+supports_tools: true
+
+max_context_tokens: 262144
+max_audio_turns: 50
+max_audio_duration_s: 300
+
+parameter_overrides:
+  voice:
+    default: "longanqian_v3.1"
+    enum:
+      - "longanqian"
+      - "longanlingxin"
+      - "longanlingxi"
+      - "longanxiaoxin"
+      - "longanlufeng"
+      - "longanqian_v3.1"
+      - "longanhuan_v3.1"
+      - "longanlingxin_v3.1"
+      - "longanfengyue_v3.1"
+      - "xunanchuan_v3.1"
+      - "beth_v3.1"
+      - "betty_v3.1"
+      - "cally_v3.1"

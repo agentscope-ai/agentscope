@@ -350,10 +350,18 @@ class RealtimeAgent:
             for message in messages
             if (text := message.get_text_content())
         ]
-        history = "\n".join(lines)
-        if len(history) <= _HISTORY_MAX_TEXT_CHARS:
-            return history
-        return history[-_HISTORY_MAX_TEXT_CHARS:]
+        kept: list[str] = []
+        kept_chars = 0
+        for line in reversed(lines):
+            separator_chars = 1 if kept else 0
+            if (
+                kept_chars + separator_chars + len(line)
+                > _HISTORY_MAX_TEXT_CHARS
+            ):
+                break
+            kept.append(line)
+            kept_chars += separator_chars + len(line)
+        return "\n".join(reversed(kept))
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""

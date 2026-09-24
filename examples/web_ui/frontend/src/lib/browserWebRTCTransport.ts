@@ -38,6 +38,8 @@ type ServerFrame = AudioStartFrame | AudioDurationFrame | ClearAudioFrame | Erro
 
 const ICE_GATHERING_TIMEOUT_MS = 10_000;
 const CONNECTION_TIMEOUT_MS = 20_000;
+const PLAYOUT_FENCE_POLL_MS = 20;
+const PLAYOUT_FENCE_POLL_TIMEOUT_MS = 5_000;
 
 /** WebRTC microphone, model audio, and DataChannel control transport. */
 export class BrowserWebRTCTransport {
@@ -49,6 +51,8 @@ export class BrowserWebRTCTransport {
 	private audioElement: HTMLAudioElement | null = null;
 	private progressTimer: number | null = null;
 	private playoutFenceTimer: number | null = null;
+	private playoutFenceAudio: HTMLAudioElement | null = null;
+	private playoutFenceListener: (() => void) | null = null;
 	private itemId = '';
 	private itemTrackStartMs = 0;
 	private readonly durationsMs = new Map<string, number>();
@@ -148,10 +152,7 @@ export class BrowserWebRTCTransport {
 			window.clearInterval(this.progressTimer);
 			this.progressTimer = null;
 		}
-		if (this.playoutFenceTimer !== null) {
-			window.clearTimeout(this.playoutFenceTimer);
-			this.playoutFenceTimer = null;
-		}
+		this.clearPlayoutFence();
 		this.sendJson({ type: 'close' });
 		this.controlChannel?.close();
 		this.peerConnection?.close();
@@ -188,6 +189,7 @@ export class BrowserWebRTCTransport {
 
 	private attachRemoteTrack(track: MediaStreamTrack): void {
 		if (track.kind !== 'audio') return;
+		this.clearPlayoutFence();
 		this.remoteStream = new MediaStream([track]);
 		const audio = new Audio();
 		audio.autoplay = true;
@@ -236,23 +238,47 @@ export class BrowserWebRTCTransport {
 	private muteUntilTrackTime(trackTimeMs: number): void {
 		const audio = this.audioElement;
 		if (!audio || !Number.isFinite(trackTimeMs)) return;
-		if (this.playoutFenceTimer !== null) {
-			window.clearTimeout(this.playoutFenceTimer);
-		}
+		this.clearPlayoutFence();
 		audio.muted = true;
-		const release = () => {
+		const deadline = performance.now() + PLAYOUT_FENCE_POLL_TIMEOUT_MS;
+		const releaseIfCaughtUp = () => {
 			if (this.audioElement !== audio) {
+				this.clearPlayoutFence();
+				return true;
+			}
+			if (audio.currentTime * 1000 < trackTimeMs) return false;
+			audio.muted = false;
+			this.clearPlayoutFence();
+			return true;
+		};
+		const release = () => {
+			if (releaseIfCaughtUp()) return;
+			if (performance.now() >= deadline) {
 				this.playoutFenceTimer = null;
+				this.playoutFenceAudio = audio;
+				this.playoutFenceListener = () => {
+					releaseIfCaughtUp();
+				};
+				audio.addEventListener('playing', this.playoutFenceListener);
+				audio.addEventListener('timeupdate', this.playoutFenceListener);
 				return;
 			}
-			if (audio.currentTime * 1000 >= trackTimeMs) {
-				audio.muted = false;
-				this.playoutFenceTimer = null;
-				return;
-			}
-			this.playoutFenceTimer = window.setTimeout(release, 20);
+			this.playoutFenceTimer = window.setTimeout(release, PLAYOUT_FENCE_POLL_MS);
 		};
 		release();
+	}
+
+	private clearPlayoutFence(): void {
+		if (this.playoutFenceTimer !== null) {
+			window.clearTimeout(this.playoutFenceTimer);
+			this.playoutFenceTimer = null;
+		}
+		if (this.playoutFenceAudio && this.playoutFenceListener) {
+			this.playoutFenceAudio.removeEventListener('playing', this.playoutFenceListener);
+			this.playoutFenceAudio.removeEventListener('timeupdate', this.playoutFenceListener);
+		}
+		this.playoutFenceAudio = null;
+		this.playoutFenceListener = null;
 	}
 
 	private currentPosition(): { item_id: string; played_ms: number } {

@@ -86,8 +86,18 @@ class RealtimeModelBase(ABC):
         """
         self.model = model
         self.credential = credential
-        self.parameters = parameters or self.Parameters()
         self.card = model_card or self._find_card(model)
+        card_defaults = {
+            name: override["default"]
+            for name, override in self.card.parameter_overrides.items()
+            if "default" in override
+        }
+        explicit_parameters = (
+            parameters.model_dump(exclude_unset=True) if parameters else {}
+        )
+        self.parameters = self.Parameters(
+            **{**card_defaults, **explicit_parameters},
+        )
 
     @classmethod
     def _find_card(cls, model: str) -> RealtimeModelCard:

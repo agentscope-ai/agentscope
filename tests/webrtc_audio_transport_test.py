@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for browser WebRTC audio and control transport."""
+# pylint: disable=protected-access
 
 import asyncio
 import json
@@ -425,6 +426,40 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_audio_queue_drops_only_the_oldest_audio(self) -> None:
+        """A stalled consumer keeps recent audio and every control frame."""
+        self.transport._max_queued_audio_frames = 2
+        self.transport._enqueue_incoming(AudioFrame(pcm=b"first"))
+        self.transport._enqueue_incoming(AudioFrame(pcm=b"second"))
+        self.channel.emit_message(
+            {
+                "type": "control",
+                "control": "interrupt",
+                "data": {},
+            },
+        )
+        self.transport._enqueue_incoming(AudioFrame(pcm=b"third"))
+
+        incoming = self.transport.incoming()
+        frames = [await anext(incoming) for _ in range(3)]
+        await incoming.aclose()
+
+        self.assertListEqual(
+            [
+                (
+                    {"type": "audio", "pcm": frame.pcm}
+                    if isinstance(frame, AudioFrame)
+                    else frame.model_dump(mode="json")
+                )
+                for frame in frames
+            ],
+            [
+                {"type": "audio", "pcm": b"second"},
+                {"type": "interrupt", "data": {}},
+                {"type": "audio", "pcm": b"third"},
+            ],
+        )
+
     async def test_late_clear_ack_does_not_reset_the_next_item(self) -> None:
         """Ignore a timed-out clear acknowledgement from an old item."""
         pcm = np.full((2_400,), 2_000, dtype="<i2").tobytes()
@@ -532,6 +567,60 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
 
 class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     """Verify that a WebRTC run keeps the normal session contract."""
+
+    async def test_request_close_owns_and_deduplicates_the_task(self) -> None:
+        """Synchronous callbacks share one retained asynchronous close."""
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        storage = _FakeStorage()
+        message_bus = _FakeMessageBus()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> _FakeAgent:
+            raise AssertionError(
+                "An unstarted session must not load an agent.",
+            )
+
+        session = WebRTCSession(
+            connection_id="connection-1",
+            peer_connection=peer_connection,  # type: ignore[arg-type]
+            transport=transport,  # type: ignore[arg-type]
+            agent_factory=_create_agent,  # type: ignore[arg-type]
+            storage=storage,  # type: ignore[arg-type]
+            message_bus=message_bus,  # type: ignore[arg-type]
+            user_id="alice",
+            agent_id="agent-1",
+            session_id="session-1",
+            on_closed=closed_sessions.append,
+        )
+
+        session.request_close()
+        close_task = session._close_task
+        session.request_close()
+        if close_task is None:
+            self.fail("request_close() did not retain its task.")
+        await close_task
+
+        self.assertDictEqual(
+            {
+                "same_task": session._close_task is close_task,
+                "task_done": close_task.done(),
+                "transport_closed": transport.closed,
+                "peer_connection_closed": peer_connection.closed,
+                "storage_calls": storage.calls,
+                "message_bus_calls": message_bus.calls,
+                "closed_sessions": closed_sessions,
+            },
+            {
+                "same_task": True,
+                "task_done": True,
+                "transport_closed": True,
+                "peer_connection_closed": True,
+                "storage_calls": [],
+                "message_bus_calls": [],
+                "closed_sessions": [session],
+            },
+        )
 
     async def test_run_publishes_persists_and_closes(self) -> None:
         """Persist full agent state after publishing events to SSE."""

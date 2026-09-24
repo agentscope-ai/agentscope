@@ -31,6 +31,7 @@ _WEBRTC_SAMPLE_RATE = 48_000
 _FRAME_DURATION_MS = 20
 _FRAME_SAMPLES = _WEBRTC_SAMPLE_RATE * _FRAME_DURATION_MS // 1_000
 _FRAME_BYTES = _FRAME_SAMPLES * 2
+_MAX_INCOMING_AUDIO_MS = 10_000
 
 
 class WebRTCAudioTrack(MediaStreamTrack):
@@ -140,9 +141,13 @@ class WebRTCAudioTransport(TransportBase):
             source_sample_rate=output_sample_rate,
             on_item_started=self._on_item_started,
         )
-        self._incoming: asyncio.Queue[
-            TransportFrame | object
-        ] = asyncio.Queue()
+        self._incoming: deque[TransportFrame | object] = deque()
+        self._incoming_ready = asyncio.Event()
+        self._queued_audio_frames = 0
+        self._max_queued_audio_frames = max(
+            1,
+            _MAX_INCOMING_AUDIO_MS // _FRAME_DURATION_MS,
+        )
         self._input_task: asyncio.Task | None = None
         self._channel: RTCDataChannel | None = None
         self._position = PlayoutPosition(item_id="")
@@ -173,7 +178,8 @@ class WebRTCAudioTransport(TransportBase):
             if not waiter.done():
                 waiter.set_result(self.playout())
         self._clear_waiters.clear()
-        await self._incoming.put(_END)
+        self._incoming.append(_END)
+        self._incoming_ready.set()
 
     def set_input_track(self, track: MediaStreamTrack) -> None:
         """Attach the browser microphone track."""
@@ -191,7 +197,7 @@ class WebRTCAudioTransport(TransportBase):
         @channel.on("message")
         def _on_message(message: str | bytes) -> None:
             if isinstance(message, str):
-                asyncio.create_task(self._handle_json(message))
+                self._handle_json(message)
 
         @channel.on("close")
         def _on_close() -> None:
@@ -200,7 +206,12 @@ class WebRTCAudioTransport(TransportBase):
     async def incoming(self) -> AsyncIterator[TransportFrame]:
         """Yield decoded microphone PCM and control frames."""
         while True:
-            frame = await self._incoming.get()
+            while not self._incoming:
+                self._incoming_ready.clear()
+                await self._incoming_ready.wait()
+            frame = self._incoming.popleft()
+            if isinstance(frame, AudioFrame):
+                self._queued_audio_frames -= 1
             if frame is _END:
                 return
             yield frame  # type: ignore[misc]
@@ -294,14 +305,29 @@ class WebRTCAudioTransport(TransportBase):
                         .tobytes()
                     )
                     if pcm:
-                        await self._incoming.put(AudioFrame(pcm=pcm))
+                        self._enqueue_incoming(AudioFrame(pcm=pcm))
         except (MediaStreamError, asyncio.CancelledError):
             pass
         finally:
             if not self._closed:
                 self._notify_disconnect()
 
-    async def _handle_json(self, raw: str) -> None:
+    def _enqueue_incoming(self, frame: TransportFrame) -> None:
+        """Queue one frame, dropping only stale audio when audio is full."""
+        if self._closed:
+            return
+        if isinstance(frame, AudioFrame):
+            if self._queued_audio_frames >= self._max_queued_audio_frames:
+                for index, queued in enumerate(self._incoming):
+                    if isinstance(queued, AudioFrame):
+                        del self._incoming[index]
+                        self._queued_audio_frames -= 1
+                        break
+            self._queued_audio_frames += 1
+        self._incoming.append(frame)
+        self._incoming_ready.set()
+
+    def _handle_json(self, raw: str) -> None:
         """Handle one DataChannel control or playback report."""
         try:
             payload = json.loads(raw)
@@ -323,7 +349,7 @@ class WebRTCAudioTransport(TransportBase):
             if not isinstance(data, dict):
                 self.send_error("Control frame data must be an object.")
                 return
-            await self._incoming.put(ControlFrame(type=control, data=data))
+            self._enqueue_incoming(ControlFrame(type=control, data=data))
             return
 
         if frame_type == "playout":

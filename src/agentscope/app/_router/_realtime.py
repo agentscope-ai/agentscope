@@ -4,6 +4,7 @@
 import asyncio
 import uuid
 from typing import Any
+from weakref import WeakValueDictionary
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -93,7 +94,7 @@ async def create_realtime_offer(
 ) -> RealtimeOfferResponse:
     """Negotiate one browser peer connection for a persisted session."""
     connection_key = (user_id, session_id)
-    offer_locks: dict[
+    offer_locks: WeakValueDictionary[
         tuple[str, str],
         asyncio.Lock,
     ] = request.app.state.realtime_offer_locks
@@ -226,7 +227,7 @@ async def _create_realtime_offer(
             "failed",
             "closed",
         }:
-            asyncio.create_task(runner.close())
+            runner.request_close()
 
     try:
         await peer_connection.setRemoteDescription(
@@ -265,7 +266,7 @@ async def _create_realtime_offer(
             session_id=session_id,
             on_closed=_remove_closed,
         )
-        transport.on_disconnect = lambda: asyncio.create_task(runner.close())
+        transport.on_disconnect = runner.request_close
         connections[connection_key] = runner
         runner.start()
         if not await runner.wait_until_lock_acquired(
