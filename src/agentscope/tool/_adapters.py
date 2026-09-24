@@ -404,13 +404,15 @@ class MCPTool(ToolBase):
                         type(content.resource),
                     )
 
-            elif isinstance(content, mcp.types.ResourceContents):
+            elif isinstance(content, mcp.types.ResourceLink):
                 as_content.append(
                     DataBlock(
                         source=URLSource(
-                            media_type=content.mimeType,
+                            media_type=content.mimeType
+                            or "application/octet-stream",
                             url=content.uri,
                         ),
+                        name=content.name,
                     ),
                 )
 
