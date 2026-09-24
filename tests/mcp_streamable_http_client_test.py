@@ -6,6 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import FastMCP
 from mcp.types import (
+    BlobResourceContents,
     EmbeddedResource,
     ResourceLink,
     TextResourceContents,
@@ -63,6 +64,29 @@ async def tool_3() -> list:
     ]
 
 
+async def tool_4() -> list:
+    """
+    A test tool function that returns embedded binary resources
+    """
+    return [
+        EmbeddedResource(
+            type="resource",
+            resource=BlobResourceContents(
+                uri="file://chart.png",
+                mimeType="image/png",
+                blob="iVBORw0KGgoAAAANSUhEUg==",
+            ),
+        ),
+        EmbeddedResource(
+            type="resource",
+            resource=BlobResourceContents(
+                uri="file://payload",
+                blob="aGVsbG8=",
+            ),
+        ),
+    ]
+
+
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("StreamableHTTP", port=8002)
@@ -73,6 +97,9 @@ def setup_server() -> None:
     sse_server.tool(
         description="A test tool function with resource links.",
     )(tool_3)
+    sse_server.tool(
+        description="A test tool function with embedded binary resources.",
+    )(tool_4)
     sse_server.run(transport="streamable-http")
 
 
@@ -197,3 +224,26 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         self.assertEqual(str(notes.source.url), "https://example.com/notes")
         self.assertEqual(notes.source.media_type, "application/octet-stream")
         self.assertEqual(notes.name, "notes")
+
+    async def test_embedded_binary_resource(self) -> None:
+        """Test the embedded binary resource functionality."""
+        client = MCPClient(
+            name="test_embedded_binary_resource",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/mcp",
+            ),
+        )
+
+        my_tool_4 = await client.get_tool("tool_4")
+        res: ToolChunk = await my_tool_4()
+
+        self.assertEqual(len(res.content), 2)
+        chart, payload = res.content
+        self.assertEqual(chart.type, "data")
+        self.assertEqual(chart.source.data, "iVBORw0KGgoAAAANSUhEUg==")
+        self.assertEqual(chart.source.media_type, "image/png")
+        # Binary data without a mimeType is kept under a generic type
+        self.assertEqual(payload.source.data, "aGVsbG8=")
+        self.assertEqual(payload.source.media_type, "application/octet-stream")
