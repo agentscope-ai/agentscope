@@ -287,7 +287,7 @@ def _write_memory_file(
     """
     path = os.path.join(memory_dir, filename)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(
             "---\n"
             f"name: {filename}\n"
@@ -592,13 +592,16 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
         await agent.reply(UserMsg("user", "recall my project"))
+        a_path, b_path = (
+            os.path.join(memory_dir, _) for _ in ["a.md", "b.md"]
+        )
         self.assertListEqual(
             _hint_texts(agent),
             [
-                f"Memory (saved today): {memory_dir}/a.md:\n\n"
+                f"Memory (saved today): {a_path}:\n\n"
                 "---\nname: a.md\ndescription: Memory a\ntype: project\n"
                 "---\n\nFact a.\n\n\n---\n\n"
-                f"Memory (saved today): {memory_dir}/b.md:\n\n"
+                f"Memory (saved today): {b_path}:\n\n"
                 "---\nname: b.md\ndescription: Memory b\ntype: project\n"
                 "---\n\nFact b.\n",
             ],
