@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool import ExecResult, LocalBackend
@@ -142,6 +143,22 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.exit_code, -1)
         self.assertEqual(result.stderr, b"timed out")
+
+    async def test_unsupported_event_loop_raises_runtime_error(self) -> None:
+        """Opaque ``NotImplementedError`` becomes an actionable RuntimeError.
+
+        Windows ``SelectorEventLoop`` raises ``NotImplementedError`` from
+        ``create_subprocess_exec``; callers should get a clear message
+        instead of that bare exception.
+        """
+        with mock.patch(
+            "agentscope.tool._builtin._backend.asyncio.create_subprocess_exec",
+            side_effect=NotImplementedError("subprocess"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                await self.backend.exec_shell([sys.executable, "-c", "pass"])
+        self.assertIn("SelectorEventLoop", str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, NotImplementedError)
 
 
 class TestLocalBackendFileIO(IsolatedAsyncioTestCase):
