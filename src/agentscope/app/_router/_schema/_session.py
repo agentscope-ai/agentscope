@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from ....permission import PermissionMode
 from ...storage import (
     ChatModelConfig,
+    RealtimeModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionRecord,
@@ -86,6 +87,12 @@ class CreateSessionRequest(BaseModel):
         default=None,
         description="TTS model configuration. Can be set later via PATCH.",
     )
+    realtime_model_config: RealtimeModelConfig | None = Field(
+        default=None,
+        description=(
+            "Realtime voice model configuration. Can be set later via PATCH."
+        ),
+    )
     knowledge_config: SessionKnowledgeConfig | None = Field(
         default=None,
         description=(
@@ -126,6 +133,11 @@ class UpdateSessionRequest(BaseModel):
     tts_model_config: TTSModelConfig | None = Field(
         default=None,
         description="New TTS model configuration. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
+    realtime_model_config: RealtimeModelConfig | None = Field(
+        default=None,
+        description="New realtime voice model configuration. "
         "Pass null to clear; omit to leave unchanged.",
     )
     knowledge_config: SessionKnowledgeConfig | None = Field(

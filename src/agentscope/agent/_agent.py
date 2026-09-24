@@ -957,6 +957,17 @@ class Agent:
             # flag once resumed by the next pull
             if isinstance(item, ReplyEndEvent):
                 self._receive_reply_end = True
+                finished_reason = ReplyFinishedReason(item.finished_reason)
+                if finished_reason in (
+                    ReplyFinishedReason.COMPLETED,
+                    ReplyFinishedReason.EXCEED_MAX_ITERS,
+                ):
+                    context_msg = self._get_last_msg()
+                    if (
+                        context_msg is not None
+                        and context_msg.id == item.reply_id
+                    ):
+                        context_msg.finished_reason = finished_reason
             yield item
 
     async def _close_unfinished_tool_calls(

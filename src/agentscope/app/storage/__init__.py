@@ -35,12 +35,14 @@ from ._model import (
     TeamOrigin,
     SkillRecord,
     ChatModelConfig,
+    RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
     TeamData,
     TeamRecord,
     UserRecord,
     TeamMember,
+    ChatConfig,
     InviteConfig,
 )
 
@@ -76,6 +78,7 @@ __all__ = [
     "RedisStorage",
     "AsyncSQLAlchemyStorage",
     # The ORM models
+    "ChatConfig",
     "InviteConfig",
     "AgentData",
     "AgentRecord",
@@ -104,6 +107,7 @@ __all__ = [
     "TeamOrigin",
     "SkillRecord",
     "ChatModelConfig",
+    "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
     "TeamMember",

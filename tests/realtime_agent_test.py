@@ -3,18 +3,25 @@
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
 import asyncio
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
-from utils import AnyString
+from utils import AnyString, MockModel
 
-from agentscope.agent import RealtimeAgent, TurnAggregator
+from agentscope.agent import (
+    Agent,
+    InjectionConfig,
+    RealtimeAgent,
+    TurnAggregator,
+)
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
+    TextBlockEndEvent,
 )
-from agentscope.message import Msg
+from agentscope.message import AssistantMsg, Msg, UserMsg
+from agentscope.model import ChatResponse
 from agentscope.realtime import (
     AudioFrame,
     ControlFrame,
@@ -44,8 +51,10 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
+from agentscope.state import AgentState
 from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
 from agentscope.realtime import _events as me
+from agentscope.types import ReplyFinishedReason
 
 PCM_100MS = b"\x01\x00" * 2400
 
@@ -91,6 +100,7 @@ class ScriptedModel(RealtimeModelBase):
         self.calls: list[str] = []
         self.sessions = 0
         self.instructions = ""
+        self.supports_text_input = False
         self.connect_error: Exception | None = None
         self.push_text_error: Exception | None = None
         self._open = asyncio.Event()
@@ -169,14 +179,73 @@ class ScriptedModel(RealtimeModelBase):
         self.calls.append(f"truncate({item_id},{played_ms}ms,{played_text!r})")
 
 
+class HistoryScriptedModel(ScriptedModel):
+    """Records structured history supplied for each new model session."""
+
+    supports_history_replay = True
+
+    def __init__(self, scripts: list[list[Any]]) -> None:
+        super().__init__(scripts)
+        self.replayed: list[list[Msg]] = []
+
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Keep a deep copy so later context changes cannot affect it."""
+        replay = [message.model_copy(deep=True) for message in messages]
+        self.replayed.append(replay)
+        self.calls.append("replay_history")
+
+
+class QueueSessionModel(ScriptedModel):
+    """Keeps each session's event iterator alive on its own queue."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.event_queues: list[asyncio.Queue[me.ModelEvent | None]] = []
+        self.iterator_started: list[asyncio.Event] = []
+        self.iterator_finished: list[asyncio.Event] = []
+
+    async def connect(
+        self,
+        instructions: str,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Open a session with a distinct event queue."""
+        await super().connect(instructions, tools, **kwargs)
+        self.event_queues.append(asyncio.Queue())
+        self.iterator_started.append(asyncio.Event())
+        self.iterator_finished.append(asyncio.Event())
+
+    async def events(self) -> AsyncIterator[me.ModelEvent]:
+        """Yield only events belonging to the current session."""
+        index = self.sessions - 1
+        queue = self.event_queues[index]
+        self.iterator_started[index].set()
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    return
+                yield event
+        finally:
+            self.iterator_finished[index].set()
+
+
 class FakeTransport(TransportBase):
     """Emits ``frames`` chunks of silence, reports 320 ms played."""
 
     input_sample_rate = 16000
     output_sample_rate = 24000
 
-    def __init__(self, frames: int) -> None:
+    def __init__(
+        self,
+        frames: int,
+        played_ms: int = 320,
+        reported_item: str | None = None,
+    ) -> None:
         self.frames = frames
+        self.played_ms = played_ms
+        self.reported_item = reported_item
         self.item = ""
         self.cleared = 0
         self.started = 0
@@ -206,10 +275,14 @@ class FakeTransport(TransportBase):
         return self.playout()
 
     def playout(self) -> PlayoutPosition:
-        """Always 320 ms into the current item."""
+        """Report the configured position in the current item."""
         return PlayoutPosition(
-            item_id=self.item,
-            played_ms=320,
+            item_id=(
+                self.reported_item
+                if self.reported_item is not None
+                else self.item
+            ),
+            played_ms=self.played_ms,
             first_played_at=1.0,
         )
 
@@ -339,6 +412,225 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
 
+    async def test_barge_in_after_response_done_clears_playout(self) -> None:
+        """A completed response remains interruptible while its queued
+        audio is still playing."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3)
+        rebuilt = Msg(
+            id="r1",
+            role="assistant",
+            name="Friday",
+            content=[],
+        )
+        correction_events = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if getattr(event, "reply_id", None) == "r1":
+                    rebuilt.append_event(event)
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    correction_events.append(
+                        event.model_dump(exclude={"id", "created_at"}),
+                    )
+
+        self.assertEqual(
+            correction_events,
+            [
+                {
+                    "type": "TEXT_BLOCK_END",
+                    "metadata": {},
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "text": "从前有座山山里有座庙",
+                },
+            ],
+        )
+        self.assertEqual(rebuilt.get_text_content(), "从前有座山山里有座庙")
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,320ms,'从前有座山山里有座庙')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (
+                    message.role,
+                    message.get_text_content(),
+                    message.finished_reason,
+                )
+                for message in agent.state.context
+            ],
+            [
+                ("user", "讲个故事", None),
+                (
+                    "assistant",
+                    "从前有座山山里有座庙",
+                    ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    async def test_barge_in_after_completed_playout_keeps_reply(self) -> None:
+        """Speaking after all queued audio played does not truncate it."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3, played_ms=700)
+        correction_events = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    correction_events.append(event)
+
+        self.assertListEqual(correction_events, [])
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (
+                    message.role,
+                    message.get_text_content(),
+                    message.finished_reason,
+                )
+                for message in agent.state.context
+            ],
+            [
+                ("user", "讲个故事", None),
+                (
+                    "assistant",
+                    "从前有座山山里有座庙庙里有个老和尚",
+                    ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    async def test_zero_playout_keeps_no_transcript_prefix(self) -> None:
+        """A response interrupted before playback retains no first word."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3, played_ms=0)
+        corrections = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    corrections.append(
+                        event.model_dump(exclude={"id", "created_at"}),
+                    )
+
+        self.assertEqual(
+            corrections,
+            [
+                {
+                    "type": "TEXT_BLOCK_END",
+                    "metadata": {},
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "text": "",
+                },
+            ],
+        )
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,0ms,'')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("user", "讲个故事")],
+        )
+
+    async def test_mismatched_playout_still_cancels_active_reply(self) -> None:
+        """A stale previous item cannot make the current reply
+        uninterruptible."""
+        script = REPLY_R1 + [me.SpeechStartedEvent(item_id="u2")]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(
+            frames=3,
+            played_ms=700,
+            reported_item="previous-item",
+        )
+
+        async with agent:
+            summary = await self._collect(agent, transport)
+
+        self.assertListEqual(
+            summary,
+            [
+                ("user", "讲个故事"),
+                ("reply_end", "interrupted"),
+            ],
+        )
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,0ms,'')",
+                "cancel",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("user", "讲个故事")],
+        )
+
     async def test_interrupt_stops_active_reply(self) -> None:
         """``interrupt()`` cuts the reply in flight to what was heard."""
         model = ScriptedModel([REPLY_R1])
@@ -443,6 +735,307 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
             [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
+        )
+
+    async def test_structured_history_is_replayed_on_reconnect(self) -> None:
+        """A replay-capable provider gets roles, summary, and no fallback."""
+        state = AgentState(
+            summary="Earlier summary",
+            context=[
+                UserMsg(name="user", content="hello"),
+                AssistantMsg(
+                    name="Friday",
+                    content="hi",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="partial",
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="legacy complete",
+                    finished_at="2026-01-01T00:00:00",
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="unfinished",
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+        model = HistoryScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        agent = RealtimeAgent("Friday", "be brief", model, state=state)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            disconnected_before_reconnect = not agent._connected
+            await self._collect(agent, FakeTransport(frames=1))
+
+        expected_replay = [
+            {
+                "name": "summary",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Earlier summary",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "system",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hi",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": None,
+                "finished_reason": "completed",
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "legacy complete",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": "2026-01-01T00:00:00",
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+        ]
+        self.assertDictEqual(
+            {
+                "disconnected_before_reconnect": (
+                    disconnected_before_reconnect
+                ),
+                "instructions": model.instructions,
+                "sessions": model.sessions,
+                "calls": model.calls,
+                "replayed": [
+                    [message.model_dump(mode="json") for message in replay]
+                    for replay in model.replayed
+                ],
+            },
+            {
+                "disconnected_before_reconnect": True,
+                "instructions": "be brief",
+                "sessions": 2,
+                "calls": [
+                    "connect(session=1,td_off=False)",
+                    "replay_history",
+                    "connect(session=2,td_off=False)",
+                    "replay_history",
+                    "push_audio",
+                    "close",
+                ],
+                "replayed": [expected_replay, expected_replay],
+            },
+        )
+
+    async def test_completed_chat_reply_is_replayed_in_realtime(self) -> None:
+        """Switching modes preserves the complete preceding chat turn."""
+        story = "从前有一只小猫，它每天都在窗边等待朋友回来。"
+        chat_model = MockModel()
+        chat_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text=story)],
+                    is_last=True,
+                ),
+            ],
+        )
+        chat_agent = Agent(
+            name="Friday",
+            system_prompt="be brief",
+            model=chat_model,
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        await chat_agent.reply(
+            UserMsg(name="user", content="讲一个一百字的故事"),
+        )
+
+        realtime_model = HistoryScriptedModel([[]])
+        realtime_agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            realtime_model,
+            state=chat_agent.state,
+        )
+        async with realtime_agent:
+            replayed = [
+                message.model_dump(mode="json")
+                for message in realtime_model.replayed[0]
+            ]
+
+        fallback_model = ScriptedModel([[]])
+        fallback_agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            fallback_model,
+            state=chat_agent.state,
+        )
+        async with fallback_agent:
+            instructions = fallback_model.instructions
+
+        self.assertDictEqual(
+            {
+                "replayed": replayed,
+                "fallback_instructions": instructions,
+            },
+            {
+                "replayed": [
+                    message.model_dump(mode="json")
+                    for message in chat_agent.state.context
+                ],
+                "fallback_instructions": (
+                    "be brief\n\n## Conversation so far\n"
+                    "user: 讲一个一百字的故事\n"
+                    f"Friday: {story}"
+                ),
+            },
+        )
+
+    def test_history_fallback_keeps_only_complete_recent_messages(
+        self,
+    ) -> None:
+        """Text fallback drops old messages instead of slicing one in half."""
+        old_text = "旧" * 20_000
+        recent_text = "新" * 20_000
+        fallback = RealtimeAgent._format_history_fallback(
+            [
+                UserMsg(name="old", content=old_text),
+                UserMsg(name="recent", content=recent_text),
+            ],
+        )
+
+        self.assertDictEqual(
+            {
+                "fallback": fallback,
+                "contains_old_message": old_text in fallback,
+                "length": len(fallback),
+            },
+            {
+                "fallback": f"recent: {recent_text}",
+                "contains_old_message": False,
+                "length": len("recent: ") + len(recent_text),
+            },
+        )
+
+    async def test_old_downlink_cannot_disconnect_new_session(self) -> None:
+        """Late completion of an old iterator leaves reconnection active."""
+        model = QueueSessionModel()
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await model.iterator_started[0].wait()
+            old_queue = model.event_queues[0]
+            agent._mark_disconnected()  # pylint: disable=protected-access
+            await agent.connect()
+            old_queue.put_nowait(None)
+            await model.iterator_finished[0].wait()
+            await model.iterator_started[1].wait()
+
+            active_state = {
+                "connected": agent._connected,  # pylint: disable=W0212
+                "connection_generation": agent._connection_generation,
+                "sessions": model.sessions,
+                "iterator_started": [
+                    event.is_set() for event in model.iterator_started
+                ],
+                "iterator_finished": [
+                    event.is_set() for event in model.iterator_finished
+                ],
+            }
+
+        self.assertDictEqual(
+            {
+                "active": active_state,
+                "closed": {
+                    "connected": agent._connected,
+                    "iterator_finished": [
+                        event.is_set() for event in model.iterator_finished
+                    ],
+                    "calls": model.calls,
+                },
+            },
+            {
+                "active": {
+                    "connected": True,
+                    "connection_generation": 2,
+                    "sessions": 2,
+                    "iterator_started": [True, True],
+                    "iterator_finished": [True, False],
+                },
+                "closed": {
+                    "connected": False,
+                    "iterator_finished": [True, True],
+                    "calls": [
+                        "connect(session=1,td_off=False)",
+                        "connect(session=2,td_off=False)",
+                        "close",
+                    ],
+                },
+            },
         )
 
     async def test_provider_timeout_reconnects_on_text(self) -> None:
@@ -1289,8 +1882,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },
-                    "finished_at": None,
-                    "finished_reason": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": "completed",
                     "structured_output": None,
                     "error": None,
                 },

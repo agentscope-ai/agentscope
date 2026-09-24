@@ -1,5 +1,6 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
 import {
+	AudioLines,
 	Paperclip,
 	Loader2,
 	Square,
@@ -34,6 +35,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
 /**
@@ -77,13 +79,19 @@ interface TextInputProps {
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
 	/**
 	 * The current reply lifecycle phase from ``useMessages``. Drives the
-	 * send / stop button in one shot:
+	 * primary action button when realtime voice is inactive:
 	 *   - ``idle`` — Send (enabled when there is content to send)
 	 *   - ``streaming`` — Stop (click to interrupt)
 	 *   - ``interrupting`` — Stop (disabled while the interrupt is in flight)
 	 */
 	phase?: ReplyPhase;
 	onInterrupt?: () => void;
+	/** Current browser realtime voice connection state. */
+	voiceState?: RealtimeConnectionState;
+	/** Starts or stops the browser realtime voice connection. */
+	onVoiceToggle?: () => void;
+	/** Prevents voice start when no realtime model is configured. */
+	voiceDisabled?: boolean;
 	/**
 	 * Content rendered directly above the input pill, inside the outer
 	 * wrapper that {@link className} styles (e.g. the working directory
@@ -139,6 +147,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			fileProcessor,
 			phase = 'idle',
 			onInterrupt,
+			voiceState = 'idle',
+			onVoiceToggle,
+			voiceDisabled = false,
 			headerSlot,
 		},
 		ref,
@@ -249,15 +260,31 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		/**
-		 * Send / stop button configuration derived from the current reply
-		 * phase. One struct = one branch of rendering, so the JSX stays flat.
+		 * Primary action configuration derived from realtime voice, reply,
+		 * and text input state. One struct keeps the JSX branch-free.
 		 */
-		const sendButton: {
+		const actionButton: {
 			icon: LucideIcon;
 			tooltip: string;
 			disabled: boolean;
 			onClick: (() => void) | undefined;
 		} = (() => {
+			if (voiceState === 'connecting') {
+				return {
+					icon: Loader2,
+					tooltip: t('realtime.connecting'),
+					disabled: true,
+					onClick: onVoiceToggle,
+				};
+			}
+			if (voiceState === 'active') {
+				return {
+					icon: Square,
+					tooltip: t('realtime.stop'),
+					disabled: false,
+					onClick: onVoiceToggle,
+				};
+			}
 			if (phase === 'streaming') {
 				return {
 					icon: Square,
@@ -274,11 +301,19 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onInterrupt,
 				};
 			}
+			if (value.trim()) {
+				return {
+					icon: ArrowUp,
+					tooltip: t('textInput.send'),
+					disabled: disabled || hasProcessing,
+					onClick: handleSend,
+				};
+			}
 			return {
-				icon: ArrowUp,
-				tooltip: t('textInput.send'),
-				disabled: disabled || !value.trim() || hasProcessing,
-				onClick: handleSend,
+				icon: AudioLines,
+				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
+				disabled: voiceDisabled,
+				onClick: onVoiceToggle,
 			};
 		})();
 
@@ -502,20 +537,30 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipContent>
 							</Tooltip>
 
-							{/* Send / Stop button — driven by ``sendButton`` config */}
+							{/* Voice / Send / Stop — driven by ``actionButton`` config */}
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<Button
 										type="button"
-										onClick={sendButton.onClick}
-										disabled={sendButton.disabled}
+										variant={voiceState === 'active' ? 'default' : 'ghost'}
+										onClick={actionButton.onClick}
+										disabled={actionButton.disabled}
 										size="icon-lg"
-										className="shrink-0 rounded-full"
+										className={cn(
+											'relative shrink-0 rounded-full transition-colors',
+											voiceState === 'active' &&
+												'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
+										)}
 									>
-										<sendButton.icon className="h-4 w-4" />
+										<actionButton.icon
+											className={cn(
+												'h-4 w-4',
+												voiceState === 'connecting' && 'animate-spin',
+											)}
+										/>
 									</Button>
 								</TooltipTrigger>
-								<TooltipContent>{sendButton.tooltip}</TooltipContent>
+								<TooltipContent>{actionButton.tooltip}</TooltipContent>
 							</Tooltip>
 
 							{/* Hidden file input */}
