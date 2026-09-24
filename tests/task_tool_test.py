@@ -438,6 +438,61 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(tasks_dump, expected)
 
+    async def test_update_subject_to_empty_string(self) -> None:
+        """Test clearing a task subject with an empty string."""
+        # Create a task
+        await self.task_create(
+            subject="Original Subject",
+            description="Test description",
+            _agent_state=self.agent_state,
+        )
+        task_id = self.agent_state.tasks_context.tasks[0].id
+
+        # Clear the subject
+        result = await self.task_update(
+            task_id=task_id,
+            subject="",
+            _agent_state=self.agent_state,
+        )
+
+        # Check result using model_dump
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task_id}) subject.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        # Check task using model_dump
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "",
+                "description": "Test description",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task_id,
+                "owner": None,
+                "blocks": [],
+                "blocked_by": [],
+            },
+        ]
+        self.assertEqual(tasks_dump, expected)
+
     async def test_update_description(self) -> None:
         """Test updating task description."""
         # Create a task

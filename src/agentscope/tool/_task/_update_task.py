@@ -171,7 +171,7 @@ Set up task dependencies:
 
         updated_fields = []
 
-        if subject:
+        if subject is not None:
             updated_fields.append("subject")
             _agent_state.tasks_context.tasks[index].subject = subject
 
