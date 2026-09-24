@@ -221,18 +221,18 @@ AgentScope 中的一个 chat model 不只是一个类——要在 `Agent` 中可
 
    示例(`claude-sonnet-4-6.yaml`)：
    ```yaml
-   name： claude-sonnet-4-6
-   label： Claude Sonnet 4.6
-   status： active
-   input_types：
+   name: claude-sonnet-4-6
+   label: Claude Sonnet 4.6
+   status: active
+   input_types:
      - text/plain
      - image/jpeg
-   output_types：
+   output_types:
      - text/plain
-   context_size： 1000000
-   output_size： 65536
-   parameter_overrides：
-     max_tokens： {"maximum"： 65536}
+   context_size: 1000000
+   output_size: 65536
+   parameter_overrides:
+     max_tokens: {"maximum": 65536}
    ```
 
 4. **Formatter 类**——位于 `agentscope.formatter`，均继承 `FormatterBase`。需要两种变体，因为部分 API 对多 agent 对话与单用户对话的处理方式不同：
