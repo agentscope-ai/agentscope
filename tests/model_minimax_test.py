@@ -1,46 +1,36 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Unit tests for MiniMaxChatModel with mocked API responses.
-
-MiniMax's M-series chat models run through MiniMax's officially
-recommended Anthropic-compatible API, so the tests follow the same
-shape as :mod:`tests.model_anthropic_test`:
-
-- Non-stream mode returns a single ChatResponse with is_last=True.
-- Stream mode yields delta ChatResponses (is_last=False) followed by a
-  final ChatResponse (is_last=True) with the full accumulated content.
-- ``_format_tools`` converts OpenAI-style schemas into Anthropic's flat
-  format and maps modes to Anthropic's type-based tool_choice.
-- Model card listing returns the expected MiniMax models.
-"""
+"""Unit tests for the MiniMax Anthropic-compatible model."""
 
 import json
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import MiniMaxChatModel
 from agentscope.credential import MiniMaxCredential
+from agentscope.message import (
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
+from agentscope.model import AnthropicChatModel, MiniMaxChatModel
 from agentscope.tool import ToolChoice
 
 A = AnyString()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_model(stream: bool = False) -> Any:
+def _make_model(stream: bool = False) -> MiniMaxChatModel:
+    """Build a MiniMax model for tests."""
     return MiniMaxChatModel(
         credential=MiniMaxCredential(api_key="test"),
         model="MiniMax-M3",
         stream=stream,
-        context_size=512_000,
     )
 
 
@@ -50,54 +40,60 @@ def _mock_completion(
     thinking: Any = None,
     response_id: str = "msg-1",
 ) -> MagicMock:
-    """Build a mock non-streaming Anthropic-compatible Message response."""
+    """Build a mock Anthropic-compatible response."""
     blocks = []
     if thinking:
-        b = MagicMock()
-        b.type = "thinking"
-        b.thinking = thinking
-        b.signature = "sig123"
-        blocks.append(b)
+        block = MagicMock()
+        block.type = "thinking"
+        block.thinking = thinking
+        block.signature = "sig123"
+        blocks.append(block)
     if text:
-        b = MagicMock()
-        b.type = "text"
-        b.text = text
-        blocks.append(b)
+        block = MagicMock()
+        block.type = "text"
+        block.text = text
+        blocks.append(block)
     if tool_calls:
-        for tc in tool_calls:
-            b = MagicMock()
-            b.type = "tool_use"
-            b.id = tc["id"]
-            b.name = tc["name"]
-            b.input = tc["input"]
-            blocks.append(b)
+        for tool_call in tool_calls:
+            block = MagicMock()
+            block.type = "tool_use"
+            block.id = tool_call["id"]
+            block.name = tool_call["name"]
+            block.input = tool_call["input"]
+            blocks.append(block)
 
-    resp = MagicMock()
-    resp.id = response_id
-    resp.content = blocks
-    resp.usage = MagicMock()
-    resp.usage.input_tokens = 10
-    resp.usage.output_tokens = 5
-    resp.usage.cache_creation_input_tokens = 0
-    resp.usage.cache_read_input_tokens = 0
-    return resp
+    response = MagicMock()
+    response.id = response_id
+    response.content = blocks
+    response.usage = MagicMock()
+    response.usage.input_tokens = 10
+    response.usage.output_tokens = 5
+    response.usage.cache_creation_input_tokens = 0
+    response.usage.cache_read_input_tokens = 0
+    return response
 
 
 def _make_event(event_type: str, **kwargs: Any) -> MagicMock:
     """Build a mock Anthropic-compatible streaming event."""
     event = MagicMock()
     event.type = event_type
-    for key, val in kwargs.items():
-        setattr(event, key, val)
+    for key, value in kwargs.items():
+        setattr(event, key, value)
     return event
 
 
 class _MockAsyncEventStream:
-    """Mock async iterator over Anthropic-compatible events."""
+    """Mock an Anthropic asynchronous event stream."""
 
     def __init__(self, events: list) -> None:
         self._events = events
         self._index = 0
+
+    async def __aenter__(self) -> "_MockAsyncEventStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
 
     def __aiter__(self) -> "_MockAsyncEventStream":
         return self
@@ -110,40 +106,34 @@ class _MockAsyncEventStream:
         return event
 
 
-# ---------------------------------------------------------------------------
-# Non-streaming tests
-# ---------------------------------------------------------------------------
-
-
 class TestMiniMaxNonStream(IsolatedAsyncioTestCase):
-    """Tests for MiniMaxChatModel in non-streaming mode."""
+    """Tests for non-streaming MiniMax responses."""
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
-        """Non-stream text response returns a single ChatResponse."""
-        mock_create = AsyncMock(
+    async def test_text_response(self) -> None:
+        """A text response is converted to a TextBlock."""
+        self.mock_client.messages.create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
-        mock_client_cls.return_value.messages.create = mock_create
 
         result = await self.model([])
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "msg-1")
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_tool_call_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
-        """Non-stream tool call response creates ToolCallBlocks."""
-        mock_create = AsyncMock(
+    async def test_tool_call_response(self) -> None:
+        """A tool-use response is converted to a ToolCallBlock."""
+        self.mock_client.messages.create = AsyncMock(
             return_value=_mock_completion(
                 tool_calls=[
                     {
@@ -154,7 +144,6 @@ class TestMiniMaxNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.messages.create = mock_create
 
         result = await self.model([])
 
@@ -163,28 +152,24 @@ class TestMiniMaxNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="toolu_1",
                         name="get_weather",
                         input=json.dumps({"city": "Shanghai"}),
+                        created_at=A,
                     ),
                 ],
             ),
         )
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_thinking_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
-        """Non-stream response with thinking creates ThinkingBlock."""
-        mock_create = AsyncMock(
+    async def test_thinking_response(self) -> None:
+        """A signed thinking block is preserved in the response."""
+        self.mock_client.messages.create = AsyncMock(
             return_value=_mock_completion(
                 thinking="Step by step...",
                 text="42",
             ),
         )
-        mock_client_cls.return_value.messages.create = mock_create
 
         result = await self.model([])
 
@@ -195,256 +180,289 @@ class TestMiniMaxNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Step by step...",
                         signature="sig123",
                     ),
-                    TextBlock.model_construct(id=A, text="42"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="42",
+                    ),
                 ],
             ),
         )
 
+    async def test_adaptive_thinking_request(self) -> None:
+        """Enabling thinking sends MiniMax's adaptive configuration."""
+        self.model.parameters.thinking_enable = True
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.messages.create = mock_create
+
+        await self.model([])
+
+        self.assertEqual(
+            mock_create.call_args.kwargs,
+            {
+                "model": "MiniMax-M3",
+                "max_tokens": 8192,
+                "stream": False,
+                "thinking": {"type": "adaptive"},
+                "messages": [],
+            },
+        )
+
+    async def test_complete_tool_turn_is_replayed(self) -> None:
+        """Thinking and tool-use blocks are replayed in the next request."""
+        self.model.parameters.thinking_enable = True
+        mock_create = AsyncMock(
+            side_effect=[
+                _mock_completion(
+                    thinking="I should check the weather.",
+                    tool_calls=[
+                        {
+                            "id": "toolu_1",
+                            "name": "get_weather",
+                            "input": {"city": "Shanghai"},
+                        },
+                    ],
+                ),
+                _mock_completion(text="It is sunny.", response_id="msg-2"),
+            ],
+        )
+        self.mock_client.messages.create = mock_create
+        user_msg = Msg(
+            name="user",
+            role="user",
+            content=[TextBlock(text="How is the weather?")],
+        )
+
+        first_response = await self.model([user_msg])
+        assistant_msg = Msg(
+            name="assistant",
+            role="assistant",
+            content=first_response.content,
+        )
+        tool_result_msg = Msg(
+            name="tool",
+            role="assistant",
+            content=[
+                ToolResultBlock(
+                    id="toolu_1",
+                    name="get_weather",
+                    output="Sunny, 25 C",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        await self.model([user_msg, assistant_msg, tool_result_msg])
+
+        self.assertEqual(
+            mock_create.await_args_list[1].kwargs["messages"],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "How is the weather?"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "I should check the weather.",
+                            "signature": "sig123",
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": "get_weather",
+                            "input": {"city": "Shanghai"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": [
+                                {"type": "text", "text": "Sunny, 25 C"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        )
+
 
 class TestMiniMaxModelParameters(unittest.TestCase):
-    """Tests for MiniMaxChatModel.Parameters."""
+    """Tests for MiniMax model configuration."""
 
-    def test_default_thinking_disabled(self) -> None:
-        """Extended thinking is off by default to match other chat models."""
+    def test_parameter_schema(self) -> None:
+        """Only parameters supported by MiniMax are exposed."""
         params = MiniMaxChatModel.Parameters()
-        self.assertIs(params.thinking_enable, False)
-        self.assertIsNone(params.thinking_budget)
 
-    def test_thinking_budget_must_be_positive(self) -> None:
-        """thinking_budget must be > 0 when provided."""
-        from pydantic import ValidationError
+        self.assertEqual(
+            params.model_dump(),
+            {"max_tokens": None, "thinking_enable": False},
+        )
 
-        with self.assertRaises(ValidationError):
-            MiniMaxChatModel.Parameters(thinking_budget=0)
+    def test_inherits_anthropic_model(self) -> None:
+        """MiniMax reuses the Anthropic model implementation."""
+        self.assertIsInstance(_make_model(), AnthropicChatModel)
 
-    def test_default_base_url_is_anthropic_compatible(self) -> None:
-        """Default base URL points to MiniMax's Anthropic-compatible
-        endpoint."""
-        cred = MiniMaxCredential(api_key="test")
-        self.assertEqual(cred.base_url, "https://api.minimax.io/anthropic")
+    def test_default_context_size(self) -> None:
+        """MiniMax-M3 defaults to its documented 1M context window."""
+        self.assertEqual(_make_model().context_size, 1_000_000)
 
-
-# ---------------------------------------------------------------------------
-# Streaming tests
-# ---------------------------------------------------------------------------
+    def test_default_base_url(self) -> None:
+        """The credential uses MiniMax's Anthropic-compatible endpoint."""
+        credential = MiniMaxCredential(api_key="test")
+        self.assertEqual(
+            credential.base_url,
+            "https://api.minimax.io/anthropic",
+        )
 
 
 class TestMiniMaxStream(IsolatedAsyncioTestCase):
-    """Tests for MiniMaxChatModel in streaming mode."""
+    """Tests for streaming MiniMax responses."""
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
-        """Stream text yields n deltas + 1 final with full content."""
-        msg_usage = MagicMock()
-        msg_usage.input_tokens = 10
-        msg_usage.output_tokens = 0
-        msg_usage.cache_creation_input_tokens = 0
-        msg_usage.cache_read_input_tokens = 0
-
+    async def test_stream_text(self) -> None:
+        """Text deltas are accumulated into the final response."""
         message = MagicMock()
         message.id = "msg-1"
-        message.usage = msg_usage
-
-        delta1 = MagicMock()
-        delta1.type = "text_delta"
-        delta1.text = "Hi"
-
-        delta2 = MagicMock()
-        delta2.type = "text_delta"
-        delta2.text = " there"
-
-        msg_delta_usage = MagicMock()
-        msg_delta_usage.output_tokens = 2
-
-        events = [
-            _make_event("message_start", message=message),
-            _make_event("content_block_delta", index=0, delta=delta1),
-            _make_event("content_block_delta", index=0, delta=delta2),
-            _make_event("message_delta", usage=msg_delta_usage),
-        ]
-        mock_create = AsyncMock(
-            return_value=_MockAsyncEventStream(events),
-        )
-        mock_client_cls.return_value.messages.create = mock_create
-
-        gen = await self.model([])
-        responses = [r async for r in gen]
-
-        self.assertListEqual(
-            [(r.is_last, r.content) for r in responses],
-            [
-                (False, [TextBlock.model_construct(id=A, text="Hi")]),
-                (False, [TextBlock.model_construct(id=A, text=" there")]),
-                (True, [TextBlock.model_construct(id=A, text="Hi there")]),
-            ],
-        )
-        self.assertEqual(responses[-1].id, "msg-1")
-
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_thinking_and_text(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
-        """Stream thinking + text yields deltas then final with signature."""
-        msg_usage = MagicMock()
-        msg_usage.input_tokens = 10
-        msg_usage.output_tokens = 0
-        msg_usage.cache_creation_input_tokens = 0
-        msg_usage.cache_read_input_tokens = 0
-
-        message = MagicMock()
-        message.id = "msg-2"
-        message.usage = msg_usage
-
-        thinking_delta = MagicMock()
-        thinking_delta.type = "thinking_delta"
-        thinking_delta.thinking = "Let me think"
-
-        sig_delta = MagicMock()
-        sig_delta.type = "signature_delta"
-        sig_delta.signature = "sig_abc"
-
-        text_delta = MagicMock()
-        text_delta.type = "text_delta"
-        text_delta.text = "Result"
-
-        events = [
-            _make_event("message_start", message=message),
-            _make_event("content_block_delta", index=0, delta=thinking_delta),
-            _make_event("content_block_delta", index=0, delta=sig_delta),
-            _make_event("content_block_delta", index=1, delta=text_delta),
-        ]
-        mock_create = AsyncMock(
-            return_value=_MockAsyncEventStream(events),
-        )
-        mock_client_cls.return_value.messages.create = mock_create
-
-        gen = await self.model([])
-        responses = [r async for r in gen]
-
-        self.assertListEqual(
-            [(r.is_last, r.content) for r in responses],
-            [
-                (
-                    False,
-                    [
-                        ThinkingBlock.model_construct(
-                            id=A,
-                            thinking="Let me think",
-                        ),
-                    ],
-                ),
-                (False, [TextBlock.model_construct(id=A, text="Result")]),
-                (
-                    True,
-                    [
-                        ThinkingBlock.model_construct(
-                            id=A,
-                            thinking="Let me think",
-                            signature="sig_abc",
-                        ),
-                        TextBlock.model_construct(id=A, text="Result"),
-                    ],
-                ),
-            ],
-        )
-
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_tool_call(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
-        """Stream tool call yields partial deltas then full accumulated
-        input."""
-        msg_usage = MagicMock()
-        msg_usage.input_tokens = 10
-        msg_usage.output_tokens = 0
-        msg_usage.cache_creation_input_tokens = 0
-        msg_usage.cache_read_input_tokens = 0
-
-        message = MagicMock()
-        message.id = "msg-3"
-        message.usage = msg_usage
-
-        tool_block = MagicMock()
-        tool_block.type = "tool_use"
-        tool_block.id = "toolu_1"
-        tool_block.name = "search"
-
-        json_delta1 = MagicMock()
-        json_delta1.type = "input_json_delta"
-        json_delta1.partial_json = '{"q":'
-
-        json_delta2 = MagicMock()
-        json_delta2.type = "input_json_delta"
-        json_delta2.partial_json = '"test"}'
-
+        message.usage = MagicMock()
+        message.usage.input_tokens = 10
+        message.usage.output_tokens = 0
+        message.usage.cache_creation_input_tokens = 0
+        message.usage.cache_read_input_tokens = 0
+        text_start = MagicMock()
+        text_start.type = "text"
+        delta_one = MagicMock(type="text_delta", text="Hi")
+        delta_two = MagicMock(type="text_delta", text=" there")
         events = [
             _make_event("message_start", message=message),
             _make_event(
                 "content_block_start",
                 index=0,
-                content_block=tool_block,
+                content_block=text_start,
             ),
-            _make_event("content_block_delta", index=0, delta=json_delta1),
-            _make_event("content_block_delta", index=0, delta=json_delta2),
+            _make_event("content_block_delta", index=0, delta=delta_one),
+            _make_event("content_block_delta", index=0, delta=delta_two),
         ]
-        mock_create = AsyncMock(
+        self.mock_client.messages.create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
 
-        gen = await self.model([])
-        responses = [r async for r in gen]
+        responses = [response async for response in await self.model([])]
 
-        self.assertListEqual(
-            [(r.is_last, r.content) for r in responses],
-            [
-                (
-                    False,
-                    [
-                        ToolCallBlock(
-                            id="toolu_1",
-                            name="search",
-                            input='{"q":',
-                        ),
-                    ],
-                ),
-                (
-                    False,
-                    [
-                        ToolCallBlock(
-                            id="toolu_1",
-                            name="search",
-                            input='"test"}',
-                        ),
-                    ],
-                ),
-                (
-                    True,
-                    [
-                        ToolCallBlock(
-                            id="toolu_1",
-                            name="search",
-                            input='{"q":"test"}',
-                        ),
-                    ],
-                ),
-            ],
+        self.assertEqual(
+            (responses[-1].is_last, responses[-1].content),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Hi there",
+                    ),
+                ],
+            ),
+        )
+
+    async def test_stream_thinking_and_tool_call(self) -> None:
+        """Streaming preserves signed thinking before the tool call."""
+        message = MagicMock()
+        message.id = "msg-2"
+        message.usage = MagicMock()
+        message.usage.input_tokens = 10
+        message.usage.output_tokens = 0
+        message.usage.cache_creation_input_tokens = 0
+        message.usage.cache_read_input_tokens = 0
+        thinking_start = MagicMock(type="thinking")
+        thinking_delta = MagicMock(
+            type="thinking_delta",
+            thinking="I should search.",
+        )
+        signature_delta = MagicMock(
+            type="signature_delta",
+            signature="sig_abc",
+        )
+        tool_start = MagicMock()
+        tool_start.type = "tool_use"
+        tool_start.id = "toolu_1"
+        tool_start.name = "search"
+        json_delta = MagicMock(
+            type="input_json_delta",
+            partial_json='{"q":"test"}',
+        )
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=thinking_start,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=0,
+                delta=thinking_delta,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=0,
+                delta=signature_delta,
+            ),
+            _make_event(
+                "content_block_start",
+                index=1,
+                content_block=tool_start,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=1,
+                delta=json_delta,
+            ),
+        ]
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        responses = [response async for response in await self.model([])]
+
+        self.assertEqual(
+            (responses[-1].is_last, responses[-1].content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking="I should search.",
+                        signature="sig_abc",
+                    ),
+                    ToolCallBlock.model_construct(
+                        id="toolu_1",
+                        name="search",
+                        input='{"q":"test"}',
+                        created_at=A,
+                    ),
+                ],
+            ),
         )
 
 
-# ---------------------------------------------------------------------------
-# _format_tools tests
-# ---------------------------------------------------------------------------
-
-_FT_TOOLS = [
+_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -471,7 +489,7 @@ _FT_TOOLS = [
     },
 ]
 
-_FT_TOOLS_ANTHROPIC = [
+_ANTHROPIC_TOOLS = [
     {
         "name": "get_weather",
         "description": "Get the weather",
@@ -494,101 +512,94 @@ _FT_TOOLS_ANTHROPIC = [
 
 
 class TestMiniMaxFormatTools(unittest.TestCase):
-    """Tests for MiniMaxChatModel._format_tools."""
+    """Tests for MiniMax tool formatting."""
 
     def setUp(self) -> None:
-        """Set up model instance."""
         self.model = _make_model()
 
-    def test_auto_mode(self) -> None:
-        """Auto mode returns converted tools and type=auto."""
-        fmt_tools, fmt_choice = self.model._format_tools(
-            _FT_TOOLS,
-            ToolChoice(mode="auto"),
-        )
-        self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
-        self.assertEqual(fmt_choice, {"type": "auto"})
+    def test_literal_modes(self) -> None:
+        """Literal tool modes map to the Anthropic format."""
+        expected = {
+            "auto": {"type": "auto"},
+            "none": {"type": "none"},
+            "required": {"type": "any"},
+        }
+        for mode, expected_choice in expected.items():
+            with self.subTest(mode=mode):
+                tools, choice = self.model._format_tools(
+                    _TOOLS,
+                    ToolChoice(mode=mode),
+                )
+                self.assertEqual(
+                    (tools, choice),
+                    (_ANTHROPIC_TOOLS, expected_choice),
+                )
 
-    def test_none_mode(self) -> None:
-        """None mode returns converted tools and type=none."""
-        fmt_tools, fmt_choice = self.model._format_tools(
-            _FT_TOOLS,
-            ToolChoice(mode="none"),
-        )
-        self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
-        self.assertEqual(fmt_choice, {"type": "none"})
-
-    def test_required_mode(self) -> None:
-        """Required mode maps to type=any."""
-        fmt_tools, fmt_choice = self.model._format_tools(
-            _FT_TOOLS,
-            ToolChoice(mode="required"),
-        )
-        self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
-        self.assertEqual(fmt_choice, {"type": "any"})
-
-    def test_str_mode_force_call(self) -> None:
-        """A specific tool name returns a type=tool dict."""
-        fmt_tools, fmt_choice = self.model._format_tools(
-            _FT_TOOLS,
+    def test_specific_tool(self) -> None:
+        """A named mode forces that tool."""
+        tools, choice = self.model._format_tools(
+            _TOOLS,
             ToolChoice(mode="get_weather"),
         )
-        self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
         self.assertEqual(
-            fmt_choice,
-            {"type": "tool", "name": "get_weather"},
+            (tools, choice),
+            (_ANTHROPIC_TOOLS, {"type": "tool", "name": "get_weather"}),
         )
 
-    def test_tools_filtered(self) -> None:
-        """When tool_choice.tools is set, only those tools are included."""
-        fmt_tools, fmt_choice = self.model._format_tools(
-            _FT_TOOLS,
+    def test_tool_filter(self) -> None:
+        """The allowed tool list filters schemas."""
+        tools, choice = self.model._format_tools(
+            _TOOLS,
             ToolChoice(mode="auto", tools=["get_weather"]),
         )
-        self.assertEqual(len(fmt_tools), 1)
-        self.assertEqual(fmt_tools[0]["name"], "get_weather")
-        self.assertEqual(fmt_choice, {"type": "auto"})
+        self.assertEqual(
+            (tools, choice),
+            ([_ANTHROPIC_TOOLS[0]], {"type": "auto"}),
+        )
 
     def test_no_tool_choice(self) -> None:
-        """Without tool_choice, returns converted tools and None."""
-        fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
-        self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
-        self.assertIsNone(fmt_choice)
-
-
-# ---------------------------------------------------------------------------
-# Model card listing tests
-# ---------------------------------------------------------------------------
+        """Missing tool choice leaves selection unspecified."""
+        tools, choice = self.model._format_tools(_TOOLS, None)
+        self.assertEqual((tools, choice), (_ANTHROPIC_TOOLS, None))
 
 
 class TestMiniMaxModelListing(unittest.TestCase):
     """Tests for MiniMax model card discovery."""
 
-    def test_list_models_returns_minimax_cards(self) -> None:
-        """list_models() returns the three MiniMax model cards."""
+    def test_model_cards(self) -> None:
+        """The expected MiniMax model cards are available."""
         cards = MiniMaxChatModel.list_models()
-        names = {c.name for c in cards}
-        self.assertIn("MiniMax-M3", names)
-        self.assertIn("MiniMax-M2.7", names)
-        self.assertIn("MiniMax-M2.7-highspeed", names)
+        cards_by_name = {card.name: card for card in cards}
 
-    def test_m3_is_active(self) -> None:
-        """The M3 model card is marked active."""
-        cards = MiniMaxChatModel.list_models()
-        m3 = next(c for c in cards if c.name == "MiniMax-M3")
-        self.assertEqual(m3.status, "active")
-
-    def test_m3_supports_image_input(self) -> None:
-        """The M3 model card advertises image/* input support."""
-        cards = MiniMaxChatModel.list_models()
-        m3 = next(c for c in cards if c.name == "MiniMax-M3")
-        image_inputs = [t for t in m3.input_types if t.startswith("image/")]
-        self.assertGreater(len(image_inputs), 0)
+        self.assertEqual(
+            set(cards_by_name),
+            {"MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"},
+        )
+        self.assertEqual(cards_by_name["MiniMax-M3"].status, "active")
+        self.assertEqual(cards_by_name["MiniMax-M3"].context_size, 1_000_000)
+        self.assertTrue(
+            any(
+                media_type.startswith("image/")
+                for media_type in cards_by_name["MiniMax-M3"].input_types
+            ),
+        )
+        self.assertTrue(
+            any(
+                media_type.startswith("video/")
+                for media_type in cards_by_name["MiniMax-M3"].input_types
+            ),
+        )
+        for model_name in ("MiniMax-M2.7", "MiniMax-M2.7-highspeed"):
+            self.assertFalse(
+                any(
+                    media_type.startswith(("image/", "video/"))
+                    for media_type in cards_by_name[model_name].input_types
+                ),
+            )
 
     def test_credential_lists_models(self) -> None:
-        """MiniMaxCredential.list_models delegates to the chat model class."""
-        cards = MiniMaxCredential.list_models()
-        names = {c.name for c in cards}
+        """The credential delegates model listing to MiniMaxChatModel."""
+        names = {card.name for card in MiniMaxCredential.list_models()}
         self.assertIn("MiniMax-M3", names)
 
 

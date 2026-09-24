@@ -184,6 +184,35 @@ class AnthropicChatModel(ChatModelBase):
             return self.parameters.thinking_mode
         return "enabled" if self.parameters.thinking_enable else None
 
+    def _build_thinking_config(
+        self,
+        max_tokens: int,
+    ) -> tuple[dict[str, Any] | None, int]:
+        """Build the provider-specific thinking configuration."""
+        mode = self._thinking_mode()
+        if mode is None:
+            return None, max_tokens
+
+        thinking: dict[str, Any] = {"type": mode}
+        if mode == "enabled":
+            # Anthropic requires max_tokens > budget_tokens strictly.
+            budget = self.parameters.thinking_budget or (max_tokens // 2)
+            if budget >= max_tokens:
+                max_tokens = budget + 1024
+            thinking["budget_tokens"] = budget
+
+        # ``display`` is invalid alongside ``type: "disabled"``.
+        if mode != "disabled" and self.parameters.thinking_display:
+            thinking["display"] = self.parameters.thinking_display
+
+        return thinking, max_tokens
+
+    def _build_output_config(self) -> dict[str, Any] | None:
+        """Build the provider-specific output configuration."""
+        if self.parameters.reasoning_effort:
+            return {"effort": self.parameters.reasoning_effort}
+        return None
+
     async def _call_api(
         self,
         model_name: str,
@@ -226,27 +255,17 @@ class AnthropicChatModel(ChatModelBase):
             **generate_kwargs,
         }
 
-        mode = self._thinking_mode()
-        if mode is not None and "thinking" not in kwargs:
-            thinking: dict[str, Any] = {"type": mode}
-            if mode == "enabled":
-                # Anthropic requires max_tokens > budget_tokens strictly.
-                budget = self.parameters.thinking_budget or (max_tokens // 2)
-                if budget >= max_tokens:
-                    # Auto-expand max_tokens to satisfy the inequality.
-                    max_tokens = budget + 1024
-                    kwargs["max_tokens"] = max_tokens
-                thinking["budget_tokens"] = budget
-            # ``display`` is invalid alongside ``type: "disabled"``.
-            if mode != "disabled" and self.parameters.thinking_display:
-                thinking["display"] = self.parameters.thinking_display
-            kwargs["thinking"] = thinking
+        if "thinking" not in kwargs:
+            thinking, max_tokens = self._build_thinking_config(max_tokens)
+            if thinking is not None:
+                kwargs["thinking"] = thinking
+                kwargs["max_tokens"] = max_tokens
 
         # Effort travels inside ``output_config``, not as a top-level field.
-        if self.parameters.reasoning_effort and "output_config" not in kwargs:
-            kwargs["output_config"] = {
-                "effort": self.parameters.reasoning_effort,
-            }
+        if "output_config" not in kwargs:
+            output_config = self._build_output_config()
+            if output_config is not None:
+                kwargs["output_config"] = output_config
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
         if fmt_tools:

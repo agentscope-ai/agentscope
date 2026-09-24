@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Example of MiniMax chat model multimodal (vision) calls using
+"""Example of MiniMax chat model image and video calls using
 DataBlock.
 
-The MiniMax M-series chat models accept image input on the
-Anthropic-compatible endpoint, identical to Anthropic Claude.
+MiniMax-M3 accepts image and video input on its Anthropic-compatible
+endpoint.
 """
 
 import asyncio
@@ -28,6 +28,12 @@ TEST_IMAGE_URL = (
     "-files/zh-CN/20241022/emyrja/dog_and_girl.jpeg"
 )
 
+# A publicly accessible test video from the MiniMax API documentation
+TEST_VIDEO_URL = (
+    "https://filecdn.minimax.chat/public/"
+    "ee8c1648-21f1-41b7-8397-65022d22ffe5.mp4"
+)
+
 
 def _build_model() -> MiniMaxChatModel:
     """Build and return a MiniMaxChatModel instance."""
@@ -39,7 +45,6 @@ def _build_model() -> MiniMaxChatModel:
         stream=True,
         parameters=MiniMaxChatModel.Parameters(
             thinking_enable=True,
-            thinking_budget=1024,
         ),
     )
 
@@ -145,7 +150,36 @@ async def example_image_base64() -> None:
     await stream_and_collect(await model(msgs))
 
 
+async def example_video_url() -> None:
+    """Call MiniMax-M3 with a public video URL."""
+    model = _build_model()
+
+    video_block = DataBlock(
+        source=URLSource(
+            url=TEST_VIDEO_URL,
+            media_type="video/mp4",
+        ),
+    )
+
+    msgs = [
+        Msg(
+            name="user",
+            content=[
+                TextBlock(
+                    text="What is happening in this video?",
+                ),
+                video_block,
+            ],
+            role="user",
+        ),
+    ]
+
+    print("=== Multimodal Call (Video URL) ===")
+    await stream_and_collect(await model(msgs))
+
+
 if __name__ == "__main__":
     asyncio.run(example_image_url())
     asyncio.run(example_image_local_path())
     asyncio.run(example_image_base64())
+    asyncio.run(example_video_url())

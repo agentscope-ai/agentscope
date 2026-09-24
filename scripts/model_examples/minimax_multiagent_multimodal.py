@@ -34,7 +34,6 @@ async def example_multiagent_image_url() -> None:
         stream=True,
         parameters=MiniMaxChatModel.Parameters(
             thinking_enable=True,
-            thinking_budget=1024,
         ),
         formatter=formatter,
     )
