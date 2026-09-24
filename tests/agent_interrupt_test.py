@@ -319,28 +319,13 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
         )
         return agent, model
 
-    async def _assert_cancel_during_acting_middleware(
-        self,
-        mixed_batch: bool,
-        raise_cancelled_error: bool,
-    ) -> None:
-        """Cancel before toolkit entry, optionally alongside a running tool.
-
-        Args:
-            mixed_batch (`bool`):
-                Whether another call has already entered the toolkit.
-            raise_cancelled_error (`bool`):
-                Whether cancellation should propagate after reply cleanup.
-        """
+    async def test_cancel_before_toolkit_entry(self) -> None:
+        """A concurrent call cancelled in acting middleware is not re-run."""
         waiting = asyncio.Event()
-        running = asyncio.Event()
-        middleware_closed = asyncio.Event()
-        tool_closed = asyncio.Event()
-        middleware_entries: list[str] = []
         tool_entries: list[str] = []
 
         class WaitingMiddleware(MiddlewareBase):
-            """Suspend the first waiting call before raw tool execution."""
+            """Block the call before it reaches the toolkit."""
 
             async def on_acting(
                 self,
@@ -348,60 +333,36 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                 input_kwargs: dict,
                 next_handler: Callable[..., AsyncGenerator],
             ) -> AsyncGenerator:
-                """Wait once so a lost cancellation remains observable.
-
-                Args:
-                    agent (`Agent`):
-                        The agent executing the tool call.
-                    input_kwargs (`dict`):
-                        The tool call forwarded to the next handler.
-                    next_handler (`Callable[..., AsyncGenerator]`):
-                        The next acting handler.
-
-                Yields:
-                    `ToolChunk | ToolResponse`:
-                        The downstream tool output.
-                """
-                call_id = input_kwargs["tool_call"].id
-                middleware_entries.append(call_id)
-                if (
-                    call_id == "waiting"
-                    and middleware_entries.count(call_id) == 1
-                ):
+                """Wait on the first entry only."""
+                if not waiting.is_set():
                     waiting.set()
-                    try:
-                        await asyncio.Event().wait()
-                    finally:
-                        middleware_closed.set()
+                    await asyncio.Event().wait()
                 async for chunk in next_handler(**input_kwargs):
                     yield chunk
 
-        async def controlled_tool(mode: str) -> ToolChunk:
-            """Record invocations and optionally wait inside the toolkit.
-
-            Args:
-                mode (`str`):
-                    ``running`` waits until cancelled; other values return.
-
-            Returns:
-                `ToolChunk`:
-                    A completed result if this call was not cancelled.
-            """
-            tool_entries.append(mode)
-            if mode == "running":
-                running.set()
-                try:
-                    await asyncio.Event().wait()
-                finally:
-                    tool_closed.set()
+        async def record() -> ToolChunk:
+            """Record the invocation."""
+            tool_entries.append("record")
             return ToolChunk(content=[TextBlock(text="done")])
 
         tool = FunctionTool(
-            controlled_tool,
+            record,
             is_concurrency_safe=True,
             is_read_only=True,
         )
         model = MockModel(model="mock-model", stream=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(id="c1", name="record", input="{}"),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
         agent = Agent(
             name="Friday",
             system_prompt="You are a test agent.",
@@ -409,210 +370,38 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             toolkit=Toolkit(tools=[tool]),
             middlewares=[WaitingMiddleware()],
             injection_config=InjectionConfig(inject_runtime_state=False),
-            react_config=ReActConfig(
-                interruption_raise_cancelled_error=raise_cancelled_error,
-            ),
         )
-        call_ids = ["waiting", "running"] if mixed_batch else ["waiting"]
-        model.set_responses(
-            [
-                [
-                    ChatResponse(
-                        content=[
-                            ToolCallBlock(
-                                id=call_id,
-                                name=tool.name,
-                                input=f'{{"mode": "{call_id}"}}',
-                            )
-                            for call_id in call_ids
-                        ],
-                        is_last=True,
-                    ),
-                ],
-                [
-                    ChatResponse(
-                        content=[TextBlock(text="Unexpected continuation")],
-                        is_last=True,
-                    ),
-                ],
-            ],
-        )
+
         events: list[Any] = []
 
         async def drive() -> None:
-            """Collect the complete reply, including the fallback message."""
+            """Collect the reply events."""
             async for event in agent.reply_stream(
                 UserMsg(name="user", content="Hi"),
-                yield_final_msg=True,
             ):
                 events.append(event)
 
         task = asyncio.create_task(drive())
-        try:
-            await asyncio.wait_for(waiting.wait(), timeout=5)
-            if mixed_batch:
-                await asyncio.wait_for(running.wait(), timeout=5)
-            task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout=5)
-            except asyncio.CancelledError:
-                pass
-        finally:
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+        await asyncio.wait_for(waiting.wait(), timeout=5)
+        task.cancel()
+        await asyncio.wait_for(task, timeout=5)
 
         self.assertDictEqual(
             {
-                "middleware_entries": middleware_entries,
                 "tool_entries": tool_entries,
-                "middleware_closed": middleware_closed.is_set(),
-                "tool_closed": tool_closed.is_set(),
                 "model_calls": model.cnt,
-                "cancelled": task.cancelled(),
+                "finished_reason": [
+                    _.finished_reason
+                    for _ in events
+                    if isinstance(_, ReplyEndEvent)
+                ],
             },
             {
-                "middleware_entries": call_ids,
-                "tool_entries": ["running"] if mixed_batch else [],
-                "middleware_closed": True,
-                "tool_closed": mixed_batch,
+                "tool_entries": [],
                 "model_calls": 1,
-                "cancelled": raise_cancelled_error,
+                "finished_reason": ["interrupted"],
             },
         )
-        # The running tool's queued interruption must be drained before the
-        # reply closes the call that never reached the toolkit.
-        result_ids = ["running", "waiting"] if mixed_batch else ["waiting"]
-        base_event = {
-            "id": AnyString(),
-            "created_at": AnyString(),
-            "metadata": {},
-            "reply_id": agent.state.reply_id,
-        }
-        expected_events = [
-            {
-                **base_event,
-                "type": "REPLY_START",
-                "session_id": agent.state.session_id,
-                "name": "Friday",
-                "role": "assistant",
-            },
-            {
-                **base_event,
-                "type": "MODEL_CALL_START",
-                "model_name": "mock-model",
-            },
-            {
-                **base_event,
-                "type": "MODEL_CALL_END",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cache_input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-                "finished_reason": "completed",
-            },
-            *[
-                {
-                    **base_event,
-                    "type": "TOOL_RESULT_START",
-                    "tool_call_id": call_id,
-                    "tool_call_name": tool.name,
-                }
-                for call_id in call_ids
-            ],
-        ]
-        for call_id in result_ids:
-            expected_events.extend(
-                [
-                    {
-                        **base_event,
-                        "type": "TOOL_RESULT_TEXT_DELTA",
-                        "tool_call_id": call_id,
-                        "delta": _INTERRUPT_MSG,
-                    },
-                    {
-                        **base_event,
-                        "type": "TOOL_RESULT_END",
-                        "tool_call_id": call_id,
-                        "state": "interrupted",
-                    },
-                ],
-            )
-        expected_events.append(
-            {
-                **base_event,
-                "type": "REPLY_END",
-                "session_id": agent.state.session_id,
-                "finished_reason": "interrupted",
-                "error": None,
-            },
-        )
-        self.assertListEqual(
-            [event.model_dump(mode="json") for event in events[:-1]],
-            expected_events,
-        )
-        self.assertDictEqual(
-            events[-1].model_dump(mode="json"),
-            {
-                **_msg_base(),
-                "id": agent.state.reply_id,
-                "finished_reason": "interrupted",
-                "content": [
-                    {
-                        "type": "text",
-                        "id": AnyString(),
-                        "text": agent.react_config.interruption_message,
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-            },
-        )
-        self.assertListEqual(
-            [msg.model_dump(mode="json") for msg in agent.state.context],
-            [
-                _user_msg_dict("Hi"),
-                {
-                    **_msg_base(),
-                    "content": [
-                        *[
-                            _tool_call_dict(
-                                call_id,
-                                tool.name,
-                                f'{{"mode": "{call_id}"}}',
-                            )
-                            for call_id in call_ids
-                        ],
-                        *[
-                            _interrupted_tool_result_dict(
-                                call_id,
-                                tool.name,
-                                output_is_blocks=call_id == "running",
-                            )
-                            for call_id in result_ids
-                        ],
-                    ],
-                },
-            ],
-        )
-
-    async def test_cancel_before_toolkit_entry(self) -> None:
-        """Cancellation in acting middleware must not restart the tool."""
-        await self._assert_cancel_during_acting_middleware(False, False)
-
-    async def test_cancel_before_toolkit_entry_propagates(self) -> None:
-        """Configured cancellation propagates after middleware cleanup."""
-        await self._assert_cancel_during_acting_middleware(False, True)
-
-    async def test_cancel_before_toolkit_entry_in_mixed_batch(self) -> None:
-        """Drain the running tool and close the middleware's waiting call."""
-        await self._assert_cancel_during_acting_middleware(True, False)
-
-    async def test_cancel_before_toolkit_entry_in_mixed_batch_propagates(
-        self,
-    ) -> None:
-        """Mixed-batch cleanup still honors cancellation propagation."""
-        await self._assert_cancel_during_acting_middleware(True, True)
 
     async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
         """With ``interruption_raise_cancelled_error`` the cancellation

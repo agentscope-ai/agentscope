@@ -2204,10 +2204,7 @@ class Agent:
         tasks are cancelled explicitly (to avoid orphan tasks), any events
         already queued by the workers (including interruption chunks emitted
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
-        flushed to the caller before re-raising ``CancelledError``. The
-        reply loop then closes any unfinished tool calls, including those
-        cancelled in middleware before reaching ``toolkit.call_tool`` and
-        therefore unable to emit their own interruption events.
+        flushed to the caller before re-raising ``CancelledError``.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -2292,9 +2289,8 @@ class Agent:
                 if event is sentinel:
                     continue
                 yield event
-            # Middleware may be cancelled before the toolkit can emit an
-            # interrupted result. Always propagate cancellation so the reply
-            # loop closes unfinished calls instead of executing them again.
+            # Calls cancelled before reaching the toolkit emit no interrupted
+            # result, so propagate to let the reply loop close them
             raise
 
         # All tasks are done at this point; collect and re-raise exceptions.
