@@ -87,6 +87,8 @@ class _FakeEmbedding(EmbeddingModelBase):
     the middleware only checks presence and passes it through to ReMe.
     """
 
+    dimensions = 1024
+
     def __init__(self) -> None:
         """Skip the heavy base init; nothing here is exercised."""
 
@@ -472,61 +474,92 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         self.assertEqual(mw._session_id_of(_Agent()), "sess-xyz")
         self.assertIsNone(mw._session_id_of(object()))
 
-    def test_embedding_model_enables_vector_store(self) -> None:
-        """An ``embedding_model`` turns ReMe's vector store on at build."""
+    def test_config_is_agentscope_owned_and_minimal(self) -> None:
+        """Building the app uses only AgentScope's minimal ReMe config."""
         captured: dict = {}
-
-        def _fake_resolve(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"_ok": True}
-
         fake_reme = types.ModuleType("reme")
-        fake_reme.ReMe = lambda **kw: ("app", kw)  # type: ignore[attr-defined]
-        fake_cfg = types.ModuleType("reme.config")
-        setattr(fake_cfg, "resolve_app_config", _fake_resolve)
+        fake_reme.ReMe = (  # type: ignore[attr-defined]
+            lambda **kw: captured.update(kw)
+        )
+
+        mw = ReMeMiddleware(workspace_dir="/real/ws")
+        with mock.patch.dict(sys.modules, {"reme": fake_reme}):
+            mw._build_app()
+
+        self.assertEqual(captured["workspace_dir"], "/real/ws")
+        self.assertFalse(captured["enable_logo"])
+        self.assertFalse(captured["log_to_console"])
+        self.assertEqual(
+            set(captured["jobs"]),
+            {
+                "index_update_loop",
+                "search",
+                "reindex",
+                "auto_memory",
+                "dream_cron",
+                "auto_dream",
+                "node_search",
+                "daily_list",
+                "frontmatter_update",
+                "frontmatter_read",
+                "move",
+                "read",
+                "write",
+                "daily_write",
+                "edit",
+            },
+        )
+        self.assertNotIn("resource_watch_loop", captured["jobs"])
+        self.assertNotIn("digest_watch_loop", captured["jobs"])
+        self.assertNotIn("daily_paper", captured["jobs"])
+        self.assertEqual(
+            captured["jobs"]["dream_cron"]["steps"],
+            captured["jobs"]["auto_dream"]["steps"],
+        )
+        self.assertEqual(
+            captured["jobs"]["index_update_loop"]["watch_dirs"],
+            ["daily_dir", "digest_dir"],
+        )
+        self.assertEqual(
+            captured["jobs"]["reindex"]["watch_dirs"],
+            ["daily_dir", "digest_dir"],
+        )
+        components = captured["components"]
+        self.assertEqual(set(components["file_catalog"]), {"dream"})
+        self.assertNotIn("as_embedding", components)
+        self.assertNotIn("embedding_store", components)
+        self.assertEqual(
+            components["file_store"]["default"]["embedding_store"],
+            "",
+        )
+
+    def test_embedding_model_enables_internal_vector_store(self) -> None:
+        """An embedding model extends the minimal config with vector search."""
+        captured: dict = {}
+        fake_reme = types.ModuleType("reme")
+        fake_reme.ReMe = (  # type: ignore[attr-defined]
+            lambda **kw: captured.update(kw)
+        )
 
         mw = ReMeMiddleware(
             workspace_dir="/real/ws",
-            config="mycfg",
             parameters=ReMeMiddleware.Parameters(
                 embedding_model=_FakeEmbedding(),
             ),
         )
-        with mock.patch.dict(
-            sys.modules,
-            {"reme": fake_reme, "reme.config": fake_cfg},
-        ):
+        with mock.patch.dict(sys.modules, {"reme": fake_reme}):
             mw._build_app()
 
+        components = captured["components"]
         self.assertEqual(
-            captured["components"],
-            {"file_store": {"default": {"embedding_store": "default"}}},
+            components["file_store"]["default"]["embedding_store"],
+            "default",
         )
-        self.assertEqual(captured["workspace_dir"], "/real/ws")
-        self.assertEqual(captured["config"], "mycfg")
-        self.assertFalse(captured["enable_logo"])
-
-    def test_no_embedding_model_keeps_keyword_only(self) -> None:
-        """Without an ``embedding_model`` the vector store stays off."""
-        captured: dict = {}
-
-        def _fake_resolve(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"_ok": True}
-
-        fake_reme = types.ModuleType("reme")
-        fake_reme.ReMe = lambda **kw: ("app", kw)  # type: ignore[attr-defined]
-        fake_cfg = types.ModuleType("reme.config")
-        setattr(fake_cfg, "resolve_app_config", _fake_resolve)
-
-        mw = ReMeMiddleware(workspace_dir="/real/ws")
-        with mock.patch.dict(
-            sys.modules,
-            {"reme": fake_reme, "reme.config": fake_cfg},
-        ):
-            mw._build_app()
-
-        self.assertNotIn("components", captured)
+        self.assertEqual(
+            components["as_embedding"]["default"]["dimensions"],
+            1024,
+        )
+        self.assertIn("embedding_store", components)
 
 
 # ----------------------------------------------------------------------
@@ -918,7 +951,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """Without a chat_model the middleware injects nothing.
 
         The model is fixed at construction and never taken from the agent,
-        so ReMe falls back to the LLM in its own config/credentials.
+        so the AgentScope ReMe config supplies the environment-backed LLM.
         """
         fake = _FakeReMeApp()
         mw = _mw(

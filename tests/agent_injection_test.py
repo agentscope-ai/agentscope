@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the runtime state injection of the agent, i.e. the
 ``Agent._inject_runtime_state`` method."""
+# pylint: disable=too-many-public-methods
 from datetime import datetime, tzinfo
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -9,8 +10,13 @@ from pydantic import ValidationError
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
-from agentscope.message import HintBlock
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.message import (
+    HintBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from agentscope.state import Task
 from agentscope.tool import Toolkit
 
@@ -53,6 +59,7 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         )
         self.agent.state.reply_id = "reply-1"
         self.agent.state.cur_iter = 0
+        self._batch_index = 0
 
         # Freeze the wall-clock time for all the test cases
         patcher = patch("agentscope.agent._agent.datetime", _FrozenDatetime)
@@ -81,6 +88,26 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
                         f"<timezone>{timezone}</timezone>"
                     ),
                 ),
+            ],
+        )
+
+    def _add_tool_batch(
+        self,
+        *calls: tuple[str, str, ToolResultState],
+    ) -> None:
+        """Append one reasoning-acting iteration to the context, where each
+        call is a ``(tool name, arguments, result state)`` triple."""
+        self._batch_index += 1
+        ids = [f"tc-{self._batch_index}-{_}" for _ in range(len(calls))]
+        self.agent.state.append_context(
+            self.agent.name,
+            [
+                ToolCallBlock(id=id_, name=name, input=arguments)
+                for id_, (name, arguments, _) in zip(ids, calls)
+            ]
+            + [
+                ToolResultBlock(id=id_, name=name, output="boom", state=state)
+                for id_, (name, _, state) in zip(ids, calls)
             ],
         )
 
@@ -335,6 +362,80 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             [evt.model_dump() for evt in events],
         )
 
+    async def test_compression_tool_is_recommended_between_tasks(self) -> None:
+        """A long context at a task boundary recommends the agent tool."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<context-length>Your current context contains 700 tokens. "
+            "When reaching 800 tokens, your context will be compressed. "
+            "No task is in progress, so judge by yourself whether the "
+            "context should be compressed now by calling `CompressContext`."
+            "</context-length>\n"
+            "</system-reminder>"
+        )
+        self.agent.context_config = ContextConfig(
+            trigger_ratio=0.8,
+            reserve_ratio=0.1,
+            compression_tool_enabled=True,
+        )
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        self.model.count_tokens = AsyncMock(return_value=700)
+
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_compression_tool_is_not_recommended_within_a_task(
+        self,
+    ) -> None:
+        """An in-progress task isn't a boundary to compress at."""
+        self.agent.context_config = ContextConfig(
+            trigger_ratio=0.8,
+            reserve_ratio=0.1,
+            compression_tool_enabled=True,
+        )
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        self.agent.state.tasks_context.tasks = [
+            Task(
+                subject="Write the report",
+                description="Draft the quarterly report.",
+                metadata={},
+                state="in_progress",
+            ),
+        ]
+        self.model.count_tokens = AsyncMock(return_value=700)
+
+        events = await self._run_injection()
+
+        self.assertNotIn("CompressContext", events[0].hint)
+        self.assertIn(
+            "<context-length>Your current context contains 700 tokens. "
+            "When reaching 800 tokens, your context will be compressed."
+            "</context-length>",
+            events[0].hint,
+        )
+
+    async def test_disabled_compression_tool_keeps_awareness_boundary(
+        self,
+    ) -> None:
+        """The regular context reminder retains its strict boundary."""
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        # Exactly max(0, 0.8 - 0.2) * 1000; the original behavior requires
+        # token usage to be strictly greater than this boundary.
+        self.model.count_tokens = AsyncMock(return_value=600)
+
+        events = await self._run_injection()
+
+        self.assertEqual([], events)
+
     async def test_template_without_placeholder_is_rejected(self) -> None:
         """A template that would silently drop the injected fields should be
         rejected at the config level."""
@@ -359,6 +460,114 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             ],
             [evt.model_dump() for evt in events],
         )
+
+    async def test_repeated_tool_errors_trigger_injection(self) -> None:
+        """The same tool call failing in consecutive iterations should trigger
+        a tool-error injection."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<tool-error>The last 3 calls to 'read' with the same arguments "
+            "all failed. Stop retrying the same call as-is, check the error "
+            "message and try a different approach.</tool-error>\n"
+            "</system-reminder>"
+        )
+        self.agent.state.cur_iter = 1
+        # A recent injection so the time branch is not triggered.
+        self._add_injection("2026-07-01T12:00:00")
+
+        # Two failures are still below the default threshold of three.
+        self._add_tool_batch(
+            ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+        )
+        self._add_tool_batch(
+            ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+        )
+        self.assertEqual([], await self._run_injection())
+
+        self._add_tool_batch(
+            ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+        )
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in await self._run_injection()],
+        )
+
+    async def test_arguments_are_normalized(self) -> None:
+        """Semantically equal arguments should count as the same call, while
+        different ones break the streak."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<tool-error>The last 3 calls to 'read' with the same arguments "
+            "all failed. Stop retrying the same call as-is, check the error "
+            "message and try a different approach.</tool-error>\n"
+            "</system-reminder>"
+        )
+        self.agent.state.cur_iter = 1
+        self._add_injection("2026-07-01T12:00:00")
+
+        # Different arguments, which the streak below shouldn't count in.
+        self._add_tool_batch(
+            ("read", '{"path": "other.py"}', ToolResultState.ERROR),
+        )
+        # The same arguments in a different key order and spacing.
+        self._add_tool_batch(
+            ("read", '{"a": 1, "b": 2}', ToolResultState.ERROR),
+        )
+        self._add_tool_batch(("read", '{"b":2,"a":1}', ToolResultState.ERROR))
+        self.assertEqual([], await self._run_injection())
+
+        self._add_tool_batch(
+            ("read", '{"a":  1, "b": 2}', ToolResultState.ERROR),
+        )
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in await self._run_injection()],
+        )
+
+    async def test_fan_out_errors_do_not_trigger_injection(self) -> None:
+        """Failing calls with different arguments are not retries, even when
+        they repeat across iterations."""
+        self.agent.state.cur_iter = 1
+        self._add_injection("2026-07-01T12:00:00")
+
+        for _ in range(3):
+            self._add_tool_batch(
+                ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+                ("read", '{"path": "b.py"}', ToolResultState.ERROR),
+            )
+
+        self.assertEqual([], await self._run_injection())
+
+    async def test_interleaved_results_break_the_streak(self) -> None:
+        """The streak is counted over the trailing tool results, so another
+        tool succeeding in between breaks it."""
+        self.agent.state.cur_iter = 1
+        self._add_injection("2026-07-01T12:00:00")
+
+        for _ in range(3):
+            self._add_tool_batch(
+                ("read", '{"path": "a.py"}', ToolResultState.ERROR),
+                ("TaskUpdate", "{}", ToolResultState.SUCCESS),
+            )
+
+        self.assertEqual([], await self._run_injection())
+
+    async def test_non_error_results_break_the_streak(self) -> None:
+        """Only the ``ERROR`` state counts, so denied or successful results
+        break the streak."""
+        self.agent.state.cur_iter = 1
+        self._add_injection("2026-07-01T12:00:00")
+
+        self._add_tool_batch(("read", "{}", ToolResultState.ERROR))
+        self._add_tool_batch(("read", "{}", ToolResultState.DENIED))
+        self._add_tool_batch(("read", "{}", ToolResultState.ERROR))
+        self._add_tool_batch(("read", "{}", ToolResultState.ERROR))
+
+        self.assertEqual([], await self._run_injection())
 
     async def test_invalid_timezone_falls_back_to_utc(self) -> None:
         """An unresolvable timezone shouldn't break the reply loop."""

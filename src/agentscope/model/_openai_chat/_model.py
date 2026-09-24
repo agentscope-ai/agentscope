@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The OpenAI Chat Completions model implementation."""
-import warnings
 import base64
 from collections import OrderedDict
 from datetime import datetime
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field
 from ..._utils._audio import _build_streaming_wav_header
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
@@ -184,6 +183,14 @@ class OpenAIChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
 
     async def _call_api(
         self,
@@ -543,48 +550,6 @@ class OpenAIChatModel(ChatModelBase):
             resp_kwargs["id"] = response_id
 
         return ChatResponse(**resp_kwargs)
-
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """OpenAI-compatible override for structured output.
-
-        Some third-party providers that expose an OpenAI-compatible API (e.g.
-        DeepSeek via DashScope) reject forced ``tool_choice`` when thinking
-        mode is active.  When such a ``BadRequestError`` is encountered, this
-        method automatically retries with ``tool_choice="auto"``.
-        """
-        import openai
-
-        try:
-            return await super()._call_api_with_structured_output(
-                model_name=model_name,
-                messages=messages,
-                structured_model=structured_model,
-                tool_choice=tool_choice,
-                **kwargs,
-            )
-        except openai.BadRequestError as e:
-            if "tool_choice" not in str(e):
-                raise
-            # Thinking mode rejects forced tool_choice; fall back to auto
-            warnings.warn(
-                f"Forced tool_choice rejected by provider ({e}), "
-                "retrying with tool_choice='auto'.",
-                stacklevel=2,
-            )
-            return await super()._call_api_with_structured_output(
-                model_name=model_name,
-                messages=messages,
-                structured_model=structured_model,
-                tool_choice=ToolChoice(mode="auto"),
-                **kwargs,
-            )
 
     def _format_tools(
         self,

@@ -2,6 +2,7 @@
 """Schema models for the agent service."""
 
 from ._channel import (
+    StartCredentialBindingRequest,
     ChannelActionResponse,
     ChannelChatId,
     ChannelChatIdsResponse,
@@ -55,13 +56,17 @@ from ._credential import (
     ListCredentialSchemasResponse,
 )
 from ._knowledge_base import (
+    ChunkerInfo,
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
     KnowledgeDocumentView,
+    ListChunkersResponse,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
+    ListDocumentChunksResponse,
+    DocumentDownloadTokenResponse,
     ListKnowledgeDocumentsResponse,
     ListKnowledgeDocumentStatusResponse,
     ListSupportedContentTypesResponse,
@@ -119,6 +124,7 @@ __all__ = [
     "ChannelResponse",
     "ChannelSessionsResponse",
     "CreateChannelRequest",
+    "StartCredentialBindingRequest",
     "UpdateChannelRequest",
     # Chat
     "ChatRequest",
@@ -130,13 +136,17 @@ __all__ = [
     "ListCredentialsResponse",
     "ListCredentialSchemasResponse",
     # Knowledge base
+    "ChunkerInfo",
     "CreateKnowledgeBaseRequest",
     "CreateKnowledgeBaseResponse",
     "KbEmbeddingProvider",
     "KbMiddlewareParametersSchemaResponse",
     "KnowledgeDocumentView",
+    "ListChunkersResponse",
     "ListKbEmbeddingModelsResponse",
     "ListKnowledgeBasesResponse",
+    "ListDocumentChunksResponse",
+    "DocumentDownloadTokenResponse",
     "ListKnowledgeDocumentsResponse",
     "ListKnowledgeDocumentStatusResponse",
     "ListSupportedContentTypesResponse",

@@ -288,31 +288,44 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._INDEX_TASKS_SIGNAL
 
     # ------------------------------------------------------------------
-    # Channel output forwarding — a durable queue of "a channel session
-    # is producing output" signals. Each node running channel adapters
-    # drains it; the node that pops a signal (and hosts that channel)
-    # subscribes to the session's event stream and forwards the reply
-    # back to the platform chat. Queue + atomic pop → exactly one node
-    # forwards, even though every node runs the adapter.
+    # Schedules. Only the node that owns the timers reconciles them;
+    # every node publishes here after writing a schedule to storage.
     # ------------------------------------------------------------------
 
-    _CHANNEL_OUTBOUND_QUEUE = "agentscope:channel:outbound"
-    _CHANNEL_OUTBOUND_SIGNAL = "agentscope:channel:outbound:wake"
+    _SCHEDULE_LIFECYCLE = "agentscope:schedule:lifecycle"
+
+    @classmethod
+    def schedule_lifecycle(cls) -> str:
+        """Pub/sub channel that nudges the timer-owning node to
+        reconcile its schedule jobs against storage."""
+        return cls._SCHEDULE_LIFECYCLE
+
+    # ------------------------------------------------------------------
+    # Channels. A reply never travels through the bus: delivery is plain
+    # REST, so the node running the agent sends it directly. What does
+    # cross nodes is coordination — reconcile nudges, the status
+    # heartbeat that lets a connection-free replica answer, and the
+    # per-chat buffers.
+    # ------------------------------------------------------------------
+
+    _CHANNEL_CREDENTIAL_BINDING = "agentscope:channel:binding"
+
+    CREDENTIAL_BINDING_FIELD = "record"
+    """Field holding the serialised binding session."""
+
+    CREDENTIAL_BINDING_CLAIM_TTL_SECS = 300
+    """How long obtained credentials stay claimable. Short on purpose —
+    they sit here in the clear until the channel is created."""
+
+    @classmethod
+    def channel_credential_binding(cls, binding_id: str) -> str:
+        """Registry namespace holding one credential-binding session."""
+        return f"{cls._CHANNEL_CREDENTIAL_BINDING}:{binding_id}"
+
     _CHANNEL_LIFECYCLE = "agentscope:channel:lifecycle"
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
-    _CHANNEL_FORWARD = "agentscope:channel:forward:{sid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
-
-    @classmethod
-    def channel_outbound_queue(cls) -> str:
-        """Durable queue of channel output-forward signals."""
-        return cls._CHANNEL_OUTBOUND_QUEUE
-
-    @classmethod
-    def channel_outbound_signal(cls) -> str:
-        """Pub/sub nudge for channel output-forward consumers."""
-        return cls._CHANNEL_OUTBOUND_SIGNAL
 
     @classmethod
     def channel_lifecycle(cls) -> str:
@@ -338,11 +351,6 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
             chat=chat_id,
             uid=user_id,
         )
-
-    @classmethod
-    def channel_forward_lease(cls, session_id: str) -> str:
-        """Per-run lock so exactly one node forwards a reply."""
-        return cls._CHANNEL_FORWARD.format(sid=session_id)
 
     @classmethod
     def channel_seen_chats(cls, channel_id: str) -> str:

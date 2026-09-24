@@ -172,6 +172,20 @@ class _FakeBus(MessageBus):
     ) -> None:
         raise NotImplementedError
 
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        raise NotImplementedError
+
     async def registry_del(self, namespace: str, field: str) -> None:
         raise NotImplementedError
 

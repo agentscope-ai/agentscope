@@ -167,8 +167,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         """Construct an OpenSandbox workspace and run full initialize.
 
         ``workspace_id`` is always concrete here — :meth:`get_workspace`
-        resolves ``None`` via :meth:`assign_workspace_id` before calling
-        — and is forwarded so metadata-based reattachment works on the
+        resolves an unset id via :meth:`assign_workspace_id` first —
+        and is forwarded so metadata-based reattachment works on the
         next cache miss.
         """
         ws = OpenSandboxWorkspace(
@@ -227,7 +227,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key and the
                 value stored in the sandbox's ``agentscope.workspace.id``
-                metadata. When ``None`` the manager falls back to
+                metadata. When unset the manager falls back to
                 :meth:`assign_workspace_id` under its isolation policy.
 
         Returns:
@@ -236,8 +236,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

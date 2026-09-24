@@ -122,40 +122,38 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             )
 
                 elif isinstance(block, HintBlock):
-                    if content_blocks:
-                        role = "user" if has_tool_result else msg.role
-                        messages.append(
-                            {"role": role, "content": content_blocks},
-                        )
-                        content_blocks = []
-                        has_tool_result = False
-
                     if isinstance(block.hint, str):
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": block.hint},
-                                ],
-                            },
+                        hint_parts = (
+                            [{"type": "text", "text": block.hint}]
+                            if block.hint
+                            else []
                         )
                     else:
-                        hint_parts: list[dict] = []
+                        hint_parts = []
                         for sub in block.hint:
                             if isinstance(sub, TextBlock):
-                                hint_parts.append(
-                                    {"type": "text", "text": sub.text},
-                                )
+                                if sub.text:
+                                    hint_parts.append(
+                                        {"type": "text", "text": sub.text},
+                                    )
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = (
                                     self._format_anthropic_data_block(sub)
                                 )
                                 if formatted_sub:
                                     hint_parts.append(formatted_sub)
-                        if hint_parts:
+
+                    if hint_parts:
+                        if content_blocks:
+                            role = "user" if has_tool_result else msg.role
                             messages.append(
-                                {"role": "user", "content": hint_parts},
+                                {"role": role, "content": content_blocks},
                             )
+                            content_blocks = []
+                            has_tool_result = False
+                        messages.append(
+                            {"role": "user", "content": hint_parts},
+                        )
 
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_anthropic_data_block(block)
@@ -303,69 +301,59 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             )
             return None
 
-        # Anthropic only supports images
-        if not media_type.startswith("image/"):
-            logger.warning(
-                "Anthropic only supports image data, got %s, skipped.",
-                media_type,
-            )
-            return None
+        # Anthropic supports images and PDF documents
+        if media_type.startswith("image/"):
+            return self._format_source(source, "image")
+        if media_type == "application/pdf":
+            return self._format_source(source, "document")
 
-        return self._format_image_source(source)
+        logger.warning(
+            "Anthropic only supports image and PDF data, got %s, skipped.",
+            media_type,
+        )
+        return None
 
     @staticmethod
-    def _format_image_source(
+    def _format_source(
         source: URLSource | Base64Source,
+        block_type: str,
     ) -> dict[str, Any]:
-        """Format an image source into Anthropic API format.
+        """Format an image or document source into an Anthropic base64
+        content block.
 
         Args:
             source (`URLSource | Base64Source`):
-                The image source to format.
+                The source to format. Local ``file://`` URLs are read from
+                disk and remote URLs are downloaded.
+            block_type (`str`):
+                The Anthropic block type, ``"image"`` or ``"document"``.
 
         Returns:
             `dict[str, Any]`:
-                The formatted image source.
+                The formatted content block.
         """
         if isinstance(source, Base64Source):
-            return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": source.media_type,
-                    "data": source.data,
-                },
-            }
+            data = source.data
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
-                # Local file - read and convert to base64
-                file_path = url.removeprefix("file://")
-                with open(file_path, "rb") as f:
+                with open(url.removeprefix("file://"), "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": source.media_type,
-                        "data": data,
-                    },
-                }
             else:
-                # Remote URL - download and convert to base64
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": source.media_type,
-                        "data": data,
-                    },
-                }
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")
+
+        return {
+            "type": block_type,
+            "source": {
+                "type": "base64",
+                "media_type": source.media_type,
+                "data": data,
+            },
+        }
 
 
 class AnthropicChatFormatter(_AnthropicFormatterBase):
@@ -375,10 +363,10 @@ class AnthropicChatFormatter(_AnthropicFormatterBase):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``.'
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``.'
         ),
     )
 
@@ -420,10 +408,10 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
     )
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*"],
+        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``.'
+            'Defaults to ``["text/plain", "image/*", "application/pdf"]``.'
         ),
     )
 
@@ -448,13 +436,13 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                         await self._format_messages(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

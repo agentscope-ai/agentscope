@@ -92,6 +92,10 @@ Before writing code, find or open the issue that frames your work.
   your proposed solution, and any design alternatives. Wait for feedback
   from the core team before starting a non-trivial implementation — this
   avoids wasted rewrites.
+- **One thing at a time.** Each contributor can have at most 5 open issues
+  and hold at most 5 claimed issues at once. Beyond that, a new issue is
+  closed and a new claim is declined automatically, so please see the ones
+  you already have through first.
 
 ### Step 2. Fork the repo and create a development branch
 

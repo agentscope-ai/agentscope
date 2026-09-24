@@ -45,19 +45,21 @@ from ..storage import (
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionConfig,
+    SessionNaming,
     SessionRecord,
     StorageBase,
     TeamRecord,
 )
 from ...message import ToolCallState
 from ...state import ToolContext
-from ..storage._utils import _ensure_team_members
+from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
 
 
 async def _build_team_detail(
     storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     team: TeamRecord,
 ) -> TeamDetailResponse:
@@ -68,6 +70,8 @@ async def _build_team_detail(
         storage (`StorageBase`):
             Application storage. Used to look up the leader session,
             each member agent, and each member's session.
+        access (`ResourceAccessService`):
+            Resolves roster agents against the viewer's current grants.
         user_id (`str`):
             The owner user id.
         team (`TeamRecord`):
@@ -79,24 +83,19 @@ async def _build_team_detail(
             member paired with its session id when available).
     """
     leader_agent: AgentView | None = None
-    leader_session = await storage.get_session(user_id, "", team.session_id)
-    if leader_session is not None:
-        leader_record = await storage.get_agent(
-            user_id,
-            leader_session.agent_id,
+    leader = await _resolve_team_leader(storage, user_id, team)
+    if leader is not None:
+        leader_agent = AgentView.model_validate(
+            {
+                **leader.agent.model_dump(),
+                "editable": leader.agent.user_id == user_id,
+            },
         )
-        if leader_record is not None:
-            leader_agent = AgentView.model_validate(
-                {
-                    **leader_record.model_dump(),
-                    "editable": leader_record.user_id == user_id,
-                },
-            )
 
     members: list[TeamMemberView] = []
     for member in await _ensure_team_members(storage, user_id, team):
-        agent = await storage.get_agent(member.owner_id, member.agent_id)
-        if agent is None:
+        agent = await access.try_resolve_agent(user_id, member.agent_id)
+        if agent is None or agent.user_id != member.owner_id:
             continue
         # Use the member's team-scoped session id directly; an invited
         # agent has multiple sessions and only ``member.session_id``
@@ -247,6 +246,7 @@ async def list_sessions(
             if team_record is not None:
                 team_detail = await _build_team_detail(
                     storage,
+                    access,
                     user_id,
                     team_record,
                 )
@@ -341,7 +341,7 @@ async def create_session(
     # flows to force sharing); otherwise defer to the manager's
     # isolation policy — see ``WorkspaceManagerBase.assign_workspace_id``.
     resolved_workspace_id = body.workspace_id or (
-        workspace_manager.assign_workspace_id(
+        await workspace_manager.assign_workspace_id(
             user_id=user_id,
             agent_id=body.agent_id,
             session_id=_generate_id(),
@@ -357,6 +357,10 @@ async def create_session(
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
             knowledge_config=body.knowledge_config,
+            # A caller that named the session owns that name; anything
+            # else starts on the creation timestamp and is the server's
+            # to replace once the conversation says what it is about.
+            naming=SessionNaming(auto=body.name is None),
             **({"name": body.name} if body.name is not None else {}),
         ),
     )
@@ -542,6 +546,14 @@ async def update_session(
         exclude_unset=True,
         exclude={"permission_mode"},
     )
+
+    # An explicit rename settles the name for good — auto-naming must
+    # not overwrite what the user just typed.
+    if "name" in config_updates:
+        config_updates["naming"] = {
+            **existing.config.naming.model_dump(),
+            "auto": False,
+        }
 
     return await storage.upsert_session(
         user_id=user_id,

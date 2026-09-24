@@ -13,6 +13,7 @@ constructor arguments:
 - ``path="/path/to/db"`` — in-process, persisted to local disk
 - ``url="http://localhost:6333"`` — remote Qdrant server / cloud
 """
+import math
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -191,6 +192,11 @@ class QdrantStore(VectorStoreBase):
         :class:`Chunk` under the ``chunk`` key, so that :meth:`delete`
         can remove all records of one document.
 
+        Point IDs are derived deterministically from
+        ``(document_id, chunk_index)`` so that re-indexing the same
+        document after a mid-pipeline crash upserts over the previous
+        records instead of duplicating them.
+
         Args:
             collection (`str`):
                 The target collection name.
@@ -207,7 +213,7 @@ class QdrantStore(VectorStoreBase):
             collection_name=collection,
             points=[
                 models.PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=self._point_id(record),
                     vector=record.vector,
                     payload={
                         "document_id": record.document_id,
@@ -217,6 +223,26 @@ class QdrantStore(VectorStoreBase):
                 for record in records
             ],
         )
+
+    @staticmethod
+    def _point_id(record: VectorRecord) -> str:
+        """Deterministic point ID for ``(document_id, chunk_index)``.
+
+        ``\0`` separates the fields because it cannot occur in either,
+        so no pair can collide with another. Re-inserting the same
+        chunk therefore upserts in place — the idempotency the indexing
+        pipeline relies on when it retries after a crash.
+
+        Args:
+            record (`VectorRecord`):
+                The record to derive an ID for.
+
+        Returns:
+            `str`:
+                A UUIDv5 string (Qdrant requires UUID-shaped IDs).
+        """
+        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
     async def delete(
         self,
@@ -288,9 +314,12 @@ class QdrantStore(VectorStoreBase):
             with_payload=True,
             query_filter=self._build_metadata_filter(metadata_filter),
         )
+        # ``Euclid`` / ``Manhattan`` are distances, so negate them to
+        # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
+        sign = -1 if self._distance in ("Euclid", "Manhattan") else 1
         return [
             VectorSearchResult(
-                score=point.score,
+                score=sign * point.score,
                 document_id=point.payload["document_id"],
                 chunk=Chunk.model_validate(point.payload["chunk"]),
             )
@@ -357,6 +386,88 @@ class QdrantStore(VectorStoreBase):
 
         return list(summaries.values())
 
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Selects the page with a payload range condition
+        ``offset <= chunk.chunk_index < offset + limit`` instead of
+        sort-and-skip — Qdrant's ``scroll`` has no payload ordering,
+        but because ``chunk_index`` is dense the range filter yields
+        exactly the requested page, which is then sorted in Python
+        (at most ``limit`` items).
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        from qdrant_client import models
+
+        if limit <= 0:
+            return []
+        conditions = [
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            ),
+            models.FieldCondition(
+                key="chunk.chunk_index",
+                range=models.Range(gte=offset, lt=offset + limit),
+            ),
+        ]
+        base_filter = self._build_metadata_filter(metadata_filter)
+        if base_filter is not None:
+            conditions.extend(base_filter.must)
+
+        client = self.get_client()
+        # Scroll the WHOLE index range (bounded: its width is `limit`)
+        # and deduplicate by chunk_index — collections written before
+        # deterministic point IDs may hold duplicates from indexing
+        # retries, and an early stop at `limit` raw points could then
+        # drop a low index while returning a duplicate of a higher one.
+        by_index: dict[int, Chunk] = {}
+        scroll_offset: Any = None
+        while True:
+            points, next_offset = await client.scroll(
+                collection_name=collection,
+                scroll_filter=models.Filter(must=conditions),
+                limit=256,
+                offset=scroll_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                chunk = Chunk.model_validate(point.payload["chunk"])
+                by_index.setdefault(chunk.chunk_index, chunk)
+            if next_offset is None:
+                break
+            scroll_offset = next_offset
+
+        return [by_index[index] for index in sorted(by_index)][:limit]
+
     @staticmethod
     def _build_metadata_filter(
         metadata_filter: dict[str, Any] | None,
@@ -381,12 +492,24 @@ class QdrantStore(VectorStoreBase):
 
         from qdrant_client import models
 
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=f"chunk.metadata.{key}",
+        conditions = []
+        for key, value in metadata_filter.items():
+            field = f"chunk.metadata.{key}"
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    raise ValueError(
+                        "Metadata filter float values must be finite.",
+                    )
+                # MatchValue supports only strings, integers, and booleans.
+                condition = models.FieldCondition(
+                    key=field,
+                    range=models.Range(gte=value, lte=value),
+                )
+            else:
+                condition = models.FieldCondition(
+                    key=field,
                     match=models.MatchValue(value=value),
                 )
-                for key, value in metadata_filter.items()
-            ],
-        )
+            conditions.append(condition)
+
+        return models.Filter(must=conditions)

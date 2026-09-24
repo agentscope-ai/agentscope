@@ -176,6 +176,15 @@ class BackendBase(ABC):
     #:     explicit ``cwd`` argument.
     _path_module: ModuleType = posixpath
 
+    #: The operating system family of the backend's **environment**,
+    #: following the :data:`os.name` convention (``"posix"`` or
+    #: ``"nt"``).  Like :attr:`_path_module`, this describes where the
+    #: commands actually run, not the host process, so tools can pick
+    #: the right shell (``/bin/sh`` vs ``cmd.exe``) when a Windows host
+    #: drives a Linux sandbox.  Defaults to ``"posix"``; subclasses
+    #: targeting Windows environments override it.
+    os_name: str = "posix"
+
     # ── path manipulation helpers (pure string ops) ────────────────
 
     def join_path(self, path: str, *paths: str) -> str:
@@ -747,6 +756,10 @@ class LocalBackend(BackendBase):
     # the base class default (``posixpath``), so path helpers behave
     # correctly when running on a Windows host.
     _path_module = os.path
+
+    # The local backend runs commands on the host, so its environment
+    # OS is the host OS.
+    os_name = os.name
 
     async def exec_shell(
         self,

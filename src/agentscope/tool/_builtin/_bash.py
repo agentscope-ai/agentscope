@@ -703,10 +703,10 @@ easier to review tool calls and give permission.
             # ``command`` is a full shell command line (it may contain
             # pipes, redirects, ``&&``, …), so wrap it in a shell — the
             # backend primitive runs the argv directly without one. Pick
-            # the platform's native shell so the Windows experience that
-            # ``main`` had (commands interpreted by ``cmd.exe``) is
-            # preserved; POSIX hosts use ``/bin/sh``.
-            if os.name == "nt":
+            # the native shell of the *backend's* environment (not the
+            # host's): ``cmd.exe`` on Windows, ``/bin/sh`` on POSIX, so
+            # a Windows host driving a Linux sandbox still works.
+            if self._backend.os_name == "nt":
                 shell_command = ["cmd", "/c", command]
             else:
                 shell_command = ["/bin/sh", "-c", command]

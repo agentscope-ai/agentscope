@@ -99,7 +99,7 @@ class ResetTools(ToolBase):
                 "Error: ResetTools requires state to be provided.",
             )
 
-        # First verify the existance of the given group names
+        # First verify the existence of the given group names
         unexist_groups: list[str] = []
         cur_groups: list[str] = [
             _.name for _ in self.groups if _.name != "basic"

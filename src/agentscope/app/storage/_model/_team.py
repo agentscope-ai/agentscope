@@ -22,13 +22,9 @@ class TeamMember(BaseModel):
 
     owner_id: str = Field(
         description=(
-            "Owner of the member's agent. Always equals the team owner "
-            "in today's user-only invite pool, but is stored explicitly "
-            "so a future admin-share layer (agents borrowed across users) "
-            "can slot in without a schema migration. Distinct name from "
-            ":attr:`TeamRecord.user_id` on purpose — the surrounding "
-            "team already carries the team owner in context, so calling "
-            "this field ``user_id`` too would be ambiguous."
+            "Owner of the member's agent definition. For a cross-owner "
+            "invited member this differs from the team owner; its borrowed "
+            "session still belongs to :attr:`TeamRecord.user_id`."
         ),
     )
 
@@ -41,8 +37,8 @@ class TeamMember(BaseModel):
             "The team-scoped session id for this member. For ``created`` "
             "members this is the sole session (1:1 with the agent). For "
             "``invited`` members this is the freshly-minted session that "
-            "``AgentInvite`` created — the agent's other sessions are "
-            "unrelated to this team."
+            "``AgentInvite`` created in the team owner's namespace — the "
+            "agent owner's other sessions are unrelated to this team."
         ),
     )
 
@@ -117,6 +113,12 @@ class TeamRecord(_RecordBase):
 
     session_id: str
     """The leader session id — the session that called ``create_team``."""
+
+    leader_agent_id: str | None = None
+    """The leader session's agent id, denormalised so resolving the
+    leader's name skips the session read. ``None`` on records written
+    before this field; read it via ``_resolve_team_leader``, which
+    backfills."""
 
     data: TeamData
     """The team data."""

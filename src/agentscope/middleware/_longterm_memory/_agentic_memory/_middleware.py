@@ -324,13 +324,13 @@ information that will be useful in future conversations.
 When looking for past context:
 1. Search topic files in your memory directory:
 ```
-Grep with pattern="<search>" path="{memory_dir}" glob="*.md"</search>
+Grep with pattern="<search>" path="{memory_dir}" glob="*.md"
 # or Bash command:
 grep -rn "<search term>" {memory_dir} --include="*.md"
 ```
 Use narrow search terms (error messages, file paths, function names) rather \
 than broad keywords.
-"""  # noqa:
+"""
 
 DEFAULT_RETRIEVAL_INSTRUCTIONS = (
     "You are selecting memory files that will be useful as context for "

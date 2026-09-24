@@ -375,7 +375,8 @@ class Grep(ToolBase):
                 is_last=True,
             )
 
-        args: list[str] = ["--hidden"]
+        # Sort by path: offset/head_limit paginate over a stable order
+        args: list[str] = ["--hidden", "--sort", "path"]
 
         # Exclude VCS directories
         for vcs_dir in VCS_DIRECTORIES_TO_EXCLUDE:

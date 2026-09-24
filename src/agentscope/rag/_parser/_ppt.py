@@ -15,6 +15,7 @@ long text stays intact inside a section and is split downstream by a
 """
 import base64
 import io
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from ..._logging import logger
@@ -26,6 +27,28 @@ from ._utils import (
     _table_to_json,
     _table_to_markdown,
 )
+
+
+def _iter_shapes(shapes: Any) -> Iterator[Any]:
+    """Yield every shape on a slide, descending into groups.
+
+    A group carries no picture, table or text frame of its own; its
+    children do. Iterating ``slide.shapes`` alone therefore never reaches
+    what is inside one, and the text is dropped without an error.
+
+    Args:
+        shapes (`Any`):
+            A python-pptx shape collection.
+
+    Yields:
+        `Any`: Each leaf shape, in depth-first shape-tree order.
+    """
+    for shape in shapes:
+        # A group is the only shape with its own ``shapes`` collection.
+        if hasattr(shape, "shapes"):
+            yield from _iter_shapes(shape.shapes)
+        else:
+            yield shape
 
 
 def _extract_table_rows(table: Any) -> list[list[str]]:
@@ -45,7 +68,11 @@ def _extract_table_rows(table: Any) -> list[list[str]]:
         cells: list[str] = []
         for cell in row.cells:
             text = cell.text.strip()
-            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            text = (
+                text.replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .replace("\v", "\n")
+            )
             cells.append(text)
         rows.append(cells)
     return rows
@@ -133,9 +160,10 @@ class PPTParser(ParserBase):
             table_format (`Literal["markdown", "json"]`, defaults to
                 ``"markdown"``):
                 How to render tables.  ``"markdown"`` uses pipe-table
-                syntax; ``"json"`` emits a JSON array prefixed with a
-                ``<system-info>`` marker — choose JSON when cells
-                contain newlines that would corrupt Markdown layout.
+                syntax, escaping pipes and rendering cell line breaks
+                as ``<br>``; ``"json"`` emits a JSON array prefixed with
+                a ``<system-info>`` marker and preserves extracted cell
+                strings without Markdown rendering.
             slide_prefix (`str | None`, defaults to
                 ``"<slide index={index}>"``):
                 Prepended to the first text section of each slide.
@@ -255,7 +283,7 @@ class PPTParser(ParserBase):
         if prefix:
             text_buffer.append(prefix)
 
-        for shape in slide.shapes:
+        for shape in _iter_shapes(slide.shapes):
             # 1. Pictures — flush running text, emit a DataBlock section.
             if self.include_image:
                 image_bytes = _extract_image_bytes(shape)

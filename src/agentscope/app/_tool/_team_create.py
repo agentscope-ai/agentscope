@@ -114,6 +114,7 @@ one team at a time.
             team = TeamRecord(
                 user_id=self._user_id,
                 session_id=self._session_id,
+                leader_agent_id=self._agent_id,
                 data=TeamData(
                     name=name,
                     description=description,

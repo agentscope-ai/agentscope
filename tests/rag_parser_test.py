@@ -111,6 +111,110 @@ def _make_pptx_rich() -> bytes:
     return buffer.getvalue()
 
 
+def _make_pptx_with_group() -> bytes:
+    """Build a PPTX whose slide holds a text box and a group of two boxes.
+
+    A group carries no text frame of its own, so a loop over ``slide.shapes``
+    that only looks at text frames, tables and pictures never reaches it.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    standalone = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(0.2),
+        Inches(4),
+        Inches(0.5),
+    )
+    standalone.text_frame.text = "Standalone"
+
+    first = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    first.text_frame.text = "Grouped one"
+    second = slide.shapes.add_textbox(
+        Inches(3.0),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    second.text_frame.text = "Grouped two"
+    slide.shapes.add_group_shape([first, second])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_pptx_with_nested_group() -> bytes:
+    """Build a PPTX whose slide holds a group inside a group."""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    inner_a = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(0.5),
+        Inches(2),
+        Inches(0.5),
+    )
+    inner_a.text_frame.text = "Innermost"
+    inner_b = slide.shapes.add_textbox(
+        Inches(3.0),
+        Inches(0.5),
+        Inches(2),
+        Inches(0.5),
+    )
+    inner_b.text_frame.text = "Sibling"
+    inner_group = slide.shapes.add_group_shape([inner_a, inner_b])
+
+    outer = slide.shapes.add_textbox(
+        Inches(0.5),
+        Inches(2.0),
+        Inches(2),
+        Inches(0.5),
+    )
+    outer.text_frame.text = "Outer"
+    slide.shapes.add_group_shape([inner_group, outer])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_pptx_with_special_table_cells() -> bytes:
+    """Build a PPTX table with pipes and a multi-line cell."""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    table = slide.shapes.add_table(
+        rows=2,
+        cols=2,
+        left=Inches(1),
+        top=Inches(1),
+        width=Inches(4),
+        height=Inches(1),
+    ).table
+    table.cell(0, 0).text = "A|B"
+    table.cell(0, 1).text = r"Path \| label"
+    table.cell(1, 0).text = "1|2"
+    table.cell(1, 1).text = "Line 1\vLine 2"
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_docx_simple(paragraphs: list[str]) -> bytes:
     """Build a DOCX in memory with plain text paragraphs."""
     from docx import Document as DocxDocument
@@ -138,6 +242,22 @@ def _make_docx_with_table() -> bytes:
     table.cell(1, 1).text = "2"
 
     doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_docx_with_special_table_cells() -> bytes:
+    """Build a DOCX table with pipes and a multi-line cell."""
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "A|B"
+    table.cell(0, 1).text = r"Path \| label"
+    table.cell(1, 0).text = "1|2"
+    table.cell(1, 1).text = "Line 1\nLine 2"
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -525,6 +645,44 @@ class PPTParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_markdown_table_escapes_special_cells(self) -> None:
+        """Pipes and line breaks do not corrupt Markdown table rows."""
+        pptx_bytes = _make_pptx_with_special_table_cells()
+        parser = PPTParser(
+            include_image=False,
+            separate_table=True,
+            slide_prefix=None,
+            slide_suffix=None,
+        )
+        sections = await parser.parse(pptx_bytes, "special.pptx")
+
+        expected_text = (
+            "\n".join(
+                [
+                    r"| A\|B | Path \\\| label |",
+                    "| --- | --- |",
+                    r"| 1\|2 | Line 1<br>Line 2 |",
+                ],
+            )
+            + "\n"
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": expected_text,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "special.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
     async def test_table_separated_when_separate_table_true(self) -> None:
         """``separate_table=True`` flushes the running text around the
         table."""
@@ -798,9 +956,141 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(FileNotFoundError):
             await parser.parse("/no/such/file.pptx", "x.pptx")
 
+    async def test_group_shape_text_is_read(self) -> None:
+        """Text inside a group reaches the Sections, in shape-tree order."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(_make_pptx_with_group(), "demo.pptx")
+
+        # Only "Standalone" was read before; the group held the other two.
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "<slide index=1>\n"
+                            "Standalone\n"
+                            "Grouped one\n"
+                            "Grouped two\n"
+                            "</slide>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
+    async def test_nested_group_shape_text_is_read(self) -> None:
+        """A group can hold a group, so the descent has to recurse."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            _make_pptx_with_nested_group(),
+            "demo.pptx",
+        )
+
+        # Depth first: the inner group is emptied before its sibling, and
+        # both come before the shape that follows the outer group.
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "<slide index=1>\n"
+                            "Innermost\n"
+                            "Sibling\n"
+                            "Outer\n"
+                            "</slide>"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
+
+    async def test_header_only_sheet(self) -> None:
+        """A sheet with only a header row is kept as a table."""
+        xlsx_bytes = _make_xlsx_simple({"Data": [["Revenue", "Year"]]})
+        sections = await ExcelParser().parse(xlsx_bytes, "header.xlsx")
+
+        self.assertListEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Sheet: Data\n"
+                            "| Revenue | Year |\n"
+                            "| --- | --- |\n"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "header.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_blank_sheet_has_no_sections(self) -> None:
+        """A blank sheet produces neither a table nor images."""
+        xlsx_bytes = _make_xlsx_simple({"Blank": []})
+        sections = await ExcelParser().parse(xlsx_bytes, "blank.xlsx")
+
+        self.assertListEqual(sections, [])
+
+    async def test_image_only_sheet(self) -> None:
+        """Images on a sheet without cell values are still extracted."""
+        from openpyxl import Workbook
+        from openpyxl.drawing.image import Image
+
+        workbook = Workbook()
+        workbook.active.title = "Images"
+        workbook.active.add_image(Image(io.BytesIO(_PNG_PIXEL)), "A3")
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+
+        parser = ExcelParser(include_image=True)
+        sections = await parser.parse(buffer.getvalue(), "images.xlsx")
+
+        self.assertListEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "images.xlsx",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "images.xlsx",
+                    "metadata": {"sheet": "Images", "media_type": "image/png"},
+                },
+            ],
+        )
 
     async def test_single_sheet_markdown(self) -> None:
         """A single-sheet workbook produces one text Section with
@@ -828,6 +1118,46 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                         "finished_at": None,
                     },
                     "source": "demo.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_markdown_table_escapes_special_cells(self) -> None:
+        """Pipes and line breaks do not corrupt Markdown table rows."""
+        xlsx_bytes = _make_xlsx_simple(
+            {
+                "S1": [
+                    ["A|B", r"Path \| label"],
+                    ["1|2", "Line 1\nLine 2"],
+                ],
+            },
+        )
+        parser = ExcelParser(include_sheet_names=False)
+        sections = await parser.parse(xlsx_bytes, "special.xlsx")
+
+        expected_text = (
+            "\n".join(
+                [
+                    r"| A\|B | Path \\\| label |",
+                    "| --- | --- |",
+                    r"| 1\|2 | Line 1<br>Line 2 |",
+                ],
+            )
+            + "\n"
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": expected_text,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "special.xlsx",
                     "metadata": {},
                 },
             ],
@@ -1091,6 +1421,78 @@ class WordParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_empty_paragraph_is_preserved_between_text(self) -> None:
+        """A blank paragraph between text paragraphs remains a blank line."""
+        docx_bytes = _make_docx_simple(
+            ["Paragraph one.", "", "Paragraph two."],
+        )
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\nParagraph two.",
+        )
+
+    async def test_consecutive_empty_paragraphs_are_preserved(self) -> None:
+        """Consecutive blank paragraphs preserve each intervening line."""
+        docx_bytes = _make_docx_simple(
+            ["Paragraph one.", "", "", "Paragraph two."],
+        )
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\n\nParagraph two.",
+        )
+
+    async def test_empty_paragraph_with_bookmark_is_preserved(self) -> None:
+        """Word often leaves bookmarks (e.g. ``_GoBack``) on blank
+        paragraphs, which are still blank lines."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = DocxDocument()
+        doc.add_paragraph("Paragraph one.")
+        blank = doc.add_paragraph("")
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), "0")
+        start.set(qn("w:name"), "_GoBack")
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), "0")
+        blank._element.append(start)  # pylint: disable=protected-access
+        blank._element.append(end)  # pylint: disable=protected-access
+        doc.add_paragraph("Paragraph two.")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\nParagraph two.",
+        )
+
+    async def test_trailing_empty_paragraphs_do_not_add_newlines(self) -> None:
+        """Trailing blank paragraphs do not leave a trailing newline."""
+        docx_bytes = _make_docx_simple(["Paragraph one.", "", ""])
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "demo.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].content.text, "Paragraph one.")
+
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
         text."""
@@ -1116,6 +1518,39 @@ class WordParserTest(IsolatedAsyncioTestCase):
                         "finished_at": None,
                     },
                     "source": "demo.docx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_markdown_table_escapes_special_cells(self) -> None:
+        """Pipes and line breaks do not corrupt Markdown table rows."""
+        docx_bytes = _make_docx_with_special_table_cells()
+        parser = WordParser(include_image=False, separate_table=True)
+        sections = await parser.parse(docx_bytes, "special.docx")
+
+        expected_text = (
+            "\n".join(
+                [
+                    r"| A\|B | Path \\\| label |",
+                    "| --- | --- |",
+                    r"| 1\|2 | Line 1<br>Line 2 |",
+                ],
+            )
+            + "\n"
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": expected_text,
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "special.docx",
                     "metadata": {},
                 },
             ],

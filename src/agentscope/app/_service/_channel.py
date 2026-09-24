@@ -5,6 +5,7 @@ Validates, writes the record, and publishes a lifecycle notification so
 every node's :class:`ChannelLifecycleDispatcher` reconciles its running
 instances against storage. Holds no channel instances.
 """
+import time
 from datetime import datetime
 
 from ..._utils._common import _generate_id
@@ -15,6 +16,7 @@ from ..storage import (
     SessionSettings,
     StorageBase,
 )
+from ..channel._base import ChannelHeartbeat, ChannelStatus
 from ..channel._errors import ChannelError
 from ..channel._registry import ChannelTypeRegistry
 
@@ -79,7 +81,7 @@ class ChannelService:
             )
 
         channel_id = _generate_id()
-        now = datetime.now().isoformat()
+        now = datetime.now()
         record = ChannelRecord(
             id=channel_id,
             channel_type=channel_type,
@@ -109,7 +111,7 @@ class ChannelService:
         updates.pop("credentials", None)
         updates.pop("channel_type", None)
         updated = record.model_copy(
-            update={**updates, "updated_at": datetime.now().isoformat()},
+            update={**updates, "updated_at": datetime.now()},
         )
         bot_id = self._types.extract_platform_bot_id(
             updated.channel_type,
@@ -145,6 +147,64 @@ class ChannelService:
         )
         await self._storage.delete_channel(channel_id, bot_id)
         await self._notify(channel_id)
+
+    # -- Read-side (cluster-wide, no local instances needed) --
+
+    async def get_status(self, channel_id: str) -> ChannelStatus:
+        """The channel's connection status, from whichever node holds it.
+
+        Nodes that run a channel heartbeat their view into a registry,
+        so this answers correctly from an API replica that holds no
+        connection. Reports older than the heartbeat TTL are ignored —
+        the namespace expires as a whole, so a node that stopped
+        reporting can leave its last entry behind indefinitely while a
+        successor keeps the namespace alive.
+
+        With no report at all, the enabled flag decides: an enabled
+        channel is starting, a disabled one is stopped.
+
+        Args:
+            channel_id (`str`): The channel to report on.
+        """
+        try:
+            entries = await self._bus.registry_getall(
+                MessageBusKeys.channel_liveness(channel_id),
+            )
+        except Exception:  # pylint: disable=broad-except
+            return ChannelStatus(state="stopped")
+
+        now = time.time()
+        best: ChannelStatus | None = None
+        for raw in entries.values():
+            beat = ChannelHeartbeat.model_validate_json(raw)
+            if not beat.is_fresh(now):
+                continue
+            if beat.status.state == "connected":
+                return beat.status
+            if best is None or best.state == "stopped":
+                best = beat.status
+        if best is not None:
+            return best
+
+        # Nobody has reported yet. For an enabled channel that means it
+        # has not been picked up *yet* — a freshly created one is on its
+        # way — and calling that "stopped" sends the operator looking
+        # for something to start that is already starting.
+        record = await self._storage.get_channel(channel_id)
+        if record is not None and record.enabled:
+            return ChannelStatus(state="connecting")
+        return ChannelStatus(state="stopped")
+
+    async def list_seen_chat_ids(self, channel_id: str) -> list[str]:
+        """Chat_ids passively recorded from inbound messages.
+
+        Args:
+            channel_id (`str`): The channel to list seen chats for.
+        """
+        fields = await self._bus.registry_getall(
+            MessageBusKeys.channel_seen_chats(channel_id),
+        )
+        return sorted(fields.keys())
 
     # -- internals --
 

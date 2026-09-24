@@ -4,7 +4,6 @@ GeminiMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import (
     GeminiChatFormatter,
@@ -281,6 +280,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_base64_pdf(self) -> None:
+        """Base64-encoded PDF is passed through as ``inline_data``."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="JVBERi0xLjQgZmFrZQ==",
+                            media_type="application/pdf",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this."},
+                        {
+                            "inline_data": {
+                                "data": "JVBERi0xLjQgZmFrZQ==",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock becomes a part with thought=True in Gemini format."""
         fmt = GeminiChatFormatter()
@@ -337,13 +372,44 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(thought_parts, [])
         self.assertEqual(res[0]["parts"], [{"text": "reply"}])
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
+    async def test_empty_text_block_is_dropped(self) -> None:
+        """Gemini rejects content parts whose text is empty."""
+        fmt = GeminiChatFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[TextBlock(text="")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(res, [])
+
+    async def test_empty_text_does_not_hide_valid_text(self) -> None:
+        """Only empty text parts are removed from a mixed message."""
+        fmt = GeminiChatFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text=""),
+                        TextBlock(text="reply"),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [{"role": "model", "parts": [{"text": "reply"}]}],
+        )
+
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """Base64 images in tool results are promoted to a follow-up user
         message."""
@@ -363,6 +429,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=Base64Source(
                                     data=self.image_b64,
                                     media_type="image/png",
@@ -497,6 +564,60 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         # Empty
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_multiagent_empty_group_keeps_first_history_marker(
+        self,
+    ) -> None:
+        """A skipped group must not consume the first-history marker."""
+        fmt = GeminiMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[ThinkingBlock(thinking="")],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_capital",
+                            input='{"country": "Japan"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_capital",
+                            output=[
+                                TextBlock(
+                                    text="The capital of Japan is Tokyo.",
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+                UserMsg(name="user", content=[TextBlock(text="hello")]),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                self._gt_tool_call,
+                self._gt_tool_result,
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                fmt.conversation_history_prompt
+                                + "<history>\nuser: hello\n</history>"
+                            ),
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
@@ -701,6 +822,51 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     "parts": [
                         {"text": "Here is my answer."},
                     ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_drops_empty_hint_text(self) -> None:
+        """Empty hint text is ignored without splitting adjacent content."""
+        fmt = GeminiChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text="before"),
+                        HintBlock(hint=""),
+                        TextBlock(text="after"),
+                        HintBlock(hint=[TextBlock(text="")]),
+                        HintBlock(
+                            hint=[
+                                TextBlock(text=""),
+                                TextBlock(text="valid hint"),
+                            ],
+                        ),
+                        TextBlock(text="done"),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "before"},
+                        {"text": "after"},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [{"text": "valid hint"}],
+                },
+                {
+                    "role": "model",
+                    "parts": [{"text": "done"}],
                 },
             ],
             res,

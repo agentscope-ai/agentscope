@@ -120,11 +120,26 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         self.assertEqual(len(_FakeWorkspace.created), 1)
         self.assertEqual(
             first.kwargs["workspace_id"],
-            manager.assign_workspace_id(
+            await manager.assign_workspace_id(
                 user_id="u",
                 agent_id="a1",
                 session_id="",
             ),
+        )
+
+    async def test_an_empty_workspace_id_is_not_a_binding(self) -> None:
+        """Sessions persisted with ``workspace_id=""`` fall back to the
+        isolation policy instead of pooling every user into one
+        workspace keyed on the empty string."""
+        manager = DaytonaWorkspaceManager()
+
+        alice = await manager.get_workspace("alice", "a", "s", "")
+        bob = await manager.get_workspace("bob", "a", "s", "")
+
+        self.assertIsNot(alice, bob)
+        self.assertListEqual(
+            [alice.kwargs["workspace_id"], bob.kwargs["workspace_id"]],
+            ["ca79105d522eba6f", "ecbe3dbe754c96ee"],
         )
 
     async def test_concurrent_get_workspace_creates_one_instance(self) -> None:

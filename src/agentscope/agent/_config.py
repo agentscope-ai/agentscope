@@ -54,7 +54,7 @@ class ContextConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     """Allow arbitrary types in the pydantic model."""
 
-    trigger_ratio: float = Field(default=0.8, gt=0, lt=0.9)
+    trigger_ratio: float = Field(default=0.8, gt=0, le=0.9)
     """When the token exceeds this ratio of the maximum context length, the
     context will be compressed. To reserve the context for context compression,
     the maximum ratio is 0.9."""
@@ -63,10 +63,25 @@ class ContextConfig(BaseModel):
     """The ratio of the tokens to reserve in context compression, which should
     be smaller than the trigger ratio."""
 
+    context_buffer_ratio: float = Field(
+        title="Context Buffer",
+        default=0.2,
+        ge=0,
+        le=1,
+        description=(
+            "The buffer ahead of the 'trigger_ratio', within which the agent "
+            "is told that a compression is near, and can compress by itself "
+            "if the compression tool is enabled. It must be smaller than the "
+            "'trigger_ratio'."
+        ),
+    )
+    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
+    of 0.8 and a buffer of 0.2, the context length is injected once the input
+    tokens exceed 60% of the model context size."""
+
     compression_prompt: str = Field(
         default=(
-            "<system-hint>You have been working on the task described above "
-            "but have not yet completed it. "
+            "<system-hint>You have been working on the task described above. "
             "Now write a continuation summary that will allow you to resume "
             "work efficiently in a future context window where the "
             "conversation history will be replaced with this summary. "
@@ -138,6 +153,44 @@ class ContextConfig(BaseModel):
     )
     """The tool result limit to avoid tool result bursting."""
 
+    compression_fallback_to_truncation: bool = Field(
+        default=True,
+        description=(
+            "Whether to truncate the oldest context when the compression "
+            "summary cannot be generated. Turning it off raises the error "
+            "instead, keeping the context intact at the cost of exceeding "
+            "the context length."
+        ),
+    )
+    """Whether to fall back to context truncation when the summary generation
+    fails."""
+
+    compression_tool_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to expose a context compression tool to the agent. "
+            "When runtime-state injection is enabled, the agent is prompted "
+            "to use the tool between tasks as the context approaches the "
+            "hard compression threshold."
+        ),
+    )
+    """Whether the agent can explicitly request context compression."""
+
+    max_image_num: int = Field(
+        title="Max Image Number",
+        default=5,
+        ge=0,
+        description=(
+            "The maximum number of images kept in the context. The oldest "
+            "images exceeding the limit will be removed."
+        ),
+    )
+    """The maximum number of images kept in the context. When the number of
+    images exceeds this limit, the oldest images will be offloaded to the
+    workspace (if an offloader is provided) and replaced by a hint that
+    records the offloaded path; otherwise they are dropped and replaced by a
+    hint without path information."""
+
 
 class InjectionConfig(BaseModel):
     """The state injection related configuration in AgentScope."""
@@ -190,20 +243,47 @@ class InjectionConfig(BaseModel):
     """The minimum elapsed time in **hours** from the recorded time to trigger
     a new time injection."""
 
-    context_buffer_ratio: float = Field(
+    context_buffer_ratio: float | None = Field(
         title="Context Buffer",
-        default=0.2,
+        default=None,
         ge=0,
         le=1,
         description=(
-            "The buffer that will activate context length injection before "
-            "context compression, which should be smaller than the "
-            "'trigger_ratio' of the context config."
+            "Deprecated, use the 'context_buffer_ratio' of the context "
+            "config instead. When provided, it overrides the one in the "
+            "context config."
         ),
     )
-    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
-    of 0.8 and a buffer of 0.2, the context length is injected once the input
-    tokens exceed 60% of the model context size."""
+    """Deprecated in favor of ``ContextConfig.context_buffer_ratio``, which
+    is also consumed by the context compression tool."""
+
+    tool_retries_limit: int = Field(
+        title="Tool Retries Limit",
+        default=3,
+        ge=3,
+        description=(
+            "The number of consecutive failures of the same tool call that "
+            "triggers the tool error injection."
+        ),
+    )
+    """The number of consecutive failures of the same tool call, i.e. the same
+    tool name and arguments, that triggers the tool error injection."""
+
+    tool_retries_hint: str = Field(
+        title="Tool Retries Hint",
+        default=(
+            "The last {count} calls to '{tool_name}' with the same arguments "
+            "all failed. Stop retrying the same call as-is, check the error "
+            "message and try a different approach."
+        ),
+        description=(
+            "The hint injected when the same tool call keeps failing, where "
+            "the '{tool_name}' and '{count}' placeholders will be replaced "
+            "by the failing tool name and the number of consecutive failures."
+        ),
+    )
+    """The hint injected when the same tool call keeps failing, which supports
+    the ``{tool_name}`` and ``{count}`` placeholders."""
 
     template: str = Field(
         title="Template",
@@ -284,7 +364,7 @@ class ReActConfig(BaseModel):
 
     max_iters: int = Field(
         title="Max Iterations",
-        default=20,
+        default=50,
         description="The maximum number of reasoning-acting iterations in "
         "one reply",
     )

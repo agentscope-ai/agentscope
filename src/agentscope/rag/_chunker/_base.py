@@ -18,6 +18,8 @@ guarantee preserves the structural metadata attached by the Parser
 """
 from abc import ABC, abstractmethod
 
+from pydantic import BaseModel
+
 from .._document import Chunk, Section
 
 
@@ -29,6 +31,9 @@ class ChunkerBase(ABC):
     chunker is configured once at construction time and reused
     across many ``chunk()`` calls within the same knowledge base.
 
+    Subclasses must set :attr:`chunker_type` and may override the
+    :class:`Parameters` inner class to declare their tunable parameters.
+
     Subclasses must guarantee:
 
     - **No cross-Section merging**: every output :class:`Chunk` is
@@ -36,6 +41,9 @@ class ChunkerBase(ABC):
     - **DataBlock pass-through**: a Section whose content is a
       :class:`~agentscope.message.DataBlock` becomes a single Chunk
       with the same content; multimodal data is never sliced.
+    - **No empty-text chunks**: a Section whose text content is
+      empty or whitespace-only produces no Chunk, so blank pages
+      never reach the embedding step.
     - **Continuous indexing**: ``chunk_index`` runs from ``0`` to
       ``total_chunks - 1`` across the entire output list, even
       when the input contains many Sections.
@@ -44,6 +52,27 @@ class ChunkerBase(ABC):
     - **Metadata inheritance**: each output Chunk's ``source`` and
       ``metadata`` are copied from its parent Section.
     """
+
+    chunker_type: str
+    """The unique identifier of the chunking strategy."""
+
+    class Parameters(BaseModel):
+        """The tunable parameters of the chunker."""
+
+    def __init__(
+        self,
+        parameters: "ChunkerBase.Parameters | None" = None,
+    ) -> None:
+        """Initialize the chunker.
+
+        Args:
+            parameters (`ChunkerBase.Parameters | None`, optional):
+                The chunker parameters. Defaults to
+                ``self.Parameters()`` when not provided.
+        """
+        self.parameters = (
+            parameters if parameters is not None else self.Parameters()
+        )
 
     @abstractmethod
     async def chunk(self, sections: list[Section]) -> list[Chunk]:

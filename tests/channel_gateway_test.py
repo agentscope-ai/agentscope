@@ -8,21 +8,36 @@ needs a running agent and is exercised end-to-end against a real bot.
 """
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
 # pylint: disable=attribute-defined-outside-init
+import asyncio
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
+from agentscope.app._bus_ops import (
+    has_pending_inbox_or_release,
+    register_inbox_consumer,
+)
 from agentscope.app.channel._base import (
     ChannelBase,
+    ChannelConfirmationResultEvent,
     ChannelEvent,
     _EVENT_ADAPTER,
 )
 from agentscope.app.channel._gateway import ChannelGateway
-from agentscope.message import Msg
+from agentscope.app.channel._routing import resolve
+from agentscope.message import Msg, ToolCallBlock, ToolCallState
+from agentscope.state import AgentState
 from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import MessageBusKeys
 from agentscope.app.storage import (
     ChannelBinding,
     ChannelRecord,
     RoutingConfig,
+    ChannelOrigin,
+    SessionConfig,
+    SessionRecord,
     SessionScope,
     SessionSettings,
 )
@@ -216,7 +231,8 @@ class SendResponseTest(IsolatedAsyncioTestCase):
             ],
             show_thinking=True,
         )
-        self.assertIn("hmm", _text(channel))
+        # Markdown needs the blank line, or thinking runs into the answer.
+        self.assertEqual(_text(channel), "\U0001f4ad hmm\n\nanswer")
 
     async def test_data_block_reassembled_and_delivered(self) -> None:
         channel = await _run(
@@ -298,16 +314,30 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
 
 
 class _RecordingStorage:
-    """Storage stub capturing the workspace_id of upserted sessions."""
+    """Storage stub capturing what a session was upserted with."""
 
     def __init__(self) -> None:
         self.workspace_ids: list[str] = []
+        self.upserts: list[dict[str, Any]] = []
 
     async def get_session(self, **kwargs: Any) -> None:
         return None
 
     async def upsert_session(self, *, config: Any, **kwargs: Any) -> None:
         self.workspace_ids.append(config.workspace_id)
+        self.upserts.append(kwargs)
+
+
+class _InboundStorage(_RecordingStorage):
+    """Storage stub for one normal inbound channel message."""
+
+    def __init__(self, record: ChannelRecord) -> None:
+        super().__init__()
+        self.record = record
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Return the configured channel by id."""
+        return self.record if channel_id == self.record.id else None
 
 
 def _channel_record(user_id: str) -> ChannelRecord:
@@ -326,9 +356,107 @@ def _channel_record(user_id: str) -> ChannelRecord:
                 "parameters": {},
             },
         ),
-        created_at="t",
-        updated_at="t",
     )
+
+
+class _ChannelStorage:
+    """Return one channel record for the gateway hand-off test."""
+
+    def __init__(self, record: ChannelRecord) -> None:
+        self._record = record
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord:
+        del channel_id
+        return self._record
+
+
+class _PausedSessionCheckBus(InMemoryMessageBus):
+    """Pause the gateway after it observes the active session lock."""
+
+    def __init__(self, lock_key: str) -> None:
+        super().__init__()
+        self._lock_key = lock_key
+        self.checked = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def is_locked(self, key: str) -> bool:
+        locked = await super().is_locked(key)
+        if key == self._lock_key:
+            self.checked.set()
+            await self.resume.wait()
+        return locked
+
+
+class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
+    """Channel hints must use the session inbox hand-off protocol."""
+
+    async def test_late_channel_message_enqueues_wakeup(self) -> None:
+        """A message after the final consumer check cannot be stranded."""
+        record = _channel_record("user-1")
+        event = ChannelEvent(
+            channel_id="chan-1",
+            channel_user_id="member-1",
+            chat_id="chat-1",
+            content=[TextBlock(text="late message")],
+        )
+        _agent_id, session_id, _scope = resolve(event, record)
+        bus = _PausedSessionCheckBus(
+            MessageBusKeys.session_lock(session_id),
+        )
+        gateway = ChannelGateway(
+            storage=_ChannelStorage(record),
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await register_inbox_consumer(bus, session_id)
+        async with bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            message_task = asyncio.create_task(gateway.process(event))
+            await asyncio.wait_for(bus.checked.wait(), timeout=2)
+
+            self.assertFalse(
+                await has_pending_inbox_or_release(bus, session_id),
+            )
+            bus.resume.set()
+            await asyncio.wait_for(message_task, timeout=2)
+
+        wakeups = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(wakeups), 1)
+        self.assertDictEqual(
+            wakeups[0][1],
+            {
+                "user_id": "user-1",
+                "session_id": session_id,
+                "agent_id": "agent-x",
+                "kind": MessageBusKeys.WAKEUP_KIND_WAKE,
+                "input": None,
+            },
+        )
+
+        inbox = await bus.queue_drain(MessageBusKeys.inbox(session_id))
+        self.assertListEqual(
+            [payload for _entry_id, payload in inbox],
+            [
+                {
+                    "type": "hint",
+                    "hint": [
+                        {
+                            "type": "text",
+                            "text": "late message",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "id": AnyString(),
+                    "source": '{"label": "channel", "sublabel": "member-1"}',
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                },
+            ],
+        )
 
 
 class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
@@ -369,6 +497,43 @@ class WorkspaceIsolationTest(IsolatedAsyncioTestCase):
             storage.workspace_ids[0],
             storage.workspace_ids[1],
         )
+
+
+class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
+    """The gateway records the trusted sender on the session's origin."""
+
+    async def test_session_origin_carries_the_trusted_sender(self) -> None:
+        record = _channel_record("owner-1")
+        storage = _InboundStorage(record)
+        bus = InMemoryMessageBus()
+        gateway = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await gateway.process(
+            ChannelEvent(
+                channel_id=record.id,
+                channel_user_id="staff-1",
+                chat_id="group:cid-1",
+                chat_name="Product",
+                content=[TextBlock(text="hello")],
+            ),
+        )
+
+        self.assertEqual(
+            storage.upserts[0]["origin"],
+            ChannelOrigin(
+                channel_id=record.id,
+                chat_id="group:cid-1",
+                chat_name="Product",
+                channel_user_id="staff-1",
+            ),
+        )
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(queued), 1)
+        self.assertNotIn("channel_user_id", queued[0][1])
 
 
 class FeishuPostParseTest(IsolatedAsyncioTestCase):
@@ -414,3 +579,188 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
         self.assertTrue(
             any(isinstance(b, TextBlock) and "link" in b.text for b in blocks),
         )
+
+
+class _AwaitingStorage:
+    """Storage stub whose one session is parked on a tool call."""
+
+    def __init__(self, record: ChannelRecord, session_id: str) -> None:
+        self._record = record
+        self._session_id = session_id
+        self.asked: list[str] = []
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord:
+        del channel_id
+        return self._record
+
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[Any]:
+        del user_id, channel_id
+        return [
+            SessionRecord(
+                id=self._session_id,
+                user_id=self._record.user_id,
+                agent_id="agent-x",
+                origin=ChannelOrigin(
+                    channel_id="chan-1",
+                    chat_id="group:cid-1",
+                ),
+                config=SessionConfig(workspace_id="ws-1"),
+            ),
+        ]
+
+    async def get_session(self, *, session_id: str, **kwargs: Any) -> Any:
+        self.asked.append(session_id)
+        if session_id != self._session_id:
+            return None
+        return SessionRecord(
+            id=session_id,
+            user_id=self._record.user_id,
+            agent_id="agent-x",
+            config=SessionConfig(workspace_id="ws-1"),
+            state=AgentState(
+                reply_id="reply-1",
+                context=[
+                    Msg(
+                        name="Friday",
+                        role="assistant",
+                        content=[
+                            ToolCallBlock(
+                                type="tool_call",
+                                id="call_abc",
+                                name="Bash",
+                                input="{}",
+                                state=ToolCallState.ASKING,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+    async def get_agent(self, **kwargs: Any) -> Any:
+        del kwargs
+        return SimpleNamespace(data=SimpleNamespace(name="Friday"))
+
+
+class ChatNameRecordingTest(IsolatedAsyncioTestCase):
+    """The title arrives with the message; a later node cannot look it up."""
+
+    async def _upsert(self, chat_name: str) -> dict[str, Any]:
+        storage = _RecordingStorage()
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=InMemoryMessageBus(),
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        await gw._ensure_session(
+            _channel_record("user-a"),
+            "agent-x",
+            "s-a",
+            ChannelEvent(
+                channel_id="c",
+                channel_user_id="u",
+                chat_id="group:cid-1",
+                chat_name=chat_name,
+            ),
+            SessionScope.PER_CHAT,
+        )
+        return storage.upserts[0]
+
+    async def test_chat_title_is_recorded_on_the_session(self) -> None:
+        upsert = await self._upsert("产品群")
+
+        self.assertEqual(
+            upsert["origin"],
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                chat_name="产品群",
+                channel_user_id="u",
+            ),
+        )
+
+    async def test_a_nameless_chat_records_no_title(self) -> None:
+        """A private chat has no title, and "" is not one."""
+        upsert = await self._upsert("")
+
+        self.assertEqual(
+            upsert["origin"],
+            ChannelOrigin(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                chat_name=None,
+                channel_user_id="u",
+            ),
+        )
+
+
+class DecisionRoutingTest(IsolatedAsyncioTestCase):
+    """A click resumes the run that is waiting, not the one routing picks."""
+
+    async def test_decision_finds_the_waiting_session(self) -> None:
+        record = _channel_record("user-1")
+        # Not what routing derives: the platform names the clicker
+        # differently than it named the sender.
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        await gw.process(
+            ChannelConfirmationResultEvent(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                channel_user_id="300905",
+                tool_call_id="call_abc",
+                approved=True,
+                actor="300905",
+            ),
+        )
+
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(queued), 1)
+        payload = queued[0][1]
+        event = payload["input"]
+        tool_call = event["confirm_results"][0]["tool_call"]
+        self.assertDictEqual(
+            payload,
+            {
+                "user_id": "user-1",
+                "session_id": "the-parked-session",
+                "agent_id": "agent-x",
+                "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                "input": {
+                    "id": event["id"],
+                    "created_at": event["created_at"],
+                    "metadata": {},
+                    "type": "USER_CONFIRM_RESULT",
+                    "reply_id": "reply-1",
+                    "confirm_results": [
+                        {
+                            "confirmed": True,
+                            "rules": None,
+                            "tool_call": {
+                                "type": "tool_call",
+                                "id": "call_abc",
+                                "name": "Bash",
+                                "input": "{}",
+                                "state": "asking",
+                                "suggested_rules": [],
+                                "created_at": tool_call["created_at"],
+                                "finished_at": None,
+                            },
+                        },
+                    ],
+                },
+            },
+        )
+        # The routing guess was tried first, then the parked session.
+        self.assertNotEqual(storage.asked[0], "the-parked-session")
+        self.assertIn("the-parked-session", storage.asked)

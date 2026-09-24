@@ -1208,6 +1208,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             await self.workspace.add_skill(skill_dir)
 
+    @unittest.skipIf(
+        shutil.which("test") is None,
+        "host-backed Daytona fake relies on POSIX sandbox commands",
+    )
     async def test_offload_context_tool_result_and_reset(self) -> None:
         """Offload writes sessions/data and reset clears persistent state."""
         data_block = DataBlock(
@@ -1684,6 +1688,9 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                 scheduler_manager=SchedulerManager(
                     storage=_NoOpStorage(),  # type: ignore[arg-type]
                     message_bus=_NullBus(),  # type: ignore[arg-type]
+                    workspace_manager=(
+                        _NoOpWorkspaceManager()  # type: ignore[arg-type]
+                    ),
                 ),
                 background_task_manager=BackgroundTaskManager(
                     message_bus=_NullBus(),  # type: ignore[arg-type]

@@ -145,11 +145,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+                "text": None,
             },
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
         ]
@@ -344,6 +347,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -599,6 +604,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -933,6 +940,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -1263,6 +1272,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(

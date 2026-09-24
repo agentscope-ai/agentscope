@@ -214,9 +214,10 @@ class KnowledgeBase:
                 Maximum number of results returned across all queries
                 (after dedup).
             score_threshold (`float | None`, optional):
-                Minimum similarity score for a hit to be retained.
-                Only meaningful for similarity metrics where higher is
-                better (cosine / dot-product).  ``None`` disables
+                Minimum :attr:`VectorSearchResult.score` for a hit to
+                be retained.  The scale depends on the store's metric —
+                a distance metric reports negated distances, so the
+                threshold is negative there.  ``None`` disables
                 filtering.
 
         Returns:
@@ -380,5 +381,45 @@ class KnowledgeBase:
         await self.ensure_collection()
         return await self._vector_store.list_documents(
             self._collection,
+            metadata_filter=self._metadata_filter,
+        )
+
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Filtered by :attr:`metadata_filter` when set, so callers only
+        ever see chunks within their own scope.
+
+        Args:
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip; equals the first
+                returned chunk's ``chunk_index``.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks ordered by ``chunk_index``
+                ascending.
+
+        Raises:
+            `NotImplementedError`:
+                If the configured vector store does not support chunk
+                listing.
+        """
+        await self.ensure_collection()
+        return await self._vector_store.list_chunks(
+            self._collection,
+            document_id,
+            offset=offset,
+            limit=limit,
             metadata_filter=self._metadata_filter,
         )

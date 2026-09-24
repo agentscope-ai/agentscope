@@ -17,7 +17,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
-from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generic,
+    TypeVar,
+    TYPE_CHECKING,
+)
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -33,6 +41,7 @@ from ...message import (
 from ...types import ReplyFinishedReason
 
 if TYPE_CHECKING:
+    from ._credential_binding import CredentialBindingBase
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
 
@@ -40,6 +49,7 @@ _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
     "❌ Agent encountered an error. Please check the agent configuration."
 )
+_WikiEntry = TypeVar("_WikiEntry", "WikiSpace", "WikiNode")
 # Deserialize a bus event dict back into its typed AgentEvent.
 _EVENT_ADAPTER: TypeAdapter = TypeAdapter(AgentEvent)
 
@@ -145,6 +155,35 @@ class ChannelStatus(BaseModel):
     last_error: str = ""
 
 
+# How long a node's status report stays trustworthy.
+LIVENESS_TTL_SECS = 30
+
+
+class ChannelHeartbeat(BaseModel):
+    """One node's report of a channel's status, stamped with the time it
+    was written.
+
+    The bus expires a registry namespace as a whole rather than per
+    field, so a node that stops reporting — a worker that restarted
+    under a fresh id, say — leaves its last entry behind while its
+    successor keeps the namespace alive. Readers therefore drop reports
+    older than :data:`LIVENESS_TTL_SECS` instead of trusting expiry.
+    """
+
+    status: ChannelStatus
+    reported_at: float
+    """Wall-clock seconds since the epoch. Compared across nodes, so a
+    little clock skew is expected and harmless at this TTL."""
+
+    def is_fresh(self, now: float) -> bool:
+        """Whether this report is recent enough to believe.
+
+        Args:
+            now (`float`): The reader's current epoch time.
+        """
+        return now - self.reported_at <= LIVENESS_TTL_SECS
+
+
 class ChatKind(str, Enum):
     """A chat's audience shape, used to tailor the agent's context.
 
@@ -157,10 +196,84 @@ class ChatKind(str, Enum):
     PRIVATE = "private"
 
 
+class WikiSpace(BaseModel):
+    """One wiki space — what a platform calls a knowledge base."""
+
+    space_id: str
+    """The space's platform id."""
+
+    name: str
+    """Display name, as the platform shows it."""
+
+    root_node_id: str
+    """Where browsing starts; pass it to
+    :meth:`ChannelBase.list_wiki_nodes`."""
+
+    description: str | None = None
+    """What the space is for, when the platform records one."""
+
+    url: str | None = None
+    """Link to the space in the platform's own UI, for a person to open."""
+
+
+class WikiNode(BaseModel):
+    """One entry in a wiki space's tree — a folder or a document."""
+
+    node_id: str
+    """The entry's platform id, used to browse or read it."""
+
+    name: str
+    """Display name, as the platform shows it."""
+
+    has_children: bool = False
+    """Whether it can be browsed with :meth:`ChannelBase.list_wiki_nodes`."""
+
+    is_document: bool = False
+    """Whether it can be read with :meth:`ChannelBase.read_wiki_document`."""
+
+    url: str | None = None
+    """Link to the entry in the platform's own UI, for a person to open."""
+
+    updated_at: datetime | None = None
+    """When it last changed, so the agent can judge how current it is."""
+
+
+class WikiPage(BaseModel, Generic[_WikiEntry]):
+    """One page of a wiki listing, and where the next one starts."""
+
+    items: list[_WikiEntry]
+    """The entries on this page, in the platform's own order."""
+
+    next_token: str | None = None
+    """Pass back to the same call for the next page; ``None`` at the end."""
+
+
+class WikiDocument(BaseModel):
+    """A bounded read of one wiki document.
+
+    Bounded because a document is read in block ranges: a long one costs
+    several calls rather than one reply too large for the model to use.
+    """
+
+    node_id: str
+    """The document's platform id."""
+
+    name: str
+    """Display name, as the platform shows it."""
+
+    content: list[TextBlock | DataBlock]
+    """The range that was read, in the same block types as
+    :attr:`ChannelEvent.content`, so it reaches the agent unconverted."""
+
+    next_start_index: int | None = None
+    """Where a follow-up read resumes; ``None`` once the document ends."""
+
+
 class ChannelCapability(BaseModel):
     """Platform capability declaration for gateway degradation decisions.
 
-    All flags describe the send direction (agent → platform).
+    Flags describe the send direction (agent → platform) unless the flag
+    says otherwise.
     """
 
     text: bool = True
@@ -179,6 +292,12 @@ class ChannelCapability(BaseModel):
 
     max_message_length: int = 4000
     """Max characters per message; longer replies are split before send."""
+
+    wiki: bool = False
+    """Whether the platform has a wiki the agent can browse and read as
+    the message sender — the read direction, unlike the flags above. A
+    channel that sets it implements the three wiki methods on
+    :class:`ChannelBase`, and inherits the tools that call them."""
 
 
 class ChannelBase(ABC):
@@ -224,6 +343,11 @@ class ChannelBase(ABC):
     class Config(BaseModel):
         """Non-secret per-channel behaviour switches. Subclasses override;
         left empty when the platform exposes no options."""
+
+    credential_binding: type["CredentialBindingBase"] | None = None
+    """Provider letting an operator hand over credentials out of band
+    (scan a QR code, approve a consent screen) instead of pasting them.
+    Left ``None`` by platforms that only support the form."""
 
     def __init__(
         self,
@@ -332,14 +456,16 @@ class ChannelBase(ABC):
                 data.append(block)
             elif isinstance(block, ThinkingBlock):
                 if show_thinking:
-                    parts.append(f"\n💭 {block.thinking}\n")
+                    parts.append(f"💭 {block.thinking}")
             elif isinstance(block, ToolCallBlock):
                 if show_tool_process:
-                    parts.append(f"\n🔧 Calling tool: {block.name}\n")
+                    parts.append(f"🔧 Calling tool: {block.name}")
             elif isinstance(block, ToolResultBlock):
                 if show_tool_process and isinstance(block.output, str):
                     parts.append(block.output)
-        text = "".join(parts).strip()
+        # Every block is already folded whole, and Markdown needs a blank
+        # line between them or thinking runs into the text that follows.
+        text = "\n\n".join(part for part in parts if part.strip()).strip()
         if reply.finished_reason == ReplyFinishedReason.ERROR:
             text = text or _AGENT_ERROR_REPLY
         elif not text and not data:
@@ -349,6 +475,16 @@ class ChannelBase(ABC):
         )
         blocks.extend(data)
         return blocks
+
+    async def aclose(self) -> None:
+        """Release resources acquired outside :meth:`start_listening`.
+
+        An instance built by
+        :class:`~agentscope.app.channel.ChannelClients` never runs the
+        connection loop, so whatever its REST calls opened lazily has no
+        ``finally`` to close it. Override to close those; the connection
+        loop keeps releasing its own. Default: nothing to do.
+        """
 
     async def send_reaction(  # pylint: disable=unused-argument
         self,
@@ -416,15 +552,106 @@ class ChannelBase(ABC):
     async def list_tools(  # pylint: disable=unused-argument
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Platform tools exposed to the agent — e.g. send a file to a
-        different user/group than the conversation. Default: none.
+        different user/group than the conversation.
+
+        Default: the wiki tools, for a platform that has a wiki and a
+        session that acts as a known user. A subclass adds its own
+        platform tools to what this returns.
 
         Args:
             workspace (`WorkspaceBase`): The calling session's workspace,
                 so file-sending tools read from it, not the host.
+            channel_user_id (`str | None`, optional): The platform user the
+                session acts as, for tools that read with that user's own
+                permissions. ``None`` when the session has no single such
+                user — a shared group session, or a chat whose audience the
+                platform cannot classify.
         """
-        return []
+        from ._tools import ListWikiNodes, ListWikiSpaces, ReadWikiDocument
+
+        if not (self.capabilities.wiki and channel_user_id):
+            return []
+        return [
+            ListWikiSpaces(self, channel_user_id),
+            ListWikiNodes(self, channel_user_id),
+            ReadWikiDocument(self, channel_user_id),
+        ]
+
+    # -- Optional wiki access, read as one platform user --
+
+    async def list_wiki_spaces(  # pylint: disable=unused-argument
+        self,
+        channel_user_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> WikiPage[WikiSpace]:
+        """Wiki spaces readable by one platform user.
+
+        Every wiki call names the user it acts as, so the platform applies
+        that user's own permissions rather than the bot's. Default: empty,
+        for a platform with no wiki.
+
+        Args:
+            channel_user_id (`str`): The platform user to read as.
+            limit (`int`): Maximum spaces to return.
+            next_token (`str | None`, optional): Token from a previous page.
+
+        Returns:
+            `WikiPage[WikiSpace]`: One page of spaces.
+        """
+        return WikiPage(items=[])
+
+    async def list_wiki_nodes(  # pylint: disable=unused-argument
+        self,
+        channel_user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> WikiPage[WikiNode]:
+        """Direct children of one wiki space root or folder.
+
+        Default: empty, for a platform with no wiki.
+
+        Args:
+            channel_user_id (`str`): The platform user to read as.
+            parent_node_id (`str`): The space root or folder to browse.
+            limit (`int`): Maximum children to return.
+            next_token (`str | None`, optional): Token from a previous page.
+
+        Returns:
+            `WikiPage[WikiNode]`: One page of child entries.
+        """
+        return WikiPage(items=[])
+
+    async def read_wiki_document(  # pylint: disable=unused-argument
+        self,
+        channel_user_id: str,
+        node_id: str,
+        start_index: int,
+        max_blocks: int,
+    ) -> WikiDocument | None:
+        """Read a bounded range of one wiki document.
+
+        Default: ``None``, for a platform with no wiki.
+
+        Args:
+            channel_user_id (`str`): The platform user to read as.
+            node_id (`str`): The document to read.
+            start_index (`int`): First block index to read.
+            max_blocks (`int`): Maximum blocks to read.
+
+        Returns:
+            `WikiDocument | None`: The range that was read, or ``None``
+            when the node is not a document this platform can read.
+
+        Raises:
+            `RuntimeError`: If the platform refuses the read, with a
+            message naming what the operator has to fix.
+        """
+        return None
 
     def _split_long_message(self, text: str) -> list[str]:
         """Split text into chunks within the platform length limit.
