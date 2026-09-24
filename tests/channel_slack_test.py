@@ -14,6 +14,9 @@ from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from slack_sdk.web.async_client import AsyncWebClient
+from slack_sdk.web.async_slack_response import AsyncSlackResponse
+
 from agentscope.app.channel._base import ChannelEvent, ChatKind
 from agentscope.app.channel._slack._card_templates import (
     _build_approval_blocks,
@@ -89,6 +92,9 @@ class _FakeWeb:
 
     async def conversations_info(self, channel: str) -> dict:
         return {"channel": {"name": f"name-of-{channel}", "is_im": False}}
+
+    async def conversations_open(self, users: str) -> dict:
+        return {"channel": {"id": f"D-{users}"}}
 
     async def users_info(self, user: str) -> dict:
         return {"user": {"profile": {"display_name": f"Name{user}"}}}
@@ -1042,3 +1048,72 @@ class ListToolsTest(IsolatedAsyncioTestCase):
                 "SendImage",
             ],
         )
+
+
+class _WireWeb(AsyncWebClient):
+    """The real client with only the HTTP layer faked, so what
+    ``files_upload_v2`` finally sends to Slack can be inspected."""
+
+    def __init__(self) -> None:
+        super().__init__(token="xoxb-x")
+        self.calls: list[tuple[str, dict]] = []
+
+    async def api_call(  # type: ignore[override]
+        self,
+        api_method: str,
+        *,
+        params: dict | None = None,
+        **kwargs: Any,
+    ) -> AsyncSlackResponse:
+        self.calls.append((api_method, dict(params or {})))
+        data: dict = {"ok": True}
+        if api_method == "conversations.open":
+            data["channel"] = {"id": "D1"}
+        elif api_method == "files.getUploadURLExternal":
+            data.update(file_id="F1", upload_url="https://files.invalid/1")
+        elif api_method == "files.completeUploadExternal":
+            data["files"] = [{"id": "F1"}]
+        return AsyncSlackResponse(
+            client=self,
+            http_verb="POST",
+            api_url=api_method,
+            req_args={},
+            data=data,
+            headers={},
+            status_code=200,
+        )
+
+    async def _upload_file(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(status=200, body="")
+
+
+class DirectMessageTargetTest(IsolatedAsyncioTestCase):
+    """A user id from ListChatMembers reaches that person's DM."""
+
+    async def test_upload_to_a_user_completes_in_its_dm(self) -> None:
+        channel, _ = _channel()
+        web = channel._web = _WireWeb()
+        result = await channel.upload_file("U1", b"data", "a.txt")
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            [method for method, _ in web.calls],
+            [
+                "conversations.open",
+                "files.getUploadURLExternal",
+                "files.completeUploadExternal",
+            ],
+        )
+        self.assertEqual(web.calls[0][1]["users"], "U1")
+        self.assertEqual(web.calls[-1][1]["channel_id"], "D1")
+
+    async def test_upload_to_a_channel_skips_conversations_open(self) -> None:
+        channel, _ = _channel()
+        web = channel._web = _WireWeb()
+        await channel.upload_file("C1", b"data", "a.txt")
+        self.assertNotIn("conversations.open", [m for m, _ in web.calls])
+        self.assertEqual(web.calls[-1][1]["channel_id"], "C1")
+
+    async def test_text_to_a_user_posts_in_its_dm(self) -> None:
+        channel, web = _channel()
+        await channel.send_message_to("W1", "hi")
+        self.assertEqual(web.posts[0]["channel"], "D-W1")

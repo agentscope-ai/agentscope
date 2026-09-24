@@ -14,6 +14,10 @@ Approval cards carry their lookup keys in the button ``value`` (Slack
 allows 2000 characters there), so a click resolves without any in-process
 state and this channel stays correct when several nodes each hold a
 Socket Mode connection for the same app.
+
+A user id given as a send target is resolved to its direct-message
+conversation with ``conversations.open`` first, which needs the
+``im:write`` bot scope.
 """
 import asyncio
 import base64
@@ -81,6 +85,9 @@ _TERMINAL_AUTH_ERRORS = frozenset(
 # Message subtypes that are still a person talking. Anything else (joins,
 # edits, deletions, bot posts) is not input for the agent.
 _USER_SUBTYPES = frozenset({"file_share", "thread_broadcast"})
+
+# User ids, as opposed to the C/G/D ids of conversations.
+_USER_ID_PREFIXES = ("U", "W")
 
 
 class SlackChannel(ChannelBase):
@@ -1109,6 +1116,16 @@ class SlackChannel(ChannelBase):
                 "sent_ts": [],
                 "segments": 0,
             }
+        try:
+            chat_id = await self._open_dm(chat_id)
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("Slack DM with '%s' did not open: %s", chat_id, e)
+            return {
+                "ok": False,
+                "error": str(e),
+                "sent_ts": [],
+                "segments": len(parts),
+            }
         return await self._send_segments(chat_id, parts)
 
     async def upload_file(
@@ -1123,7 +1140,7 @@ class SlackChannel(ChannelBase):
         both the file and the image tool.
 
         Args:
-            chat_id (`str`): The conversation to upload into.
+            chat_id (`str`): A conversation id, or a user id for a DM.
             data (`bytes`): The file bytes.
             file_name (`str`): The file's display name.
 
@@ -1135,7 +1152,7 @@ class SlackChannel(ChannelBase):
             return {"ok": False, "error": "slack_sdk is not installed"}
         try:
             await web.files_upload_v2(
-                channel=chat_id,
+                channel=await self._open_dm(chat_id),
                 file=data,
                 filename=file_name,
                 title=file_name,
@@ -1146,6 +1163,26 @@ class SlackChannel(ChannelBase):
             return {"ok": False, "error": str(e)}
 
     # -- Slack API helpers --
+
+    async def _open_dm(self, chat_id: str) -> str:
+        """Resolve a user id to its direct-message conversation id.
+
+        ``files.completeUploadExternal`` takes only a conversation id, so a
+        person target has to become its ``D...`` conversation first; the
+        text path resolves the same way so both land in one place.
+
+        Args:
+            chat_id (`str`): A conversation id, or a user id for a DM.
+
+        Returns:
+            `str`: The DM's conversation id for a user id, else
+            ``chat_id`` unchanged.
+        """
+        web = self._web_client()
+        if web is None or not chat_id.startswith(_USER_ID_PREFIXES):
+            return chat_id
+        resp = await web.conversations_open(users=chat_id)
+        return (resp.get("channel") or {}).get("id") or chat_id
 
     async def _post(
         self,
