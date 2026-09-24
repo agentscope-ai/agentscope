@@ -218,11 +218,11 @@ class WebRTCAudioTransport(TransportBase):
 
     async def send_audio(self, pcm: bytes, item_id: str) -> None:
         """Queue assistant PCM on the outgoing WebRTC audio track."""
-        if self._blocked_item_id:
-            if item_id == self._blocked_item_id:
-                return
-            self._blocked_item_id = ""
-        self._latest_item_id = item_id
+        if item_id == self._blocked_item_id:
+            return
+        if item_id != self._latest_item_id:
+            self._audio_bytes.pop(self._latest_item_id, None)
+            self._latest_item_id = item_id
         self.output_track.push(pcm, item_id)
         self._audio_bytes[item_id] = self._audio_bytes.get(item_id, 0) + len(
             pcm,
@@ -241,6 +241,7 @@ class WebRTCAudioTransport(TransportBase):
     async def clear_audio(self) -> PlayoutPosition:
         """Stop queued media and ask the browser what was audible."""
         self._blocked_item_id = self._latest_item_id
+        self._audio_bytes.pop(self._blocked_item_id, None)
         resume_track_time_ms = self.output_track.clear()
         if self._channel is None or self._channel.readyState != "open":
             return self._take_playout()

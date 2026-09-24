@@ -413,6 +413,22 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
                 "duration_ms": 100,
             },
         )
+        state_after_item_2 = {
+            "sent": self.channel.sent.copy(),
+            "audio_bytes": self.transport._audio_bytes.copy(),
+            "latest_item_id": self.transport._latest_item_id,
+            "blocked_item_id": self.transport._blocked_item_id,
+        }
+        await self.transport.send_audio(pcm, "item-1")
+        self.assertDictEqual(
+            {
+                "sent": self.channel.sent,
+                "audio_bytes": self.transport._audio_bytes,
+                "latest_item_id": self.transport._latest_item_id,
+                "blocked_item_id": self.transport._blocked_item_id,
+            },
+            state_after_item_2,
+        )
         self.assertEqual(
             {
                 "item_id": position.item_id,
@@ -423,6 +439,43 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
                 "item_id": "item-1",
                 "played_ms": 125,
                 "has_first_played_at": True,
+            },
+        )
+
+    async def test_audio_duration_discards_completed_item_counts(self) -> None:
+        """Only the current sequential output item keeps byte counts."""
+        pcm = np.full((2_400,), 2_000, dtype="<i2").tobytes()
+
+        await self.transport.send_audio(pcm, "item-1")
+        await self.transport.send_audio(pcm, "item-1")
+        await self.transport.send_audio(pcm, "item-2")
+
+        self.assertDictEqual(
+            {
+                "audio_bytes": self.transport._audio_bytes,
+                "latest_item_id": self.transport._latest_item_id,
+                "sent": self.channel.sent,
+            },
+            {
+                "audio_bytes": {"item-2": len(pcm)},
+                "latest_item_id": "item-2",
+                "sent": [
+                    {
+                        "type": "audio_duration",
+                        "item_id": "item-1",
+                        "duration_ms": 100,
+                    },
+                    {
+                        "type": "audio_duration",
+                        "item_id": "item-1",
+                        "duration_ms": 200,
+                    },
+                    {
+                        "type": "audio_duration",
+                        "item_id": "item-2",
+                        "duration_ms": 100,
+                    },
+                ],
             },
         )
 
