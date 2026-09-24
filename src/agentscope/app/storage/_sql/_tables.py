@@ -396,6 +396,27 @@ class ChannelRow(_JsonRecordMixin):
     _indexed_fields = ("user_id",)
 
 
+class ChannelUserCredentialRow(_Base):
+    """Secret OAuth credentials for one platform user and channel."""
+
+    __tablename__ = "channel_user_credentials"
+
+    channel_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        ForeignKey("channels.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    channel_user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        primary_key=True,
+    )
+    credentials: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime().with_variant(_MySQLDateTime(fsp=6), "mysql", "mariadb"),
+        nullable=False,
+    )
+
+
 class MessageRow(_Base):
     """One row per persisted :class:`~agentscope.message.Msg`.
 

@@ -42,6 +42,7 @@ from ._tables import (
     _Base,
     AgentRow,
     ChannelRow,
+    ChannelUserCredentialRow,
     CredentialRow,
     KnowledgeBaseRow,
     KnowledgeDocumentRow,
@@ -1480,8 +1481,68 @@ class AsyncSQLAlchemyStorage(StorageBase):
 
         _ = platform_bot_id
         async with self._session() as sess:
+            await sess.execute(
+                delete(ChannelUserCredentialRow).where(
+                    ChannelUserCredentialRow.channel_id == channel_id,
+                ),
+            )
             result = await sess.execute(
                 delete(ChannelRow).where(ChannelRow.id == channel_id),
+            )
+            await sess.commit()
+        return result.rowcount > 0
+
+    async def get_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+    ) -> dict[str, Any] | None:
+        """Fetch credentials for one channel user."""
+        async with self._session() as sess:
+            row = await sess.get(
+                ChannelUserCredentialRow,
+                (channel_id, channel_user_id),
+            )
+        return None if row is None else dict(row.credentials)
+
+    async def upsert_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+        credentials: dict[str, Any],
+    ) -> None:
+        """Atomically insert or replace credentials for a channel user."""
+        values = {
+            "channel_id": channel_id,
+            "channel_user_id": channel_user_id,
+            "credentials": dict(credentials),
+            "updated_at": _utcnow(),
+        }
+        stmt = self._upsert_stmt(
+            ChannelUserCredentialRow,
+            values,
+            ["channel_id", "channel_user_id"],
+            ("credentials", "updated_at"),
+        )
+        async with self._session() as sess:
+            await sess.execute(stmt)
+            await sess.commit()
+
+    async def delete_channel_user_credentials(
+        self,
+        channel_id: str,
+        channel_user_id: str,
+    ) -> bool:
+        """Delete credentials for one channel user."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(ChannelUserCredentialRow).where(
+                    ChannelUserCredentialRow.channel_id == channel_id,
+                    ChannelUserCredentialRow.channel_user_id
+                    == channel_user_id,
+                ),
             )
             await sess.commit()
         return result.rowcount > 0

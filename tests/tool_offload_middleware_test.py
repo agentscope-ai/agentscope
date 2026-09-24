@@ -86,6 +86,13 @@ class SlowTool(ToolBase):
         )
 
 
+class ForegroundSlowTool(SlowTool):
+    """A slow tool whose result must stay attached to the current run."""
+
+    name: str = "foreground_slow_tool"
+    can_offload: bool = False
+
+
 class _FastToolParams(BaseModel):
     """Parameters for the fast test tool."""
 
@@ -272,6 +279,26 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         # Background task should be registered
         self.assertEqual(len(self.bg_manager.tasks), 1)
+
+    async def test_tool_can_opt_out_of_background_offload(self) -> None:
+        """A non-offloadable tool waits for and returns its real result."""
+        toolkit = Toolkit(tools=[ForegroundSlowTool()])
+        agent, _ = self._make_agent(toolkit, timeout_secs=0.01)
+        tool_call = ToolCallBlock(
+            id="call_foreground",
+            name="foreground_slow_tool",
+            input=json.dumps({"delay": 0.02}),
+        )
+
+        results = [item async for item in agent._acting(tool_call)]
+
+        responses = [r for r in results if isinstance(r, ToolResponse)]
+        self.assertEqual(len(responses), 1)
+        self.assertIn(
+            "SlowTool finished",
+            responses[0].content[0].text,  # type: ignore[union-attr]
+        )
+        self.assertEqual(len(self.bg_manager.tasks), 0)
 
     async def test_background_task_result_injected_into_context(
         self,
