@@ -419,6 +419,17 @@ class MCPClient(BaseModel):
         else:
             return self._create_http_client()
 
+    async def _list_tools(self, session: ClientSession) -> list[mcp.types.Tool]:
+        """List all tools from an MCP session, following pagination cursors."""
+        tools: list[mcp.types.Tool] = []
+        cursor: str | None = None
+        while True:
+            result = await session.list_tools(cursor=cursor)
+            tools.extend(result.tools)
+            if result.nextCursor is None:
+                return tools
+            cursor = result.nextCursor
+
     async def list_raw_tools(self) -> list[mcp.types.Tool]:
         """List available tools from the MCP server in raw
         :class:`mcp.types.Tool` form, applying ``enable_tools`` and
@@ -443,13 +454,11 @@ class MCPClient(BaseModel):
                     write_stream,
                 ) as session:
                     await session.initialize()
-                    res = await session.list_tools()
-                    self._cached_tools = res.tools
+                    self._cached_tools = await self._list_tools(session)
         else:
             # Stateful: use existing session
             self._validate_connection()
-            res = await self._session.list_tools()
-            self._cached_tools = res.tools
+            self._cached_tools = await self._list_tools(self._session)
 
         available_tools: list = self._cached_tools
         if self.enable_tools is not None:
