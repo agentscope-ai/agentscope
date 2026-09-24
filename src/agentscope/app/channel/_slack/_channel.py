@@ -1052,6 +1052,7 @@ class SlackChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
         """Expose the Slack send/discovery tools to the agent.
 
@@ -1059,6 +1060,8 @@ class SlackChannel(ChannelBase):
             workspace (`WorkspaceBase`):
                 The calling session's workspace; the file tools read their
                 payload from its backend by absolute path.
+            channel_user_id (`str | None`, optional): The platform user
+                the session acts as, passed through to the inherited tools.
 
         Returns:
             `list[ToolBase]`: The Slack agent tools.
@@ -1078,7 +1081,7 @@ class SlackChannel(ChannelBase):
             SendMessage(self, backend),
             SendFile(self, backend),
             SendImage(self, backend),
-        ]
+        ] + await super().list_tools(workspace, channel_user_id)
 
     # -- Agent-tool operations (act on chats/users other than the current) --
 

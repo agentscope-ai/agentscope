@@ -1023,3 +1023,22 @@ class ClientOnlyTest(IsolatedAsyncioTestCase):
             chats,
             [{"chat_id": "C1", "name": "general", "chat_type": "channel"}],
         )
+
+
+class ListToolsTest(IsolatedAsyncioTestCase):
+    """The override keeps the base contract ChatService calls it with."""
+
+    async def test_accepts_the_session_user(self) -> None:
+        channel, _ = _channel()
+        workspace = SimpleNamespace(get_backend=lambda: None)
+        tools = await channel.list_tools(workspace, "U1")
+        self.assertEqual(
+            [tool.name for tool in tools],
+            [
+                "ListChats",
+                "ListChatMembers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+            ],
+        )
