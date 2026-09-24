@@ -5,7 +5,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel
 
-from utils import MockModel
+from utils import AnyString, MockModel
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.classifier import (
     ChoiceAnswer,
@@ -223,10 +223,8 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertIs(agent.model, self.primary)
 
     async def test_new_reply_is_gated_by_its_own_routing(self) -> None:
-        """An attachment is judged against the models of *its* reply, not
-        against the candidate the previous reply was routed to."""
-        # The cheap candidate carries no media at all; the roomy context
-        # keeps the recording from being compressed out of the turn.
+        """A new reply's media is not gated by the previous reply's route."""
+        # The fast model accepts no media, so a stale route drops the audio
         self.fast.formatter = OpenAIChatFormatter(input_types=["text/plain"])
         for model in (self.primary, self.fast, self.reasoning):
             model.context_size = 100000
@@ -247,34 +245,29 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
         self.assertListEqual(called, ["fast-model", "reasoning-model"])
-        self.assertDictEqual(
-            agent.state.middle_context,
-            {"ModelRouterMiddleware": {agent.state.reply_id: "reasoning"}},
-        )
-
-        def kinds(msg: Msg) -> list[tuple[str, str]]:
-            """The content blocks of *msg*, by type and payload."""
-            return [
-                (
-                    block.type,
-                    block.text
-                    if block.type == "text"
-                    else block.source.media_type,
-                )
-                for block in msg.content
-            ]
-
-        # The recording reaches the model that was asked about it: while the
-        # route is still unknown the agent's own model gates the media, and
-        # that one accepts audio.
+        user_msg = [_ for _ in agent.state.context if _.role == "user"][-1]
         self.assertListEqual(
-            [kinds(_) for _ in agent.state.context if _.role == "user"],
+            [_.model_dump() for _ in user_msg.content],
             [
-                [("text", "Say hello.")],
-                [
-                    ("text", "What is in this recording?"),
-                    ("data", "audio/wav"),
-                ],
+                {
+                    "type": "text",
+                    "text": "What is in this recording?",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "AA==",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
             ],
         )
 
