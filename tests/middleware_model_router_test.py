@@ -5,7 +5,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel
 
-from utils import MockModel
+from utils import AnyString, MockModel
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.classifier import (
     ChoiceAnswer,
@@ -15,6 +15,7 @@ from agentscope.classifier import (
 )
 from agentscope.credential import CredentialBase
 from agentscope.event import ModelCallStartEvent, ReplyStartEvent
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import (
     Base64Source,
     DataBlock,
@@ -220,6 +221,55 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
         # The resumed reply keeps the route, a new one is routed again
         self.assertListEqual(active, [self.reasoning, self.primary])
         self.assertIs(agent.model, self.primary)
+
+    async def test_new_reply_is_gated_by_its_own_routing(self) -> None:
+        """A new reply's media is not gated by the previous reply's route."""
+        # The fast model accepts no media, so a stale route drops the audio
+        self.fast.formatter = OpenAIChatFormatter(input_types=["text/plain"])
+        for model in (self.primary, self.fast, self.reasoning):
+            model.context_size = 100000
+        middleware = ModelRouterMiddleware(
+            _MockClassifier(["fast", "reasoning"]),
+            self.candidates,
+        )
+
+        agent, called = await self._reply(
+            middleware,
+            [TextBlock(text="Say hello.")],
+            [
+                TextBlock(text="What is in this recording?"),
+                DataBlock(
+                    source=Base64Source(data="AA==", media_type="audio/wav"),
+                ),
+            ],
+        )
+
+        self.assertListEqual(called, ["fast-model", "reasoning-model"])
+        user_msg = [_ for _ in agent.state.context if _.role == "user"][-1]
+        self.assertListEqual(
+            [_.model_dump() for _ in user_msg.content],
+            [
+                {
+                    "type": "text",
+                    "text": "What is in this recording?",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "AA==",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
 
     async def test_chat_model_routes_with_structured_output(self) -> None:
         """A chat model routes through a structured choice."""
