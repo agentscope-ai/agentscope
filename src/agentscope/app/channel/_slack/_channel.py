@@ -840,42 +840,54 @@ class SlackChannel(ChannelBase):
         meta = resp.get("response_metadata") or {}
         return {"chats": chats, "next_cursor": meta.get("next_cursor") or None}
 
-    async def list_chat_members(self, chat_id: str) -> list[dict]:
-        """List a conversation's members as ``{user_id, name}`` dicts.
+    async def list_chat_members(
+        self,
+        chat_id: str,
+        limit: int,
+        cursor: str | None = None,
+    ) -> dict:
+        """One page of a conversation's members, with their names.
+
+        ``conversations.members`` returns ids only, so each member costs a
+        ``users.info`` lookup; fetching one page per call keeps that to at
+        most ``limit`` lookups.
 
         Args:
             chat_id (`str`): The conversation whose members to list.
+            limit (`int`): The most members to return.
+            cursor (`str | None`): ``next_cursor`` from the previous page,
+                or ``None`` for the first.
 
         Returns:
-            `list[dict]`: One ``{user_id, name}`` per member.
+            `dict`: ``{"members": [{user_id, name}], "next_cursor": str |
+            None}``. ``name`` is ``None`` when it could not be resolved,
+            and ``next_cursor`` is ``None`` on the last page.
         """
         web = self._web_client()
         if web is None:
-            return []
-        results: list[dict] = []
-        cursor = ""
-        while True:
-            try:
-                resp = await web.conversations_members(
-                    channel=chat_id,
-                    limit=200,
-                    cursor=cursor or None,
-                )
-            except Exception:  # pylint: disable=broad-except
-                logger.debug("Slack conversations.members failed")
-                break
-            for user_id in resp.get("members") or []:
-                results.append(
-                    {
-                        "user_id": user_id,
-                        "name": await self._user_name(user_id),
-                    },
-                )
-            meta = resp.get("response_metadata") or {}
-            cursor = meta.get("next_cursor") or ""
-            if not cursor:
-                break
-        return results
+            return {"members": [], "next_cursor": None}
+        try:
+            resp = await web.conversations_members(
+                channel=chat_id,
+                limit=limit,
+                cursor=cursor or None,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Slack conversations.members failed")
+            return {"members": [], "next_cursor": None}
+        members: list[dict] = []
+        for user_id in (resp.get("members") or [])[:limit]:
+            members.append(
+                {
+                    "user_id": user_id,
+                    "name": await self._user_name(user_id) or None,
+                },
+            )
+        meta = resp.get("response_metadata") or {}
+        return {
+            "members": members,
+            "next_cursor": meta.get("next_cursor") or None,
+        }
 
     # -- Outbound --
 

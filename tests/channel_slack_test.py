@@ -28,7 +28,7 @@ from agentscope.app.channel._slack._channel import (
     _STREAM_MIN_INTERVAL,
     SlackChannel,
 )
-from agentscope.app.channel._slack._tools import ListChats
+from agentscope.app.channel._slack._tools import ListChatMembers, ListChats
 from agentscope.event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -63,6 +63,8 @@ class _FakeWeb:
         self.list_pages: list[dict] = []
         self.list_calls: list[dict] = []
         self.member_pages: list[dict] = []
+        self.member_calls: list[dict] = []
+        self.user_lookups: list[str] = []
         self._ts = 0
 
     async def auth_test(self) -> dict:
@@ -100,6 +102,9 @@ class _FakeWeb:
         return {"channel": {"id": f"D-{users}"}}
 
     async def users_info(self, user: str) -> dict:
+        self.user_lookups.append(user)
+        if user == "UX":
+            raise RuntimeError("user_not_found")
         return {"user": {"profile": {"display_name": f"Name{user}"}}}
 
     async def users_conversations(self, **kwargs: Any) -> dict:
@@ -117,6 +122,7 @@ class _FakeWeb:
         }
 
     async def conversations_members(self, **kwargs: Any) -> dict:
+        self.member_calls.append(dict(kwargs))
         if self.member_pages:
             return self.member_pages.pop(0)
         return {"members": []}
@@ -525,22 +531,44 @@ class DiscoveryTest(IsolatedAsyncioTestCase):
             [(2, None), (2, "c2")],
         )
 
-    async def test_list_chat_members_pages_and_names(self) -> None:
+    async def test_list_chat_members_returns_one_page_and_its_cursor(
+        self,
+    ) -> None:
         channel, web = _channel()
         web.member_pages = [
             {
-                "members": ["U1"],
+                "members": ["U1", "U2", "UX"],
                 "response_metadata": {"next_cursor": "c2"},
             },
-            {"members": ["U2"], "response_metadata": {"next_cursor": ""}},
+            {"members": ["U4"], "response_metadata": {"next_cursor": ""}},
         ]
-        members = await channel.list_chat_members("C1")
+        tool = ListChatMembers(channel, None)
+        first = json.loads((await tool("C1", limit=3)).content[0].text)
         self.assertEqual(
-            members,
-            [
-                {"user_id": "U1", "name": "NameU1"},
-                {"user_id": "U2", "name": "NameU2"},
-            ],
+            first,
+            {
+                "members": [
+                    {"chat_id": "U1", "name": "NameU1"},
+                    {"chat_id": "U2", "name": "NameU2"},
+                    {"chat_id": "UX", "name": None},
+                ],
+                "next_cursor": "c2",
+            },
+        )
+        self.assertLessEqual(len(web.user_lookups), 3)
+        second = json.loads(
+            (await tool("C1", limit=3, cursor="c2")).content[0].text,
+        )
+        self.assertEqual(
+            second,
+            {
+                "members": [{"chat_id": "U4", "name": "NameU4"}],
+                "next_cursor": None,
+            },
+        )
+        self.assertEqual(
+            [(c["limit"], c["cursor"]) for c in web.member_calls],
+            [(3, None), (3, "c2")],
         )
 
 
