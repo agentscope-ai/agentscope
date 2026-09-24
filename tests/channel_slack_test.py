@@ -453,8 +453,34 @@ class ActionValueTest(IsolatedAsyncioTestCase):
         )
         for element in blocks[-1]["elements"]:
             self.assertLessEqual(len(element["value"]), 2000)
+            self.assertEqual(_parse_action(element["value"])[0], "c" * 200)
         section = blocks[1]["text"]["text"]
         self.assertLessEqual(len(section), 3000)
+
+    async def test_oversized_value_is_refused_not_cut(self) -> None:
+        with self.assertRaises(ValueError):
+            _build_approval_blocks("c1", "C1", "Bash", "ls", "a" * 2000, "s1")
+
+    async def test_oversized_card_falls_back_to_plain_text(self) -> None:
+        channel, web = _channel()
+        await channel._present_confirm(
+            ChannelEvent(
+                channel_id="chan-1",
+                channel_user_id="U1",
+                chat_id="C1",
+                metadata={"agent_id": "a" * 2000, "session_id": "s1"},
+            ),
+            RequireUserConfirmEvent(
+                id="req-1",
+                reply_id=_RID,
+                tool_calls=[
+                    ToolCallBlock(id="call-1", name="Bash", input="{}"),
+                ],
+            ),
+        )
+        self.assertEqual(len(web.posts), 1)
+        self.assertNotIn("blocks", web.posts[0])
+        self.assertIn("cannot be approved here", web.posts[0]["text"])
 
 
 class DiscoveryTest(IsolatedAsyncioTestCase):

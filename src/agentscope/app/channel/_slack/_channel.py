@@ -1076,17 +1076,33 @@ class SlackChannel(ChannelBase):
             req (`RequireUserConfirmEvent`): The approval request to show.
         """
         for tool in req.tool_calls:
-            await self._post(
-                event.chat_id,
-                f"Tool execution needs approval: {tool.name}",
-                blocks=_build_approval_blocks(
+            try:
+                blocks = _build_approval_blocks(
                     tool.id,
                     event.chat_id,
                     tool.name,
                     tool.input,
                     event.metadata.get("agent_id", ""),
                     event.metadata.get("session_id", ""),
-                ),
+                )
+            except ValueError as e:
+                logger.warning(
+                    "Slack '%s' cannot post an approval card for %s: %s",
+                    self._channel_id,
+                    tool.name,
+                    e,
+                )
+                await self._post(
+                    event.chat_id,
+                    f"Tool execution needs approval: {tool.name}, but the "
+                    "request is too large for a Slack approval card, so it "
+                    "cannot be approved here.",
+                )
+                continue
+            await self._post(
+                event.chat_id,
+                f"Tool execution needs approval: {tool.name}",
+                blocks=blocks,
             )
 
     # -- Agent-callable tools --

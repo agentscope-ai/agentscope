@@ -43,6 +43,9 @@ def _build_approval_blocks(
 
     Returns:
         `list[dict]`: The Block Kit blocks to post.
+
+    Raises:
+        `ValueError`: When the routing keys do not fit a button value.
     """
     base = {
         "type": _ACTION_TYPE,
@@ -87,13 +90,24 @@ def _button(label: str, style: str, value: dict) -> dict:
         label (`str`): The button's visible text.
         style (`str`): Slack button style (``primary`` / ``danger``).
         value (`dict`): The payload echoed back on click.
+
+    Raises:
+        `ValueError`: When the serialized payload exceeds Slack's limit.
+            Cutting it would leave JSON that ``_parse_action`` cannot
+            read, so the click would be silently ignored.
     """
+    serialized = json.dumps(value, ensure_ascii=False)
+    if len(serialized) > _VALUE_LIMIT:
+        raise ValueError(
+            f"button value is {len(serialized)} characters, over Slack's "
+            f"{_VALUE_LIMIT}",
+        )
     return {
         "type": "button",
         "text": {"type": "plain_text", "text": label},
         "style": style,
         "action_id": f"{_ACTION_TYPE}:{value['action']}",
-        "value": json.dumps(value, ensure_ascii=False)[:_VALUE_LIMIT],
+        "value": serialized,
     }
 
 
