@@ -877,6 +877,49 @@ class PPTParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_picture_placeholder_emits_data_block(self) -> None:
+        """Pictures inserted into layout placeholders keep their content."""
+        from pptx import Presentation
+
+        presentation = Presentation()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[8])
+        slide.shapes.title.text = "Before picture"
+        slide.placeholders[1].insert_picture(io.BytesIO(_PNG_PIXEL))
+        slide.placeholders[2].text = "After picture"
+        # An unfilled picture placeholder must not be treated as an image.
+        presentation.slides.add_slide(presentation.slide_layouts[8])
+        buffer = io.BytesIO()
+        presentation.save(buffer)
+
+        parser = PPTParser(slide_prefix=None, slide_suffix=None)
+        sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
+
+        self.assertEqual(len(sections), 3)
+        self.assertEqual(sections[0].content.text, "Before picture")
+        image = sections[1]
+        self.assertEqual(image.content.type, "data")
+        self.assertEqual(image.content.source.data, _PNG_PIXEL_B64)
+        self.assertEqual(image.content.source.media_type, "image/png")
+        self.assertEqual(image.content.name, "placeholder.pptx")
+        self.assertEqual(image.source, "placeholder.pptx")
+        self.assertEqual(
+            image.metadata,
+            {"slide": 1, "media_type": "image/png"},
+        )
+        self.assertEqual(sections[2].content.text, "After picture")
+
+        parser = PPTParser(
+            include_image=False,
+            slide_prefix=None,
+            slide_suffix=None,
+        )
+        sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "Before picture\nAfter picture",
+        )
+
     async def test_table_json_format(self) -> None:
         """``table_format="json"`` emits the JSON marker payload."""
         pptx_bytes = _make_pptx_rich()
